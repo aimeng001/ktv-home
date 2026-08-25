@@ -15,7 +15,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -72,7 +71,13 @@ public class LibraryScanService {
         this.assetWriter = assetWriter;
     }
 
-    public record ScanResult(int scanned, int added, int updated, int skipped, int unrecognized) {}
+    public record ScanResult(int scanned, int added, int updated, int skipped, int unrecognized,
+                             int fastIndexed, int probeQueued, int probeCalls, int hashCalls,
+                             int dbUpdates, int missing) {
+        public ScanResult(int scanned, int added, int updated, int skipped, int unrecognized) {
+            this(scanned, added, updated, skipped, unrecognized, 0, 0, 0, 0, 0, 0);
+        }
+    }
     public record IngestResult(boolean imported, Long songId, Long songFileId) {}
     public record ScanProgress(boolean running, int total, int completed, String currentFile,
                                int added, int updated, int skipped, int unrecognized,
@@ -82,7 +87,7 @@ public class LibraryScanService {
         }
     }
 
-    /** 全量/增量扫描曲库根目录 */
+    /** 全量/增量扫描曲库根目录。Fast Index 与串行 Media Probe Queue 分阶段执行。 */
     public ScanResult scanAll() {
         synchronized (scanLock) {
             OffsetDateTime startedAt = OffsetDateTime.now();
@@ -96,7 +101,10 @@ public class LibraryScanService {
                 return result;
             }
             Set<String> knownArtists = existingArtistNames();
-            List<Path> files = new ArrayList<>();
+            List<FastIndexEntry> indexedEntries = new ArrayList<>();
+            Set<String> currentPaths = new HashSet<>();
+            ScanCounters counters = new ScanCounters();
+            boolean[] enumerationComplete = {true};
             try {
                 Files.walkFileTree(root, new SimpleFileVisitor<>() {
                     @Override
@@ -108,19 +116,51 @@ public class LibraryScanService {
 
                     @Override
                     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                        if (isMediaFile(file) && isExternalPathAllowed(file)) files.add(file);
+                        if (isMediaFile(file) && isExternalPathAllowed(file)) {
+                            try {
+                                FastIndexEntry entry = fastIndex(file, attrs, knownArtists);
+                                indexedEntries.add(entry);
+                                currentPaths.add(entry.path());
+                                counters.fastIndexed++;
+                            } catch (RuntimeException failure) {
+                                enumerationComplete[0] = false;
+                                log.warn("快速索引失败，跳过：{} - {}", file, failure.getMessage());
+                            }
+                        }
                         return FileVisitResult.CONTINUE;
                     }
                 });
             } catch (IOException e) {
+                enumerationComplete[0] = false;
                 log.error("遍历曲库失败：{}", e.getMessage());
             }
-            scanProgress.set(new ScanProgress(true, files.size(), 0, null, 0, 0, 0, 0, startedAt, null));
+            scanProgress.set(new ScanProgress(true, indexedEntries.size(), 0, null, 0, 0, 0, 0,
+                    startedAt, null));
 
             int added = 0, updated = 0, skipped = 0, unrecognized = 0;
-            for (Path file : files) {
+            ArrayDeque<FastIndexEntry> probeQueue = new ArrayDeque<>();
+            for (FastIndexEntry entry : indexedEntries) {
+                if (hasUnchangedSnapshot(entry)) {
+                    reactivateIfNeeded(entry, counters);
+                    skipped++;
+                } else {
+                    probeQueue.addLast(entry);
+                }
+            }
+            counters.probeQueued = probeQueue.size();
+            if (enumerationComplete[0]) {
+                markMissingFiles(root, currentPaths, counters);
+            } else {
+                log.warn("曲库枚举未完整结束，本轮不标记消失文件，等待下次扫描重试：{}", root);
+            }
+            scanProgress.set(new ScanProgress(true, indexedEntries.size(), skipped, null, 0, 0, skipped, 0,
+                    startedAt, null));
+
+            int completed = skipped;
+            while (!probeQueue.isEmpty()) {
+                FastIndexEntry entry = probeQueue.removeFirst();
                 try {
-                    IngestOutcome outcome = ingest(file, knownArtists);
+                    IngestOutcome outcome = ingest(entry, knownArtists, counters);
                     switch (outcome) {
                         case ADDED -> added++;
                         case UPDATED -> updated++;
@@ -128,17 +168,20 @@ public class LibraryScanService {
                         case UNRECOGNIZED -> { added++; unrecognized++; }
                     }
                 } catch (Exception e) {
-                    log.warn("入库失败，跳过：{} - {}", file, e.getMessage());
+                    log.warn("入库失败，跳过：{} - {}", entry.file(), e.getMessage());
                     skipped++;
                 }
-                scanProgress.set(new ScanProgress(true, files.size(), added + updated + skipped,
-                        file.getFileName().toString(), added, updated, skipped, unrecognized,
+                completed++;
+                scanProgress.set(new ScanProgress(true, indexedEntries.size(), completed,
+                        entry.file().getFileName().toString(), added, updated, skipped, unrecognized,
                         startedAt, null));
             }
             log.info("扫描完成：共 {} 文件，新增 {}，更新 {}，跳过 {}，未识别 {}",
-                    files.size(), added, updated, skipped, unrecognized);
-            ScanResult result = new ScanResult(files.size(), added, updated, skipped, unrecognized);
-            scanProgress.set(new ScanProgress(false, files.size(), files.size(), null, added, updated,
+                    indexedEntries.size(), added, updated, skipped, unrecognized);
+            ScanResult result = new ScanResult(indexedEntries.size(), added, updated, skipped, unrecognized,
+                    counters.fastIndexed, counters.probeQueued, counters.probeCalls, counters.hashCalls,
+                    counters.dbUpdates, counters.missing);
+            scanProgress.set(new ScanProgress(false, indexedEntries.size(), indexedEntries.size(), null, added, updated,
                     skipped, unrecognized, startedAt, OffsetDateTime.now()));
             return result;
         }
@@ -174,18 +217,136 @@ public class LibraryScanService {
         return FilenameParser.parse(filename, existingArtistNames());
     }
 
+    /**
+     * Fast Index 阶段只读取目录项属性和文件名元数据；不会打开媒体内容。
+     * The fast-index phase reads directory attributes and filename metadata only;
+     * it never opens the media payload.
+     */
+    private FastIndexEntry fastIndex(Path file, Collection<String> knownArtists) {
+        try {
+            BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class);
+            return fastIndex(file, attrs, knownArtists);
+        } catch (IOException e) {
+            throw new IllegalStateException("读取文件属性失败：" + file, e);
+        }
+    }
+
+    private FastIndexEntry fastIndex(Path file, BasicFileAttributes attrs, Collection<String> knownArtists) {
+        String path = file.toString();
+        Path sidecarLyric = sidecarLyricOf(file);
+        OffsetDateTime mediaMtime = attrs.lastModifiedTime().toInstant().atOffset(ZoneOffset.UTC);
+        return new FastIndexEntry(file, path, attrs.size(), newestMtime(file, sidecarLyric, mediaMtime),
+                FilenameParser.parse(file.getFileName().toString(), knownArtists),
+                fileRepo.findByFilePath(path));
+    }
+
+    /**
+     * Stable snapshot identity is path + media size + effective input mtime.
+     * The effective mtime includes a valid LRC sidecar because it is another scan input.
+     * PostgreSQL TIMESTAMPTZ stores microseconds, so compare and persist at that same
+     * precision. This avoids false changes after database truncation while remaining
+     * much finer than the old seconds-only comparison.
+     */
+    private static boolean hasUnchangedSnapshot(FastIndexEntry entry) {
+        return entry.existing().filter(existing -> existing.getFileSize() == entry.size()
+                && sameMtime(existing.getFileMtime(), entry.mtime())).isPresent();
+    }
+
+    private static boolean sameMtime(OffsetDateTime left, OffsetDateTime right) {
+        return left != null && right != null
+                && mtimeKey(left) == mtimeKey(right);
+    }
+
+    private static long mtimeKey(OffsetDateTime value) {
+        var instant = value.toInstant();
+        return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000;
+    }
+
+    private static OffsetDateTime normalizeMtime(OffsetDateTime value) {
+        if (value == null) return null;
+        return value.withNano((value.getNano() / 1_000) * 1_000);
+    }
+
+    private void reactivateIfNeeded(FastIndexEntry entry, ScanCounters counters) {
+        SongFile existing = entry.existing().orElse(null);
+        if (existing == null || existing.isValid()) return;
+
+        existing.setValid(true);
+        fileRepo.save(existing);
+        counters.dbUpdates++;
+        if (existing.getSongId() == null) return;
+        songRepo.findById(existing.getSongId()).ifPresent(song -> {
+            if ("file_missing".equals(song.getStatus())) {
+                song.setStatus("ok");
+                songRepo.save(song);
+                counters.dbUpdates++;
+            }
+        });
+    }
+
+    /** Mark disappeared records invalid; never delete or touch a source path. */
+    private void markMissingFiles(Path root, Set<String> currentPaths, ScanCounters counters) {
+        String role = LibraryModePolicy.isExternalReadOnly(props)
+                ? LibraryModePolicy.EXTERNAL_FILE_ROLE : "LIBRARY";
+        List<SongFile> tracked = fileRepo.findByFileRoleOrderByImportedAtDesc(role);
+        if (tracked == null) return;
+        for (SongFile file : tracked) {
+            String path = file == null ? null : file.getFilePath();
+            if (path == null || !file.isValid() || currentPaths.contains(path)
+                    || !isPathInsideActiveRoot(root, path)) continue;
+            file.setValid(false);
+            fileRepo.save(file);
+            counters.dbUpdates++;
+            counters.missing++;
+            markSongMissingIfNeeded(file.getSongId(), counters);
+        }
+    }
+
+    private boolean isPathInsideActiveRoot(Path root, String path) {
+        try {
+            Path candidate = Path.of(path);
+            if (LibraryModePolicy.isExternalReadOnly(props)) {
+                LibraryModePolicy.requireExternalPathInsideSource(props, candidate);
+                return true;
+            }
+            return candidate.toAbsolutePath().normalize()
+                    .startsWith(root.toAbsolutePath().normalize());
+        } catch (RuntimeException rejected) {
+            return false;
+        }
+    }
+
+    private void markSongMissingIfNeeded(Long songId, ScanCounters counters) {
+        if (songId == null) return;
+        List<SongFile> validFiles = fileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(songId);
+        if (validFiles != null && !validFiles.isEmpty()) return;
+        songRepo.findById(songId).ifPresent(song -> {
+            if ("ok".equals(song.getStatus())) {
+                song.setStatus("file_missing");
+                songRepo.save(song);
+                counters.dbUpdates++;
+            }
+        });
+    }
+
     enum IngestOutcome { ADDED, UPDATED, SKIPPED, UNRECOGNIZED }
 
-    /** 单文件入库（幂等：已存在的文件路径按 mtime 判断是否需更新） */
+    /** 单文件入库（幂等：已存在的路径按 path + size + mtime 判断是否需更新） */
     @Transactional
     public IngestOutcome ingest(Path file) {
         LibraryModePolicy.requireExternalPathInsideSource(props, file);
-        return ingest(file, existingArtistNames());
+        Collection<String> knownArtists = existingArtistNames();
+        FastIndexEntry entry = fastIndex(file, knownArtists);
+        if (hasUnchangedSnapshot(entry)) {
+            return IngestOutcome.SKIPPED;
+        }
+        return ingest(entry, knownArtists, new ScanCounters());
     }
 
-    private IngestOutcome ingest(Path file, Collection<String> knownArtists) {
-        LibraryModePolicy.requireExternalPathInsideSource(props, file);
-        return ingestInternal(file, null, null, null, false, knownArtists).outcome();
+    private IngestOutcome ingest(FastIndexEntry entry, Collection<String> knownArtists,
+                                 ScanCounters counters) {
+        LibraryModePolicy.requireExternalPathInsideSource(props, entry.file());
+        return ingestInternal(entry, null, null, null, false, knownArtists, counters).outcome();
     }
 
     private boolean isExternalPathAllowed(Path path) {
@@ -202,8 +363,15 @@ public class LibraryScanService {
     @Transactional
     public IngestResult ingestLibraryFile(Path file, Path sourceFile, String sourceMd5, String outputMd5, boolean transcodeRequired) {
         LibraryModePolicy.requireManaged(props, "导入");
-        IngestState state = ingestInternal(file, sourceFile, sourceMd5, outputMd5, transcodeRequired,
-                existingArtistNames());
+        Collection<String> knownArtists = existingArtistNames();
+        FastIndexEntry entry = fastIndex(file, knownArtists);
+        if (hasUnchangedSnapshot(entry)) {
+            SongFile existing = entry.existing().orElse(null);
+            return new IngestResult(false, existing == null ? null : existing.getSongId(),
+                    existing == null ? null : existing.getId());
+        }
+        IngestState state = ingestInternal(entry, sourceFile, sourceMd5, outputMd5,
+                transcodeRequired, knownArtists, new ScanCounters());
         return new IngestResult(
                 state.outcome() == IngestOutcome.ADDED || state.outcome() == IngestOutcome.UPDATED,
                 state.songId(),
@@ -211,27 +379,19 @@ public class LibraryScanService {
         );
     }
 
-    private IngestState ingestInternal(Path file, Path sourceFile, String sourceMd5, String outputMd5,
-                                       boolean transcodeRequired, Collection<String> knownArtists) {
-        String pathStr = file.toString();
+    private IngestState ingestInternal(FastIndexEntry entry, Path sourceFile, String sourceMd5, String outputMd5,
+                                       boolean transcodeRequired, Collection<String> knownArtists,
+                                       ScanCounters counters) {
+        Path file = entry.file();
+        String pathStr = entry.path();
         Path sidecarLyric = sidecarLyricOf(file);
-        OffsetDateTime mtime = newestMtime(file, sidecarLyric);
-
-        // 已入库且未修改 → 跳过（增量扫描）。
-        // 用秒级比较：DB TIMESTAMPTZ 为微秒精度，文件系统 mtime 为纳秒，直接比较会因精度截断误判为“已修改”。
-        Optional<SongFile> existing = fileRepo.findByFilePath(pathStr);
-        if (existing.isPresent()) {
-            long storedSec = existing.get().getFileMtime().toEpochSecond();
-            long fileSec = mtime.toEpochSecond();
-            if (fileSec <= storedSec) {
-                SongFile existingFile = existing.get();
-                return new IngestState(IngestOutcome.SKIPPED, existingFile.getSongId(), existingFile.getId());
-            }
-        }
+        OffsetDateTime mtime = entry.mtime();
+        Optional<SongFile> existing = entry.existing();
 
         // 1) ffprobe 探测
         MediaProbe probe;
         try {
+            counters.probeCalls++;
             probe = ffprobe.probe(file);
         } catch (MediaProbeException e) {
             log.debug("ffprobe 失败：{} - {}", file.getFileName(), e.getMessage());
@@ -263,7 +423,7 @@ public class LibraryScanService {
             recognized = true;
             identitySource = "lrc_tag";
         } else {
-            filenameMeta = FilenameParser.parse(file.getFileName().toString(), knownArtists);
+            filenameMeta = entry.filenameMeta();
             title = filenameMeta.title();
             artist = filenameMeta.artist();
             recognized = filenameMeta.recognized();
@@ -332,6 +492,7 @@ public class LibraryScanService {
             }
         }
         song = songRepo.save(song);
+        counters.dbUpdates++;
 
         // 7) 写 song_files（KTV 视频优先级高）
         int priority = switch (mediaType) {
@@ -370,8 +531,8 @@ public class LibraryScanService {
         sf.setVocalTrackIndex(vocalTrackIndex);
         sf.setVocalConfidence(vocalConfidence);
         sf.setResolution(probe.resolution());
-        sf.setFileSize(sizeOf(file));
-        sf.setFileMtime(mtime);
+        sf.setFileSize(entry.size());
+        sf.setFileMtime(normalizeMtime(mtime));
         sf.setPriority(priority);
         // 文件重新被成功探测，说明之前的瞬时播放失败不应永久屏蔽该源。
         sf.setValid(true);
@@ -393,6 +554,7 @@ public class LibraryScanService {
         }
         sf.setSourceDeleted(false);
         sf = fileRepo.save(sf);
+        counters.dbUpdates++;
 
         IngestOutcome outcome;
         if (!recognized) outcome = IngestOutcome.UNRECOGNIZED;
@@ -426,8 +588,7 @@ public class LibraryScanService {
         return mediaFile.resolveSibling(stem + ".lrc");
     }
 
-    private static OffsetDateTime newestMtime(Path mediaFile, Path sidecarLyric) {
-        OffsetDateTime mediaMtime = mtimeOf(mediaFile);
+    private static OffsetDateTime newestMtime(Path mediaFile, Path sidecarLyric, OffsetDateTime mediaMtime) {
         if (!Files.isRegularFile(sidecarLyric)) return mediaMtime;
         OffsetDateTime lyricMtime = mtimeOf(sidecarLyric);
         return lyricMtime.isAfter(mediaMtime) ? lyricMtime : mediaMtime;
@@ -463,15 +624,19 @@ public class LibraryScanService {
         return Set.of("国语", "粤语", "闽南语", "英语", "日语", "韩语", "纯音乐", "其他", "未知").contains(raw) ? raw : "其他";
     }
 
-    private static long sizeOf(Path file) {
-        try {
-            return Files.size(file);
-        } catch (IOException e) {
-            return 0;
-        }
-    }
+    private record FastIndexEntry(Path file, String path, long size, OffsetDateTime mtime,
+                                  ParsedMeta filenameMeta, Optional<SongFile> existing) {}
 
     private record IngestState(IngestOutcome outcome, Long songId, Long songFileId) {}
+
+    private static final class ScanCounters {
+        private int fastIndexed;
+        private int probeQueued;
+        private int probeCalls;
+        private int hashCalls;
+        private int dbUpdates;
+        private int missing;
+    }
 
     @PreDestroy
     void shutdown() {
