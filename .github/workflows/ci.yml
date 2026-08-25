@@ -87,3 +87,11 @@ jobs:
         run: dotnet test windows-player/HomeKtv.Windows.sln --no-restore -c Release
       - name: Build Windows Player
         run: dotnet build windows-player/HomeKtv.Windows.sln --no-restore -c Release
+
+  release-config:
+    name: Release workflow contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test release workflow contracts
+        run: python scripts/release_workflow_test.py

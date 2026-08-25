@@ -31,9 +31,41 @@ env:
   RAW_RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
+  release-source:
+    name: Verify release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require reviewed master source
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$GITHUB_REF_NAME" != "master" ]]; then
+              echo "Manual releases must run from master (got $GITHUB_REF_NAME)." >&2
+              exit 1
+            fi
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            git fetch --no-tags origin master:refs/remotes/origin/master
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/master; then
+              echo "Release tag must point to a commit reachable from master." >&2
+              exit 1
+            fi
+          else
+            echo "Unsupported release event: $GITHUB_EVENT_NAME." >&2
+            exit 1
+          fi
+
   release-meta:
     name: Resolve release metadata
     runs-on: ubuntu-latest
+    needs: release-source
     outputs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
       version_name: ${{ steps.meta.outputs.version_name }}
@@ -57,6 +89,13 @@ jobs:
           if [[ "$REQUESTED_CHANNEL" == "unstable" || "$version" == *-* ]]; then
             channel=unstable
             [[ "$version" == *-* ]] || version="${version}-unstable"
+          fi
+
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+            :
+          else
+            echo "Invalid release version: $version" >&2
+            exit 1
           fi
 
           release_tag="${prefix}${version}"
@@ -162,7 +201,7 @@ jobs:
   image:
     name: Publish image with TV APKs
     runs-on: ubuntu-latest
-    needs: [release-meta, android-tv]
+    needs: [release-meta, android-tv, windows-player]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -206,7 +245,7 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [release-meta, android-tv, windows-player]
+    needs: [release-meta, android-tv, windows-player, image]
     steps:
       - name: Download APK artifacts
         uses: actions/download-artifact@v4
