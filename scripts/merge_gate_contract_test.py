@@ -39,8 +39,31 @@ class MergeGateContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("compose-config:", workflow)
-        self.assertIn("docker-compose*.yml", workflow)
+        self.assertIn("files=(", workflow)
+        for filename in (
+            "docker-compose.yml",
+            "docker-compose.dev.yml",
+            "docker-compose.nas.yml",
+            "docker-compose.prebuilt.yml",
+            "docker-compose.hardware.yml",
+            "docker-compose.rockchip.yml",
+        ):
+            self.assertIn(filename, workflow)
         self.assertIn('docker compose -f "$file" config --quiet', workflow)
+
+    def test_ci_combines_compose_hardware_overlays_with_the_base(self) -> None:
+        workflow = (REPOSITORY / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('case "$file" in', workflow)
+        self.assertIn(
+            "docker-compose.hardware.yml|docker-compose.rockchip.yml)",
+            workflow,
+        )
+        self.assertIn(
+            'docker compose -f docker-compose.yml -f "$file" config --quiet',
+            workflow,
+        )
 
 
 if __name__ == "__main__":

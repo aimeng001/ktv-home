@@ -5,6 +5,7 @@ import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
+import com.homektv.media.MediaProbeException;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.domain.AudioChannel;
@@ -23,6 +24,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileTime;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -71,6 +73,8 @@ class ExternalReadOnlyLibraryTest {
 
         lenient().when(songFileRepository.findByFilePath(anyString())).thenAnswer(invocation ->
                 Optional.ofNullable(filesByPath.get(invocation.getArgument(0))));
+        lenient().when(songFileRepository.findByFileRoleOrderByImportedAtDesc(anyString()))
+                .thenAnswer(invocation -> new ArrayList<>(filesByPath.values()));
         lenient().when(songRepository.findByFingerprint(anyString())).thenReturn(Optional.empty());
         lenient().when(songRepository.save(any(Song.class))).thenAnswer(invocation -> {
             Song song = invocation.getArgument(0);
@@ -169,6 +173,48 @@ class ExternalReadOnlyLibraryTest {
         scanService.scanAll();
 
         assertThat(filesByPath.get(source.toString()).getAudioLayout()).isEqualTo(AudioLayout.NORMAL_STEREO);
+    }
+
+    @Test
+    void oneTrackFileDoesNotKeepAnInvalidExternalDualTrackDefault() throws Exception {
+        when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_TRACK);
+        Path source = sourceDir.resolve("周杰伦-晴天-国语-流行.mkv");
+        Files.write(source, new byte[]{0x01, 0x23});
+        when(tagReader.read(any())).thenReturn(new TagInfo());
+        when(ffprobe.probe(source)).thenReturn(new MediaProbe(180_000, 1, 0, true,
+                "1920x1080", List.of(), "h264", "aac"));
+
+        scanService.scanAll();
+
+        assertThat(filesByPath.get(source.toString()).getAudioLayout())
+                .isEqualTo(AudioLayout.NORMAL_STEREO);
+        assertThat(filesByPath.get(source.toString()).getOriginalTrackIndex()).isNull();
+        assertThat(filesByPath.get(source.toString()).getAccompanimentTrackIndex()).isNull();
+    }
+
+    @Test
+    void failedProbeRetryPreservesPerFileOverrideOnThePendingPlaceholder() throws Exception {
+        when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_TRACK);
+        Path source = sourceDir.resolve("周杰伦-晴天-国语-流行.mkv");
+        Files.write(source, new byte[]{0x01, 0x23});
+        when(tagReader.read(any())).thenReturn(new TagInfo());
+        when(ffprobe.probe(source))
+                .thenThrow(new MediaProbeException("temporary probe failure"))
+                .thenReturn(new MediaProbe(180_000, 1, 0, true,
+                        "1920x1080", List.of(), "h264", "aac"));
+
+        scanService.scanAll();
+        SongFile pending = filesByPath.get(source.toString());
+        assertThat(pending.isProbePending()).isTrue();
+        pending.setAudioLayout(AudioLayout.DUAL_CHANNEL);
+
+        scanService.scanAll();
+
+        SongFile retried = filesByPath.get(source.toString());
+        assertThat(retried.getAudioLayout()).isEqualTo(AudioLayout.DUAL_CHANNEL);
+        assertThat(retried.getOriginalChannel()).isEqualTo(AudioChannel.LEFT);
+        assertThat(retried.getAccompanimentChannel()).isEqualTo(AudioChannel.RIGHT);
+        verify(ffprobe, times(2)).probe(source);
     }
 
     @Test

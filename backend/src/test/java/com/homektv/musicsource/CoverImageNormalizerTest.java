@@ -1,6 +1,7 @@
 package com.homektv.musicsource;
 
 import com.homektv.web.ApiException;
+import com.homektv.testutil.FakeFfmpegProcess;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -11,7 +12,6 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -66,11 +66,10 @@ class CoverImageNormalizerTest {
         fixture.setRGB(0, 0, Color.BLUE.getRGB());
         Path converted = temp.resolve("converted.jpg");
         ImageIO.write(fixture, "jpg", converted.toFile());
-        Path ffmpeg = temp.resolve("fake-ffmpeg.sh");
-        Files.writeString(ffmpeg, "#!/bin/sh\nfor last; do :; done\ncp '" + converted + "' \"$last\"\n");
-        Files.setPosixFilePermissions(ffmpeg, PosixFilePermissions.fromString("rwx------"));
+        CoverImageNormalizer fallback = new CoverImageNormalizer("fake-ffmpeg",
+                command -> FakeFfmpegProcess.coverFallback(command, converted));
 
-        byte[] normalized = new CoverImageNormalizer(ffmpeg.toString()).normalize("unsupported upstream bytes".getBytes());
+        byte[] normalized = fallback.normalize("unsupported upstream bytes".getBytes());
 
         BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(normalized));
         assertThat(decoded.getWidth()).isEqualTo(3);

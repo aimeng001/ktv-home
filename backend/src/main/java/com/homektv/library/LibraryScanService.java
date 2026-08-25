@@ -170,7 +170,7 @@ public class LibraryScanService {
                     reactivateIfNeeded(entry, counters);
                     skipped++;
                 } else {
-                    probeQueue.addLast(prepareFastIndex(entry, counters));
+                    probeQueue.addLast(prepareFastIndex(entry, counters, externalDefault));
                 }
             }
             counters.probeQueued = probeQueue.size();
@@ -307,7 +307,8 @@ public class LibraryScanService {
     }
 
     /** Persist filename metadata before opening the media file for FFprobe. */
-    private FastIndexEntry prepareFastIndex(FastIndexEntry entry, ScanCounters counters) {
+    private FastIndexEntry prepareFastIndex(FastIndexEntry entry, ScanCounters counters,
+                                            AudioLayout externalDefault) {
         SongFile existing = entry.existing().orElse(null);
         OffsetDateTime normalizedMtime = normalizeMtime(entry.mtime());
         if (existing != null) {
@@ -364,6 +365,12 @@ public class LibraryScanService {
         indexed.setFileMtime(normalizedMtime);
         indexed.setFileIdentity(entry.fileIdentity());
         indexed.setFileRole(activeFileRole());
+        if (LibraryModePolicy.isExternalReadOnly(props)) {
+            // Store the configured default on the pending row so a later retry
+            // can distinguish it from any per-file override made in the admin UI.
+            indexed.setAudioLayout(externalDefault == null
+                    ? AudioLayout.NORMAL_STEREO : externalDefault);
+        }
         indexed.setValid(true);
         indexed.setProbePending(true);
         indexed = fileRepo.save(indexed);
@@ -634,15 +641,15 @@ public class LibraryScanService {
         sf.setFilePath(pathStr);
         sf.setFormat(extOf(file));
         sf.setAudioTracks(probe.audioTracks());
-        // External files keep every existing per-file override. A configured
-        // external default is applied only to a newly created file, so changing
-        // the default cannot silently overwrite a user's single-song setting.
+        // External files keep the layout stored on the file row. The Fast Index
+        // placeholder also stores the configured default, so a failed probe
+        // retry cannot overwrite a per-file override made while it is pending.
         AudioLayout storedLayout = existing.map(SongFile::getAudioLayout).orElse(null);
         AudioLayout audioLayout;
-        if (LibraryModePolicy.isExternalReadOnly(props) && existing.isEmpty()) {
+        if (LibraryModePolicy.isExternalReadOnly(props) && storedLayout != null) {
+            audioLayout = externalDefaultAudioLayout(probe.audioTracks(), storedLayout);
+        } else if (LibraryModePolicy.isExternalReadOnly(props)) {
             audioLayout = externalDefaultAudioLayout(probe.audioTracks(), externalDefault);
-        } else if (LibraryModePolicy.isExternalReadOnly(props) && storedLayout != null) {
-            audioLayout = storedLayout;
         } else {
             // Managed-mode behavior remains the existing two-track detector.
             audioLayout = storedLayout == AudioLayout.DUAL_CHANNEL

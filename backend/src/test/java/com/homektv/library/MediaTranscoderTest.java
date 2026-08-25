@@ -1,12 +1,13 @@
 package com.homektv.library;
 
 import com.homektv.web.ApiException;
+import com.homektv.config.AppProperties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import com.homektv.testutil.FakeFfmpegProcess;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -18,15 +19,13 @@ class MediaTranscoderTest {
 
     @Test
     void removesPartialOutputWhenFfmpegFails() throws Exception {
-        Path ffmpeg = temp.resolve("fake-ffmpeg.sh");
-        Files.writeString(ffmpeg, "#!/bin/sh\nfor last; do :; done\nprintf partial > \"$last\"\nexit 1\n");
-        Files.setPosixFilePermissions(ffmpeg, PosixFilePermissions.fromString("rwx------"));
         Path source = temp.resolve("source.mpg");
         Path output = temp.resolve("output.mkv");
         Files.writeString(source, "source");
         TranscodeHardwareService hardware = new TranscodeHardwareService(
-                temp.resolve("dri").toString(), temp.resolve("sys").toString(), temp.resolve("mpp").toString(), ffmpeg.toString());
-        MediaTranscoder transcoder = new MediaTranscoder(hardware, ffmpeg.toString());
+                temp.resolve("dri").toString(), temp.resolve("sys").toString(), temp.resolve("mpp").toString(), "fake-ffmpeg");
+        MediaTranscoder transcoder = new MediaTranscoder(hardware, "fake-ffmpeg", new AppProperties(),
+                FakeFfmpegProcess::failing);
         SettingService.TranscodePolicy policy = new SettingService.TranscodePolicy(
                 List.of("mkv"), List.of("h264"), List.of("aac"), false,
                 "mkv", "h264", "aac", false);

@@ -97,9 +97,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for file in docker-compose*.yml; do
+          files=(
+            docker-compose.yml
+            docker-compose.dev.yml
+            docker-compose.nas.yml
+            docker-compose.prebuilt.yml
+            docker-compose.hardware.yml
+            docker-compose.rockchip.yml
+          )
+          for file in "${files[@]}"; do
             echo "Validating $file"
-            docker compose -f "$file" config --quiet
+            case "$file" in
+              docker-compose.hardware.yml|docker-compose.rockchip.yml)
+                docker compose -f docker-compose.yml -f "$file" config --quiet
+                ;;
+              *)
+                docker compose -f "$file" config --quiet
+                ;;
+            esac
           done
 
   release-config:
