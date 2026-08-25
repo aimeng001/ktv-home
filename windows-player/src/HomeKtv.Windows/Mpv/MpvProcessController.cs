@@ -111,11 +111,8 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
         CancellationToken cancellationToken = default) =>
         ExecuteWithRecoveryAsync(async active =>
         {
-            var trackList = await active.ExecuteAsync(MpvCommands.GetTrackList(), cancellationToken)
+            var trackId = await ResolveAudioTrackIdAsync(active, requestedRelativeIndex, cancellationToken)
                 .ConfigureAwait(false);
-            var trackId = MpvTrackMapper.ResolveAudioTrackId(trackList, requestedRelativeIndex)
-                ?? throw new MpvCommandException(
-                    $"mpv did not expose audio track {requestedRelativeIndex}.");
             await active.ExecuteAsync(MpvCommands.SetAudioTrack(trackId), cancellationToken)
                 .ConfigureAwait(false);
             audioTrackRelativeIndex = requestedRelativeIndex;
@@ -242,10 +239,8 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
             .ConfigureAwait(false);
         if (audioTrackRelativeIndex is { } relativeIndex)
         {
-            var trackList = await active.ExecuteAsync(MpvCommands.GetTrackList(), cancellationToken)
+            var trackId = await ResolveAudioTrackIdAsync(active, relativeIndex, cancellationToken)
                 .ConfigureAwait(false);
-            var trackId = MpvTrackMapper.ResolveAudioTrackId(trackList, relativeIndex)
-                ?? throw new MpvCommandException($"mpv did not restore audio track {relativeIndex}.");
             await active.ExecuteAsync(MpvCommands.SetAudioTrack(trackId), cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -261,6 +256,26 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
             await active.ExecuteAsync(shouldPause ? MpvCommands.Pause() : MpvCommands.Play(),
                 cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static async Task<int> ResolveAudioTrackIdAsync(
+        IMpvSession active,
+        int relativeIndex,
+        CancellationToken cancellationToken)
+    {
+        // mpv accepts loadfile before demuxing has exposed its tracks. Polling
+        // this read-only property avoids treating that normal startup window as
+        // a playback failure and never reloads or seeks the media.
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            var trackList = await active.ExecuteAsync(MpvCommands.GetTrackList(), cancellationToken)
+                .ConfigureAwait(false);
+            var trackId = MpvTrackMapper.ResolveAudioTrackId(trackList, relativeIndex);
+            if (trackId is { } resolved) return resolved;
+            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new MpvCommandException($"mpv did not expose audio track {relativeIndex}.");
     }
 
     private void HandleNotification(IMpvSession source, MpvNotification notification)
