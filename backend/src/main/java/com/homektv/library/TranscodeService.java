@@ -1,8 +1,10 @@
 package com.homektv.library;
 
+import com.homektv.config.AppProperties;
 import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
@@ -13,10 +15,21 @@ import java.util.List;
 @Service
 public class TranscodeService {
     private final SongFileRepository files;
+    private final AppProperties props;
 
-    public TranscodeService(SongFileRepository files) { this.files = files; }
+    /** Compatibility constructor for callers that use the original managed-mode service directly. */
+    public TranscodeService(SongFileRepository files) {
+        this(files, new AppProperties());
+    }
+
+    @Autowired
+    public TranscodeService(SongFileRepository files, AppProperties props) {
+        this.files = files;
+        this.props = props;
+    }
 
     public Result transcodeSong(Long songId) {
+        LibraryModePolicy.requireManaged(props, "转码源文件");
         List<SongFile> sources = files.findBySongIdOrderByPriorityDesc(songId);
         SongFile source = sources.stream().findFirst()
                 .orElseThrow(() -> new ApiException("FILE_NOT_FOUND", "歌曲没有可转码文件"));

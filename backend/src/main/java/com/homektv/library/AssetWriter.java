@@ -21,9 +21,12 @@ public class AssetWriter {
     private static final Logger log = LoggerFactory.getLogger(AssetWriter.class);
 
     private final Path dataRoot;
+    private final AppProperties props;
 
     public AssetWriter(AppProperties props) {
+        this.props = props;
         this.dataRoot = Path.of(props.getDataPath());
+        LibraryModePolicy.requireCacheOutsideExternalSource(props, dataRoot);
     }
 
     /** 写歌词缓存，返回相对路径 lyrics/{fingerprint}.lrc */
@@ -54,6 +57,7 @@ public class AssetWriter {
 
     private void write(String relPath, byte[] data) {
         try {
+            LibraryModePolicy.requireCacheOutsideExternalSource(props, dataRoot);
             Path target = dataRoot.resolve(relPath);
             Files.createDirectories(target.getParent());
             Files.write(target, data);

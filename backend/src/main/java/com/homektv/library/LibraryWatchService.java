@@ -130,6 +130,16 @@ public class LibraryWatchService {
 
     private void runScan() {
         try {
+            if (LibraryModePolicy.isExternalReadOnly(props)) {
+                LibraryScanService.ScanResult result = scanService.scanAll();
+                if (result.added() > 0 || result.updated() > 0) {
+                    broadcaster.broadcast(WsEvent.of("library_updated",
+                            Map.of("added", result.added(), "updated", result.updated())));
+                }
+                log.info("外部只读曲库自动扫描：扫描 {}，新增 {}，更新 {}，跳过 {}",
+                        result.scanned(), result.added(), result.updated(), result.skipped());
+                return;
+            }
             MediaImportService.SourceScanResult result = importService.scanSourceLibrary();
             if (result.copied() > 0) {
                 broadcaster.broadcast(WsEvent.of("library_updated",

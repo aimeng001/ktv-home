@@ -184,6 +184,7 @@ public class AdminService {
     /** 删除正式曲库歌曲：删除 /music 下文件和数据库记录，不影响扫描源目录。 */
     @Transactional
     public void deleteSong(Long id) {
+        LibraryModePolicy.requireManaged(props, "删除曲库歌曲");
         Song song = songRepo.findById(id)
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         deleteLibraryFiles(id);
@@ -211,6 +212,7 @@ public class AdminService {
     }
 
     private void deleteLibraryFiles(Long songId) {
+        LibraryModePolicy.requireManaged(props, "删除曲库文件");
         Path root = Path.of(props.getKtvLibraryPath()).toAbsolutePath().normalize();
         for (SongFile file : fileRepo.findBySongIdOrderByPriorityDesc(songId)) {
             Path path = Path.of(file.getFilePath()).toAbsolutePath().normalize();

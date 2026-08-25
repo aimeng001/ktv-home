@@ -1,6 +1,8 @@
 package com.homektv.library;
 
+import com.homektv.config.AppProperties;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -15,14 +17,24 @@ public class MediaTranscoder {
 
     private final TranscodeHardwareService hardwareService;
     private final String ffmpegPath;
+    private final AppProperties props;
 
     public MediaTranscoder(TranscodeHardwareService hardwareService,
                            @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath) {
+        this(hardwareService, ffmpegPath, new AppProperties());
+    }
+
+    @Autowired
+    public MediaTranscoder(TranscodeHardwareService hardwareService,
+                           @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath,
+                           AppProperties props) {
         this.hardwareService = hardwareService;
         this.ffmpegPath = ffmpegPath;
+        this.props = props;
     }
 
     public Path transcode(Path source, Path output, SettingService.TranscodePolicy policy, boolean hasVideo) {
+        LibraryModePolicy.requireManaged(props, "转码源文件");
         List<String> command = new ArrayList<>(List.of(ffmpegPath, "-hide_banner", "-loglevel", "error", "-y"));
         boolean hardware = policy.hardwareAcceleration() && hasVideo;
         TranscodeHardwareService.HardwareStatus hardwareStatus = null;

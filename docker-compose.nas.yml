@@ -48,6 +48,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: *db-password
       KTV_SOURCE_LIBRARY_PATH: /source-music
       KTV_LIBRARY_PATH: /music
+      KTV_LIBRARY_MODE: EXTERNAL_READ_ONLY
       KTV_DATA_PATH: /data
       KTV_DISCOVERY_ENABLED: "true"
       KTV_DISCOVERY_UDP_PORT: 18888
@@ -70,6 +71,7 @@ services:
         # 相对于此 Compose 项目所在目录。
         source: ./source-music
         target: /source-music
+        read_only: true
         bind:
           create_host_path: true
       - type: bind

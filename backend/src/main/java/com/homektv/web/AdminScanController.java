@@ -1,7 +1,9 @@
 package com.homektv.web;
 
+import com.homektv.config.AppProperties;
 import com.homektv.library.AdminService;
 import com.homektv.library.LibraryScanService;
+import com.homektv.library.LibraryModePolicy;
 import com.homektv.library.LibraryWatchService;
 import com.homektv.library.MediaImportService;
 import com.homektv.library.SettingService;
@@ -41,13 +43,14 @@ public class AdminScanController {
     private final TranscodeHardwareService transcodeHardwareService;
     private final SongReparseService reparseService;
     private final SongMergeService songMergeService;
+    private final AppProperties props;
 
     public AdminScanController(LibraryScanService scanService, LibraryWatchService libraryWatchService,
                                AdminService adminService,
                                MediaImportService mediaImportService,
                                SettingService settingService, TranscodeService transcodeService,
                                TranscodeHardwareService transcodeHardwareService, SongReparseService reparseService,
-                               SongMergeService songMergeService) {
+                               SongMergeService songMergeService, AppProperties props) {
         this.scanService = scanService;
         this.libraryWatchService = libraryWatchService;
         this.adminService = adminService;
@@ -57,6 +60,7 @@ public class AdminScanController {
         this.transcodeHardwareService = transcodeHardwareService;
         this.reparseService = reparseService;
         this.songMergeService = songMergeService;
+        this.props = props;
     }
 
     /**
@@ -67,6 +71,9 @@ public class AdminScanController {
      */
     @PostMapping("/scan")
     public Map<String, Object> scan() {
+        if (LibraryModePolicy.isExternalReadOnly(props)) {
+            return Map.of("libraryScan", scanService.scanAll());
+        }
         MediaImportService.SourceScanResult sourceScan = mediaImportService.scanSourceLibrary();
         return Map.of("sourceScan", sourceScan);
     }
@@ -78,7 +85,8 @@ public class AdminScanController {
      * @return scan progress indicating current status
      */
     @PostMapping("/scan/start")
-    public MediaImportService.SourceScanProgress startScan() {
+    public Object startScan() {
+        if (LibraryModePolicy.isExternalReadOnly(props)) return scanService.startScan();
         return mediaImportService.startSourceScan();
     }
 
@@ -89,7 +97,8 @@ public class AdminScanController {
      * @return scan progress details
      */
     @GetMapping("/scan/progress")
-    public MediaImportService.SourceScanProgress scanProgress() {
+    public Object scanProgress() {
+        if (LibraryModePolicy.isExternalReadOnly(props)) return scanService.getScanProgress();
         return mediaImportService.getScanProgress();
     }
 

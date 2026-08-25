@@ -8,6 +8,7 @@ import com.homektv.media.MediaProbe;
 import com.homektv.media.MediaProbeException;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -20,6 +21,9 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 曲库扫描入库管线（P1.1-P1.5，详设§9.3）。
@@ -49,6 +53,13 @@ public class LibraryScanService {
     private final SongRepository songRepo;
     private final SongFileRepository fileRepo;
     private final AssetWriter assetWriter;
+    private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "library-scan");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final AtomicReference<ScanProgress> scanProgress = new AtomicReference<>(ScanProgress.idle());
+    private final Object scanLock = new Object();
 
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter) {
@@ -62,45 +73,91 @@ public class LibraryScanService {
 
     public record ScanResult(int scanned, int added, int updated, int skipped, int unrecognized) {}
     public record IngestResult(boolean imported, Long songId, Long songFileId) {}
+    public record ScanProgress(boolean running, int total, int completed, String currentFile,
+                               int added, int updated, int skipped, int unrecognized,
+                               OffsetDateTime startedAt, OffsetDateTime finishedAt) {
+        static ScanProgress idle() {
+            return new ScanProgress(false, 0, 0, null, 0, 0, 0, 0, null, null);
+        }
+    }
 
     /** 全量/增量扫描曲库根目录 */
     public ScanResult scanAll() {
-        Path root = Path.of(props.getKtvLibraryPath());
-        if (!Files.isDirectory(root)) {
-            log.warn("曲库目录不存在：{}", root);
-            return new ScanResult(0, 0, 0, 0, 0);
+        synchronized (scanLock) {
+            OffsetDateTime startedAt = OffsetDateTime.now();
+            scanProgress.set(new ScanProgress(true, 0, 0, null, 0, 0, 0, 0, startedAt, null));
+            Path root = LibraryModePolicy.activeLibraryRoot(props);
+            if (!Files.isDirectory(root)) {
+                log.warn("曲库目录不存在：{}", root);
+                ScanResult result = new ScanResult(0, 0, 0, 0, 0);
+                scanProgress.set(new ScanProgress(false, 0, 0, null, 0, 0, 0, 0,
+                        startedAt, OffsetDateTime.now()));
+                return result;
+            }
+            List<Path> files = new ArrayList<>();
+            try {
+                Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                        if (isMediaFile(file)) files.add(file);
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+            } catch (IOException e) {
+                log.error("遍历曲库失败：{}", e.getMessage());
+            }
+            scanProgress.set(new ScanProgress(true, files.size(), 0, null, 0, 0, 0, 0, startedAt, null));
+
+            int added = 0, updated = 0, skipped = 0, unrecognized = 0;
+            for (Path file : files) {
+                try {
+                    IngestOutcome outcome = ingest(file);
+                    switch (outcome) {
+                        case ADDED -> added++;
+                        case UPDATED -> updated++;
+                        case SKIPPED -> skipped++;
+                        case UNRECOGNIZED -> { added++; unrecognized++; }
+                    }
+                } catch (Exception e) {
+                    log.warn("入库失败，跳过：{} - {}", file, e.getMessage());
+                    skipped++;
+                }
+                scanProgress.set(new ScanProgress(true, files.size(), added + updated + skipped,
+                        file.getFileName().toString(), added, updated, skipped, unrecognized,
+                        startedAt, null));
+            }
+            log.info("扫描完成：共 {} 文件，新增 {}，更新 {}，跳过 {}，未识别 {}",
+                    files.size(), added, updated, skipped, unrecognized);
+            ScanResult result = new ScanResult(files.size(), added, updated, skipped, unrecognized);
+            scanProgress.set(new ScanProgress(false, files.size(), files.size(), null, added, updated,
+                    skipped, unrecognized, startedAt, OffsetDateTime.now()));
+            return result;
         }
-        List<Path> files = new ArrayList<>();
-        try {
-            Files.walkFileTree(root, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    if (isMediaFile(file)) files.add(file);
-                    return FileVisitResult.CONTINUE;
+    }
+
+    /** Starts the active library scan asynchronously for the admin progress endpoint. */
+    public ScanProgress startScan() {
+        synchronized (scanLock) {
+            ScanProgress current = scanProgress.get();
+            if (current.running()) return current;
+            scanProgress.set(new ScanProgress(true, 0, 0, null, 0, 0, 0, 0,
+                    OffsetDateTime.now(), null));
+            scanExecutor.submit(() -> {
+                try {
+                    scanAll();
+                } catch (RuntimeException exception) {
+                    ScanProgress failed = scanProgress.get();
+                    scanProgress.set(new ScanProgress(false, failed.total(), failed.completed(), null,
+                            failed.added(), failed.updated(), failed.skipped() + 1,
+                            failed.unrecognized(), failed.startedAt(), OffsetDateTime.now()));
                 }
             });
-        } catch (IOException e) {
-            log.error("遍历曲库失败：{}", e.getMessage());
+            return scanProgress.get();
         }
+    }
 
-        int added = 0, updated = 0, skipped = 0, unrecognized = 0;
-        for (Path file : files) {
-            try {
-                IngestOutcome outcome = ingest(file);
-                switch (outcome) {
-                    case ADDED -> added++;
-                    case UPDATED -> updated++;
-                    case SKIPPED -> skipped++;
-                    case UNRECOGNIZED -> { added++; unrecognized++; }
-                }
-            } catch (Exception e) {
-                log.warn("入库失败，跳过：{} - {}", file, e.getMessage());
-                skipped++;
-            }
-        }
-        log.info("扫描完成：共 {} 文件，新增 {}，更新 {}，跳过 {}，未识别 {}",
-                files.size(), added, updated, skipped, unrecognized);
-        return new ScanResult(files.size(), added, updated, skipped, unrecognized);
+    public ScanProgress getScanProgress() {
+        return scanProgress.get();
     }
 
     enum IngestOutcome { ADDED, UPDATED, SKIPPED, UNRECOGNIZED }
@@ -113,6 +170,7 @@ public class LibraryScanService {
 
     @Transactional
     public IngestResult ingestLibraryFile(Path file, Path sourceFile, String sourceMd5, String outputMd5, boolean transcodeRequired) {
+        LibraryModePolicy.requireManaged(props, "导入");
         IngestState state = ingestInternal(file, sourceFile, sourceMd5, outputMd5, transcodeRequired);
         return new IngestResult(
                 state.outcome() == IngestOutcome.ADDED || state.outcome() == IngestOutcome.UPDATED,
@@ -276,12 +334,22 @@ public class LibraryScanService {
         sf.setPriority(priority);
         // 文件重新被成功探测，说明之前的瞬时播放失败不应永久屏蔽该源。
         sf.setValid(true);
-        sf.setFileRole("LIBRARY");
-        sf.setSourcePath(sourceFile != null ? sourceFile.toString() : sf.getSourcePath());
-        sf.setSourceMd5(sourceMd5);
-        sf.setOutputMd5(outputMd5);
-        sf.setTranscodeRequired(transcodeRequired);
-        sf.setImportedAt(OffsetDateTime.now());
+        if (LibraryModePolicy.isExternalReadOnly(props)) {
+            sf.setFileRole(LibraryModePolicy.EXTERNAL_FILE_ROLE);
+            sf.setSourcePath(null);
+            sf.setSourceMd5(null);
+            sf.setOutputMd5(null);
+            sf.setTranscodeRequired(false);
+            sf.setImportedAt(null);
+            sf.setSourceDeleted(false);
+        } else {
+            sf.setFileRole("LIBRARY");
+            sf.setSourcePath(sourceFile != null ? sourceFile.toString() : sf.getSourcePath());
+            sf.setSourceMd5(sourceMd5);
+            sf.setOutputMd5(outputMd5);
+            sf.setTranscodeRequired(transcodeRequired);
+            sf.setImportedAt(OffsetDateTime.now());
+        }
         sf.setSourceDeleted(false);
         sf = fileRepo.save(sf);
 
@@ -363,4 +431,9 @@ public class LibraryScanService {
     }
 
     private record IngestState(IngestOutcome outcome, Long songId, Long songFileId) {}
+
+    @PreDestroy
+    void shutdown() {
+        scanExecutor.shutdownNow();
+    }
 }

@@ -1,6 +1,7 @@
 package com.homektv.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import com.homektv.library.LibraryMode;
 
 /**
  * 应用配置（app.* 前缀）。
@@ -15,6 +16,9 @@ public class AppProperties {
 
     /** TV 实际播放曲库目录（容器内 /music）。TV playback music library directory (inside container: /music). */
     private String ktvLibraryPath = "/music";
+
+    /** 曲库所有权模式。Managed imports into /music; external mode reads source in place. */
+    private LibraryMode libraryMode = LibraryMode.MANAGED;
 
     /** 数据缓存目录（封面/歌词）。Data cache directory (covers/lyrics). */
     private String dataPath = "./data";
@@ -38,6 +42,9 @@ public class AppProperties {
     public void setSourceLibraryPath(String sourceLibraryPath) { this.sourceLibraryPath = sourceLibraryPath; }
     public String getKtvLibraryPath() { return ktvLibraryPath; }
     public void setKtvLibraryPath(String ktvLibraryPath) { this.ktvLibraryPath = ktvLibraryPath; }
+    public LibraryMode getLibraryMode() { return libraryMode; }
+    public void setLibraryMode(LibraryMode libraryMode) { this.libraryMode = libraryMode; }
+    public boolean isExternalReadOnly() { return LibraryMode.EXTERNAL_READ_ONLY.equals(libraryMode); }
     public String getDataPath() { return dataPath; }
     public void setDataPath(String dataPath) { this.dataPath = dataPath; }
     public String getFfprobePath() { return ffprobePath; }
