@@ -4,6 +4,7 @@ import com.homektv.web.ApiException;
 import com.homektv.testutil.FakeFfmpegProcess;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
@@ -21,6 +22,16 @@ class CoverImageNormalizerTest {
     Path temp;
 
     private final CoverImageNormalizer normalizer = new CoverImageNormalizer("ffmpeg-command-not-needed");
+
+    @Test
+    void springCreatesComponentUsingConfiguredFfmpegPath() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.register(CoverImageNormalizer.class);
+            context.refresh();
+
+            assertThat(context.getBean(CoverImageNormalizer.class)).isNotNull();
+        }
+    }
 
     @Test
     void normalizesImageByActualBytesRegardlessOfResponseMime() throws Exception {

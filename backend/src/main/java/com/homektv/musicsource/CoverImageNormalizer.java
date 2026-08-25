@@ -1,6 +1,7 @@
 package com.homektv.musicsource;
 
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -32,6 +33,7 @@ class CoverImageNormalizer {
     private final String ffmpegPath;
     private final ProcessLauncher processLauncher;
 
+    @Autowired
     CoverImageNormalizer(@Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath) {
         this(ffmpegPath, CoverImageNormalizer::startProcess);
     }
