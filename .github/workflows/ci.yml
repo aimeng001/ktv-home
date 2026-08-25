@@ -72,3 +72,18 @@ jobs:
         run: echo "9feed2a29f7717955f579eff0373503ef3f8681734b053797fbda3cf62b3a5ab  app/libs/media3-decoder-ffmpeg.aar" | sha256sum -c -
       - name: Run release-variant tests and lint
         run: ./gradlew --no-daemon testReleaseUnitTest lintRelease
+
+  windows-player:
+    name: Windows Player tests and build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Restore Windows Player
+        run: dotnet restore windows-player/HomeKtv.Windows.sln
+      - name: Run Windows Player tests
+        run: dotnet test windows-player/HomeKtv.Windows.sln --no-restore -c Release
+      - name: Build Windows Player
+        run: dotnet build windows-player/HomeKtv.Windows.sln --no-restore -c Release
