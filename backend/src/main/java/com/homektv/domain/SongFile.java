@@ -83,6 +83,14 @@ public class SongFile {
     @Column(name = "source_deleted", nullable = false)
     private boolean sourceDeleted;
 
+    /** Filesystem identity captured by Fast Index when the provider exposes one. */
+    @Column(name = "file_identity")
+    private String fileIdentity;
+
+    /** True while the row contains filename metadata but has not passed FFprobe. */
+    @Column(name = "probe_pending", nullable = false)
+    private boolean probePending;
+
     // ---- getters / setters ----
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -122,4 +130,8 @@ public class SongFile {
     public void setImportedAt(OffsetDateTime importedAt) { this.importedAt = importedAt; }
     public boolean isSourceDeleted() { return sourceDeleted; }
     public void setSourceDeleted(boolean sourceDeleted) { this.sourceDeleted = sourceDeleted; }
+    public String getFileIdentity() { return fileIdentity; }
+    public void setFileIdentity(String fileIdentity) { this.fileIdentity = fileIdentity; }
+    public boolean isProbePending() { return probePending; }
+    public void setProbePending(boolean probePending) { this.probePending = probePending; }
 }

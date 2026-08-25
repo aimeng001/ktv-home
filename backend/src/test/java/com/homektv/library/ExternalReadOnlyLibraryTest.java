@@ -20,17 +20,23 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class ExternalReadOnlyLibraryTest {
+
+    private final Map<Long, Song> songsById = new HashMap<>();
 
     @TempDir
     Path tempDir;
@@ -62,8 +68,11 @@ class ExternalReadOnlyLibraryTest {
         lenient().when(songRepository.save(any(Song.class))).thenAnswer(invocation -> {
             Song song = invocation.getArgument(0);
             song.setId(101L);
+            songsById.put(song.getId(), song);
             return song;
         });
+        lenient().when(songRepository.findById(anyLong())).thenAnswer(invocation ->
+                Optional.ofNullable(songsById.get(invocation.getArgument(0))));
         lenient().when(songFileRepository.save(any(SongFile.class))).thenAnswer(invocation -> {
             SongFile songFile = invocation.getArgument(0);
             songFile.setId(202L);
@@ -100,16 +109,16 @@ class ExternalReadOnlyLibraryTest {
         verify(ffprobe).probe(source);
 
         var fileCaptor = org.mockito.ArgumentCaptor.forClass(SongFile.class);
-        verify(songFileRepository).save(fileCaptor.capture());
-        assertThat(fileCaptor.getValue().getFilePath()).isEqualTo(source.toString());
-        assertThat(fileCaptor.getValue().getFileRole()).isEqualTo("EXTERNAL_READ_ONLY");
+        verify(songFileRepository, times(2)).save(fileCaptor.capture());
+        assertThat(fileCaptor.getAllValues().get(1).getFilePath()).isEqualTo(source.toString());
+        assertThat(fileCaptor.getAllValues().get(1).getFileRole()).isEqualTo("EXTERNAL_READ_ONLY");
 
         var songCaptor = org.mockito.ArgumentCaptor.forClass(Song.class);
-        verify(songRepository).save(songCaptor.capture());
-        assertThat(songCaptor.getValue().getTitle()).isEqualTo("晴天");
-        assertThat(songCaptor.getValue().getArtist()).isEqualTo("周杰伦");
-        assertThat(songCaptor.getValue().getLanguage()).isEqualTo("国语");
-        assertThat(songCaptor.getValue().getTags()).containsExactly("流行");
+        verify(songRepository, times(2)).save(songCaptor.capture());
+        assertThat(songCaptor.getAllValues().get(1).getTitle()).isEqualTo("晴天");
+        assertThat(songCaptor.getAllValues().get(1).getArtist()).isEqualTo("周杰伦");
+        assertThat(songCaptor.getAllValues().get(1).getLanguage()).isEqualTo("国语");
+        assertThat(songCaptor.getAllValues().get(1).getTags()).containsExactly("流行");
     }
 
     @Test
@@ -131,9 +140,9 @@ class ExternalReadOnlyLibraryTest {
         scanService.scanAll();
 
         var songCaptor = org.mockito.ArgumentCaptor.forClass(Song.class);
-        verify(songRepository).save(songCaptor.capture());
-        assertThat(songCaptor.getValue().getArtist()).isEqualTo("A-Lin");
-        assertThat(songCaptor.getValue().getTitle()).isEqualTo("给我一个理由忘记");
+        verify(songRepository, times(2)).save(songCaptor.capture());
+        assertThat(songCaptor.getAllValues().get(1).getArtist()).isEqualTo("A-Lin");
+        assertThat(songCaptor.getAllValues().get(1).getTitle()).isEqualTo("给我一个理由忘记");
     }
 
     @Test

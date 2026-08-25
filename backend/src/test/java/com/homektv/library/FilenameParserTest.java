@@ -33,6 +33,17 @@ class FilenameParserTest {
     }
 
     @Test
+    void preparedArtistIndexKeepsLongestMatchBehavior() {
+        FilenameParser.ArtistIndex index = FilenameParser.prepareKnownArtists(EXISTING_ARTISTS);
+
+        ParsedMeta parsed = FilenameParser.parse(
+                "A-Lin-给我一个理由忘记-国语-流行.mkv", index);
+
+        assertThat(parsed.artist()).isEqualTo("A-Lin");
+        assertThat(parsed.title()).isEqualTo("给我一个理由忘记");
+    }
+
+    @Test
     void marksUnreliableFilenameForReviewWithoutChangingItsText() {
         String filename = "名称不规范.mkv";
 

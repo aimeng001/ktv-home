@@ -20,7 +20,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Collection;
@@ -396,9 +398,16 @@ public class MediaImportService {
 
     private ScanOutcome analyzeAndMaybeCopy(Path source, Path targetRoot) throws IOException {
         LibraryModePolicy.requireManaged(props, "导入、移动或转码");
-        String sourceMd5 = hashService.md5(source);
         MediaImportRecord existing = importRepo.findBySourcePath(source.toString()).orElse(null);
+        SourceSnapshot snapshot = sourceSnapshot(source);
+        boolean unchangedSnapshot = existing != null && sameSourceSnapshot(existing, snapshot);
+        String sourceMd5 = unchangedSnapshot && hasText(existing.getSourceMd5())
+                ? existing.getSourceMd5() : hashService.md5(source);
         if (existing != null && Objects.equals(existing.getSourceMd5(), sourceMd5)) {
+            if (!unchangedSnapshot && snapshot != null) {
+                rememberSourceSnapshot(existing, snapshot);
+                importRepo.save(existing);
+            }
             if (existing.isImportedFlag()) return ScanOutcome.UNCHANGED;
             if (PENDING_TRANSCODE.equals(existing.getAction()) && hasStoredFormatAnalysis(existing)) {
                 DirectCopyDecision previousDecision = directCopyDecision(
@@ -593,8 +602,66 @@ public class MediaImportService {
         record.setSongId(songId);
         record.setSongFileId(songFileId);
         record.setSourceDeleted(false);
+        SourceSnapshot snapshot = sourceSnapshot(source);
+        if (snapshot != null) {
+            record.setSourceSize(snapshot.size());
+            record.setSourceMtime(snapshot.mtime());
+            record.setSourceFileIdentity(snapshot.fileIdentity());
+        }
         if (record.getCleanupStatus() == null) record.setCleanupStatus("NOT_REQUESTED");
     }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static void rememberSourceSnapshot(MediaImportRecord record, SourceSnapshot snapshot) {
+        record.setSourceSize(snapshot.size());
+        record.setSourceMtime(snapshot.mtime());
+        record.setSourceFileIdentity(snapshot.fileIdentity());
+    }
+
+    private static boolean sameSourceSnapshot(MediaImportRecord record, SourceSnapshot current) {
+        if (record == null || current == null || record.getSourceSize() == null
+                || record.getSourceMtime() == null) return false;
+        if (record.getSourceSize() != current.size()
+                || !sameMtime(record.getSourceMtime(), current.mtime())) return false;
+        String storedIdentity = record.getSourceFileIdentity();
+        String currentIdentity = current.fileIdentity();
+        // Legacy rows with no identity can use the original path/size/mtime
+        // contract; once one side has an identity, a missing identity is not trusted.
+        return storedIdentity == null && currentIdentity == null
+                || storedIdentity != null && currentIdentity != null
+                && storedIdentity.equals(currentIdentity);
+    }
+
+    private static boolean sameMtime(OffsetDateTime left, OffsetDateTime right) {
+        return left != null && right != null
+                && mtimeKey(left) == mtimeKey(right);
+    }
+
+    private static long mtimeKey(OffsetDateTime value) {
+        var instant = value.toInstant();
+        return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000;
+    }
+
+    private static SourceSnapshot sourceSnapshot(Path source) {
+        try {
+            BasicFileAttributes attrs = Files.readAttributes(source, BasicFileAttributes.class);
+            Object identity = attrs.fileKey();
+            return new SourceSnapshot(attrs.size(), normalizeMtime(
+                    attrs.lastModifiedTime().toInstant().atOffset(ZoneOffset.UTC)),
+                    identity == null ? null : identity.toString());
+        } catch (IOException failure) {
+            return null;
+        }
+    }
+
+    private static OffsetDateTime normalizeMtime(OffsetDateTime value) {
+        return value == null ? null : value.withNano((value.getNano() / 1_000) * 1_000);
+    }
+
+    private record SourceSnapshot(long size, OffsetDateTime mtime, String fileIdentity) {}
 
     private ParsedMeta parseFilename(Path source) {
         String filename = source.getFileName().toString();

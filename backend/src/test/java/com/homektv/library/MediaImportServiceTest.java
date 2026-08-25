@@ -15,6 +15,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -42,6 +44,7 @@ class MediaImportServiceTest {
     private MediaImportService service;
     private SettingService settingService;
     private MediaTranscoder mediaTranscoder;
+    private FileHashService hashService;
     private final List<MediaImportRecord> saved = new ArrayList<>();
 
     @BeforeEach
@@ -57,6 +60,9 @@ class MediaImportServiceTest {
         scanService = mock(LibraryScanService.class);
         settingService = mock(SettingService.class);
         mediaTranscoder = mock(MediaTranscoder.class);
+        hashService = mock(FileHashService.class);
+        when(hashService.md5(any(Path.class))).thenAnswer(invocation ->
+                new FileHashService().md5(invocation.getArgument(0)));
         when(settingService.transcodePolicy()).thenReturn(new SettingService.TranscodePolicy(
                 List.of("mp4", "m4v", "mkv"), List.of("h264", "hevc"), List.of("aac", "mp3"),
                 false, "mkv", "h264", "aac", false));
@@ -68,7 +74,7 @@ class MediaImportServiceTest {
         });
         when(scanService.ingestLibraryFile(any(), any(), anyString(), anyString(), anyBoolean()))
                 .thenReturn(new LibraryScanService.IngestResult(true, 1L, 2L));
-        service = new MediaImportService(props, probe, new FileHashService(), importRepo, songFileRepo,
+        service = new MediaImportService(props, probe, hashService, importRepo, songFileRepo,
                 scanService, settingService, mediaTranscoder);
     }
 
@@ -100,6 +106,31 @@ class MediaImportServiceTest {
         verify(scanService).ingestLibraryFile(any(), eq(source), anyString(), anyString(), eq(false));
         verify(importRepo).delete(previousRecord);
         verify(importRepo, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void unchangedImportedSourceUsesSnapshotWithoutReadingFullHash() throws Exception {
+        Path source = sourceDir.resolve("歌手 - unchanged.mkv");
+        Files.writeString(source, "same");
+        BasicFileAttributes attributes = Files.readAttributes(source, BasicFileAttributes.class);
+        MediaImportRecord previous = new MediaImportRecord();
+        previous.setSourcePath(source.toString());
+        previous.setSourceFilename(source.getFileName().toString());
+        previous.setSourceMd5("stored-md5");
+        previous.setSourceSize(attributes.size());
+        previous.setSourceMtime(attributes.lastModifiedTime().toInstant().atOffset(ZoneOffset.UTC));
+        previous.setSourceFileIdentity(attributes.fileKey() == null ? null : attributes.fileKey().toString());
+        previous.setImportedFlag(true);
+        when(importRepo.findBySourcePath(source.toString())).thenReturn(Optional.of(previous));
+
+        MediaImportService.SourceScanResult result = service.scanSourceLibrary();
+
+        assertThat(result.scanned()).isEqualTo(1);
+        assertThat(result.copied()).isZero();
+        assertThat(result.pendingTranscode()).isZero();
+        assertThat(result.failed()).isZero();
+        verify(hashService, never()).md5(any(Path.class));
+        verifyNoInteractions(probe, scanService);
     }
 
     @Test

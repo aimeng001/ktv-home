@@ -67,12 +67,14 @@ public class AdminScanController {
      * 触发全量/增量扫描（P1.8）。
      *
      * Trigger a full/incremental scan (P1.8).
-     * @return scan result containing source scan details
+     * @return asynchronous scan progress for an external read-only library
      */
     @PostMapping("/scan")
     public Map<String, Object> scan() {
         if (LibraryModePolicy.isExternalReadOnly(props)) {
-            return Map.of("libraryScan", scanService.scanAll());
+            // Fast Index is persisted before the background Media Probe queue;
+            // do not hold this HTTP request open for NAS FFprobe work.
+            return Map.of("libraryScan", scanService.startScan());
         }
         MediaImportService.SourceScanResult sourceScan = mediaImportService.scanSourceLibrary();
         return Map.of("sourceScan", sourceScan);

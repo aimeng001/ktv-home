@@ -29,6 +29,16 @@ public class MediaImportRecord {
     @Column(name = "source_md5", nullable = false)
     private String sourceMd5;
 
+    /** Fast source snapshot used to avoid hashing an unchanged Managed source. */
+    @Column(name = "source_size")
+    private Long sourceSize;
+
+    @Column(name = "source_mtime")
+    private OffsetDateTime sourceMtime;
+
+    @Column(name = "source_file_identity")
+    private String sourceFileIdentity;
+
     @Column(name = "parsed_title")
     private String parsedTitle;
 
@@ -113,6 +123,12 @@ public class MediaImportRecord {
     public void setSourceFilename(String sourceFilename) { this.sourceFilename = sourceFilename; }
     public String getSourceMd5() { return sourceMd5; }
     public void setSourceMd5(String sourceMd5) { this.sourceMd5 = sourceMd5; }
+    public Long getSourceSize() { return sourceSize; }
+    public void setSourceSize(Long sourceSize) { this.sourceSize = sourceSize; }
+    public OffsetDateTime getSourceMtime() { return sourceMtime; }
+    public void setSourceMtime(OffsetDateTime sourceMtime) { this.sourceMtime = sourceMtime; }
+    public String getSourceFileIdentity() { return sourceFileIdentity; }
+    public void setSourceFileIdentity(String sourceFileIdentity) { this.sourceFileIdentity = sourceFileIdentity; }
     public String getParsedTitle() { return parsedTitle; }
     public void setParsedTitle(String parsedTitle) { this.parsedTitle = parsedTitle; }
     public String getParsedArtist() { return parsedArtist; }

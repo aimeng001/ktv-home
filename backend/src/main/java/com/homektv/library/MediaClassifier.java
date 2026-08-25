@@ -15,6 +15,8 @@ public final class MediaClassifier {
     public static final String KTV_VIDEO = "KTV_VIDEO";
     public static final String MV = "MV";
     public static final String AUDIO = "AUDIO";
+    /** Temporary type used while Fast Index metadata is waiting for FFprobe. */
+    public static final String PENDING_PROBE = "PENDING_PROBE";
 
     /** 时长分桶粒度（毫秒）：±2s 视为同一首，用 2000ms 桶 */
     private static final long DURATION_BUCKET_MS = 2000;
@@ -47,6 +49,15 @@ public final class MediaClassifier {
         long bucket = durationMs / DURATION_BUCKET_MS;
         String raw = safeLower(artist) + "|" + safeLower(title) + "|" + bucket;
         return md5(raw);
+    }
+
+    /**
+     * A deterministic metadata-only identity for a provisional Fast Index row.
+     * It is deliberately prefixed so it cannot collide with a media fingerprint
+     * and is never presented as a content hash.
+     */
+    public static String fastIndexFingerprint(String path) {
+        return "fast-index-" + md5(path == null ? "" : path);
     }
 
     private static String safeLower(String s) {

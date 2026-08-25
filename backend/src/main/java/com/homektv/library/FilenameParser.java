@@ -68,7 +68,7 @@ public final class FilenameParser {
      * 使用已有歌手名称解析标准文件名。歌手名称完全匹配时，优先选择最长匹配。
      */
     public static ParsedMeta parse(String filename, Collection<String> knownArtists) {
-        return parse(filename, DEFAULT_RULE, knownArtists);
+        return parse(filename, DEFAULT_RULE, prepareKnownArtists(knownArtists));
     }
 
     /**
@@ -82,6 +82,31 @@ public final class FilenameParser {
      * 按规则解析文件名，并可复用已有歌手库。
      */
     public static ParsedMeta parse(String filename, String rule, Collection<String> knownArtists) {
+        return parse(filename, rule, prepareKnownArtists(knownArtists));
+    }
+
+    /**
+     * Prepare the normalized artist lookup once for a scan. Reusing this index
+     * avoids rebuilding a map for every media filename in a large library.
+     */
+    static ArtistIndex prepareKnownArtists(Collection<String> knownArtists) {
+        Map<String, String> normalizedArtists = new HashMap<>();
+        if (knownArtists != null) {
+            for (String artist : knownArtists) {
+                if (artist == null || artist.isBlank()) continue;
+                String cleaned = artist.trim();
+                String normalized = normalizeArtist(cleaned);
+                if (!normalized.isBlank()) normalizedArtists.putIfAbsent(normalized, cleaned);
+            }
+        }
+        return new ArtistIndex(Map.copyOf(normalizedArtists));
+    }
+
+    static ParsedMeta parse(String filename, ArtistIndex artistIndex) {
+        return parse(filename, DEFAULT_RULE, artistIndex);
+    }
+
+    static ParsedMeta parse(String filename, String rule, ArtistIndex artistIndex) {
         String base = stripExtension(filename).trim();
         if (base.isBlank()) return ParsedMeta.unrecognized(base);
 
@@ -104,19 +129,19 @@ public final class FilenameParser {
 
         MetadataSuffix suffix = findMetadataSuffix(parts);
         if (suffix != null) {
-            return parseStandard(parts, suffix, knownArtists, base.trim());
+            return parseStandard(parts, suffix, artistIndex, base.trim());
         }
-        return parseLegacy(parts, rule, knownArtists, base.trim());
+        return parseLegacy(parts, rule, artistIndex, base.trim());
     }
 
     private static ParsedMeta parseStandard(List<String> parts, MetadataSuffix suffix,
-                                            Collection<String> knownArtists, String fallbackTitle) {
+                                             ArtistIndex artistIndex, String fallbackTitle) {
         List<String> identity = parts.subList(0, suffix.languageIndex());
         if (identity.stream().anyMatch(String::isBlank)) {
             return ParsedMeta.unrecognized(fallbackTitle);
         }
 
-        ArtistMatch existingArtist = longestExistingArtist(identity, knownArtists);
+        ArtistMatch existingArtist = longestExistingArtist(identity, artistIndex);
         if (existingArtist != null) {
             String title = join(identity, existingArtist.partCount());
             return ParsedMeta.of(title, existingArtist.name(), suffix.language(), suffix.category());
@@ -131,7 +156,7 @@ public final class FilenameParser {
     }
 
     private static ParsedMeta parseLegacy(List<String> parts, String rule,
-                                          Collection<String> knownArtists, String fallbackTitle) {
+                                          ArtistIndex artistIndex, String fallbackTitle) {
         if (parts.size() < 2 || parts.stream().anyMatch(String::isBlank)) {
             return ParsedMeta.unrecognized(fallbackTitle);
         }
@@ -143,7 +168,7 @@ public final class FilenameParser {
         }
 
         // 对旧格式中的多段歌名也尝试复用歌手库；未命中时继续保留原来的首分隔符行为。
-        ArtistMatch existingArtist = longestExistingArtist(parts, knownArtists);
+        ArtistMatch existingArtist = longestExistingArtist(parts, artistIndex);
         if (existingArtist != null && existingArtist.partCount() < parts.size()
                 && !"title_artist".equals(rule)) {
             return ParsedMeta.of(join(parts, existingArtist.partCount()), existingArtist.name());
@@ -166,20 +191,13 @@ public final class FilenameParser {
         return null;
     }
 
-    private static ArtistMatch longestExistingArtist(List<String> parts, Collection<String> knownArtists) {
-        if (knownArtists == null || knownArtists.isEmpty()) return null;
-
-        Map<String, String> normalizedArtists = new HashMap<>();
-        for (String artist : knownArtists) {
-            if (artist == null || artist.isBlank()) continue;
-            String cleaned = artist.trim();
-            normalizedArtists.putIfAbsent(normalizeArtist(cleaned), cleaned);
-        }
+    private static ArtistMatch longestExistingArtist(List<String> parts, ArtistIndex artistIndex) {
+        if (artistIndex == null || artistIndex.normalizedArtists().isEmpty()) return null;
 
         ArtistMatch best = null;
         for (int partCount = 1; partCount < parts.size(); partCount++) {
             String candidate = join(parts, 0, partCount);
-            String matched = normalizedArtists.get(normalizeArtist(candidate));
+            String matched = artistIndex.normalizedArtists().get(normalizeArtist(candidate));
             if (matched == null) continue;
             if (best == null || normalizeArtist(matched).length() > normalizeArtist(best.name()).length()) {
                 best = new ArtistMatch(matched, partCount);
@@ -227,4 +245,16 @@ public final class FilenameParser {
     private record MetadataSuffix(int languageIndex, String language, String category) {}
 
     private record ArtistMatch(String name, int partCount) {}
+
+    static final class ArtistIndex {
+        private final Map<String, String> normalizedArtists;
+
+        private ArtistIndex(Map<String, String> normalizedArtists) {
+            this.normalizedArtists = normalizedArtists;
+        }
+
+        Map<String, String> normalizedArtists() {
+            return normalizedArtists;
+        }
+    }
 }

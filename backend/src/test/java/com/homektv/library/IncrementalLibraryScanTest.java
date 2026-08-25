@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -118,8 +119,25 @@ class IncrementalLibraryScanTest {
         assertThat(result.probeQueued()).isEqualTo(1);
         assertThat(result.probeCalls()).isEqualTo(1);
         assertThat(result.hashCalls()).isZero();
-        assertThat(result.dbUpdates()).isEqualTo(2);
+        assertThat(result.dbUpdates()).isEqualTo(4);
         verify(ffprobe, times(1)).probe(any(Path.class));
+    }
+
+    @Test
+    void persistsFastIndexBeforeProbeReadsMedia() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        when(ffprobe.probe(any(Path.class))).thenAnswer(invocation -> {
+            SongFile indexed = filesByPath.get(file.toString());
+            assertThat(indexed).as("Fast Index must be persisted before FFprobe").isNotNull();
+            assertThat(indexed.isProbePending()).isTrue();
+            Song provisional = songsById.get(indexed.getSongId());
+            assertThat(provisional).isNotNull();
+            assertThat(provisional.getTitle()).isEqualTo("晴天");
+            assertThat(provisional.getStatus()).isEqualTo("ok");
+            return probe();
+        });
+
+        scanService.scanAll();
     }
 
     @Test
@@ -137,8 +155,8 @@ class IncrementalLibraryScanTest {
         assertThat(second.dbUpdates()).isZero();
         assertThat(Files.exists(file)).isTrue();
         verify(ffprobe, times(1)).probe(any(Path.class));
-        verify(songRepository, times(1)).save(any(Song.class));
-        verify(songFileRepository, times(1)).save(any(SongFile.class));
+        verify(songRepository, times(2)).save(any(Song.class));
+        verify(songFileRepository, times(2)).save(any(SongFile.class));
     }
 
     @Test
@@ -189,6 +207,33 @@ class IncrementalLibraryScanTest {
     }
 
     @Test
+    void replacementWithSamePathSizeAndMtimeReprobesWhenFileIdentityChanges() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        scanService.scanAll();
+        SongFile indexed = filesByPath.get(file.toString());
+        String originalIdentity = indexed.getFileIdentity();
+        BasicFileAttributes originalAttributes = Files.readAttributes(file, BasicFileAttributes.class);
+        String replacementIdentity;
+
+        Files.delete(file);
+        Files.write(file, new byte[]{4, 5, 6});
+        Files.setLastModifiedTime(file, originalAttributes.lastModifiedTime());
+        replacementIdentity = fileIdentity(file);
+
+        org.junit.jupiter.api.Assumptions.assumeTrue(originalIdentity != null
+                        && replacementIdentity != null
+                        && !originalIdentity.equals(replacementIdentity),
+                "filesystem does not expose a changed identity for replacement");
+
+        LibraryScanService.ScanResult second = scanService.scanAll();
+
+        assertThat(second.updated()).isEqualTo(1);
+        assertThat(second.probeQueued()).isEqualTo(1);
+        assertThat(second.probeCalls()).isEqualTo(1);
+        verify(ffprobe, times(2)).probe(any(Path.class));
+    }
+
+    @Test
     void disappearedFileIsMarkedInvalidWithoutProbingOrDeletingDatabaseRecord() throws Exception {
         Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
         scanService.scanAll();
@@ -213,6 +258,11 @@ class IncrementalLibraryScanTest {
                 .thenReturn(probe());
 
         LibraryScanService.ScanResult failed = scanService.scanAll();
+        SongFile pending = filesByPath.get(file.toString());
+        assertThat(pending).isNotNull();
+        assertThat(pending.isProbePending()).isTrue();
+        assertThat(songsById.get(pending.getSongId()).getStatus()).isEqualTo("ok");
+
         LibraryScanService.ScanResult recovered = scanService.scanAll();
 
         assertThat(failed.probeCalls()).isEqualTo(1);
@@ -220,7 +270,13 @@ class IncrementalLibraryScanTest {
         assertThat(recovered.probeCalls()).isEqualTo(1);
         assertThat(recovered.added()).isEqualTo(1);
         assertThat(filesByPath).containsKey(file.toString());
+        assertThat(filesByPath.get(file.toString()).isProbePending()).isFalse();
         verify(ffprobe, times(2)).probe(any(Path.class));
+    }
+
+    private static String fileIdentity(Path file) throws Exception {
+        Object key = Files.readAttributes(file, BasicFileAttributes.class).fileKey();
+        return key == null ? null : key + "|null";
     }
 
     private static MediaProbe probe() {
