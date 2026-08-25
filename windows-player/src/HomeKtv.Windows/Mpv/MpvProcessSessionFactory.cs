@@ -44,7 +44,7 @@ public sealed class MpvProcessSessionFactory : IMpvSessionFactory
             DisposeProcess(process);
             throw;
         }
-        catch (Exception exception) when (exception is IOException or TimeoutException
+        catch (Exception exception) when (exception is MpvConnectionException or IOException or TimeoutException
             or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             pipe.Dispose();
