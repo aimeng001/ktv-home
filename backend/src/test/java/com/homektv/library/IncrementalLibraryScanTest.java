@@ -129,6 +129,7 @@ class IncrementalLibraryScanTest {
         when(ffprobe.probe(any(Path.class))).thenAnswer(invocation -> {
             SongFile indexed = filesByPath.get(file.toString());
             assertThat(indexed).as("Fast Index must be persisted before FFprobe").isNotNull();
+            assertThat(indexed.getRelativePath()).isEqualTo("周杰伦-晴天-国语-流行.mkv");
             assertThat(indexed.isProbePending()).isTrue();
             Song provisional = songsById.get(indexed.getSongId());
             assertThat(provisional).isNotNull();

@@ -26,6 +26,10 @@ public class SongFile {
     @Column(name = "file_path", nullable = false, unique = true)
     private String filePath;
 
+    /** Path relative to the active library root; kept separate from the runtime path. */
+    @Column(name = "relative_path")
+    private String relativePath;
+
     /** 文件格式（如 MKV、MP4 等）。 / File format (e.g. MKV, MP4, etc.). */
     @Column(nullable = false)
     private String format;
@@ -116,6 +120,8 @@ public class SongFile {
     public void setSongId(Long songId) { this.songId = songId; }
     public String getFilePath() { return filePath; }
     public void setFilePath(String filePath) { this.filePath = filePath; }
+    public String getRelativePath() { return relativePath; }
+    public void setRelativePath(String relativePath) { this.relativePath = relativePath; }
     public String getFormat() { return format; }
     public void setFormat(String format) { this.format = format; }
     public int getAudioTracks() { return audioTracks; }

@@ -8,6 +8,7 @@ import com.homektv.repo.SongRepository;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -87,6 +88,7 @@ class LibraryScanIntegrationTest {
     @Autowired LibraryScanService scanService;
     @Autowired SongRepository songRepo;
     @Autowired SongFileRepository fileRepo;
+    @Autowired JdbcTemplate jdbcTemplate;
 
     @org.junit.jupiter.api.BeforeEach
     void clean() {
@@ -128,6 +130,19 @@ class LibraryScanIntegrationTest {
         List<SongFile> ktvFiles = fileRepo.findBySongIdOrderByPriorityDesc(qingtian.getId());
         assertThat(ktvFiles).isNotEmpty();
         assertThat(ktvFiles.get(0).getPriority()).isEqualTo(100); // KTV 优先级最高
+    }
+
+    @Test
+    void persistsRelativePathForScannedFile() {
+        assumeTrue(ffmpegAvailable, "ffmpeg 不可用，跳过扫描集成测试");
+
+        scanService.scanAll();
+
+        String relativePath = jdbcTemplate.queryForObject(
+                "SELECT relative_path FROM song_files WHERE file_path = ?",
+                String.class,
+                libraryDir.resolve("周杰伦 - 晴天.mkv").toString());
+        assertThat(relativePath).isEqualTo("周杰伦 - 晴天.mkv");
     }
 
     @Test

@@ -322,6 +322,13 @@ public class LibraryScanService {
                 existing.setFileIdentity(entry.fileIdentity());
                 existing.setProbePending(true);
                 existing.setValid(true);
+            }
+            String relativePath = relativePathOf(entry.file());
+            if (isBlank(existing.getRelativePath()) && relativePath != null) {
+                existing.setRelativePath(relativePath);
+                changed = true;
+            }
+            if (changed) {
                 fileRepo.save(existing);
                 counters.dbUpdates++;
             }
@@ -360,6 +367,7 @@ public class LibraryScanService {
         SongFile indexed = new SongFile();
         indexed.setSongId(provisional.getId());
         indexed.setFilePath(entry.path());
+        indexed.setRelativePath(relativePathOf(entry.file()));
         indexed.setFormat(extOf(entry.file()));
         indexed.setFileSize(entry.size());
         indexed.setFileMtime(normalizedMtime);
@@ -390,11 +398,24 @@ public class LibraryScanService {
 
     private void reactivateIfNeeded(FastIndexEntry entry, ScanCounters counters) {
         SongFile existing = entry.existing().orElse(null);
-        if (existing == null || existing.isValid()) return;
+        if (existing == null) return;
 
-        existing.setValid(true);
-        fileRepo.save(existing);
-        counters.dbUpdates++;
+        boolean wasInvalid = !existing.isValid();
+        boolean changed = false;
+        String relativePath = relativePathOf(entry.file());
+        if (isBlank(existing.getRelativePath()) && relativePath != null) {
+            existing.setRelativePath(relativePath);
+            changed = true;
+        }
+        if (wasInvalid) {
+            existing.setValid(true);
+            changed = true;
+        }
+        if (changed) {
+            fileRepo.save(existing);
+            counters.dbUpdates++;
+        }
+        if (!wasInvalid) return;
         if (existing.getSongId() == null) return;
         songRepo.findById(existing.getSongId()).ifPresent(song -> {
             if ("file_missing".equals(song.getStatus())) {
@@ -639,6 +660,8 @@ public class LibraryScanService {
         SongFile sf = existing.orElseGet(SongFile::new);
         sf.setSongId(song.getId());
         sf.setFilePath(pathStr);
+        String relativePath = relativePathOf(file);
+        if (relativePath != null) sf.setRelativePath(relativePath);
         sf.setFormat(extOf(file));
         sf.setAudioTracks(probe.audioTracks());
         // External files keep the layout stored on the file row. The Fast Index
@@ -815,6 +838,18 @@ public class LibraryScanService {
         if (!Files.isRegularFile(sidecarLyric)) return mediaMtime;
         OffsetDateTime lyricMtime = mtimeOf(sidecarLyric);
         return lyricMtime.isAfter(mediaMtime) ? lyricMtime : mediaMtime;
+    }
+
+    /** Returns a portable relative path for files below the active library root. */
+    private String relativePathOf(Path file) {
+        Path root = LibraryModePolicy.activeLibraryRoot(props).toAbsolutePath().normalize();
+        Path candidate = file.toAbsolutePath().normalize();
+        if (!candidate.startsWith(root)) return null;
+        return root.relativize(candidate).toString().replace('\\', '/');
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private static String fileIdentity(BasicFileAttributes mediaAttrs, Path sidecarLyric) {
