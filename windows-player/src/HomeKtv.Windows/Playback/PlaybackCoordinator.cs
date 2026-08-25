@@ -103,6 +103,9 @@ public sealed class PlaybackCoordinator
         }
     }
 
+    /** Marks the local output as lost without changing the server's state. */
+    public void InvalidateOutputProjection() => ResetLocalProjection();
+
     private async Task ApplyAudioAsync(
         string vocalMode,
         FileSource file,
