@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 using System.Net.WebSockets;
 using System.Text;
@@ -23,6 +24,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
     private readonly ServerEndpoint endpoint;
     private readonly string clientToken;
     private readonly SemaphoreSlim sendLock = new(1, 1);
+    private readonly ConcurrentQueue<string> reliableMessages = new();
     private readonly CancellationTokenSource lifetime = new();
     private ClientWebSocket? socket;
 
@@ -73,12 +75,12 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
     public Task SendProgressAsync(long positionMs, long? queueId = null, CancellationToken cancellationToken = default) =>
         SendTextAsync(ServerMessageFactory.Progress(positionMs, queueId), cancellationToken);
 
-    public Task SendFinishedAsync(long queueId, CancellationToken cancellationToken = default) =>
-        SendTextAsync(ServerMessageFactory.Finished(queueId), cancellationToken);
+    public Task<bool> SendFinishedAsync(long queueId, CancellationToken cancellationToken = default) =>
+        SendReliableAsync(ServerMessageFactory.Finished(queueId), cancellationToken);
 
-    public Task SendPlayErrorAsync(long queueId, long? fileId, string message,
+    public Task<bool> SendPlayErrorAsync(long queueId, long? fileId, string message,
         CancellationToken cancellationToken = default) =>
-        SendTextAsync(ServerMessageFactory.PlayError(queueId, fileId, message), cancellationToken);
+        SendReliableAsync(ServerMessageFactory.PlayError(queueId, fileId, message), cancellationToken);
 
     private async Task ConnectAndReceiveAsync(CancellationToken cancellationToken)
     {
@@ -88,6 +90,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         };
         await connectedSocket.ConnectAsync(endpoint.WebSocketUri(clientToken), cancellationToken).ConfigureAwait(false);
         socket = connectedSocket;
+        await FlushReliableMessagesAsync(connectedSocket, cancellationToken).ConfigureAwait(false);
         ConnectionChanged?.Invoke(true);
 
         using var heartbeatCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -181,6 +184,62 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
                 await active.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken)
                     .ConfigureAwait(false);
             }
+        }
+        finally
+        {
+            sendLock.Release();
+        }
+    }
+
+    private async Task<bool> SendReliableAsync(string text, CancellationToken cancellationToken)
+    {
+        var active = socket;
+        if (active?.State != WebSocketState.Open)
+        {
+            reliableMessages.Enqueue(text);
+            return false;
+        }
+
+        try
+        {
+            await SendOnSocketAsync(active, text, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception exception) when (exception is WebSocketException or IOException
+            or ObjectDisposedException)
+        {
+            reliableMessages.Enqueue(text);
+            return false;
+        }
+    }
+
+    private async Task FlushReliableMessagesAsync(
+        ClientWebSocket active,
+        CancellationToken cancellationToken)
+    {
+        while (reliableMessages.TryPeek(out var text))
+        {
+            await SendOnSocketAsync(active, text, cancellationToken).ConfigureAwait(false);
+            reliableMessages.TryDequeue(out _);
+        }
+    }
+
+    private async Task SendOnSocketAsync(
+        ClientWebSocket active,
+        string text,
+        CancellationToken cancellationToken)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        await sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (active.State != WebSocketState.Open)
+            {
+                throw new WebSocketException("WebSocket is no longer open.");
+            }
+
+            await active.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken)
+                .ConfigureAwait(false);
         }
         finally
         {
