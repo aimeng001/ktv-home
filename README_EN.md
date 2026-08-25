@@ -98,7 +98,7 @@ GitHub Actions and does not compile anything on the NAS or host:
 docker compose -f docker-compose.prebuilt.yml up -d --pull always --wait
 ```
 
-It uses `ghcr.io/zhayinggang/ktv-home:latest` by default. For production, set
+It uses `ghcr.io/aimeng001/ktv-home:latest` by default. For production, set
 `KTV_RELEASE_IMAGE` in `.env` to a specific release tag so upgrades are
 explicit.
 

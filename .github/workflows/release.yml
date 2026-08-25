@@ -27,7 +27,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE_NAME: ghcr.io/zhayinggang/ktv-home
+  IMAGE_NAME: ghcr.io/aimeng001/ktv-home
   RAW_RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:

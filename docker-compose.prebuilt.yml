@@ -32,7 +32,7 @@ services:
   ktv:
     # Override KTV_RELEASE_IMAGE to pin a release tag instead of latest.
     # 可通过 KTV_RELEASE_IMAGE 指定版本标签，避免始终使用 latest。
-    image: ${KTV_RELEASE_IMAGE:-ghcr.io/zhayinggang/ktv-home:latest}
+    image: ${KTV_RELEASE_IMAGE:-ghcr.io/aimeng001/ktv-home:latest}
     container_name: ${KTV_APP_CONTAINER_NAME:-ktv-app}
     environment:
       SERVER_PORT: ${KTV_HTTP_PORT:-8080}

@@ -35,7 +35,7 @@ services:
     stop_grace_period: 1m
 
   ktv:
-    image: ghcr.io/zhayinggang/ktv-home:latest
+    image: ghcr.io/aimeng001/ktv-home:latest
     container_name: ktv-app
     devices:
       # Intel GPU passthrough for VAAPI hardware acceleration.
