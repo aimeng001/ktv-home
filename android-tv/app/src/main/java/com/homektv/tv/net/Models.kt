@@ -110,7 +110,11 @@ data class AudioLayout(
     val accompanimentTrackIndex: Int? = null,
     val originalChannel: String = "LEFT",
     val accompanimentChannel: String = "RIGHT",
-)
+) {
+    companion object {
+        fun normalStereo(): AudioLayout = AudioLayout(layout = "NORMAL_STEREO")
+    }
+}
 
 /**
  * 歌曲详情 GET /api/songs/{id}（详设§11.1）。
