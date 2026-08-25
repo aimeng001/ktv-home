@@ -26,7 +26,10 @@ public record AdminSongDto(
         int durationMs,
         int playCount,
         String filePath,
-        String importSource
+        String importSource,
+        Long fileId,
+        int audioTracks,
+        AudioLayoutDto audioLayout
 ) {
     /**
      * 根据歌曲实体和文件实体构建管理后台歌曲 DTO，自动判断导入来源。
@@ -45,6 +48,9 @@ public record AdminSongDto(
         return new AdminSongDto(song.getId(), song.getTitle(), song.getArtist(), song.getAlbum(), song.getReleaseDate(),
                 song.getAliases(), song.getCoverPath(), song.getMetadataLocks(), song.getLanguage(), song.getArtistGender(), song.getTags(),
                 song.getMediaType(), song.getLyricType(), song.getDurationMs(), song.getPlayCount(),
-                file == null ? null : file.getFilePath(), source);
+                file == null ? null : file.getFilePath(), source,
+                file == null ? null : file.getId(),
+                file == null ? 0 : file.getAudioTracks(),
+                AudioLayoutDto.from(file));
     }
 }

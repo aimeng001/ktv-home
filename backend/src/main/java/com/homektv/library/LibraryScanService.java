@@ -10,6 +10,7 @@ import com.homektv.media.MediaProbeException;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,6 +55,7 @@ public class LibraryScanService {
     private final SongRepository songRepo;
     private final SongFileRepository fileRepo;
     private final AssetWriter assetWriter;
+    private final SettingService settingService;
     private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "library-scan");
         thread.setDaemon(true);
@@ -68,12 +70,20 @@ public class LibraryScanService {
 
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter) {
+        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, null);
+    }
+
+    @Autowired
+    public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
+                              SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
+                              SettingService settingService) {
         this.props = props;
         this.ffprobe = ffprobe;
         this.tagReader = tagReader;
         this.songRepo = songRepo;
         this.fileRepo = fileRepo;
         this.assetWriter = assetWriter;
+        this.settingService = settingService;
     }
 
     public record ScanResult(int scanned, int added, int updated, int skipped, int unrecognized,
@@ -106,6 +116,8 @@ public class LibraryScanService {
                 return result;
             }
             Set<String> knownArtists = existingArtistNames();
+            AudioLayout externalDefault = LibraryModePolicy.isExternalReadOnly(props)
+                    ? configuredExternalDefaultAudioLayout() : null;
             FilenameParser.ArtistIndex artistIndex = artistIndexFor(knownArtists);
             String activeRole = activeFileRole();
             List<SongFile> trackedFiles = trackedFiles(activeRole);
@@ -174,7 +186,7 @@ public class LibraryScanService {
             while (!probeQueue.isEmpty()) {
                 FastIndexEntry entry = probeQueue.removeFirst();
                 try {
-                    IngestOutcome outcome = ingest(entry, knownArtists, counters);
+                    IngestOutcome outcome = ingest(entry, knownArtists, counters, externalDefault);
                     switch (outcome) {
                         case ADDED -> added++;
                         case UPDATED -> updated++;
@@ -440,13 +452,15 @@ public class LibraryScanService {
         if (hasUnchangedSnapshot(entry)) {
             return IngestOutcome.SKIPPED;
         }
-        return ingest(entry, knownArtists, new ScanCounters());
+        AudioLayout externalDefault = LibraryModePolicy.isExternalReadOnly(props)
+                ? configuredExternalDefaultAudioLayout() : null;
+        return ingest(entry, knownArtists, new ScanCounters(), externalDefault);
     }
 
     private IngestOutcome ingest(FastIndexEntry entry, Collection<String> knownArtists,
-                                 ScanCounters counters) {
+                                 ScanCounters counters, AudioLayout externalDefault) {
         LibraryModePolicy.requireExternalPathInsideSource(props, entry.file());
-        return ingestInternal(entry, null, null, null, false, knownArtists, counters).outcome();
+        return ingestInternal(entry, null, null, null, false, knownArtists, counters, externalDefault).outcome();
     }
 
     private boolean isExternalPathAllowed(Path path) {
@@ -471,7 +485,7 @@ public class LibraryScanService {
                     existing == null ? null : existing.getId());
         }
         IngestState state = ingestInternal(entry, sourceFile, sourceMd5, outputMd5,
-                transcodeRequired, knownArtists, new ScanCounters());
+                transcodeRequired, knownArtists, new ScanCounters(), null);
         return new IngestResult(
                 state.outcome() == IngestOutcome.ADDED || state.outcome() == IngestOutcome.UPDATED,
                 state.songId(),
@@ -480,8 +494,8 @@ public class LibraryScanService {
     }
 
     private IngestState ingestInternal(FastIndexEntry entry, Path sourceFile, String sourceMd5, String outputMd5,
-                                       boolean transcodeRequired, Collection<String> knownArtists,
-                                       ScanCounters counters) {
+                                        boolean transcodeRequired, Collection<String> knownArtists,
+                                        ScanCounters counters, AudioLayout externalDefault) {
         Path file = entry.file();
         String pathStr = entry.path();
         Path sidecarLyric = sidecarLyricOf(file);
@@ -620,13 +634,21 @@ public class LibraryScanService {
         sf.setFilePath(pathStr);
         sf.setFormat(extOf(file));
         sf.setAudioTracks(probe.audioTracks());
-        // A DUAL_CHANNEL assignment is explicit metadata and must survive a
-        // re-probe; otherwise the legacy two-track detector remains the only
-        // automatic classification and defaults to DUAL_TRACK.
+        // External files keep every existing per-file override. A configured
+        // external default is applied only to a newly created file, so changing
+        // the default cannot silently overwrite a user's single-song setting.
         AudioLayout storedLayout = existing.map(SongFile::getAudioLayout).orElse(null);
-        AudioLayout audioLayout = storedLayout == AudioLayout.DUAL_CHANNEL
-                ? AudioLayout.DUAL_CHANNEL
-                : hasVocal ? AudioLayout.DUAL_TRACK : AudioLayout.NORMAL_STEREO;
+        AudioLayout audioLayout;
+        if (LibraryModePolicy.isExternalReadOnly(props) && existing.isEmpty()) {
+            audioLayout = externalDefaultAudioLayout(probe.audioTracks(), externalDefault);
+        } else if (LibraryModePolicy.isExternalReadOnly(props) && storedLayout != null) {
+            audioLayout = storedLayout;
+        } else {
+            // Managed-mode behavior remains the existing two-track detector.
+            audioLayout = storedLayout == AudioLayout.DUAL_CHANNEL
+                    ? AudioLayout.DUAL_CHANNEL
+                    : hasVocal ? AudioLayout.DUAL_TRACK : AudioLayout.NORMAL_STEREO;
+        }
         sf.setAudioLayout(audioLayout);
         // 伴奏轨 index（0-based 音频相对序号）。已有值优先（尊重人工/历史校正），
         // 否则用元数据判定，判不出再回落默认 1（多数双轨片源 track0=原唱、track1=伴奏）。
@@ -697,6 +719,21 @@ public class LibraryScanService {
         else if (!entry.existedBeforeScan() || entry.pendingBeforeScan()) outcome = IngestOutcome.ADDED;
         else outcome = IngestOutcome.UPDATED;
         return new IngestState(outcome, song.getId(), sf.getId());
+    }
+
+    private AudioLayout configuredExternalDefaultAudioLayout() {
+        AudioLayout configured = settingService == null
+                ? AudioLayout.NORMAL_STEREO : settingService.externalDefaultAudioLayout();
+        if (configured == null) configured = AudioLayout.NORMAL_STEREO;
+        return configured;
+    }
+
+    private static AudioLayout externalDefaultAudioLayout(int audioTracks, AudioLayout configured) {
+        if (configured == null) configured = AudioLayout.NORMAL_STEREO;
+        // A global DUAL_TRACK default cannot describe a one-track media file;
+        // keep that file safe and playable rather than persisting invalid indices.
+        return configured == AudioLayout.DUAL_TRACK && audioTracks < 2
+                ? AudioLayout.NORMAL_STEREO : configured;
     }
 
     private static boolean sameSong(Song left, Song right) {

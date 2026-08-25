@@ -15,6 +15,8 @@ import com.homektv.domain.Song;
 import com.homektv.domain.MediaImportRecord;
 import com.homektv.web.dto.DashboardDto;
 import com.homektv.web.dto.AdminSongDto;
+import com.homektv.web.dto.AudioLayoutDto;
+import com.homektv.web.dto.AudioLayoutUpdateRequest;
 import com.homektv.web.dto.MediaImportRecordDto;
 import com.homektv.web.dto.SongDto;
 import com.homektv.web.dto.SongEditRequest;
@@ -382,6 +384,19 @@ public class AdminScanController {
         int index = ((Number) body.getOrDefault("accompanimentIndex", 1)).intValue();
         adminService.confirmVocalTrack(fileId, index);
         return Map.of("status", "confirmed", "fileId", fileId, "accompanimentIndex", index);
+    }
+
+    /** Update one file's audio layout semantics without touching the media file. */
+    @PutMapping("/files/{fileId}/audio-layout")
+    public AudioLayoutDto updateAudioLayout(@PathVariable Long fileId,
+                                            @RequestBody AudioLayoutUpdateRequest request) {
+        return adminService.updateAudioLayout(fileId, request);
+    }
+
+    /** Swap original/accompaniment semantic assignment without reopening or rewriting media. */
+    @PostMapping("/files/{fileId}/audio-layout/swap")
+    public AudioLayoutDto swapAudioLayout(@PathVariable Long fileId) {
+        return adminService.swapAudioLayout(fileId);
     }
 
     /**

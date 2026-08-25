@@ -7,6 +7,8 @@ import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
+import com.homektv.domain.AudioChannel;
+import com.homektv.domain.AudioLayout;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileTime;
 import java.util.List;
 import java.util.HashMap;
@@ -37,6 +40,7 @@ import static org.mockito.Mockito.when;
 class ExternalReadOnlyLibraryTest {
 
     private final Map<Long, Song> songsById = new HashMap<>();
+    private final Map<String, SongFile> filesByPath = new HashMap<>();
 
     @TempDir
     Path tempDir;
@@ -49,6 +53,8 @@ class ExternalReadOnlyLibraryTest {
     private SongRepository songRepository;
     @Mock
     private SongFileRepository songFileRepository;
+    @Mock
+    private SettingService settingService;
 
     private LibraryScanService scanService;
     private Path sourceDir;
@@ -63,7 +69,8 @@ class ExternalReadOnlyLibraryTest {
         props.setDataPath(tempDir.resolve("data").toString());
         props.setLibraryMode(LibraryMode.EXTERNAL_READ_ONLY);
 
-        lenient().when(songFileRepository.findByFilePath(anyString())).thenReturn(Optional.empty());
+        lenient().when(songFileRepository.findByFilePath(anyString())).thenAnswer(invocation ->
+                Optional.ofNullable(filesByPath.get(invocation.getArgument(0))));
         lenient().when(songRepository.findByFingerprint(anyString())).thenReturn(Optional.empty());
         lenient().when(songRepository.save(any(Song.class))).thenAnswer(invocation -> {
             Song song = invocation.getArgument(0);
@@ -76,11 +83,13 @@ class ExternalReadOnlyLibraryTest {
         lenient().when(songFileRepository.save(any(SongFile.class))).thenAnswer(invocation -> {
             SongFile songFile = invocation.getArgument(0);
             songFile.setId(202L);
+            filesByPath.put(songFile.getFilePath(), songFile);
             return songFile;
         });
 
+        lenient().when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.NORMAL_STEREO);
         scanService = new LibraryScanService(props, ffprobe, tagReader, songRepository,
-                songFileRepository, new AssetWriter(props));
+                songFileRepository, new AssetWriter(props), settingService);
     }
 
     @AfterEach
@@ -119,6 +128,47 @@ class ExternalReadOnlyLibraryTest {
         assertThat(songCaptor.getAllValues().get(1).getArtist()).isEqualTo("周杰伦");
         assertThat(songCaptor.getAllValues().get(1).getLanguage()).isEqualTo("国语");
         assertThat(songCaptor.getAllValues().get(1).getTags()).containsExactly("流行");
+    }
+
+    @Test
+    void configuredExternalDefaultAppliesToNewFilesWithSafeChannelDefaults() throws Exception {
+        when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_CHANNEL);
+        Path source = sourceDir.resolve("周杰伦-晴天-国语-流行.mkv");
+        Files.write(source, new byte[]{0x01, 0x23});
+        when(tagReader.read(any())).thenReturn(new TagInfo());
+        when(ffprobe.probe(source)).thenReturn(new MediaProbe(180_000, 1, 0, true,
+                "1920x1080", List.of(), "h264", "aac"));
+
+        scanService.scanAll();
+
+        var fileCaptor = org.mockito.ArgumentCaptor.forClass(SongFile.class);
+        verify(songFileRepository, times(2)).save(fileCaptor.capture());
+        SongFile indexed = fileCaptor.getAllValues().get(1);
+        assertThat(indexed.getAudioLayout()).isEqualTo(AudioLayout.DUAL_CHANNEL);
+        assertThat(indexed.getOriginalChannel()).isEqualTo(AudioChannel.LEFT);
+        assertThat(indexed.getAccompanimentChannel()).isEqualTo(AudioChannel.RIGHT);
+        assertThat(indexed.getOriginalTrackIndex()).isNull();
+        assertThat(indexed.getAccompanimentTrackIndex()).isNull();
+    }
+
+    @Test
+    void aPerFileOverrideSurvivesALaterExternalReprobe() throws Exception {
+        when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_CHANNEL);
+        Path source = sourceDir.resolve("周杰伦-晴天-国语-流行.mkv");
+        Files.write(source, new byte[]{0x01, 0x23});
+        when(tagReader.read(any())).thenReturn(new TagInfo());
+        when(ffprobe.probe(source)).thenReturn(new MediaProbe(180_000, 1, 0, true,
+                "1920x1080", List.of(), "h264", "aac"));
+
+        scanService.scanAll();
+        SongFile indexed = filesByPath.get(source.toString());
+        indexed.setAudioLayout(AudioLayout.NORMAL_STEREO);
+        when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_TRACK);
+        Files.write(source, new byte[]{0x45}, StandardOpenOption.APPEND);
+
+        scanService.scanAll();
+
+        assertThat(filesByPath.get(source.toString()).getAudioLayout()).isEqualTo(AudioLayout.NORMAL_STEREO);
     }
 
     @Test

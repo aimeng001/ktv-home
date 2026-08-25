@@ -92,6 +92,8 @@ export const api = {
   ).toString()),
   adminSong: (id) => request(`/admin/songs/${id}`),
   adminEditSong: (id, body) => request(`/admin/songs/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  adminUpdateAudioLayout: (fileId, body) => request(`/admin/files/${fileId}/audio-layout`, { method: 'PUT', body: JSON.stringify(body) }),
+  adminSwapAudioLayout: (fileId) => request(`/admin/files/${fileId}/audio-layout/swap`, { method: 'POST' }),
   adminDeleteSong: (id) => request(`/admin/songs/${id}`, { method: 'DELETE' }),
   adminDeleteSongs: (ids) => request('/admin/songs', { method: 'DELETE', body: JSON.stringify({ ids }) }),
   adminMergeSong: (keepSongId, sourceSongId) => request(`/admin/songs/${keepSongId}/merge`, { method: 'POST', body: JSON.stringify({ sourceSongId }) }),
