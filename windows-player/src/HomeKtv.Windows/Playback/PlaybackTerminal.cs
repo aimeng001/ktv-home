@@ -111,9 +111,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         SendControlAsync("swap_vocal_tracks", null, "vocal_changed", cancellationToken);
 
     public Task SetDisplayAsync(int screenIndex, CancellationToken cancellationToken = default) =>
-        output.IsMpvRunning
-            ? output.SetDisplayAsync(screenIndex, cancellationToken)
-            : Task.CompletedTask;
+        output.SetDisplayAsync(screenIndex, cancellationToken);
 
     private async Task ApplySnapshotFromSocketAsync(
         string eventType,

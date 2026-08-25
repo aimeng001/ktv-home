@@ -44,6 +44,18 @@ public sealed class MpvControllerTests
     }
 
     [Fact]
+    public async Task Display_selection_is_retained_before_mpv_session_starts()
+    {
+        var factory = new FakeMpvSessionFactory();
+        var controller = new MpvProcessController(factory);
+
+        await controller.SetDisplayAsync(2);
+
+        Assert.Equal(2, factory.ScreenIndex);
+        Assert.Equal(0, factory.StartCount);
+    }
+
+    [Fact]
     public async Task Dual_track_uses_mpv_audio_track_id_not_relative_index_as_id()
     {
         var session = new FakeMpvSession
@@ -105,11 +117,14 @@ public sealed class MpvControllerTests
         return document.RootElement.Clone();
     }
 
-    private sealed class FakeMpvSessionFactory(params FakeMpvSession[] sessions) : IMpvSessionFactory
+    private sealed class FakeMpvSessionFactory(params FakeMpvSession[] sessions) : IMpvDisplaySessionFactory
     {
         private int next;
 
         public int StartCount => next;
+        public int ScreenIndex { get; private set; }
+
+        public void SetScreenIndex(int screenIndex) => ScreenIndex = screenIndex;
 
         public Task<IMpvSession> StartAsync(CancellationToken cancellationToken = default)
         {

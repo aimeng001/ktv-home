@@ -137,6 +137,10 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
             displayFactory.SetScreenIndex(screenIndex);
         }
 
+        // Keep the selection for the next session without starting mpv just
+        // because the user changed the target before the first song plays.
+        if (!IsMpvRunning) return Task.CompletedTask;
+
         return ExecuteWithRecoveryAsync(async active =>
         {
             await active.ExecuteAsync(MpvCommands.SetFullscreenScreen(screenIndex), cancellationToken)
