@@ -204,6 +204,8 @@ export function makeControls(clientToken) {
     shuffle: () => c('shuffle', {}),
     play: () => c('play', {}),
     pause: () => c('pause', {}),
+    stop: () => c('stop', {}),
+    seek: (positionMs) => c('seek', { position_ms: Math.max(0, positionMs) }),
     next: () => c('next', {}),
     restart: () => c('restart', {}),
     setVolume: (volume) => c('set_volume', { volume }),

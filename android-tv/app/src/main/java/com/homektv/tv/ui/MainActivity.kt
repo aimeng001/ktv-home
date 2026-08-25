@@ -183,11 +183,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 // UI 以高频本地时钟平滑刷新，服务端进度仍保持 1s 上报频率。
                 if (lastProgressReportMs == Long.MIN_VALUE || pos - lastProgressReportMs >= 1_000L) {
                     lastProgressReportMs = pos
-                    socket?.sendProgress(pos)
+                    socket?.sendProgress(pos, currentQueueId)
                 }
                 runOnUiThread { updateProgress(pos) }
             },
-            onFinished = { socket?.sendFinished() },
+            onFinished = { socket?.sendFinished(currentQueueId) },
             onError = { onPlayError() },
         ).also {
             it.attach(binding.playerView)
@@ -622,6 +622,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             lastLyricIndex = -1
             updateProgress(0L)
         }
+        if (event == PLAYBACK_SEEKED_EVENT) {
+            engine?.seekTo(snapshot.positionMs)
+            lastLyricIndex = -1
+            updateProgress(snapshot.positionMs)
+        }
         if (event == VOCAL_CHANGED_EVENT) refreshVocalTrackMapping(snapshot)
     }
 
@@ -1018,7 +1023,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     /** 播放失败：上报文件源，服务端标记失效并推进队列。 */
     private fun onPlayError() {
         Toast.makeText(this, R.string.play_error, Toast.LENGTH_SHORT).show()
-        socket?.sendPlayError("media playback failed", currentFileId)
+        socket?.sendPlayError("media playback failed", currentFileId, currentQueueId)
     }
 
     companion object {
@@ -1027,5 +1032,6 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         private const val PROGRESS_HIDE_DELAY_MS = 5_000L
         private const val VOCAL_CHANGED_EVENT = "vocal_changed"
         private const val PLAYBACK_RESTARTED_EVENT = "playback_restarted"
+        private const val PLAYBACK_SEEKED_EVENT = "playback_seeked"
     }
 }

@@ -74,6 +74,18 @@ class AudioLayoutSerializationTest {
     }
 
     @Test
+    void websocketSnapshotCarriesOptionalPositionForOlderClients() throws Exception {
+        QueueSnapshot snapshot = new QueueSnapshot(
+                null, List.of(), "playing", 60, false, "original",
+                AudioLayoutDto.normalStereo(), true, 1, 12_345L, 7L);
+
+        JsonNode json = mapper.readTree(mapper.writeValueAsString(snapshot));
+
+        assertThat(json.path("positionMs").asLong()).isEqualTo(12_345L);
+        assertThat(json.path("seekSequence").asLong()).isEqualTo(7L);
+    }
+
+    @Test
     void snapshotServicePublishesTheCurrentFileLayoutToWebsocketPayload() {
         PlayerStateRepository playerRepository = mock(PlayerStateRepository.class);
         QueueItemRepository queueRepository = mock(QueueItemRepository.class);

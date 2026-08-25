@@ -76,20 +76,23 @@ class KtvSocket(
     }
 
     /** 上行播放进度（P1.28 播放引擎每 1s 调用）。 */
-    fun sendProgress(positionMs: Long) {
-        ws?.send("""{"type":"progress","payload":{"position_ms":$positionMs}}""")
+    fun sendProgress(positionMs: Long, queueId: Long? = null) {
+        val id = queueId?.let { ",\"queue_id\":$it" } ?: ""
+        ws?.send("""{"type":"progress","payload":{"position_ms":$positionMs$id}}""")
     }
 
     /** 上行播放完成（P1.33 自动连播）。 */
-    fun sendFinished() {
-        ws?.send("""{"type":"finished"}""")
+    fun sendFinished(queueId: Long? = null) {
+        val payload = queueId?.let { ",\"payload\":{\"queue_id\":$it}" } ?: ""
+        ws?.send("""{"type":"finished"$payload}""")
     }
 
     /** 播放文件不可读时上报，服务端会标记当前项异常并推进队列。 */
-    fun sendPlayError(message: String, fileId: Long? = null) {
+    fun sendPlayError(message: String, fileId: Long? = null, queueId: Long? = null) {
         val safe = message.replace("\\", "\\\\").replace("\"", "\\\"")
         val id = fileId?.let { ",\"file_id\":$it" } ?: ""
-        ws?.send("""{"type":"play_error","payload":{"message":"$safe"$id}}""")
+        val queue = queueId?.let { ",\"queue_id\":$it" } ?: ""
+        ws?.send("""{"type":"play_error","payload":{"message":"$safe"$id$queue}}""")
     }
 
     private fun openSocket() {
@@ -160,7 +163,7 @@ class KtvSocket(
                 listener.onToast(txt)
             }
             // 以下事件 payload 均为完整快照
-            "sync_full", "queue_updated", "now_playing", "player_state", "playback_restarted",
+            "sync_full", "queue_updated", "now_playing", "player_state", "playback_restarted", "playback_seeked",
             "volume_changed", "vocal_changed" -> {
                 val snap = payload?.let {
                     runCatching { json.decodeFromJsonElement(QueueSnapshot.serializer(), it) }.getOrNull()

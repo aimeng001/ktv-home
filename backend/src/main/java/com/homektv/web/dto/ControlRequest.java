@@ -6,10 +6,10 @@ import java.util.Map;
 
 /**
  * 统一控制指令请求（详设§4.3）。
- * action: order/shuffle/top/cancel/play/pause/next/restart/set_volume/mute/set_vocal/effect
+ * action: order/shuffle/top/cancel/play/pause/stop/seek/next/restart/set_volume/mute/set_vocal/effect
  *
  * Unified control command request (detailed design §4.3).
- * action: order/shuffle/top/cancel/play/pause/next/restart/set_volume/mute/set_vocal/effect
+ * action: order/shuffle/top/cancel/play/pause/stop/seek/next/restart/set_volume/mute/set_vocal/effect
  */
 public record ControlRequest(
         String action,

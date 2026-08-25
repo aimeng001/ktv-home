@@ -97,6 +97,8 @@ data class QueueSnapshot(
     val audioLayout: AudioLayout = AudioLayout(),
     val tvOnline: Boolean = false,
     val connectedPhones: Long = 0,
+    val positionMs: Long = 0,
+    val seekSequence: Long = 0,
 )
 
 /** Platform-neutral audio semantics; PCM/Media3 implementation stays client-local. */

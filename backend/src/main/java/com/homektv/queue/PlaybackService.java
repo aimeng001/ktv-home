@@ -74,6 +74,49 @@ public class PlaybackService {
         return playerRepo.save(ps);
     }
 
+    /** Stop playback without consuming or removing the current queue item. */
+    @Transactional
+    public PlayerState stop() {
+        PlayerState ps = playerRepo.getSingleton();
+        ps.setState("idle");
+        return playerRepo.save(ps);
+    }
+
+    /** Explicit seek requested by a remote controller. */
+    @Transactional
+    public PlayerState seek(long positionMs) {
+        if (positionMs < 0) {
+            throw new ApiException("INVALID_ACTION", "播放位置不能为负数");
+        }
+        PlayerState ps = playerRepo.getSingleton();
+        if (ps.getCurrentQueueId() == null) {
+            throw new ApiException("INVALID_ACTION", "当前没有正在播放的歌曲");
+        }
+        ps.setPositionMs(positionMs);
+        ps.setSeekSequence(ps.getSeekSequence() + 1);
+        return playerRepo.save(ps);
+    }
+
+    /**
+     * Persist a player-reported position. A queue id, when supplied by newer
+     * clients, prevents a late packet from an old song changing the state of
+     * the current song. Older Android clients may omit it.
+     */
+    @Transactional
+    public PlayerState updatePosition(Long expectedQueueId, long positionMs) {
+        PlayerState ps = playerRepo.getSingleton();
+        if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
+            return ps;
+        }
+        if (ps.getCurrentQueueId() == null || "idle".equals(ps.getState())) return ps;
+        long normalized = Math.max(0, positionMs);
+        if (ps.getPositionMs() != normalized) {
+            ps.setPositionMs(normalized);
+            return playerRepo.save(ps);
+        }
+        return ps;
+    }
+
     /** 切歌：当前行标记 skipped，推进到下一首（详设§9.2）。 */
     @Transactional
     public PlayerState next() {
@@ -86,7 +129,15 @@ public class PlaybackService {
     /** 播放完成（TV 上报）：当前行标记 done，写历史，推进下一首。 */
     @Transactional
     public PlayerState onFinished() {
+        return onFinished(null);
+    }
+
+    @Transactional
+    public PlayerState onFinished(Long expectedQueueId) {
         PlayerState ps = playerRepo.getSingleton();
+        if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
+            return ps;
+        }
         markCurrent(ps, QueueService.DONE, true);
         advanceToNext(ps);
         return playerRepo.save(ps);
@@ -94,13 +145,21 @@ public class PlaybackService {
 
     @Transactional
     public PlayerState onPlayError(Long fileId) {
+        return onPlayError(fileId, null);
+    }
+
+    @Transactional
+    public PlayerState onPlayError(Long fileId, Long expectedQueueId) {
+        PlayerState ps = playerRepo.getSingleton();
+        if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
+            return ps;
+        }
         if (fileId != null) {
             fileRepo.findById(fileId).ifPresent(file -> {
                 file.setValid(false);
                 fileRepo.save(file);
             });
         }
-        PlayerState ps = playerRepo.getSingleton();
         markCurrent(ps, QueueService.SKIPPED, false);
         advanceToNext(ps);
         return playerRepo.save(ps);
@@ -151,6 +210,8 @@ public class PlaybackService {
             throw new ApiException("INVALID_ACTION", "当前没有正在播放的歌曲");
         }
         ps.setState("playing");
+        ps.setPositionMs(0);
+        ps.setSeekSequence(ps.getSeekSequence() + 1);
         return playerRepo.save(ps);
     }
 
@@ -221,6 +282,7 @@ public class PlaybackService {
         queueRepo.deleteAll(waiting);
         ps.setCurrentQueueId(null);
         ps.setState("idle");
+        ps.setPositionMs(0);
         playerRepo.save(ps);
         return true;
     }
@@ -256,6 +318,7 @@ public class PlaybackService {
         if (waiting.isEmpty()) {
             ps.setCurrentQueueId(null);
             ps.setState("idle");
+            ps.setPositionMs(0);
             return;
         }
         QueueItem nextItem = waiting.get(0);
@@ -263,5 +326,6 @@ public class PlaybackService {
         queueRepo.save(nextItem);
         ps.setCurrentQueueId(nextItem.getId());
         ps.setState("playing");
+        ps.setPositionMs(0);
     }
 }

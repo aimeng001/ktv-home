@@ -15,6 +15,7 @@ public record WsEvent(String type, Object payload) {
     public static final String NOW_PLAYING = "now_playing";
     public static final String PLAYER_STATE = "player_state";
     public static final String PLAYBACK_RESTARTED = "playback_restarted";
+    public static final String PLAYBACK_SEEKED = "playback_seeked";
     public static final String PROGRESS = "progress";
     public static final String VOLUME_CHANGED = "volume_changed";
     public static final String VOCAL_CHANGED = "vocal_changed";

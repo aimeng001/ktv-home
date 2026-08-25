@@ -219,6 +219,11 @@ class PlaybackEngine(
         player.playWhenReady = true
     }
 
+    /** Applies a server-requested seek without reloading the current media item. */
+    fun seekTo(positionMs: Long) {
+        player.seekTo(positionMs.coerceAtLeast(0L))
+    }
+
     /**
      * 停止并清空（队列空回待机时调用）。清 currentFileId，
      * 使下次同 fileId 也会重新装载。

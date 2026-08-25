@@ -41,6 +41,12 @@ describe('usePlayerStore', () => {
     expect(p.positionMs).toBe(42000)
   })
 
+  it('playback_seeked 使用服务端快照位置', () => {
+    const p = usePlayerStore()
+    p.handleEvent('playback_seeked', { ...snapshot, positionMs: 12345 })
+    expect(p.positionMs).toBe(12345)
+  })
+
   it('effect_play 记录音效', () => {
     const p = usePlayerStore()
     p.handleEvent('effect_play', { effect_id: 'clap' })

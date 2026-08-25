@@ -99,7 +99,8 @@ public class SnapshotService {
 
         return new QueueSnapshot(nowPlaying, list, ps.getState(), ps.getVolume(),
                 ps.isMuted(), ps.getVocalMode(), audioLayout,
-                broadcaster.isTvOnline(), broadcaster.h5Count());
+                broadcaster.isTvOnline(), broadcaster.h5Count(),
+                ps.getPositionMs(), ps.getSeekSequence());
     }
 
     private Song songOf(Map<Long, Song> cache, Long id) {

@@ -76,6 +76,7 @@ export const usePlayerStore = defineStore('player', {
         case 'now_playing':
         case 'player_state':
         case 'playback_restarted':
+        case 'playback_seeked':
         case 'volume_changed':
         case 'vocal_changed':
           this.applySnapshot(payload)
@@ -109,6 +110,7 @@ export const usePlayerStore = defineStore('player', {
         ? { queueId: playing.queueId, song: playing.song, orderedByNick: playing.orderedByNick }
         : null
       this.state = snap.state ?? 'idle'
+      if (typeof snap.positionMs === 'number') this.positionMs = Math.max(0, snap.positionMs)
       this.volume = snap.volume ?? this.volume
       this.muted = snap.muted ?? false
       this.vocalMode = snap.vocalMode ?? this.vocalMode
