@@ -16,6 +16,7 @@ public sealed class PlaybackCoordinator
     private AudioLayoutDto? lastAudioLayout;
     private int? lastVolume;
     private bool? lastMuted;
+    private readonly SemaphoreSlim snapshotLock = new(1, 1);
 
     public PlaybackCoordinator(IPlaybackServerApi server, IPlaybackOutput output)
     {
@@ -27,6 +28,22 @@ public sealed class PlaybackCoordinator
         string eventType,
         QueueSnapshot snapshot,
         CancellationToken cancellationToken = default)
+    {
+        await snapshotLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await ApplySnapshotCoreAsync(eventType, snapshot, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            snapshotLock.Release();
+        }
+    }
+
+    private async Task ApplySnapshotCoreAsync(
+        string eventType,
+        QueueSnapshot snapshot,
+        CancellationToken cancellationToken)
     {
         var playing = snapshot.Playing;
         if (snapshot.State.Equals("idle", StringComparison.OrdinalIgnoreCase)
