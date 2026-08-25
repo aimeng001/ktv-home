@@ -22,6 +22,12 @@ android-tv/third_party/
 *.aab
 *.keystore
 
+# ===== Windows Player =====
+windows-player/**/bin/
+windows-player/**/obj/
+windows-player/.dotnet-cli-home/
+.dotnet-cli-home/
+
 # ===== IDE / OS =====
 .idea/
 *.iml
