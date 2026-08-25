@@ -190,6 +190,14 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
 
     private async Task<IMpvSession> StartSessionLockedAsync(CancellationToken cancellationToken)
     {
+        var previous = session;
+        session = null;
+        if (previous is not null)
+        {
+            try { await previous.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception) { }
+        }
+
         var started = await sessionFactory.StartAsync(cancellationToken).ConfigureAwait(false);
         session = started;
         started.NotificationReceived += notification => HandleNotification(started, notification);
