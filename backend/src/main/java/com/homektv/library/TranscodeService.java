@@ -62,6 +62,11 @@ public class TranscodeService {
             derivative.setFilePath(output.toString());
             derivative.setFormat("matroska");
             derivative.setAudioTracks(source.getAudioTracks());
+            derivative.setAudioLayout(source.getAudioLayout());
+            derivative.setOriginalTrackIndex(source.getOriginalTrackIndex());
+            derivative.setAccompanimentTrackIndex(source.getAccompanimentTrackIndex());
+            derivative.setOriginalChannel(source.getOriginalChannel());
+            derivative.setAccompanimentChannel(source.getAccompanimentChannel());
             derivative.setVocalTrackIndex(source.getVocalTrackIndex());
             derivative.setVocalConfidence(source.getVocalConfidence());
             derivative.setResolution(source.getResolution());

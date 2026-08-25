@@ -1,6 +1,8 @@
 package com.homektv.queue;
 
 import com.homektv.domain.AppUser;
+import com.homektv.domain.AudioChannel;
+import com.homektv.domain.AudioLayout;
 import com.homektv.domain.PlayerState;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.Song;
@@ -246,6 +248,29 @@ class QueuePlaybackIntegrationTest {
 
         playbackService.swapVocalTracks();
         assertThat(fileRepo.findById(file.getId()).orElseThrow().getVocalTrackIndex()).isEqualTo(1);
+    }
+
+    @Test
+    void swapVocalChannelsPersistsSemanticLeftRightAssignment() {
+        SongFile file = new SongFile();
+        file.setSongId(song1);
+        file.setFilePath("/tmp/ktv-channel-" + song1 + ".mkv");
+        file.setFormat("mkv");
+        file.setAudioTracks(1);
+        file.setAudioLayout(AudioLayout.DUAL_CHANNEL);
+        file.setFileMtime(OffsetDateTime.now());
+        file.setPriority(100);
+        fileRepo.save(file);
+
+        queueService.order(song1, user1, false);
+        playbackService.play();
+
+        playbackService.swapVocalTracks();
+        SongFile swapped = fileRepo.findById(file.getId()).orElseThrow();
+        assertThat(swapped.getAudioLayout()).isEqualTo(AudioLayout.DUAL_CHANNEL);
+        assertThat(swapped.getOriginalChannel()).isEqualTo(AudioChannel.RIGHT);
+        assertThat(swapped.getAccompanimentChannel()).isEqualTo(AudioChannel.LEFT);
+        assertThat(swapped.getVocalTrackIndex()).isNull();
     }
 
     @Test

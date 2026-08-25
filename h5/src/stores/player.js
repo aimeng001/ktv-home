@@ -18,6 +18,13 @@ export const usePlayerStore = defineStore('player', {
     volume: 60,
     muted: false,
     vocalMode: 'accompaniment', // 伴唱模式 | original / accompaniment
+    audioLayout: {
+      layout: 'NORMAL_STEREO',
+      originalTrackIndex: null,
+      accompanimentTrackIndex: null,
+      originalChannel: 'LEFT',
+      accompanimentChannel: 'RIGHT'
+    },
     queue: [],             // 点歌队列 | [{queueId, song, orderedBy, orderedByNick, status}]
     tvOnline: true,        // TV 是否在线（P2.13） | Whether the TV is online (P2.13)
     connectedPhones: 0,
@@ -105,6 +112,7 @@ export const usePlayerStore = defineStore('player', {
       this.volume = snap.volume ?? this.volume
       this.muted = snap.muted ?? false
       this.vocalMode = snap.vocalMode ?? this.vocalMode
+      this.audioLayout = snap.audioLayout ?? this.audioLayout
       this.queue = snap.list ?? []
       this.tvOnline = snap.tvOnline ?? true
       this.connectedPhones = snap.connectedPhones ?? 0

@@ -462,6 +462,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var currentVolume = 60
     private var currentMuted = false
     private var currentVocalMode = "accompaniment"
+    private var currentAudioLayout = "NORMAL_STEREO"
 
     private fun togglePlayback() {
         sendControl(if (currentPlaybackState == "playing") "pause" else "play")
@@ -604,6 +605,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         currentVolume = snapshot.volume
         currentMuted = snapshot.muted
         currentVocalMode = snapshot.vocalMode
+        currentAudioLayout = snapshot.audioLayout.layout
         if (binding.vocalPanel.visibility == View.VISIBLE) updateVocalPanelSelection()
         currentPlaybackState = snapshot.state
         val lyricsPlaying = snapshot.state == "playing"
@@ -675,6 +677,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         // idle 或无当前曲目：停止、回待机页
         if (snapshot.state == "idle" || playing == null || songId == null) {
             currentQueueId = null
+            currentAudioLayout = "NORMAL_STEREO"
             engine?.stop()
             binding.txtLyricPrevious.stopAnimation()
             binding.txtAudioLyricCurrent.stopAnimation()
@@ -691,7 +694,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         // 同一首：只处理播放/暂停 + 音量，不重新装载
         if (playing.queueId == currentQueueId) {
             eng.applyVolume(volume, muted)
-            eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount)
+            eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
             if (snapshot.state == "paused") eng.pause() else eng.resume()
             return
         }
@@ -727,8 +730,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 onPlayError()
                 return@launch
             }
-            accompanimentTrackIndex = file.vocalTrackIndex
+            accompanimentTrackIndex = file.audioLayout.accompanimentTrackIndex ?: file.vocalTrackIndex
             audioTrackCount = file.audioTracks
+            currentAudioLayout = file.audioLayout.layout
             currentFileId = file.id
             lyricLines = mediaApi.fetchLyric(songId)?.let(LrcParser::parse).orEmpty()
             if (currentQueueId != targetQueueId) return@launch
@@ -740,7 +744,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             }
             eng.applyVolume(volume, muted)
             eng.play(file.id, mediaApi.streamUrl(file.id))
-            eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount)
+            eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
             if (snapshot.state == "paused") eng.pause()
         }
     }
@@ -752,9 +756,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         lifecycleScope.launch {
             val file = mediaApi.bestFileSource(songId) ?: return@launch
             if (currentQueueId != targetQueueId || currentFileId != file.id) return@launch
-            accompanimentTrackIndex = file.vocalTrackIndex
+            accompanimentTrackIndex = file.audioLayout.accompanimentTrackIndex ?: file.vocalTrackIndex
             audioTrackCount = file.audioTracks
-            engine?.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount)
+            currentAudioLayout = file.audioLayout.layout
+            engine?.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
         }
     }
 

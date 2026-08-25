@@ -94,8 +94,22 @@ data class QueueSnapshot(
     val volume: Int = 60,
     val muted: Boolean = false,
     val vocalMode: String = "accompaniment", // original / accompaniment
+    val audioLayout: AudioLayout = AudioLayout(),
     val tvOnline: Boolean = false,
     val connectedPhones: Long = 0,
+)
+
+/** Platform-neutral audio semantics; PCM/Media3 implementation stays client-local. */
+@Serializable
+data class AudioLayout(
+    // The old protocol had no layout field but did expose vocalTrackIndex;
+    // DUAL_TRACK is the compatibility fallback. New server responses always
+    // send an explicit layout, including NORMAL_STEREO.
+    val layout: String = "DUAL_TRACK",
+    val originalTrackIndex: Int? = null,
+    val accompanimentTrackIndex: Int? = null,
+    val originalChannel: String = "LEFT",
+    val accompanimentChannel: String = "RIGHT",
 )
 
 /**
@@ -125,4 +139,5 @@ data class FileSource(
     val vocalTrackIndex: Int? = null,   // 伴唱轨 index（P1.29 切轨用）
     val resolution: String? = null,
     val priority: Int = 0,
+    val audioLayout: AudioLayout = AudioLayout(),
 )

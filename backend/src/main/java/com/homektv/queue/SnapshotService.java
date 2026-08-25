@@ -8,8 +8,11 @@ import com.homektv.repo.AppUserRepository;
 import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
+import com.homektv.repo.SongFileRepository;
+import com.homektv.web.dto.AudioLayoutDto;
 import com.homektv.web.dto.QueueSnapshot;
 import com.homektv.web.dto.SongDto;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,15 +31,25 @@ public class SnapshotService {
     private final SongRepository songRepo;
     private final AppUserRepository userRepo;
     private final com.homektv.ws.WsBroadcaster broadcaster;
+    private final SongFileRepository songFileRepo;
 
+    @Autowired
     public SnapshotService(PlayerStateRepository playerRepo, QueueItemRepository queueRepo,
                            SongRepository songRepo, AppUserRepository userRepo,
-                           com.homektv.ws.WsBroadcaster broadcaster) {
+                           com.homektv.ws.WsBroadcaster broadcaster, SongFileRepository songFileRepo) {
         this.playerRepo = playerRepo;
         this.queueRepo = queueRepo;
         this.songRepo = songRepo;
         this.userRepo = userRepo;
         this.broadcaster = broadcaster;
+        this.songFileRepo = songFileRepo;
+    }
+
+    /** Compatibility constructor for isolated service tests. */
+    public SnapshotService(PlayerStateRepository playerRepo, QueueItemRepository queueRepo,
+                           SongRepository songRepo, AppUserRepository userRepo,
+                           com.homektv.ws.WsBroadcaster broadcaster) {
+        this(playerRepo, queueRepo, songRepo, userRepo, broadcaster, null);
     }
 
     @Transactional(readOnly = true)
@@ -72,8 +85,20 @@ public class SnapshotService {
                 })
                 .toList();
 
+        AudioLayoutDto audioLayout = AudioLayoutDto.normalStereo();
+        if (songFileRepo != null && ps.getCurrentQueueId() != null) {
+            QueueItem current = queueRepo.findById(ps.getCurrentQueueId()).orElse(null);
+            if (current != null) {
+                audioLayout = songFileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(current.getSongId())
+                        .stream()
+                        .findFirst()
+                        .map(AudioLayoutDto::from)
+                        .orElseGet(AudioLayoutDto::normalStereo);
+            }
+        }
+
         return new QueueSnapshot(nowPlaying, list, ps.getState(), ps.getVolume(),
-                ps.isMuted(), ps.getVocalMode(),
+                ps.isMuted(), ps.getVocalMode(), audioLayout,
                 broadcaster.isTvOnline(), broadcaster.h5Count());
     }
 

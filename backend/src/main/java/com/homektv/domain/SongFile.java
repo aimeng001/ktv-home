@@ -34,6 +34,24 @@ public class SongFile {
     @Column(name = "audio_tracks", nullable = false)
     private int audioTracks = 1;
 
+    /** Platform-neutral audio layout; old rows default to normal stereo. */
+    @Column(name = "audio_layout", nullable = false)
+    private String audioLayout = AudioLayout.NORMAL_STEREO.name();
+
+    /** Semantic track indices used by DUAL_TRACK; nullable for channel layouts. */
+    @Column(name = "original_track_index")
+    private Integer originalTrackIndex;
+
+    @Column(name = "accompaniment_track_index")
+    private Integer accompanimentTrackIndex;
+
+    /** Semantic channel mapping used by DUAL_CHANNEL. */
+    @Column(name = "original_channel", nullable = false)
+    private String originalChannel = AudioChannel.LEFT.name();
+
+    @Column(name = "accompaniment_channel", nullable = false)
+    private String accompanimentChannel = AudioChannel.RIGHT.name();
+
     /** 伴奏轨 index（0-based 音频序号，入库探测，免运行时猜轨），可空 */
     // English: Accompaniment track index (0-based audio sequence, detected at import to avoid runtime guessing), nullable.
     @Column(name = "vocal_track_index")
@@ -102,8 +120,51 @@ public class SongFile {
     public void setFormat(String format) { this.format = format; }
     public int getAudioTracks() { return audioTracks; }
     public void setAudioTracks(int audioTracks) { this.audioTracks = audioTracks; }
+    public AudioLayout getAudioLayout() { return AudioLayout.from(audioLayout); }
+    public String getAudioLayoutValue() { return audioLayout; }
+    public void setAudioLayout(AudioLayout audioLayout) {
+        this.audioLayout = (audioLayout == null ? AudioLayout.NORMAL_STEREO : audioLayout).name();
+    }
+    public void setAudioLayoutValue(String audioLayout) {
+        this.audioLayout = audioLayout == null ? AudioLayout.NORMAL_STEREO.name() : audioLayout;
+    }
+    public Integer getOriginalTrackIndex() {
+        if (originalTrackIndex != null) return originalTrackIndex;
+        Integer accompaniment = getAccompanimentTrackIndex();
+        if (getAudioLayout() == AudioLayout.DUAL_TRACK && accompaniment != null && audioTracks > 1) {
+            return accompaniment == 0 ? 1 : 0;
+        }
+        return null;
+    }
+    public void setOriginalTrackIndex(Integer originalTrackIndex) { this.originalTrackIndex = originalTrackIndex; }
+    public Integer getAccompanimentTrackIndex() {
+        return accompanimentTrackIndex != null ? accompanimentTrackIndex : vocalTrackIndex;
+    }
+    public void setAccompanimentTrackIndex(Integer accompanimentTrackIndex) {
+        this.accompanimentTrackIndex = accompanimentTrackIndex;
+        this.vocalTrackIndex = accompanimentTrackIndex;
+    }
+    public AudioChannel getOriginalChannel() { return AudioChannel.from(originalChannel); }
+    public String getOriginalChannelValue() { return originalChannel; }
+    public void setOriginalChannel(AudioChannel originalChannel) {
+        this.originalChannel = (originalChannel == null ? AudioChannel.LEFT : originalChannel).name();
+    }
+    public void setOriginalChannelValue(String originalChannel) {
+        this.originalChannel = originalChannel == null ? AudioChannel.LEFT.name() : originalChannel;
+    }
+    public AudioChannel getAccompanimentChannel() { return AudioChannel.from(accompanimentChannel, AudioChannel.RIGHT); }
+    public String getAccompanimentChannelValue() { return accompanimentChannel; }
+    public void setAccompanimentChannel(AudioChannel accompanimentChannel) {
+        this.accompanimentChannel = (accompanimentChannel == null ? AudioChannel.RIGHT : accompanimentChannel).name();
+    }
+    public void setAccompanimentChannelValue(String accompanimentChannel) {
+        this.accompanimentChannel = accompanimentChannel == null ? AudioChannel.RIGHT.name() : accompanimentChannel;
+    }
     public Integer getVocalTrackIndex() { return vocalTrackIndex; }
-    public void setVocalTrackIndex(Integer vocalTrackIndex) { this.vocalTrackIndex = vocalTrackIndex; }
+    public void setVocalTrackIndex(Integer vocalTrackIndex) {
+        this.vocalTrackIndex = vocalTrackIndex;
+        this.accompanimentTrackIndex = vocalTrackIndex;
+    }
     public String getVocalConfidence() { return vocalConfidence; }
     public void setVocalConfidence(String vocalConfidence) { this.vocalConfidence = vocalConfidence; }
     public String getResolution() { return resolution; }
@@ -134,4 +195,23 @@ public class SongFile {
     public void setFileIdentity(String fileIdentity) { this.fileIdentity = fileIdentity; }
     public boolean isProbePending() { return probePending; }
     public void setProbePending(boolean probePending) { this.probePending = probePending; }
+
+    /** Swap only semantic vocal/accompaniment assignments; media bytes are untouched. */
+    public void swapOriginalAndAccompaniment() {
+        switch (getAudioLayout()) {
+            case DUAL_CHANNEL -> {
+                AudioChannel original = getOriginalChannel();
+                setOriginalChannel(getAccompanimentChannel());
+                setAccompanimentChannel(original);
+            }
+            case DUAL_TRACK -> {
+                Integer original = getOriginalTrackIndex();
+                Integer accompaniment = getAccompanimentTrackIndex();
+                if (original == null || accompaniment == null) return;
+                setOriginalTrackIndex(accompaniment);
+                setAccompanimentTrackIndex(original);
+            }
+            case NORMAL_STEREO -> { /* no vocal semantics to swap */ }
+        }
+    }
 }

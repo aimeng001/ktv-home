@@ -3,6 +3,7 @@ package com.homektv.library;
 import com.homektv.config.AppProperties;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
+import com.homektv.domain.AudioLayout;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
@@ -176,7 +177,10 @@ public class AdminService {
             throw new ApiException("INVALID_ACTION",
                     "伴奏轨 index 越界：" + accompanimentIndex + "（共 " + file.getAudioTracks() + " 轨）");
         }
+        file.setAudioLayout(AudioLayout.DUAL_TRACK);
         file.setVocalTrackIndex(accompanimentIndex);
+        file.setAccompanimentTrackIndex(accompanimentIndex);
+        file.setOriginalTrackIndex(accompanimentIndex == 0 ? 1 : 0);
         file.setVocalConfidence("HIGH");
         fileRepo.save(file);
     }

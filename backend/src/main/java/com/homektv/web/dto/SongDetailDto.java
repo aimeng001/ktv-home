@@ -31,7 +31,15 @@ public record SongDetailDto(
      * File source information: includes format, audio track count, vocal track index, etc.
      */
     public record FileSourceDto(Long id, String format, int audioTracks, Integer vocalTrackIndex,
-                                String vocalConfidence, String resolution, int priority) {
+                                String vocalConfidence, String resolution, int priority,
+                                AudioLayoutDto audioLayout) {
+        /** Source-compatible constructor for callers that only know the legacy fields. */
+        public FileSourceDto(Long id, String format, int audioTracks, Integer vocalTrackIndex,
+                             String vocalConfidence, String resolution, int priority) {
+            this(id, format, audioTracks, vocalTrackIndex, vocalConfidence, resolution, priority,
+                    AudioLayoutDto.normalStereo());
+        }
+
         /**
          * 从 SongFile 实体创建 FileSourceDto。
          *
@@ -41,7 +49,8 @@ public record SongDetailDto(
          */
         static FileSourceDto from(SongFile f) {
             return new FileSourceDto(f.getId(), f.getFormat(), f.getAudioTracks(),
-                    f.getVocalTrackIndex(), f.getVocalConfidence(), f.getResolution(), f.getPriority());
+                    f.getVocalTrackIndex(), f.getVocalConfidence(), f.getResolution(), f.getPriority(),
+                    AudioLayoutDto.from(f));
         }
     }
 

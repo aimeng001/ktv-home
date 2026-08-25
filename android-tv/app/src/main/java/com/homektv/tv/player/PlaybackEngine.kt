@@ -77,6 +77,7 @@ class PlaybackEngine(
     private var requestedVocalMode: String = "original"
     private var requestedAccompanimentIndex: Int? = null
     private var requestedAudioTrackCount: Int = 1
+    private var requestedAudioLayout: String = "NORMAL_STEREO"
     private var vocalRequestAt: Long = 0L
     private var playRequestAt: Long = 0L
     private var awaitingTracks = false
@@ -238,16 +239,26 @@ class PlaybackEngine(
     }
 
     /** 在当前音频轨组内切换原唱/伴唱，避免重新加载媒体。 */
-    fun setVocalMode(mode: String, accompanimentIndex: Int?, audioTrackCount: Int) {
+    fun setVocalMode(
+        mode: String,
+        accompanimentIndex: Int?,
+        audioTrackCount: Int,
+        audioLayout: String = "NORMAL_STEREO",
+    ) {
         requestedVocalMode = mode
         requestedAccompanimentIndex = accompanimentIndex
         requestedAudioTrackCount = audioTrackCount
+        requestedAudioLayout = audioLayout
         vocalRequestAt = SystemClock.elapsedRealtime()
         applyVocalSelection()
     }
 
     private fun applyVocalSelection() {
         if (awaitingTracks) return
+        // T04 only transports the semantic layout. DUAL_CHANNEL is deliberately
+        // not handled by TrackSelection; PCM/channel processing belongs to a
+        // later Android task.
+        if (requestedAudioLayout != "DUAL_TRACK") return
         val accompanimentIndex = requestedAccompanimentIndex
         val index = if (requestedVocalMode == "accompaniment") {
             accompanimentIndex

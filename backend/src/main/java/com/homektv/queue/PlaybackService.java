@@ -5,6 +5,7 @@ import com.homektv.domain.PlayerState;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
+import com.homektv.domain.AudioLayout;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
@@ -190,10 +191,15 @@ public class PlaybackService {
         SongFile file = fileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(current.getSongId()).stream()
                 .findFirst()
                 .orElseThrow(() -> new ApiException("FILE_NOT_FOUND", "当前歌曲没有可用文件源"));
-        if (file.getAudioTracks() < 2) {
+        if (file.getAudioLayout() != AudioLayout.DUAL_CHANNEL && file.getAudioTracks() < 2) {
             throw new ApiException("INVALID_ACTION", "当前歌曲没有可交换的双音轨");
         }
-        file.setVocalTrackIndex(Integer.valueOf(0).equals(file.getVocalTrackIndex()) ? 1 : 0);
+        if (file.getAudioLayout() == AudioLayout.NORMAL_STEREO) {
+            // Preserve the legacy two-track behavior for rows created before
+            // V17, while making the persisted layout explicit.
+            file.setAudioLayout(AudioLayout.DUAL_TRACK);
+        }
+        file.swapOriginalAndAccompaniment();
         // 用户手动交换即人工确认，标 HIGH，后续复核列表不再显示
         file.setVocalConfidence("HIGH");
         fileRepo.save(file);

@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.config.AppProperties;
+import com.homektv.domain.AudioLayout;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.media.FFprobeService;
@@ -619,12 +620,20 @@ public class LibraryScanService {
         sf.setFilePath(pathStr);
         sf.setFormat(extOf(file));
         sf.setAudioTracks(probe.audioTracks());
+        // A DUAL_CHANNEL assignment is explicit metadata and must survive a
+        // re-probe; otherwise the legacy two-track detector remains the only
+        // automatic classification and defaults to DUAL_TRACK.
+        AudioLayout storedLayout = existing.map(SongFile::getAudioLayout).orElse(null);
+        AudioLayout audioLayout = storedLayout == AudioLayout.DUAL_CHANNEL
+                ? AudioLayout.DUAL_CHANNEL
+                : hasVocal ? AudioLayout.DUAL_TRACK : AudioLayout.NORMAL_STEREO;
+        sf.setAudioLayout(audioLayout);
         // 伴奏轨 index（0-based 音频相对序号）。已有值优先（尊重人工/历史校正），
         // 否则用元数据判定，判不出再回落默认 1（多数双轨片源 track0=原唱、track1=伴奏）。
         Integer existingVocalTrackIndex = existing.map(SongFile::getVocalTrackIndex).orElse(null);
         Integer vocalTrackIndex = null;
         String vocalConfidence = null;
-        if (hasVocal) {
+        if (audioLayout == AudioLayout.DUAL_TRACK) {
             if (existingVocalTrackIndex != null) {
                 // 尊重人工/历史校正：index 不变，置信度视为已确认（HIGH）
                 vocalTrackIndex = existingVocalTrackIndex;
@@ -642,7 +651,17 @@ public class LibraryScanService {
                         file.getFileName(), vocalDetect.reason());
             }
         }
-        sf.setVocalTrackIndex(vocalTrackIndex);
+        if (audioLayout == AudioLayout.DUAL_TRACK) {
+            sf.setAccompanimentTrackIndex(vocalTrackIndex);
+            Integer storedOriginalTrackIndex = existing.map(SongFile::getOriginalTrackIndex).orElse(null);
+            sf.setOriginalTrackIndex(storedOriginalTrackIndex != null
+                    ? storedOriginalTrackIndex
+                    : vocalTrackIndex == null ? null : vocalTrackIndex == 0 ? 1 : 0);
+        } else {
+            sf.setVocalTrackIndex(null);
+            sf.setOriginalTrackIndex(null);
+            sf.setAccompanimentTrackIndex(null);
+        }
         sf.setVocalConfidence(vocalConfidence);
         sf.setResolution(probe.resolution());
         sf.setFileSize(entry.size());
