@@ -103,6 +103,37 @@ class ExternalReadOnlyLibraryTest {
         verify(songFileRepository).save(fileCaptor.capture());
         assertThat(fileCaptor.getValue().getFilePath()).isEqualTo(source.toString());
         assertThat(fileCaptor.getValue().getFileRole()).isEqualTo("EXTERNAL_READ_ONLY");
+
+        var songCaptor = org.mockito.ArgumentCaptor.forClass(Song.class);
+        verify(songRepository).save(songCaptor.capture());
+        assertThat(songCaptor.getValue().getTitle()).isEqualTo("晴天");
+        assertThat(songCaptor.getValue().getArtist()).isEqualTo("周杰伦");
+        assertThat(songCaptor.getValue().getLanguage()).isEqualTo("国语");
+        assertThat(songCaptor.getValue().getTags()).containsExactly("流行");
+    }
+
+    @Test
+    void scanUsesTheLongestReliableArtistFromTheExistingLibrary() throws Exception {
+        Song shortArtist = new Song();
+        shortArtist.setArtist("A");
+        shortArtist.setStatus("ok");
+        Song longArtist = new Song();
+        longArtist.setArtist("A-Lin");
+        longArtist.setStatus("ok");
+        when(songRepository.findAll()).thenReturn(List.of(shortArtist, longArtist));
+
+        Path source = sourceDir.resolve("A-Lin-给我一个理由忘记-国语-流行.mkv");
+        Files.write(source, new byte[]{0x11, 0x22});
+        when(tagReader.read(any())).thenReturn(new TagInfo());
+        when(ffprobe.probe(source)).thenReturn(new MediaProbe(180_000, 2, 0, true,
+                "1920x1080", List.of(), "h264", "aac"));
+
+        scanService.scanAll();
+
+        var songCaptor = org.mockito.ArgumentCaptor.forClass(Song.class);
+        verify(songRepository).save(songCaptor.capture());
+        assertThat(songCaptor.getValue().getArtist()).isEqualTo("A-Lin");
+        assertThat(songCaptor.getValue().getTitle()).isEqualTo("给我一个理由忘记");
     }
 
     @Test

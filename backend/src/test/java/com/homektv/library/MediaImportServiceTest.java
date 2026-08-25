@@ -103,6 +103,23 @@ class MediaImportServiceTest {
     }
 
     @Test
+    void managedSourceScanUsesTheSharedFilenameParserBeforeMove() throws Exception {
+        Path source = sourceDir.resolve("A-Lin-给我一个理由忘记-国语-流行.mp4");
+        Files.writeString(source, "compatible-media");
+        when(scanService.parseFilename(source.getFileName().toString())).thenReturn(
+                new ParsedMeta("给我一个理由忘记", "A-Lin", "国语", "流行", ParsedMeta.RECOGNIZED));
+        when(probe.probe(source)).thenReturn(new MediaProbe(1000, 2, 0, true, "1920x1080",
+                List.of(), "h264", "aac"));
+
+        MediaImportService.SourceScanResult result = service.scanSourceLibrary();
+
+        assertThat(result.copied()).isEqualTo(1);
+        assertThat(result.unrecognized()).isZero();
+        verify(scanService).parseFilename(source.getFileName().toString());
+        verify(scanService).ingestLibraryFile(any(), eq(source), anyString(), anyString(), eq(false));
+    }
+
+    @Test
     void scanLeavesIncompatibleVideoPending() throws Exception {
         Path source = sourceDir.resolve("薛之谦 - 绅士.mpg");
         Files.writeString(source, "legacy-media");

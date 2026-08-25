@@ -95,6 +95,7 @@ public class LibraryScanService {
                         startedAt, OffsetDateTime.now()));
                 return result;
             }
+            Set<String> knownArtists = existingArtistNames();
             List<Path> files = new ArrayList<>();
             try {
                 Files.walkFileTree(root, new SimpleFileVisitor<>() {
@@ -119,7 +120,7 @@ public class LibraryScanService {
             int added = 0, updated = 0, skipped = 0, unrecognized = 0;
             for (Path file : files) {
                 try {
-                    IngestOutcome outcome = ingest(file);
+                    IngestOutcome outcome = ingest(file, knownArtists);
                     switch (outcome) {
                         case ADDED -> added++;
                         case UPDATED -> updated++;
@@ -168,13 +169,23 @@ public class LibraryScanService {
         return scanProgress.get();
     }
 
+    /** Shared filename parsing entry point for Managed imports and active-library scans. */
+    public ParsedMeta parseFilename(String filename) {
+        return FilenameParser.parse(filename, existingArtistNames());
+    }
+
     enum IngestOutcome { ADDED, UPDATED, SKIPPED, UNRECOGNIZED }
 
     /** 单文件入库（幂等：已存在的文件路径按 mtime 判断是否需更新） */
     @Transactional
     public IngestOutcome ingest(Path file) {
         LibraryModePolicy.requireExternalPathInsideSource(props, file);
-        return ingestInternal(file, null, null, null, false).outcome();
+        return ingest(file, existingArtistNames());
+    }
+
+    private IngestOutcome ingest(Path file, Collection<String> knownArtists) {
+        LibraryModePolicy.requireExternalPathInsideSource(props, file);
+        return ingestInternal(file, null, null, null, false, knownArtists).outcome();
     }
 
     private boolean isExternalPathAllowed(Path path) {
@@ -191,7 +202,8 @@ public class LibraryScanService {
     @Transactional
     public IngestResult ingestLibraryFile(Path file, Path sourceFile, String sourceMd5, String outputMd5, boolean transcodeRequired) {
         LibraryModePolicy.requireManaged(props, "导入");
-        IngestState state = ingestInternal(file, sourceFile, sourceMd5, outputMd5, transcodeRequired);
+        IngestState state = ingestInternal(file, sourceFile, sourceMd5, outputMd5, transcodeRequired,
+                existingArtistNames());
         return new IngestResult(
                 state.outcome() == IngestOutcome.ADDED || state.outcome() == IngestOutcome.UPDATED,
                 state.songId(),
@@ -199,7 +211,8 @@ public class LibraryScanService {
         );
     }
 
-    private IngestState ingestInternal(Path file, Path sourceFile, String sourceMd5, String outputMd5, boolean transcodeRequired) {
+    private IngestState ingestInternal(Path file, Path sourceFile, String sourceMd5, String outputMd5,
+                                       boolean transcodeRequired, Collection<String> knownArtists) {
         String pathStr = file.toString();
         Path sidecarLyric = sidecarLyricOf(file);
         OffsetDateTime mtime = newestMtime(file, sidecarLyric);
@@ -233,6 +246,7 @@ public class LibraryScanService {
         boolean recognized;
         String title, artist;
         String identitySource;
+        ParsedMeta filenameMeta = null;
         if (tag.hasTitle()) {
             title = tag.getTitle();
             artist = tag.getArtist() != null ? tag.getArtist() : "";
@@ -249,10 +263,10 @@ public class LibraryScanService {
             recognized = true;
             identitySource = "lrc_tag";
         } else {
-            ParsedMeta pm = FilenameParser.parse(file.getFileName().toString());
-            title = pm.title();
-            artist = pm.artist();
-            recognized = pm.recognized();
+            filenameMeta = FilenameParser.parse(file.getFileName().toString(), knownArtists);
+            title = filenameMeta.title();
+            artist = filenameMeta.artist();
+            recognized = filenameMeta.recognized();
             identitySource = "filename";
         }
         if (artist == null || artist.isBlank()) artist = "未知歌手";
@@ -287,6 +301,13 @@ public class LibraryScanService {
             song.setStatus(recognized ? "ok" : "unrecognized");
             if (tag.getLanguage() != null && !tag.getLanguage().isBlank()) song.setLanguage(normalizeLanguage(tag.getLanguage()));
             else if (probe.language() != null && !probe.language().isBlank()) song.setLanguage(normalizeLanguage(probe.language()));
+            else if (filenameMeta != null && !filenameMeta.language().isBlank()) {
+                song.setLanguage(normalizeLanguage(filenameMeta.language()));
+            }
+            if (filenameMeta != null && !filenameMeta.category().isBlank()) {
+                // 现有模型没有独立 category 列；沿用 Home KTV 的 tags 数组承载文件名分类。
+                song.setTags(new String[]{filenameMeta.category()});
+            }
             song.setMetadataProvenance("{\"title\":{\"source\":\"" + identitySource + "\"},\"artist\":{\"source\":\"" + identitySource + "\"}}");
             song.setNeedsAiOptimization(!recognized || "未知".equals(song.getLanguage()) || "未知歌手".equals(song.getArtist()));
             isNew = true;
@@ -455,5 +476,22 @@ public class LibraryScanService {
     @PreDestroy
     void shutdown() {
         scanExecutor.shutdownNow();
+    }
+
+    private Set<String> existingArtistNames() {
+        Set<String> artists = new LinkedHashSet<>();
+        try {
+            for (Song song : songRepo.findAll()) {
+                if (song != null && "ok".equals(song.getStatus())
+                        && song.getArtist() != null && !song.getArtist().isBlank()
+                        && !"未知歌手".equals(song.getArtist().trim())) {
+                    artists.add(song.getArtist().trim());
+                }
+            }
+        } catch (RuntimeException failure) {
+            // 歌手库只是解析增强证据；数据库暂时不可用时仍可安全扫描并将复杂名称待审核。
+            log.debug("读取已有歌手库失败，文件名复杂边界将进入待审核：{}", failure.getMessage());
+        }
+        return artists;
     }
 }

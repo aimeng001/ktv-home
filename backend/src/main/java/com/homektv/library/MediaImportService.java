@@ -418,7 +418,7 @@ public class MediaImportService {
         TagInfo tag = tagReader.read(source.toFile());
         ParsedMeta parsed = tag.hasTitle()
                 ? ParsedMeta.of(tag.getTitle(), tag.getArtist())
-                : FilenameParser.parse(source.getFileName().toString());
+                : parseFilename(source);
         boolean recognized = parsed.recognized();
         DirectCopyDecision directCopy = directCopyDecision(source, probe);
         boolean transcodeRequired = directCopy.transcodeRequired();
@@ -572,7 +572,7 @@ public class MediaImportService {
                                    MediaProbe probe, String outputMd5, String action, String reason,
                                    boolean transcodeRequired, boolean duplicate, boolean imported,
                                    Long songId, Long songFileId) {
-        ParsedMeta parsed = FilenameParser.parse(source.getFileName().toString());
+        ParsedMeta parsed = parseFilename(source);
         record.setSourcePath(source.toString());
         record.setSourceFilename(source.getFileName().toString());
         record.setSourceMd5(sourceMd5 != null ? sourceMd5 : record.getSourceMd5() != null ? record.getSourceMd5() : "");
@@ -594,6 +594,18 @@ public class MediaImportService {
         record.setSongFileId(songFileId);
         record.setSourceDeleted(false);
         if (record.getCleanupStatus() == null) record.setCleanupStatus("NOT_REQUESTED");
+    }
+
+    private ParsedMeta parseFilename(Path source) {
+        String filename = source.getFileName().toString();
+        ParsedMeta local = FilenameParser.parse(filename);
+        if (local.recognized()) return local;
+
+        // Only ask the shared scan service for ambiguous names; simple legacy names
+        // keep their original no-extra-interaction path.
+        ParsedMeta shared = scanService.parseFilename(filename);
+        // Compatibility for isolated tests/legacy callers that provide a mock or older scan service.
+        return shared == null ? local : shared;
     }
 
     private void removeSourceRecord(MediaImportRecord record) {
