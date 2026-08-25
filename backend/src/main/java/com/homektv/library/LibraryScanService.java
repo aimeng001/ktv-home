@@ -8,6 +8,7 @@ import com.homektv.media.MediaProbe;
 import com.homektv.media.MediaProbeException;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
+import com.homektv.web.ApiException;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,8 +99,15 @@ public class LibraryScanService {
             try {
                 Files.walkFileTree(root, new SimpleFileVisitor<>() {
                     @Override
+                    public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                        return isExternalPathAllowed(dir)
+                                ? FileVisitResult.CONTINUE
+                                : FileVisitResult.SKIP_SUBTREE;
+                    }
+
+                    @Override
                     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                        if (isMediaFile(file)) files.add(file);
+                        if (isMediaFile(file) && isExternalPathAllowed(file)) files.add(file);
                         return FileVisitResult.CONTINUE;
                     }
                 });
@@ -165,7 +173,19 @@ public class LibraryScanService {
     /** 单文件入库（幂等：已存在的文件路径按 mtime 判断是否需更新） */
     @Transactional
     public IngestOutcome ingest(Path file) {
+        LibraryModePolicy.requireExternalPathInsideSource(props, file);
         return ingestInternal(file, null, null, null, false).outcome();
+    }
+
+    private boolean isExternalPathAllowed(Path path) {
+        if (!LibraryModePolicy.isExternalReadOnly(props)) return true;
+        try {
+            LibraryModePolicy.requireExternalPathInsideSource(props, path);
+            return true;
+        } catch (ApiException e) {
+            log.warn("外部曲库路径越界，跳过：{} - {}", path, e.getMessage());
+            return false;
+        }
     }
 
     @Transactional

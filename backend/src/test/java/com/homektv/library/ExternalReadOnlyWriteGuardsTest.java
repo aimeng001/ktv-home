@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.config.AppProperties;
+import com.homektv.domain.SongFile;
 import com.homektv.media.FFprobeService;
 import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.PlayHistoryRepository;
@@ -24,6 +25,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
@@ -94,6 +96,21 @@ class ExternalReadOnlyWriteGuardsTest {
         assertReadOnly(() -> service.transcodeSong(1L));
 
         verifyNoInteractions(songFileRepository);
+    }
+
+    @Test
+    void externalSongFileCannotBeTranscodedAfterSwitchingBackToManagedMode() {
+        props.setLibraryMode(LibraryMode.MANAGED);
+        SongFile externalFile = new SongFile();
+        externalFile.setSongId(1L);
+        externalFile.setFilePath(sourceFile.toString());
+        externalFile.setFileRole(LibraryModePolicy.EXTERNAL_FILE_ROLE);
+        externalFile.setPriority(1);
+        when(songFileRepository.findBySongIdOrderByPriorityDesc(1L)).thenReturn(List.of(externalFile));
+
+        TranscodeService service = new TranscodeService(songFileRepository, props);
+
+        assertReadOnly(() -> service.transcodeSong(1L));
     }
 
     @Test

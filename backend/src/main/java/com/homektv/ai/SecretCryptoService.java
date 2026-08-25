@@ -71,6 +71,7 @@ public class SecretCryptoService {
             byte[] generated = new byte[32];
             random.nextBytes(generated);
             String encoded = Base64.getEncoder().encodeToString(generated);
+            LibraryModePolicy.requireCacheOutsideExternalSource(properties, keyPath);
             try {
                 Files.writeString(keyPath, encoded, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             } catch (java.nio.file.FileAlreadyExistsException race) {

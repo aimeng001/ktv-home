@@ -121,13 +121,23 @@ public class AdminScanController {
                                              @RequestParam(required = false) Boolean sourceDeleted,
                                              @RequestParam(defaultValue = "0") int page,
                                              @RequestParam(defaultValue = "20") int size) {
+        if (LibraryModePolicy.isExternalReadOnly(props)) {
+            return Map.of(
+                    "content", List.of(),
+                    "total", 0L,
+                    "page", page,
+                    "totalPages", 0,
+                    "libraryMode", props.getLibraryMode().name()
+            );
+        }
         Page<MediaImportRecord> records = mediaImportService.listSourceLibrary(
                 keyword, status, formatAnalysis, sourceDeleted, page, size);
         return Map.of(
                 "content", records.getContent().stream().map(MediaImportRecordDto::from).toList(),
                 "total", records.getTotalElements(),
                 "page", records.getNumber(),
-                "totalPages", records.getTotalPages()
+                "totalPages", records.getTotalPages(),
+                "libraryMode", props.getLibraryMode().name()
         );
     }
 

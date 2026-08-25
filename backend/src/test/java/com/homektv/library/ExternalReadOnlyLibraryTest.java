@@ -8,6 +8,7 @@ import com.homektv.media.MediaProbe;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -25,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -44,24 +46,25 @@ class ExternalReadOnlyLibraryTest {
 
     private LibraryScanService scanService;
     private Path sourceDir;
+    private AppProperties props;
 
     @BeforeEach
     void setUp() throws Exception {
         sourceDir = Files.createDirectory(tempDir.resolve("nas-copy"));
-        AppProperties props = new AppProperties();
+        props = new AppProperties();
         props.setSourceLibraryPath(sourceDir.toString());
         props.setKtvLibraryPath(tempDir.resolve("managed").toString());
         props.setDataPath(tempDir.resolve("data").toString());
         props.setLibraryMode(LibraryMode.EXTERNAL_READ_ONLY);
 
-        when(songFileRepository.findByFilePath(anyString())).thenReturn(Optional.empty());
-        when(songRepository.findByFingerprint(anyString())).thenReturn(Optional.empty());
-        when(songRepository.save(any(Song.class))).thenAnswer(invocation -> {
+        lenient().when(songFileRepository.findByFilePath(anyString())).thenReturn(Optional.empty());
+        lenient().when(songRepository.findByFingerprint(anyString())).thenReturn(Optional.empty());
+        lenient().when(songRepository.save(any(Song.class))).thenAnswer(invocation -> {
             Song song = invocation.getArgument(0);
             song.setId(101L);
             return song;
         });
-        when(songFileRepository.save(any(SongFile.class))).thenAnswer(invocation -> {
+        lenient().when(songFileRepository.save(any(SongFile.class))).thenAnswer(invocation -> {
             SongFile songFile = invocation.getArgument(0);
             songFile.setId(202L);
             return songFile;
@@ -100,6 +103,39 @@ class ExternalReadOnlyLibraryTest {
         verify(songFileRepository).save(fileCaptor.capture());
         assertThat(fileCaptor.getValue().getFilePath()).isEqualTo(source.toString());
         assertThat(fileCaptor.getValue().getFileRole()).isEqualTo("EXTERNAL_READ_ONLY");
+    }
+
+    @Test
+    void externalScanIgnoresMediaSymlinkOutsideTheSourceRoot() throws Exception {
+        Path outsideDir = Files.createDirectory(tempDir.resolve("outside"));
+        Files.write(outsideDir.resolve("outside.mkv"), new byte[]{0x01, 0x02});
+        Path linkDir = sourceDir.resolve("linked-directory");
+        createDirectoryLinkOrSkip(linkDir, outsideDir);
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.scanned()).isZero();
+        org.mockito.Mockito.verifyNoInteractions(ffprobe, tagReader);
+    }
+
+    private static void createDirectoryLinkOrSkip(Path link, Path target) throws Exception {
+        try {
+            Files.createSymbolicLink(link, target);
+            return;
+        } catch (UnsupportedOperationException | SecurityException e) {
+        } catch (java.io.IOException e) {
+        }
+        if (!System.getProperty("os.name").toLowerCase().contains("win")) {
+            Assumptions.assumeTrue(false, "当前文件系统不支持目录链接");
+        }
+        String command = "mklink /J \"" + link + "\" \"" + target + "\"";
+        Process process = new ProcessBuilder("cmd.exe", "/c", command)
+                .redirectErrorStream(true)
+                .start();
+        process.getInputStream().readAllBytes();
+        int exitCode = process.waitFor();
+        Assumptions.assumeTrue(exitCode == 0 && Files.isDirectory(link),
+                "当前运行权限不允许创建目录 Junction");
     }
 
 }
