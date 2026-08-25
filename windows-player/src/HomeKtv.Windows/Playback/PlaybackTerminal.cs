@@ -45,6 +45,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
     }
 
     public bool IsConnected => socket.IsConnected;
+    public bool IsOutputRunning => output.IsMpvRunning;
     public QueueSnapshot? CurrentSnapshot => snapshot;
     public long CurrentPositionMs { get; private set; }
 
@@ -108,6 +109,11 @@ public sealed class PlaybackTerminal : IAsyncDisposable
 
     public Task SwapVocalTracksAsync(CancellationToken cancellationToken = default) =>
         SendControlAsync("swap_vocal_tracks", null, "vocal_changed", cancellationToken);
+
+    public Task SetDisplayAsync(int screenIndex, CancellationToken cancellationToken = default) =>
+        output.IsMpvRunning
+            ? output.SetDisplayAsync(screenIndex, cancellationToken)
+            : Task.CompletedTask;
 
     private async Task ApplySnapshotFromSocketAsync(
         string eventType,

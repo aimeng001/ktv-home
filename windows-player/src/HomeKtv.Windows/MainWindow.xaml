@@ -6,9 +6,12 @@
         Height="520"
         MinWidth="680"
         MinHeight="430"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="Manual"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
     <Grid Margin="24">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -24,10 +27,20 @@
             <Button Content="连接" Width="72" Click="Connect_Click" />
         </StackPanel>
 
-        <TextBlock x:Name="StatusText" Grid.Row="1" Margin="0,12,0,0"
+        <StackPanel Grid.Row="1" Margin="0,12,0,0" Orientation="Horizontal">
+            <TextBlock VerticalAlignment="Center" Margin="0,0,8,0" Text="电视输出" />
+            <ComboBox x:Name="DisplaySelectorCombo" Width="300" DisplayMemberPath="Label"
+                      ToolTip="选择用于全屏播放的显示器" SelectionChanged="DisplaySelector_SelectionChanged" />
+            <Button Content="刷新显示器" Width="92" Margin="8,0,0,0"
+                    Click="RefreshDisplays_Click" />
+            <TextBlock x:Name="DisplayStatusText" VerticalAlignment="Center" Margin="12,0,0,0"
+                       Foreground="DarkSlateGray" />
+        </StackPanel>
+
+        <TextBlock x:Name="StatusText" Grid.Row="2" Margin="0,12,0,0"
                    Foreground="DarkSlateGray" Text="未连接" />
 
-        <Border Grid.Row="2" Margin="0,20,0,12" Padding="18"
+        <Border Grid.Row="3" Margin="0,20,0,12" Padding="18"
                 BorderBrush="#D0D5DD" BorderThickness="1" CornerRadius="8">
             <StackPanel>
                 <TextBlock x:Name="CurrentTitleText" FontSize="26" FontWeight="SemiBold"
@@ -37,7 +50,7 @@
             </StackPanel>
         </Border>
 
-        <StackPanel Grid.Row="3">
+        <StackPanel Grid.Row="4">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                 <Button Content="播放" Width="74" Margin="4" Click="Play_Click" />
                 <Button Content="暂停" Width="74" Margin="4" Click="Pause_Click" />
@@ -74,7 +87,7 @@
             </StackPanel>
         </StackPanel>
 
-        <TextBlock Grid.Row="4" Margin="0,18,0,0" Foreground="Gray"
+        <TextBlock Grid.Row="5" Margin="0,18,0,0" Foreground="Gray"
                    Text="播放窗口由独立 mpv 进程输出；点歌和队列继续使用 H5。" />
     </Grid>
 </Window>

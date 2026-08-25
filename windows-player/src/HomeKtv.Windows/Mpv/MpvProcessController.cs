@@ -128,6 +128,22 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
             channelMode = requestedMode;
         }, cancellationToken);
 
+    public Task SetDisplayAsync(int requestedScreenIndex,
+        CancellationToken cancellationToken = default)
+    {
+        var screenIndex = Math.Max(0, requestedScreenIndex);
+        if (sessionFactory is IMpvDisplaySessionFactory displayFactory)
+        {
+            displayFactory.SetScreenIndex(screenIndex);
+        }
+
+        return ExecuteWithRecoveryAsync(async active =>
+        {
+            await active.ExecuteAsync(MpvCommands.SetFullscreenScreen(screenIndex), cancellationToken)
+                .ConfigureAwait(false);
+        }, cancellationToken);
+    }
+
     /** Ensures a replacement mpv session exists after an asynchronous process exit. */
     public async Task RecoverAsync(CancellationToken cancellationToken = default)
     {

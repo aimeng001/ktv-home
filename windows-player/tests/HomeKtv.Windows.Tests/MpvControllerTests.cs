@@ -25,6 +25,25 @@ public sealed class MpvControllerTests
     }
 
     [Fact]
+    public async Task Display_changes_move_fullscreen_output_without_reload_or_seek()
+    {
+        var session = new FakeMpvSession();
+        var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.Commands.Clear();
+
+        await controller.SetDisplayAsync(2);
+
+        Assert.DoesNotContain(session.Commands, command => command[0]?.ToString() == "loadfile");
+        Assert.DoesNotContain(session.Commands, command => command[0]?.ToString() == "seek");
+        var displayCommand = Assert.Single(session.Commands);
+        Assert.Equal("set_property", displayCommand[0]?.ToString());
+        Assert.Equal("fs-screen", displayCommand[1]?.ToString());
+        Assert.Equal(2, displayCommand[2]);
+    }
+
+    [Fact]
     public async Task Dual_track_uses_mpv_audio_track_id_not_relative_index_as_id()
     {
         var session = new FakeMpvSession

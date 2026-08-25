@@ -9,6 +9,18 @@ public sealed class PlayerSettings
     public string ClientToken { get; set; } = $"windows-{Guid.NewGuid():N}";
     public string MpvExecutablePath { get; set; } = "mpv.exe";
     public int DisplayIndex { get; set; }
+    public string DisplayId { get; set; } = "";
+    public WindowPlacementSettings Window { get; set; } = new();
+}
+
+public sealed class WindowPlacementSettings
+{
+    public string? DisplayId { get; set; }
+    public double? Left { get; set; }
+    public double? Top { get; set; }
+    public double Width { get; set; } = 820;
+    public double Height { get; set; } = 520;
+    public bool IsMaximized { get; set; }
 }
 
 public sealed class PlayerSettingsStore
@@ -35,6 +47,9 @@ public sealed class PlayerSettingsStore
                     {
                         settings.ClientToken = $"windows-{Guid.NewGuid():N}";
                     }
+
+                    settings.DisplayId ??= "";
+                    settings.Window ??= new WindowPlacementSettings();
                     return settings;
                 }
             }

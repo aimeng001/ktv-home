@@ -7,15 +7,25 @@ namespace HomeKtv.Windows.Mpv;
 public sealed record MpvLaunchOptions(
     string ExecutablePath = "mpv.exe",
     int ScreenIndex = 0,
-    bool Fullscreen = true);
+    bool Fullscreen = true,
+    bool Borderless = true);
 
-public sealed class MpvProcessSessionFactory : IMpvSessionFactory
+public sealed class MpvProcessSessionFactory : IMpvDisplaySessionFactory
 {
-    private readonly MpvLaunchOptions options;
+    private readonly object optionsLock = new();
+    private MpvLaunchOptions options;
 
     public MpvProcessSessionFactory(MpvLaunchOptions? options = null)
     {
         this.options = options ?? new MpvLaunchOptions();
+    }
+
+    public void SetScreenIndex(int screenIndex)
+    {
+        lock (optionsLock)
+        {
+            options = options with { ScreenIndex = Math.Max(0, screenIndex) };
+        }
     }
 
     public async Task<IMpvSession> StartAsync(CancellationToken cancellationToken = default)
@@ -55,9 +65,15 @@ public sealed class MpvProcessSessionFactory : IMpvSessionFactory
 
     private ProcessStartInfo CreateStartInfo(string pipeName)
     {
+        MpvLaunchOptions currentOptions;
+        lock (optionsLock)
+        {
+            currentOptions = options;
+        }
+
         var startInfo = new ProcessStartInfo
         {
-            FileName = options.ExecutablePath,
+            FileName = currentOptions.ExecutablePath,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
@@ -67,8 +83,12 @@ public sealed class MpvProcessSessionFactory : IMpvSessionFactory
         startInfo.ArgumentList.Add("--idle=yes");
         startInfo.ArgumentList.Add("--force-window=immediate");
         startInfo.ArgumentList.Add("--input-ipc-server=\\\\.\\pipe\\" + pipeName);
-        startInfo.ArgumentList.Add($"--fs-screen={Math.Max(0, options.ScreenIndex)}");
-        startInfo.ArgumentList.Add($"--fullscreen={(options.Fullscreen ? "yes" : "no")}");
+        startInfo.ArgumentList.Add($"--fs-screen={Math.Max(0, currentOptions.ScreenIndex)}");
+        startInfo.ArgumentList.Add($"--fullscreen={(currentOptions.Fullscreen ? "yes" : "no")}");
+        if (currentOptions.Borderless)
+        {
+            startInfo.ArgumentList.Add("--border=no");
+        }
         startInfo.ArgumentList.Add("--osd-level=0");
         return startInfo;
     }

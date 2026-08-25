@@ -24,6 +24,11 @@ public interface IMpvSessionFactory
     Task<IMpvSession> StartAsync(CancellationToken cancellationToken = default);
 }
 
+public interface IMpvDisplaySessionFactory : IMpvSessionFactory
+{
+    void SetScreenIndex(int screenIndex);
+}
+
 public class MpvConnectionException : IOException
 {
     public MpvConnectionException(string message, Exception? innerException = null)
@@ -98,6 +103,9 @@ public static class MpvCommands
         ["set_property", "volume", Math.Clamp(volume, 0, 100)];
 
     public static object?[] SetMuted(bool muted) => ["set_property", "mute", muted];
+
+    public static object?[] SetFullscreenScreen(int screenIndex) =>
+        ["set_property", "fs-screen", Math.Max(0, screenIndex)];
 
     public static object?[] GetTrackList() => ["get_property", "track-list"];
 
