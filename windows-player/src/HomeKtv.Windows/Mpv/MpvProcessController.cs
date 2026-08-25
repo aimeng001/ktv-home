@@ -25,6 +25,7 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
     }
 
     public bool IsMpvRunning => session?.IsAlive == true;
+    public long? CurrentFileId => loadedFileId;
 
     public event Action? PlaybackFinished;
     public event Action<Exception>? SessionFaulted;
