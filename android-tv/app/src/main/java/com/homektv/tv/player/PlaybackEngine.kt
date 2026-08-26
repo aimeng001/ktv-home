@@ -43,8 +43,8 @@ import java.util.concurrent.TimeUnit
 @OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlaybackEngine(
     context: Context,
-    private val onProgress: (positionMs: Long) -> Unit,
-    private val onFinished: () -> Unit,
+    private val onProgress: (positionMs: Long, queueId: Long?) -> Unit,
+    private val onFinished: (queueId: Long?) -> Unit,
     private val onError: (message: String, context: PlaybackErrorContext) -> Unit,
 ) {
     private val appContext = context.applicationContext
@@ -84,6 +84,8 @@ class PlaybackEngine(
     private var currentQueueId: Long? = null
     /** 只有同一队列中的同一文件才允许复用已加载的媒体。 */
     private var currentRequest: PlaybackRequestIdentity? = null
+    /** Callback identity is committed only after the requested media reaches READY. */
+    private val identityGate = PlaybackIdentityGate()
     private var requestedVocalMode: String = "original"
     private var requestedAccompanimentIndex: Int? = null
     private var requestedAudioTrackCount: Int = 1
@@ -199,6 +201,13 @@ class PlaybackEngine(
         currentRequest = requested
         currentQueueId = queueId
         currentFileId = fileId
+        identityGate.begin(
+            PlaybackIdentity(
+                queueId = queueId,
+                fileId = fileId,
+                mediaId = fileId.toString(),
+            ),
+        )
         awaitingTracks = true
         appliedSelectionFileId = null
         appliedSelectionMode = null
@@ -207,10 +216,15 @@ class PlaybackEngine(
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .build()
-        player.setMediaItem(MediaItem.fromUri(streamUrl))
+        stopProgressTicker()
+        player.setMediaItem(
+            MediaItem.Builder()
+                .setMediaId(fileId.toString())
+                .setUri(streamUrl)
+                .build(),
+        )
         player.prepare()
         player.playWhenReady = true
-        startProgressTicker()
     }
 
     fun pause() {
@@ -240,6 +254,7 @@ class PlaybackEngine(
         currentRequest = null
         currentQueueId = null
         currentFileId = null
+        identityGate.invalidate()
         playRequestAt = 0L
         awaitingTracks = false
         appliedSelectionFileId = null
@@ -362,6 +377,7 @@ class PlaybackEngine(
 
     fun release() {
         stopProgressTicker()
+        identityGate.invalidate()
         appContext.contentResolver.unregisterContentObserver(systemVolumeObserver)
         player.release()
     }
@@ -371,7 +387,9 @@ class PlaybackEngine(
     private val progressTicker = object : Runnable {
         override fun run() {
             if (player.isPlaying) {
-                onProgress(player.currentPosition)
+                identityGate.callbackIdentity()?.let { active ->
+                    onProgress(player.currentPosition, active.queueId)
+                }
                 checkVideoStall()
             }
             main.postDelayed(this, PROGRESS_INTERVAL_MS)
@@ -417,9 +435,19 @@ class PlaybackEngine(
                 Player.STATE_ENDED -> {
                     Log.d(TAG, "playback ended fileId=$currentFileId")
                     stopProgressTicker()
-                    onFinished()
+                    identityGate.consumeFinishedIdentity()?.let { finished ->
+                        onFinished(finished.queueId)
+                    }
                 }
-                Player.STATE_READY -> startProgressTicker()
+                Player.STATE_READY -> {
+                    val mediaId = player.currentMediaItem?.mediaId
+                    if (mediaId != null) {
+                        identityGate.markReady(mediaId)
+                    }
+                    if (identityGate.activeIdentity() != null) {
+                        startProgressTicker()
+                    }
+                }
                 else -> {}
             }
         }
@@ -449,6 +477,7 @@ class PlaybackEngine(
             }
             transientRetryCount = 0
             stopProgressTicker()
+            identityGate.invalidate()
             onError(error.errorCodeName, PlaybackErrorContext.forPlayback(currentQueueId, currentFileId))
         }
 

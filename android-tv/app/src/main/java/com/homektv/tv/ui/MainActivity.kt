@@ -46,6 +46,9 @@ import com.homektv.tv.player.EffectPlayer
 import com.homektv.tv.player.LrcParser
 import com.homektv.tv.player.LyricLine
 import com.homektv.tv.player.MicrophoneMonitor
+import com.homektv.tv.player.PlaybackLoadGate
+import com.homektv.tv.player.PlaybackLoadTicket
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -95,9 +98,13 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         else onToast("未允许安装此来源的应用")
     }
 
-    /** 当前正在播放的 queueId，用于判断快照是否切了歌。 */
+    /** 当前请求中的 queueId，用于判断快照是否切了歌；播放器回调使用其已加载身份。 */
     private var currentQueueId: Long? = null
+    /** 只有 eng.play 已提交后才设置，避免加载中的新快照操作旧媒体。 */
+    private var loadedQueueId: Long? = null
     private var currentFileId: Long? = null
+    private val playbackLoadGate = PlaybackLoadGate()
+    private var playbackLoadJob: Job? = null
     private var accompanimentTrackIndex: Int? = null
     private var audioTrackCount: Int = 1
     private var lyricLines: List<LyricLine> = emptyList()
@@ -180,15 +187,15 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.standbyPanel.post(standbySettingsTicker)
         engine = PlaybackEngine(
             context = this,
-            onProgress = { pos ->
+            onProgress = { pos, queueId ->
                 // UI 以高频本地时钟平滑刷新，服务端进度仍保持 1s 上报频率。
                 if (lastProgressReportMs == Long.MIN_VALUE || pos - lastProgressReportMs >= 1_000L) {
                     lastProgressReportMs = pos
-                    socket?.sendProgress(pos, currentQueueId)
+                    socket?.sendProgress(pos, queueId)
                 }
                 runOnUiThread { updateProgress(pos) }
             },
-            onFinished = { socket?.sendFinished(currentQueueId) },
+            onFinished = { queueId -> socket?.sendFinished(queueId) },
             onError = { _, context -> onPlayError(context) },
         ).also {
             it.attach(binding.playerView)
@@ -241,6 +248,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     override fun onDestroy() {
         standbyMotionAnimators.forEach(ObjectAnimator::cancel)
         standbyMotionAnimators.clear()
+        invalidatePlaybackLoad()
         socket?.close()
         clock.removeCallbacks(clockTick)
         clock.removeCallbacks(progressHide)
@@ -683,7 +691,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
         // idle 或无当前曲目：停止、回待机页
         if (snapshot.state == "idle" || playing == null || songId == null) {
+            invalidatePlaybackLoad()
             currentQueueId = null
+            loadedQueueId = null
             currentFileId = null
             currentAudioLayout = AudioLayout.normalStereo()
             engine?.stop()
@@ -700,7 +710,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         val muted = snapshot.muted
 
         // 同一首：只处理播放/暂停 + 音量，不重新装载
-        if (playing.queueId == currentQueueId) {
+        if (playing.queueId == currentQueueId && playbackLoadJob?.isActive == true) {
+            return
+        }
+        if (playing.queueId == currentQueueId && loadedQueueId == playing.queueId) {
             eng.applyVolume(volume, muted)
             eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
             if (snapshot.state == "paused") eng.pause() else eng.resume()
@@ -709,8 +722,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
         // 换歌：拉详情取文件源 → 播放
         currentQueueId = playing.queueId
+        loadedQueueId = null
         currentFileId = null
         val targetQueueId = playing.queueId
+        val loadTicket = beginPlaybackLoad(targetQueueId)
         val audioMode = playing.song?.mediaType.equals("AUDIO", ignoreCase = true)
         lyricLines = emptyList()
         lastLyricIndex = -1
@@ -732,9 +747,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             binding.txtAudioLyricCurrent.setLine(null, 0L)
             binding.txtAudioLyricNext.text = song?.title.orEmpty()
         }
-        lifecycleScope.launch {
+        playbackLoadJob = lifecycleScope.launch {
             val file = mediaApi.bestFileSource(songId)
-            if (currentQueueId != targetQueueId) return@launch
+            if (!isCurrentPlaybackLoad(loadTicket)) return@launch
             if (file == null) {
                 onPlayError(PlaybackErrorContext.missingSource(targetQueueId))
                 return@launch
@@ -744,18 +759,38 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             currentAudioLayout = file.audioLayout
             currentFileId = file.id
             lyricLines = mediaApi.fetchLyric(songId)?.let(LrcParser::parse).orEmpty()
-            if (currentQueueId != targetQueueId) return@launch
+            if (!isCurrentPlaybackLoad(loadTicket)) return@launch
             if (audioMode) {
-                mediaApi.fetchCover(songId)?.let { bytes ->
+                val coverBytes = mediaApi.fetchCover(songId)
+                if (!isCurrentPlaybackLoad(loadTicket)) return@launch
+                coverBytes?.let { bytes ->
                     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { binding.imgAudioCover.setImageBitmap(it) }
                 }
                 if (lyricLines.isNotEmpty()) binding.txtAudioLyricNext.text = lyricLines.first().text
             }
+            if (!isCurrentPlaybackLoad(loadTicket)) return@launch
             eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
             eng.applyVolume(volume, muted)
+            if (!isCurrentPlaybackLoad(loadTicket)) return@launch
             eng.play(file.id, mediaApi.streamUrl(file.id), targetQueueId)
+            loadedQueueId = targetQueueId
             if (snapshot.state == "paused") eng.pause()
         }
+    }
+
+    private fun beginPlaybackLoad(queueId: Long?): PlaybackLoadTicket {
+        playbackLoadJob?.cancel()
+        playbackLoadJob = null
+        return playbackLoadGate.begin(queueId)
+    }
+
+    private fun isCurrentPlaybackLoad(ticket: PlaybackLoadTicket): Boolean =
+        playbackLoadGate.isCurrent(ticket)
+
+    private fun invalidatePlaybackLoad() {
+        playbackLoadJob?.cancel()
+        playbackLoadJob = null
+        playbackLoadGate.invalidate()
     }
 
     private fun refreshVocalTrackMapping(snapshot: QueueSnapshot) {
@@ -764,7 +799,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         val targetQueueId = playing.queueId
         lifecycleScope.launch {
             val file = mediaApi.bestFileSource(songId) ?: return@launch
-            if (currentQueueId != targetQueueId || currentFileId != file.id) return@launch
+            if (loadedQueueId != targetQueueId || currentFileId != file.id) return@launch
             accompanimentTrackIndex = file.audioLayout.accompanimentTrackIndex ?: file.vocalTrackIndex
             audioTrackCount = file.audioTracks
             currentAudioLayout = file.audioLayout
