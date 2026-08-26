@@ -47,9 +47,6 @@ services:
       KTV_DATA_PATH: /data
       KTV_ADMIN_PASSWORD: ${KTV_ADMIN_PASSWORD:-}
       KTV_DISCOVERY_ENABLED: ${KTV_DISCOVERY_ENABLED:-true}
-      # The TV client scans this UDP port to discover the server.
-      # 电视端通过扫描此 UDP 端口发现服务端。
-      KTV_DISCOVERY_UDP_PORT: ${KTV_DISCOVERY_UDP_PORT:-18888}
       KTV_DISCOVERY_NAME: ${KTV_DISCOVERY_NAME:-家庭KTV}
       KTV_AI_ENABLED: ${KTV_AI_ENABLED:-false}
       KTV_AI_BASE_URL: ${KTV_AI_BASE_URL:-https://api.deepseek.com}
@@ -63,10 +60,8 @@ services:
       # TCP HTTP API/UI port for browsers, phones, and TV clients.
       # 面向浏览器、手机和电视端的 TCP HTTP API/UI 端口。
       - "${KTV_HTTP_PORT:-8080}:${KTV_HTTP_PORT:-8080}/tcp"
-      # TV discovery port: the TV client scans this exact UDP port. Do not change
-      # it unless the TV client scan configuration is changed at the same time.
-      # 电视端发现端口：电视端只扫描此 UDP 端口。除非同时修改电视端扫描配置，否则不要更改。
-      - "${KTV_DISCOVERY_UDP_PORT:-18888}:${KTV_DISCOVERY_UDP_PORT:-18888}/udp"
+      # TV discovery protocol port / 电视端发现协议端口
+      - "18888:18888/udp"
     volumes:
       - type: bind
         source: ${KTV_SOURCE_MUSIC_DIR:-./source-music}

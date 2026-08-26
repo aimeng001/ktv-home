@@ -51,7 +51,6 @@ class MergeGateContractTests(unittest.TestCase):
                 "KTV_DATA_DIR",
                 "KTV_PG_DIR",
                 "KTV_HTTP_PORT",
-                "KTV_DISCOVERY_UDP_PORT",
             }:
                 environment.pop(key, None)
             return subprocess.run(
@@ -122,6 +121,72 @@ class MergeGateContractTests(unittest.TestCase):
         self.assertIn("without moving", lowered)
         self.assertIn("without renaming", lowered)
         self.assertIn("without deleting", lowered)
+
+    def test_discovery_udp_port_is_fixed_across_server_clients_and_deployments(self) -> None:
+        for filename in (
+            ".env.example",
+            "docker-compose.yml",
+            "docker-compose.nas.yml",
+            "docker-compose.prebuilt.yml",
+            "README.md",
+            "README_EN.md",
+        ):
+            text = (REPOSITORY / filename).read_text(encoding="utf-8")
+            self.assertNotIn("KTV_DISCOVERY_UDP_PORT", text, filename)
+
+        application = (
+            REPOSITORY / "backend" / "src" / "main" / "resources" / "application.yml"
+        ).read_text(encoding="utf-8")
+        self.assertRegex(application, r"(?m)^\s+udp-port:\s*18888\s*$")
+
+        for filename in (
+            "docker-compose.yml",
+            "docker-compose.nas.yml",
+            "docker-compose.prebuilt.yml",
+        ):
+            compose = (REPOSITORY / filename).read_text(encoding="utf-8")
+            self.assertRegex(compose, r'(?m)^\s*-\s*"18888:18888/udp"\s*$')
+
+        android = (
+            REPOSITORY
+            / "android-tv"
+            / "app"
+            / "src"
+            / "main"
+            / "java"
+            / "com"
+            / "homektv"
+            / "tv"
+            / "net"
+            / "DiscoveryProtocol.kt"
+        ).read_text(encoding="utf-8")
+        self.assertRegex(android, r"const val UDP_PORT\s*=\s*18_888")
+
+        windows = (
+            REPOSITORY
+            / "windows-player"
+            / "src"
+            / "HomeKtv.Windows"
+            / "ServerConnection"
+            / "DiscoveryProtocol.cs"
+        ).read_text(encoding="utf-8")
+        self.assertRegex(windows, r"const int UdpPort\s*=\s*18_888")
+
+    def test_readmes_match_current_release_notice(self) -> None:
+        chinese = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn("默认公告除了提示下载 TV APK，还会提醒", chinese)
+        self.assertIn("默认公告会提示 Android TV APK 更新", chinese)
+        self.assertIn("升级后请重新扫描曲库", chinese)
+        self.assertIn("EXTERNAL_READ_ONLY", chinese)
+        self.assertIn("Managed", chinese)
+
+        english = (REPOSITORY / "README_EN.md").read_text(encoding="utf-8")
+        self.assertNotIn("The default notice for `MANAGED` mode asks", english)
+        self.assertIn("The default release notice announces the Android TV APK update", english)
+        self.assertIn("rescan the library after upgrading", english)
+        self.assertIn("`EXTERNAL_READ_ONLY` libraries must keep the source files unchanged.", english)
+        self.assertIn("`MANAGED`", english)
+        self.assertIn("maintenance instructions shown in the", english)
 
     def test_local_development_documents_are_not_in_release_tree(self) -> None:
         leaked = sorted(LOCAL_ONLY_DOCUMENTS & head_paths())
@@ -209,7 +274,6 @@ class MergeGateContractTests(unittest.TestCase):
                 "KTV_DATA_DIR": "./sentinel-data",
                 "KTV_PG_DIR": "./sentinel-postgres",
                 "KTV_HTTP_PORT": "18080",
-                "KTV_DISCOVERY_UDP_PORT": "19888",
             }
         )
         self.assertEqual(0, result.returncode, result.stderr)
@@ -231,7 +295,16 @@ class MergeGateContractTests(unittest.TestCase):
             services["ktv"]["environment"]["KTV_LIBRARY_MODE"],
         )
         self.assertEqual("18080", services["ktv"]["environment"]["SERVER_PORT"])
-        self.assertEqual("19888", services["ktv"]["environment"]["KTV_DISCOVERY_UDP_PORT"])
+        self.assertNotIn("KTV_DISCOVERY_UDP_PORT", services["ktv"]["environment"])
+        self.assertTrue(
+            any(
+                isinstance(port, dict)
+                and str(port.get("published")) == "18888"
+                and port.get("target") == 18888
+                and port.get("protocol") == "udp"
+                for port in services["ktv"]["ports"]
+            )
+        )
 
         mounts = {mount["target"]: mount for mount in services["ktv"]["volumes"]}
         self.assertTrue(mounts["/source-music"]["read_only"])

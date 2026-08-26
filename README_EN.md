@@ -132,10 +132,8 @@ curl http://127.0.0.1:${KTV_HTTP_PORT:-8080}/api/health
 | TCP | `8080` | Mobile UI, administration UI, API, WebSocket, and media streaming |
 | UDP | `18888` | Android TV LAN discovery |
 
-Allow both ports through the NAS or host firewall. The TV app scans the exact
-UDP discovery port configured by `KTV_DISCOVERY_UDP_PORT`; when changing it,
-update the TV scan configuration at the same time. Use the values in `.env` if
-you override the defaults.
+Allow both ports through the NAS or host firewall. The UDP discovery protocol
+always uses port `18888`; only the HTTP service port can be customized in `.env`.
 
 ### 3. Add songs and connect the TV (Managed mode)
 
@@ -165,9 +163,12 @@ the current browser until the ID or version changes. The administration UI only
 opens the notice when announcements are enabled and the image contains at least
 one APK, so source-built development images do not present dead download links.
 
-The default notice for `MANAGED` mode asks the administrator to run **Auto
-cleanup** in **Source Library**, then return to the dashboard and scan the
-source path again. Do not run source cleanup when using `EXTERNAL_READ_ONLY`.
+The default release notice announces the Android TV APK update and asks users to
+rescan the library after upgrading.
+
+`EXTERNAL_READ_ONLY` libraries must keep the source files unchanged. `MANAGED`
+deployments should follow the maintenance instructions shown in the
+administration UI.
 The notice ships in the image's `application.yml`; it does not depend on users
 updating `docker-compose.yml` or `.env`. Pulling the new image is sufficient to
 receive its version and announcement.

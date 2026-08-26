@@ -183,7 +183,7 @@ curl http://127.0.0.1:${KTV_HTTP_PORT:-8080}/api/health
 - TCP `8080`：H5、管理后台、API、WebSocket 和媒体流
 - UDP `18888`：Android TV 局域网自动发现
 
-NAS 防火墙需要允许这两个端口；使用自定义端口时以 `.env` 为准。
+NAS 防火墙需要允许这两个端口。UDP 发现协议固定使用 `18888`；只有 HTTP 服务端口可以在 `.env` 中自定义。
 
 ### 3. 导入歌曲（仅 MANAGED 模式）
 
@@ -213,8 +213,8 @@ Release APK。发布流水线使用发布标签生成 `versionName`，使用 Git
 “标记已读”会在当前浏览器保存该公告 ID，直到公告 ID 或版本号变化。公告仅在启用且镜像内
 至少存在一份 APK 时弹出；源码开发镜像未放入 APK 时不会显示无效的下载公告。
 
-默认公告除了提示下载 TV APK，还会提醒使用 `MANAGED` 模式的管理员：升级后进入“原始音乐管理”执行“自动清理”，
-再回到仪表盘重新扫描原始音乐路径。使用 `EXTERNAL_READ_ONLY` 的 NAS 曲库不要执行源文件清理。
+默认公告会提示 Android TV APK 更新；升级后请重新扫描曲库。
+使用 `EXTERNAL_READ_ONLY` 时保持 NAS 源文件不变；使用 `MANAGED` 时按管理页面提示执行相应维护操作。
 公告配置随镜像内的 `application.yml` 发布，不依赖用户更新 `docker-compose.yml` 或 `.env`；拉取新镜像即可获得新版本号和公告内容。
 
 TV 每次连接服务端成功后会检查 `versionCode`。版本不一致时根据设备 ABI 选择安装包，用户点击
@@ -333,7 +333,6 @@ source-music/
 | `KTV_DATA_DIR` | `./data` | 宿主机应用数据目录 |
 | `KTV_PG_DIR` | `./postgres` | 宿主机 PostgreSQL 数据目录 |
 | `KTV_HTTP_PORT` | `8080` | Web、API、WebSocket 和媒体流端口 |
-| `KTV_DISCOVERY_UDP_PORT` | `18888` | TV 自动发现 UDP 端口 |
 | `KTV_DISCOVERY_NAME` | `家庭KTV` | TV 发现列表中的名称 |
 | `KTV_DB_NAME` | `ktv` | PostgreSQL 数据库名 |
 | `KTV_DB_USER` | `ktv` | PostgreSQL 用户名 |

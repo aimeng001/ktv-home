@@ -36,7 +36,7 @@ app:
   discovery:
     enabled: ${KTV_DISCOVERY_ENABLED:true}
     instance-name: ${KTV_DISCOVERY_NAME:家庭KTV}
-    udp-port: ${KTV_DISCOVERY_UDP_PORT:18888}
+    udp-port: 18888
   release:
     version: ${KTV_RELEASE_VERSION:0.1.0-dev}
     version-code: ${KTV_RELEASE_VERSION_CODE:1}
