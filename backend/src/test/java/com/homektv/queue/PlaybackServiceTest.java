@@ -94,6 +94,25 @@ class PlaybackServiceTest {
         verify(fileRepository, never()).findById(anyLong());
     }
 
+    @Test
+    void stalePositionIsRejectedWithoutSaving() {
+        PositionUpdateResult result = playbackService.updatePosition(999L, 12_345L);
+
+        assertThat(result.accepted()).isFalse();
+        assertThat(result.state()).isSameAs(playerState);
+        assertThat(playerState.getPositionMs()).isZero();
+        verify(playerRepository, never()).save(any(PlayerState.class));
+    }
+
+    @Test
+    void currentPositionIsAcceptedAndSaved() {
+        PositionUpdateResult result = playbackService.updatePosition(100L, 12_345L);
+
+        assertThat(result.accepted()).isTrue();
+        assertThat(result.state().getPositionMs()).isEqualTo(12_345L);
+        verify(playerRepository).save(playerState);
+    }
+
     private static SongFile file(long id, long songId) {
         SongFile file = new SongFile();
         file.setId(id);

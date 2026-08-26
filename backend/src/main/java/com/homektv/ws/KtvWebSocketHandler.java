@@ -3,6 +3,7 @@ package com.homektv.ws;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.queue.PlaybackService;
+import com.homektv.queue.PositionUpdateResult;
 import com.homektv.queue.SnapshotService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -84,9 +85,12 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 long positionMs = node.path("payload").path("position_ms").asLong(0);
                 Long queueId = node.path("payload").path("queue_id").isNumber()
                         ? node.path("payload").path("queue_id").asLong() : null;
-                playbackService.updatePosition(queueId, positionMs);
+                PositionUpdateResult result = playbackService.updatePosition(queueId, positionMs);
+                if (!result.accepted()) {
+                    return;
+                }
                 java.util.Map<String, Object> progress = new java.util.LinkedHashMap<>();
-                progress.put("position_ms", Math.max(0, positionMs));
+                progress.put("position_ms", result.state().getPositionMs());
                 if (queueId != null) progress.put("queue_id", queueId);
                 broadcaster.broadcast(WsEvent.of(WsEvent.PROGRESS, progress));
             }

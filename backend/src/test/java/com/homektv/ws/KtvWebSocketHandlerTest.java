@@ -2,6 +2,7 @@ package com.homektv.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.queue.PlaybackService;
+import com.homektv.queue.PositionUpdateResult;
 import com.homektv.queue.SnapshotService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,6 +53,9 @@ class KtvWebSocketHandlerTest {
 
     @Test
     void progressMessageUsesQueueIdentityAndClampsOnlyTheBroadcastPayload() throws Exception {
+        when(playbackService.updatePosition(21L, -4L))
+                .thenReturn(PositionUpdateResult.accepted(new com.homektv.domain.PlayerState()));
+
         handler.handleTextMessage(mock(WebSocketSession.class), new TextMessage(
                 "{\"type\":\"progress\",\"payload\":{\"queue_id\":21,\"position_ms\":-4}}"));
 
@@ -63,6 +67,17 @@ class KtvWebSocketHandlerTest {
         Map<?, ?> payload = (Map<?, ?>) event.getValue().payload();
         assertThat(payload.get("position_ms")).isEqualTo(0L);
         assertThat(payload.get("queue_id")).isEqualTo(21L);
+    }
+
+    @Test
+    void staleProgressIsNotBroadcastAfterServiceRejectsIt() throws Exception {
+        when(playbackService.updatePosition(21L, 500L))
+                .thenReturn(PositionUpdateResult.rejected(new com.homektv.domain.PlayerState()));
+
+        handler.handleTextMessage(mock(WebSocketSession.class), new TextMessage(
+                "{\"type\":\"progress\",\"payload\":{\"queue_id\":21,\"position_ms\":500}}"));
+
+        verify(broadcaster, org.mockito.Mockito.never()).broadcast(any(WsEvent.class));
     }
 
     @Test

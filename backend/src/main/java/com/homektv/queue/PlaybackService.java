@@ -103,18 +103,20 @@ public class PlaybackService {
      * the current song. Older Android clients may omit it.
      */
     @Transactional
-    public PlayerState updatePosition(Long expectedQueueId, long positionMs) {
+    public PositionUpdateResult updatePosition(Long expectedQueueId, long positionMs) {
         PlayerState ps = playerRepo.getSingleton();
         if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
-            return ps;
+            return PositionUpdateResult.rejected(ps);
         }
-        if (ps.getCurrentQueueId() == null || "idle".equals(ps.getState())) return ps;
+        if (ps.getCurrentQueueId() == null || "idle".equals(ps.getState())) {
+            return PositionUpdateResult.rejected(ps);
+        }
         long normalized = Math.max(0, positionMs);
         if (ps.getPositionMs() != normalized) {
             ps.setPositionMs(normalized);
-            return playerRepo.save(ps);
+            return PositionUpdateResult.accepted(playerRepo.save(ps));
         }
-        return ps;
+        return PositionUpdateResult.accepted(ps);
     }
 
     /** 切歌：当前行标记 skipped，推进到下一首（详设§9.2）。 */
