@@ -1,6 +1,7 @@
 package com.homektv.musicsource;
 
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -19,15 +20,27 @@ import java.util.concurrent.TimeUnit;
 
 @Component
 class CoverImageNormalizer {
+
+    @FunctionalInterface
+    interface ProcessLauncher {
+        Process start(List<String> command) throws IOException;
+    }
     private static final int MAX_DIMENSION = 8_192;
     private static final long MAX_PIXELS = 4_096L * 4_096L;
     private static final int MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
     private static final long CONVERT_TIMEOUT_SECONDS = 20;
 
     private final String ffmpegPath;
+    private final ProcessLauncher processLauncher;
 
+    @Autowired
     CoverImageNormalizer(@Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath) {
+        this(ffmpegPath, CoverImageNormalizer::startProcess);
+    }
+
+    CoverImageNormalizer(String ffmpegPath, ProcessLauncher processLauncher) {
         this.ffmpegPath = ffmpegPath;
+        this.processLauncher = processLauncher;
     }
 
     byte[] normalize(byte[] source) {
@@ -44,14 +57,11 @@ class CoverImageNormalizer {
             input = Files.createTempFile("home-ktv-cover-", ".image");
             output = Files.createTempFile("home-ktv-cover-", ".jpg");
             Files.write(input, source);
-            process = new ProcessBuilder(List.of(
+            process = processLauncher.start(List.of(
                     ffmpegPath, "-hide_banner", "-loglevel", "error", "-y",
                     "-i", input.toString(), "-frames:v", "1",
                     "-vf", "scale=4096:4096:force_original_aspect_ratio=decrease",
-                    "-q:v", "2", output.toString()))
-                    .redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                    .start();
+                    "-q:v", "2", output.toString()));
             if (!process.waitFor(CONVERT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 throw invalid("封面格式转换超时");
@@ -77,6 +87,13 @@ class CoverImageNormalizer {
             deleteQuietly(input);
             deleteQuietly(output);
         }
+    }
+
+    private static Process startProcess(List<String> command) throws IOException {
+        return new ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .start();
     }
 
     private static BufferedImage decode(byte[] bytes) {

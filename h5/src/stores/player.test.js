@@ -10,7 +10,11 @@ describe('usePlayerStore', () => {
     list: [
       { queueId: 2, song: { id: 11, title: '七里香' }, orderedByNick: '小红', status: 'waiting' }
     ],
-    state: 'playing', volume: 70, muted: false, vocalMode: 'accompaniment'
+    state: 'playing', volume: 70, muted: false, vocalMode: 'accompaniment',
+    audioLayout: {
+      layout: 'DUAL_CHANNEL', originalTrackIndex: null, accompanimentTrackIndex: null,
+      originalChannel: 'LEFT', accompanimentChannel: 'RIGHT'
+    }
   }
 
   it('sync_full 应用快照', () => {
@@ -21,6 +25,7 @@ describe('usePlayerStore', () => {
     expect(p.nowPlaying.song.title).toBe('晴天')
     expect(p.queue).toHaveLength(1)
     expect(p.queueCount).toBe(1)
+    expect(p.audioLayout.layout).toBe('DUAL_CHANNEL')
   })
 
   it('queue_updated 刷新队列', () => {
@@ -34,6 +39,12 @@ describe('usePlayerStore', () => {
     const p = usePlayerStore()
     p.handleEvent('progress', { position_ms: 42000 })
     expect(p.positionMs).toBe(42000)
+  })
+
+  it('playback_seeked 使用服务端快照位置', () => {
+    const p = usePlayerStore()
+    p.handleEvent('playback_seeked', { ...snapshot, positionMs: 12345 })
+    expect(p.positionMs).toBe(12345)
   })
 
   it('effect_play 记录音效', () => {

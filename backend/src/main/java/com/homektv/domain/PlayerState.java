@@ -41,6 +41,14 @@ public class PlayerState {
     @Column(name = "vocal_mode", nullable = false)
     private String vocalMode = "accompaniment";
 
+    /** Last server-known position in milliseconds; used for reconnect/resume. */
+    @Column(name = "position_ms", nullable = false)
+    private long positionMs = 0;
+
+    /** Monotonic sequence for explicit seek/replay commands. */
+    @Column(name = "seek_sequence", nullable = false)
+    private long seekSequence = 0;
+
     @Generated(event = EventType.INSERT)
     @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime updatedAt;
@@ -59,5 +67,9 @@ public class PlayerState {
     public void setMuted(boolean muted) { this.muted = muted; }
     public String getVocalMode() { return vocalMode; }
     public void setVocalMode(String vocalMode) { this.vocalMode = vocalMode; }
+    public long getPositionMs() { return positionMs; }
+    public void setPositionMs(long positionMs) { this.positionMs = Math.max(0, positionMs); }
+    public long getSeekSequence() { return seekSequence; }
+    public void setSeekSequence(long seekSequence) { this.seekSequence = Math.max(0, seekSequence); }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

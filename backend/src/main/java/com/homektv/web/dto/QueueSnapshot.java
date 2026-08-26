@@ -14,9 +14,31 @@ public record QueueSnapshot(
         int volume,
         boolean muted,
         String vocalMode,  // original/accompaniment
+        AudioLayoutDto audioLayout,
         boolean tvOnline,  // TV 是否在线（P2.13：H5 据此显示「电视未连接」横幅） / Whether TV is online (P2.13: H5 shows "TV not connected" banner based on this)
-        long connectedPhones
+        long connectedPhones,
+        long positionMs,
+        long seekSequence
 ) {
+    /** Source-compatible constructor retaining the original snapshot shape. */
+    public QueueSnapshot(NowPlaying playing, List<QueueEntry> list, String state, int volume,
+                         boolean muted, String vocalMode, boolean tvOnline, long connectedPhones) {
+        this(playing, list, state, volume, muted, vocalMode, AudioLayoutDto.normalStereo(),
+                tvOnline, connectedPhones, 0, 0);
+    }
+
+    /** Source-compatible constructor retaining the AudioLayout shape. */
+    public QueueSnapshot(NowPlaying playing, List<QueueEntry> list, String state, int volume,
+                         boolean muted, String vocalMode, AudioLayoutDto audioLayout,
+                         boolean tvOnline, long connectedPhones) {
+        this(playing, list, state, volume, muted, vocalMode, audioLayout,
+                tvOnline, connectedPhones, 0, 0);
+    }
+
+    public QueueSnapshot {
+        audioLayout = audioLayout == null ? AudioLayoutDto.normalStereo() : audioLayout;
+    }
+
     /** 正在播放 / Now playing */
     public record NowPlaying(Long queueId, SongDto song, String orderedByNick) {}
 

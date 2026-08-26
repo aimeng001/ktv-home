@@ -1,7 +1,10 @@
 package com.homektv.web;
 
+import com.homektv.config.AppProperties;
 import com.homektv.domain.SongFile;
+import com.homektv.library.LibraryModePolicy;
 import com.homektv.repo.SongFileRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpRange;
 import org.springframework.http.HttpStatus;
@@ -44,9 +47,16 @@ public class StreamController {
     private static final int BUF = 64 * 1024;
 
     private final SongFileRepository fileRepo;
+    private final AppProperties props;
 
     public StreamController(SongFileRepository fileRepo) {
+        this(fileRepo, new AppProperties());
+    }
+
+    @Autowired
+    public StreamController(SongFileRepository fileRepo, AppProperties props) {
         this.fileRepo = fileRepo;
+        this.props = props;
     }
 
     /**
@@ -76,6 +86,11 @@ public class StreamController {
         }
 
         File file = new File(sf.getFilePath());
+        try {
+            LibraryModePolicy.requireExternalPathInsideSource(props, file.toPath());
+        } catch (ApiException e) {
+            return ResponseEntity.notFound().build();
+        }
         if (!file.exists() || !file.isFile()) {
             // 文件丢失：交由上层标记 file_missing（P2.5），这里返回 404
             return ResponseEntity.notFound().build();

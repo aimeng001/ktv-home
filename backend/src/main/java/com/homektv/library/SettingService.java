@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homektv.domain.AudioLayout;
 import com.homektv.domain.Setting;
 import com.homektv.repo.SettingRepository;
 import org.springframework.stereotype.Service;
@@ -20,6 +21,7 @@ public class SettingService {
 
     public static final String LIBRARY_WATCH_ENABLED = "library_watch_enabled";
     public static final String DELETE_SOURCE_AFTER_TRANSCODE = "delete_source_after_transcode";
+    public static final String EXTERNAL_DEFAULT_AUDIO_LAYOUT = "external_default_audio_layout";
 
     public static final Map<String, Object> TRANSCODE_DEFAULTS = Map.of(
             "direct_copy_containers", List.of("mp4", "m4v", "mkv"),
@@ -39,7 +41,9 @@ public class SettingService {
             Map.entry("standby_subtitle", "手机点歌，电视欢唱\n一家人的客厅 KTV"), Map.entry("standby_source", "mixed"),
             Map.entry("standby_song_ids", List.of()), Map.entry("standby_interval_sec", 8),
             Map.entry("display_address", ""), Map.entry("standby_logo_path", ""),
-            Map.entry(DELETE_SOURCE_AFTER_TRANSCODE, false), Map.entry("room_host_user_id", 0L));
+            Map.entry(DELETE_SOURCE_AFTER_TRANSCODE, false),
+            Map.entry(EXTERNAL_DEFAULT_AUDIO_LAYOUT, AudioLayout.NORMAL_STEREO.name()),
+            Map.entry("room_host_user_id", 0L));
     private static final Set<String> TRANSCODE_KEYS = TRANSCODE_DEFAULTS.keySet();
     private static final Set<String> ALLOWED_KEYS = new HashSet<>();
     static { ALLOWED_KEYS.addAll(TRANSCODE_DEFAULTS.keySet()); ALLOWED_KEYS.addAll(GENERAL_DEFAULTS.keySet()); }
@@ -67,6 +71,16 @@ public class SettingService {
 
     public boolean isLibraryWatchEnabled() {
         return Boolean.TRUE.equals(getAll().get(LIBRARY_WATCH_ENABLED));
+    }
+
+    /** Default used only when a new file is first indexed in EXTERNAL_READ_ONLY mode. */
+    public AudioLayout externalDefaultAudioLayout() {
+        Object value = getAll().get(EXTERNAL_DEFAULT_AUDIO_LAYOUT);
+        try {
+            return AudioLayout.valueOf(String.valueOf(value).trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            return AudioLayout.NORMAL_STEREO;
+        }
     }
 
     /** 批量写入设置 */
@@ -105,6 +119,13 @@ public class SettingService {
             throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "视频画面模式无效");
         if ("standby_source".equals(key) && !Set.of("mixed", "hot", "new", "custom").contains(String.valueOf(value)))
             throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "待机轮播来源无效");
+        if (EXTERNAL_DEFAULT_AUDIO_LAYOUT.equals(key)) {
+            if (!(value instanceof String)
+                    || !Set.of(AudioLayout.NORMAL_STEREO.name(), AudioLayout.DUAL_TRACK.name(),
+                    AudioLayout.DUAL_CHANNEL.name()).contains(String.valueOf(value))) {
+                throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "外部曲库音频布局无效");
+            }
+        }
     }
 
     @Transactional

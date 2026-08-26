@@ -11,9 +11,9 @@
     <!-- 歌曲列表表格 / Song List Table -->
     <section class="table-panel">
       <div class="toolbar"><span>共 {{ total }} 首可点歌曲</span><div class="toolbar-actions"><button class="secondary scrape-batch" :disabled="!selected.size" @click="goScrape([...selected])"><Tags :size="14" />刮削已选（{{ selected.size }}）</button><button class="danger" :disabled="!selected.size" @click="deleteSelected">批量删除（{{ selected.size }}）</button></div></div>
-      <div class="table-scroll"><table><thead><tr><th><input type="checkbox" :checked="allSelected" @change="toggleAll" /></th><th>歌名</th><th>歌手</th><th>类型</th><th>语种 / 标签</th><th>KTV 文件</th><th>来源</th><th>点唱</th><th class="action-cell">操作</th></tr></thead><tbody>
-        <tr v-for="song in songs" :key="song.id"><td><input type="checkbox" :checked="selected.has(song.id)" @change="toggle(song.id)" /></td><td><strong>{{ song.title }}</strong></td><td>{{ song.artist }}</td><td><span class="status" :class="typeClass(song.mediaType)">{{ typeText(song.mediaType) }}</span></td><td>{{ song.language || '—' }}<small>{{ (song.tags || []).join(' / ') || '无标签' }}</small></td><td class="path">{{ song.filePath || '—' }}</td><td>{{ sourceText(song.importSource) }}</td><td>{{ song.playCount || 0 }}</td><td class="action-cell"><div class="row-actions"><button class="link playlist-link" title="加入已有歌单" @click="openPlaylistPicker(song)"><ListPlus :size="14" />歌单</button><button class="link match-link" title="搜索、筛选并审核平台元数据" @click="goScrape([song.id],true)"><Tags :size="14" />元数据刮削</button><button class="link danger-text" title="删除歌曲" @click="deleteOne(song)"><Trash2 :size="14" />删除</button></div></td></tr>
-        <tr v-if="!songs.length"><td colspan="9" class="empty">暂无符合条件的 KTV 曲库歌曲</td></tr>
+      <div class="table-scroll"><table><thead><tr><th><input type="checkbox" :checked="allSelected" @change="toggleAll" /></th><th>歌名</th><th>歌手</th><th>类型</th><th>语种 / 标签</th><th>KTV 文件</th><th>来源</th><th>AudioLayout</th><th>点唱</th><th class="action-cell">操作</th></tr></thead><tbody>
+        <tr v-for="song in songs" :key="song.id"><td><input type="checkbox" :checked="selected.has(song.id)" @change="toggle(song.id)" /></td><td><strong>{{ song.title }}</strong></td><td>{{ song.artist }}</td><td><span class="status" :class="typeClass(song.mediaType)">{{ typeText(song.mediaType) }}</span></td><td>{{ song.language || '—' }}<small>{{ (song.tags || []).join(' / ') || '无标签' }}</small></td><td class="path">{{ song.filePath || '—' }}</td><td>{{ sourceText(song.importSource) }}</td><td><span class="status neutral">{{ audioLayoutText(song.audioLayout) }}</span><small>{{ audioLayoutDetail(song.audioLayout) }}</small></td><td>{{ song.playCount || 0 }}</td><td class="action-cell"><div class="row-actions"><AudioLayoutEditor :song="song" @updated="updateSongAudioLayout(song, $event)" /><button class="link playlist-link" title="加入已有歌单" @click="openPlaylistPicker(song)"><ListPlus :size="14" />歌单</button><button class="link match-link" title="搜索、筛选并审核平台元数据" @click="goScrape([song.id],true)"><Tags :size="14" />元数据刮削</button><button class="link danger-text" title="删除歌曲" @click="deleteOne(song)"><Trash2 :size="14" />删除</button></div></td></tr>
+        <tr v-if="!songs.length"><td colspan="10" class="empty">暂无符合条件的 KTV 曲库歌曲</td></tr>
       </tbody></table></div>
       <div class="pager"><span>第 {{ page + 1 }} / {{ totalPages || 1 }} 页</span><div><button class="secondary" :disabled="page===0" @click="go(page-1)">上一页</button><button class="secondary" :disabled="page>=totalPages-1" @click="go(page+1)">下一页</button></div></div>
     </section>
@@ -83,6 +83,8 @@ import { useRouter } from 'vue-router'
 import { Check, ChevronDown, ListPlus, RefreshCw, Tags, Trash2, X } from 'lucide-vue-next'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
+import AudioLayoutEditor from './AudioLayoutEditor.vue'
+import { audioLayoutLabel } from './audioLayout'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
 /** 歌曲列表、总数、当前页、总页数、已选集合 / Song list, total, page, total pages, selected set */
 const songs=ref([]),total=ref(0),page=ref(0),totalPages=ref(1),selected=ref(new Set())
@@ -187,6 +189,13 @@ function typeText(v){return{KTV_VIDEO:'KTV版',MV:'MV版',AUDIO:'音频版'}[v]|
 function typeClass(v){return v==='KTV_VIDEO'?'green':v==='MV'?'blue':'neutral'}
 /** 导入来源文本映射 / Import source text mapping */
 function sourceText(v){return{COPIED:'扫描直入',TRANSCODED:'转码入库',UNKNOWN:'历史曲库'}[v]||'历史曲库'}
+function audioLayoutText(value){return audioLayoutLabel(value)}
+function audioLayoutDetail(value){
+  if(value?.layout==='DUAL_TRACK') return `Original Track ${value.originalTrackIndex ?? '—'} / Accompaniment Track ${value.accompanimentTrackIndex ?? '—'}`
+  if(value?.layout==='DUAL_CHANNEL') return `${value.originalChannel || 'LEFT'} / ${value.accompanimentChannel || 'RIGHT'}`
+  return '无原唱/伴唱切换'
+}
+function updateSongAudioLayout(song, value){song.audioLayout=value}
 onMounted(load)
 </script>
 

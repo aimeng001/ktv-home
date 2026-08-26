@@ -31,6 +31,10 @@
             <SettingRow label="KTV 曲库目录"><span class="readonly path-value">/music</span></SettingRow>
           </div>
           <div class="setting-group">
+            <div class="group-head"><strong>外部曲库音频默认</strong><span>只用于外部只读曲库中新建索引的文件；单曲设置优先</span></div>
+            <SettingRow id="external_default_audio_layout" label="默认 AudioLayout" hint="DUAL_CHANNEL 默认 Original = LEFT、Accompaniment = RIGHT"><select v-model="form.external_default_audio_layout" class="input"><option value="NORMAL_STEREO">普通立体声</option><option value="DUAL_TRACK">双独立音轨</option><option value="DUAL_CHANNEL">单音轨左右声道</option></select></SettingRow>
+          </div>
+          <div class="setting-group">
             <div class="group-head"><strong>局域网访问</strong><span>控制电视端展示的手机点歌地址</span></div>
             <SettingRow id="qr_address" label="二维码展示地址" hint="留空时使用当前访问地址"><input v-model="form.qr_address" class="input" placeholder="192.168.1.10:8080" /></SettingRow>
           </div>
@@ -175,7 +179,7 @@ const categories = [
   { key: 'maintenance', label: '数据维护', description: '修复与清理', icon: Wrench }
 ]
 const search = ref(''); const section = ref(route.query.section && categories.some(x => x.key === route.query.section) ? route.query.section : 'basic')
-const form = reactive({ library_watch_enabled:false, qr_address:'', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_path:'', anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false })
+const form = reactive({ library_watch_enabled:false, qr_address:'', external_default_audio_layout:'NORMAL_STEREO', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_path:'', anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false })
 const ai = reactive({ enabled:false, apiKeyConfigured:false, apiKeySuffix:null, sources:{}, capabilities:{}, lastTestAt:null })
 const aiForm = reactive({ enabled:false, baseUrl:'', apiKey:'', bulkModel:'', reasoningModel:'', timeoutSeconds:60, identityThreshold:.97, classificationThreshold:.92, jsonMode:'AUTO', bulkConcurrency:2, reasoningConcurrency:1 })
 const musicForm = reactive({enabled:false,providers:[],resultLimit:20,timeoutSeconds:5,searchCacheHours:6,concurrencyLimit:1,requestIntervalMs:1500,autoApplyThreshold:.95})
@@ -193,7 +197,8 @@ const Checks = { props:['modelValue','options'], emits:['update:modelValue'], se
 const searchCatalog = {
   basic: [
     { key:'library_watch_enabled', label:'源目录自动扫描', keywords:'监听 扫描 文件' },
-    { key:'qr_address', label:'二维码展示地址', keywords:'局域网 手机 点歌 IP' }
+    { key:'qr_address', label:'二维码展示地址', keywords:'局域网 手机 点歌 IP' },
+    { key:'external_default_audio_layout', label:'外部曲库默认 AudioLayout', keywords:'NAS 外部 只读 原唱 伴唱 声道 音轨' }
   ],
   ai: [
     { key:'ai_enabled', label:'启用 AI', keywords:'模型 智能识别' },

@@ -1,6 +1,8 @@
 package com.homektv.library;
 
+import com.homektv.config.AppProperties;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -13,16 +15,38 @@ import java.util.List;
 @Service
 public class MediaTranscoder {
 
+    @FunctionalInterface
+    interface ProcessLauncher {
+        Process start(List<String> command) throws IOException;
+    }
+
     private final TranscodeHardwareService hardwareService;
     private final String ffmpegPath;
+    private final AppProperties props;
+    private final ProcessLauncher processLauncher;
 
     public MediaTranscoder(TranscodeHardwareService hardwareService,
                            @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath) {
+        this(hardwareService, ffmpegPath, new AppProperties(), MediaTranscoder::startProcess);
+    }
+
+    @Autowired
+    public MediaTranscoder(TranscodeHardwareService hardwareService,
+                           @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath,
+                           AppProperties props) {
+        this(hardwareService, ffmpegPath, props, MediaTranscoder::startProcess);
+    }
+
+    MediaTranscoder(TranscodeHardwareService hardwareService, String ffmpegPath,
+                    AppProperties props, ProcessLauncher processLauncher) {
         this.hardwareService = hardwareService;
         this.ffmpegPath = ffmpegPath;
+        this.props = props;
+        this.processLauncher = processLauncher;
     }
 
     public Path transcode(Path source, Path output, SettingService.TranscodePolicy policy, boolean hasVideo) {
+        LibraryModePolicy.requireManaged(props, "转码源文件");
         List<String> command = new ArrayList<>(List.of(ffmpegPath, "-hide_banner", "-loglevel", "error", "-y"));
         boolean hardware = policy.hardwareAcceleration() && hasVideo;
         TranscodeHardwareService.HardwareStatus hardwareStatus = null;
@@ -50,7 +74,7 @@ public class MediaTranscoder {
 
         boolean completed = false;
         try {
-            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            Process process = processLauncher.start(command);
             String log = new String(process.getInputStream().readAllBytes());
             int code = process.waitFor();
             if (code != 0 || !Files.isReadable(output) || Files.size(output) == 0) {
@@ -69,6 +93,10 @@ public class MediaTranscoder {
                 try { Files.deleteIfExists(output); } catch (IOException ignored) { }
             }
         }
+    }
+
+    private static Process startProcess(List<String> command) throws IOException {
+        return new ProcessBuilder(command).redirectErrorStream(true).start();
     }
 
     private static String audioEncoder(String codec) {

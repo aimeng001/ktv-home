@@ -21,9 +21,12 @@ public class AssetWriter {
     private static final Logger log = LoggerFactory.getLogger(AssetWriter.class);
 
     private final Path dataRoot;
+    private final AppProperties props;
 
     public AssetWriter(AppProperties props) {
+        this.props = props;
         this.dataRoot = Path.of(props.getDataPath());
+        LibraryModePolicy.requireCacheOutsideExternalSource(props, dataRoot);
     }
 
     /** 写歌词缓存，返回相对路径 lyrics/{fingerprint}.lrc */
@@ -55,7 +58,11 @@ public class AssetWriter {
     private void write(String relPath, byte[] data) {
         try {
             Path target = dataRoot.resolve(relPath);
+            LibraryModePolicy.requireCacheOutsideExternalSource(props, target);
             Files.createDirectories(target.getParent());
+            // Re-check the concrete target after parent directories exist. This catches
+            // a symlink/junction in lyrics/, covers/, or another cache subdirectory.
+            LibraryModePolicy.requireCacheOutsideExternalSource(props, target);
             Files.write(target, data);
         } catch (IOException e) {
             log.warn("资源落盘失败：{} - {}", relPath, e.getMessage());

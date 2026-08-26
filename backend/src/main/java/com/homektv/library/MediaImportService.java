@@ -20,7 +20,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Collection;
@@ -130,6 +132,7 @@ public class MediaImportService {
     public record AutoCleanupResult(int scanned, int eligible, int deleted, int skipped, int failed) {}
 
     public synchronized SourceScanResult scanSourceLibrary() {
+        LibraryModePolicy.requireManaged(props, "扫描、导入或移动");
         Path sourceRoot = sourceRoot();
         Path targetRoot = targetRoot();
         ensureDirectories(sourceRoot, targetRoot);
@@ -171,6 +174,7 @@ public class MediaImportService {
     }
 
     public SourceScanProgress startSourceScan() {
+        LibraryModePolicy.requireManaged(props, "启动源曲库扫描");
         synchronized (scanStartLock) {
             SourceScanProgress current = scanProgress.get();
             if (scanScheduled || current.running()) return current;
@@ -214,6 +218,7 @@ public class MediaImportService {
                                         Boolean transcodeRequired, Boolean sourceDeleted) {}
 
     public TranscodeProgress startPendingTranscode(Collection<Long> recordIds, boolean all) {
+        LibraryModePolicy.requireManaged(props, "启动源文件转码");
         if (!all && (recordIds == null || recordIds.isEmpty())) {
             throw new ApiException("TRANSCODE_SELECTION_REQUIRED", "请先选择需要转码的源文件");
         }
@@ -247,6 +252,7 @@ public class MediaImportService {
     }
 
     public PriorityResult prioritizeTranscode(Long recordId) {
+        LibraryModePolicy.requireManaged(props, "调整源文件转码队列");
         if (recordId == null) throw new ApiException("TRANSCODE_SELECTION_REQUIRED", "请选择需要插队的源文件");
         MediaImportRecord record = importRepo.findById(recordId)
                 .orElseThrow(() -> new ApiException("IMPORT_RECORD_NOT_FOUND", "源素材记录不存在"));
@@ -281,6 +287,7 @@ public class MediaImportService {
     }
 
     public DeleteSourcesResult deleteSources(Collection<Long> ids) {
+        LibraryModePolicy.requireManaged(props, "删除源文件");
         List<MediaImportRecord> records = ids == null || ids.isEmpty()
                 ? List.of()
                 : importRepo.findByIdIn(ids);
@@ -306,6 +313,7 @@ public class MediaImportService {
     }
 
     public AutoCleanupResult cleanupImportedSources() {
+        LibraryModePolicy.requireManaged(props, "自动清理源文件");
         synchronized (transcodeLock) {
             if (progress.get().running()) {
                 throw new ApiException("TRANSCODE_ALREADY_RUNNING", "批量转码进行中，暂时不能清理源文件");
@@ -331,6 +339,7 @@ public class MediaImportService {
 
     /** Clean source records associated with a manually transcoded single song. */
     public int cleanupSongSource(Long songId) {
+        LibraryModePolicy.requireManaged(props, "清理歌曲源文件");
         int cleaned = 0;
         for (MediaImportRecord record : importRepo.findBySongId(songId)) {
             record.setDeleteSourceRequested(true);
@@ -366,6 +375,7 @@ public class MediaImportService {
 
     public DeleteSourcesResult deleteSourcesByFilter(String keyword, String status, String formatAnalysis,
                                                      Boolean sourceDeleted) {
+        LibraryModePolicy.requireManaged(props, "按条件删除源文件");
         SourceLibraryFilters filters = sourceLibraryFilters(status, formatAnalysis, sourceDeleted);
         List<Long> ids = importRepo.searchSourceLibrary(normalizeKeyword(keyword), filters.action(),
                         filters.duplicateFlag(), filters.transcodeRequired(), filters.sourceDeleted(), Pageable.unpaged())
@@ -376,6 +386,7 @@ public class MediaImportService {
     }
 
     public void deleteSource(Long recordId) {
+        LibraryModePolicy.requireManaged(props, "删除源文件");
         DeleteSourcesResult result = deleteSources(List.of(recordId));
         if (result.requested() == 0) throw new ApiException("IMPORT_RECORD_NOT_FOUND", "源素材记录不存在");
         if (result.failed() > 0) throw new ApiException("DELETE_SOURCE_FAILED", "删除源视频失败");
@@ -386,9 +397,17 @@ public class MediaImportService {
     }
 
     private ScanOutcome analyzeAndMaybeCopy(Path source, Path targetRoot) throws IOException {
-        String sourceMd5 = hashService.md5(source);
+        LibraryModePolicy.requireManaged(props, "导入、移动或转码");
         MediaImportRecord existing = importRepo.findBySourcePath(source.toString()).orElse(null);
+        SourceSnapshot snapshot = sourceSnapshot(source);
+        boolean unchangedSnapshot = existing != null && sameSourceSnapshot(existing, snapshot);
+        String sourceMd5 = unchangedSnapshot && hasText(existing.getSourceMd5())
+                ? existing.getSourceMd5() : hashService.md5(source);
         if (existing != null && Objects.equals(existing.getSourceMd5(), sourceMd5)) {
+            if (!unchangedSnapshot && snapshot != null) {
+                rememberSourceSnapshot(existing, snapshot);
+                importRepo.save(existing);
+            }
             if (existing.isImportedFlag()) return ScanOutcome.UNCHANGED;
             if (PENDING_TRANSCODE.equals(existing.getAction()) && hasStoredFormatAnalysis(existing)) {
                 DirectCopyDecision previousDecision = directCopyDecision(
@@ -408,7 +427,7 @@ public class MediaImportService {
         TagInfo tag = tagReader.read(source.toFile());
         ParsedMeta parsed = tag.hasTitle()
                 ? ParsedMeta.of(tag.getTitle(), tag.getArtist())
-                : FilenameParser.parse(source.getFileName().toString());
+                : parseFilename(source);
         boolean recognized = parsed.recognized();
         DirectCopyDecision directCopy = directCopyDecision(source, probe);
         boolean transcodeRequired = directCopy.transcodeRequired();
@@ -494,6 +513,7 @@ public class MediaImportService {
 
     private TranscodeOutcome transcodeRecord(MediaImportRecord record) {
         try {
+            LibraryModePolicy.requireManaged(props, "转码源文件");
             if (record.isSourceDeleted() || !Files.isRegularFile(Path.of(record.getSourcePath()))) {
                 throw new ApiException("SOURCE_FILE_MISSING", "源文件不存在或已删除");
             }
@@ -561,7 +581,7 @@ public class MediaImportService {
                                    MediaProbe probe, String outputMd5, String action, String reason,
                                    boolean transcodeRequired, boolean duplicate, boolean imported,
                                    Long songId, Long songFileId) {
-        ParsedMeta parsed = FilenameParser.parse(source.getFileName().toString());
+        ParsedMeta parsed = parseFilename(source);
         record.setSourcePath(source.toString());
         record.setSourceFilename(source.getFileName().toString());
         record.setSourceMd5(sourceMd5 != null ? sourceMd5 : record.getSourceMd5() != null ? record.getSourceMd5() : "");
@@ -582,7 +602,77 @@ public class MediaImportService {
         record.setSongId(songId);
         record.setSongFileId(songFileId);
         record.setSourceDeleted(false);
+        SourceSnapshot snapshot = sourceSnapshot(source);
+        if (snapshot != null) {
+            record.setSourceSize(snapshot.size());
+            record.setSourceMtime(snapshot.mtime());
+            record.setSourceFileIdentity(snapshot.fileIdentity());
+        }
         if (record.getCleanupStatus() == null) record.setCleanupStatus("NOT_REQUESTED");
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static void rememberSourceSnapshot(MediaImportRecord record, SourceSnapshot snapshot) {
+        record.setSourceSize(snapshot.size());
+        record.setSourceMtime(snapshot.mtime());
+        record.setSourceFileIdentity(snapshot.fileIdentity());
+    }
+
+    private static boolean sameSourceSnapshot(MediaImportRecord record, SourceSnapshot current) {
+        if (record == null || current == null || record.getSourceSize() == null
+                || record.getSourceMtime() == null) return false;
+        if (record.getSourceSize() != current.size()
+                || !sameMtime(record.getSourceMtime(), current.mtime())) return false;
+        String storedIdentity = record.getSourceFileIdentity();
+        String currentIdentity = current.fileIdentity();
+        // Legacy rows with no identity can use the original path/size/mtime
+        // contract; once one side has an identity, a missing identity is not trusted.
+        return storedIdentity == null && currentIdentity == null
+                || storedIdentity != null && currentIdentity != null
+                && storedIdentity.equals(currentIdentity);
+    }
+
+    private static boolean sameMtime(OffsetDateTime left, OffsetDateTime right) {
+        return left != null && right != null
+                && mtimeKey(left) == mtimeKey(right);
+    }
+
+    private static long mtimeKey(OffsetDateTime value) {
+        var instant = value.toInstant();
+        return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000;
+    }
+
+    private static SourceSnapshot sourceSnapshot(Path source) {
+        try {
+            BasicFileAttributes attrs = Files.readAttributes(source, BasicFileAttributes.class);
+            Object identity = attrs.fileKey();
+            return new SourceSnapshot(attrs.size(), normalizeMtime(
+                    attrs.lastModifiedTime().toInstant().atOffset(ZoneOffset.UTC)),
+                    identity == null ? null : identity.toString());
+        } catch (IOException failure) {
+            return null;
+        }
+    }
+
+    private static OffsetDateTime normalizeMtime(OffsetDateTime value) {
+        return value == null ? null : value.withNano((value.getNano() / 1_000) * 1_000);
+    }
+
+    private record SourceSnapshot(long size, OffsetDateTime mtime, String fileIdentity) {}
+
+    private ParsedMeta parseFilename(Path source) {
+        String filename = source.getFileName().toString();
+        ParsedMeta local = FilenameParser.parse(filename);
+        if (local.recognized()) return local;
+
+        // Only ask the shared scan service for ambiguous names; simple legacy names
+        // keep their original no-extra-interaction path.
+        ParsedMeta shared = scanService.parseFilename(filename);
+        // Compatibility for isolated tests/legacy callers that provide a mock or older scan service.
+        return shared == null ? local : shared;
     }
 
     private void removeSourceRecord(MediaImportRecord record) {
@@ -680,6 +770,7 @@ public class MediaImportService {
     private record DirectCopyDecision(boolean transcodeRequired, String reason) {}
 
     private Path moveToTarget(Path source, Path targetRoot) throws IOException {
+        LibraryModePolicy.requireManaged(props, "移动源文件");
         Path output = uniqueTarget(targetRoot.resolve(source.getFileName()));
         Files.move(source, output);
         return output;
@@ -694,6 +785,7 @@ public class MediaImportService {
     }
 
     private Path transcodeToTarget(Path source, Path targetRoot, MediaProbe probe) {
+        LibraryModePolicy.requireManaged(props, "转码源文件");
         SettingService.TranscodePolicy policy = settingService.transcodePolicy();
         String baseName = stripExtension(source.getFileName().toString());
         Path output = uniqueTarget(targetRoot.resolve(baseName + "." + policy.outputContainer()));
@@ -760,6 +852,7 @@ public class MediaImportService {
     }
 
     private boolean cleanupImportedRecord(Long recordId) {
+        LibraryModePolicy.requireManaged(props, "清理源文件");
         MediaImportRecord record = importRepo.findById(recordId).orElse(null);
         if (record == null || !isSafelyImported(record)) return false;
         try {
@@ -775,6 +868,7 @@ public class MediaImportService {
     }
 
     private void deleteSourceAndCompanions(MediaImportRecord record) throws IOException {
+        LibraryModePolicy.requireManaged(props, "删除源文件");
         Path source = Path.of(record.getSourcePath()).toAbsolutePath().normalize();
         if (!source.startsWith(sourceRoot())) throw new IOException("拒绝删除扫描源目录以外的文件");
         Files.deleteIfExists(source);
@@ -791,6 +885,7 @@ public class MediaImportService {
     }
 
     private void migrateCompanions(Path source, Path output, MediaImportRecord record) throws IOException {
+        LibraryModePolicy.requireManaged(props, "迁移源文件伴随资源");
         List<String> migrated = new ArrayList<>();
         for (String ext : new String[]{"lrc", "jpg", "jpeg", "png", "webp"}) {
             Path companion = source.resolveSibling(stripExtension(source.getFileName().toString()) + "." + ext);

@@ -12,14 +12,19 @@ import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioCapabilities
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
+import com.homektv.tv.net.AudioLayout
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -77,6 +82,7 @@ class PlaybackEngine(
     private var requestedVocalMode: String = "original"
     private var requestedAccompanimentIndex: Int? = null
     private var requestedAudioTrackCount: Int = 1
+    private var requestedAudioLayout: AudioLayout = AudioLayout.normalStereo()
     private var vocalRequestAt: Long = 0L
     private var playRequestAt: Long = 0L
     private var awaitingTracks = false
@@ -87,6 +93,7 @@ class PlaybackEngine(
     private var appliedSelectionMode: String? = null
     private var appliedSelectionGroup: androidx.media3.common.TrackGroup? = null
     private var appliedSelectionTrack: Int? = null
+    private val channelAudioProcessor = KtvChannelAudioProcessor()
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -115,7 +122,22 @@ class PlaybackEngine(
                 5_000,
             )
             .build()
-        val renderersFactory = DefaultRenderersFactory(appContext)
+        val renderersFactory = object : DefaultRenderersFactory(appContext) {
+            @Suppress("DEPRECATION")
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink = DefaultAudioSink.Builder()
+                // Media3 1.4.1 only honors custom capabilities when the builder has no Context.
+                // Restricting this sink to PCM prevents encoded passthrough from bypassing the
+                // channel processor. DUAL_TRACK still uses the same decoded audio TrackSelection.
+                .setAudioCapabilities(AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES)
+                .setEnableFloatOutput(enableFloatOutput)
+                .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                .setAudioProcessors(arrayOf<AudioProcessor>(channelAudioProcessor))
+                .build()
+        }
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
             .setEnableDecoderFallback(true)
         return ExoPlayer.Builder(appContext)
@@ -197,6 +219,11 @@ class PlaybackEngine(
         player.playWhenReady = true
     }
 
+    /** Applies a server-requested seek without reloading the current media item. */
+    fun seekTo(positionMs: Long) {
+        player.seekTo(positionMs.coerceAtLeast(0L))
+    }
+
     /**
      * 停止并清空（队列空回待机时调用）。清 currentFileId，
      * 使下次同 fileId 也会重新装载。
@@ -238,16 +265,43 @@ class PlaybackEngine(
     }
 
     /** 在当前音频轨组内切换原唱/伴唱，避免重新加载媒体。 */
-    fun setVocalMode(mode: String, accompanimentIndex: Int?, audioTrackCount: Int) {
+    fun setVocalMode(
+        mode: String,
+        accompanimentIndex: Int?,
+        audioTrackCount: Int,
+        audioLayout: AudioLayout = AudioLayout.normalStereo(),
+    ) {
         requestedVocalMode = mode
         requestedAccompanimentIndex = accompanimentIndex
         requestedAudioTrackCount = audioTrackCount
+        requestedAudioLayout = audioLayout
         vocalRequestAt = SystemClock.elapsedRealtime()
         applyVocalSelection()
     }
 
     private fun applyVocalSelection() {
-        if (awaitingTracks) return
+        when (AudioPlaybackRoute.forLayout(requestedAudioLayout.layout)) {
+            AudioPlaybackRoute.PASSTHROUGH -> {
+                channelAudioProcessor.setMode(PcmChannelMode.STEREO)
+                return
+            }
+            AudioPlaybackRoute.PCM_CHANNEL_MAPPING -> {
+                // This changes only the next PCM buffer's channel mapping. It never touches the
+                // MediaItem, prepare state, or currentPosition.
+                channelAudioProcessor.setMode(
+                    PcmChannelMapper.modeFor(
+                        requestedVocalMode,
+                        requestedAudioLayout.originalChannel,
+                        requestedAudioLayout.accompanimentChannel,
+                    ),
+                )
+                return
+            }
+            AudioPlaybackRoute.TRACK_SELECTION -> {
+                channelAudioProcessor.setMode(PcmChannelMode.STEREO)
+                if (awaitingTracks) return
+            }
+        }
         val accompanimentIndex = requestedAccompanimentIndex
         val index = if (requestedVocalMode == "accompaniment") {
             accompanimentIndex

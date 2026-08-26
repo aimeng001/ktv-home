@@ -1,8 +1,10 @@
 package com.homektv.library;
 
+import com.homektv.config.AppProperties;
 import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
@@ -13,13 +15,28 @@ import java.util.List;
 @Service
 public class TranscodeService {
     private final SongFileRepository files;
+    private final AppProperties props;
 
-    public TranscodeService(SongFileRepository files) { this.files = files; }
+    /** Compatibility constructor for callers that use the original managed-mode service directly. */
+    public TranscodeService(SongFileRepository files) {
+        this(files, new AppProperties());
+    }
+
+    @Autowired
+    public TranscodeService(SongFileRepository files, AppProperties props) {
+        this.files = files;
+        this.props = props;
+    }
 
     public Result transcodeSong(Long songId) {
+        LibraryModePolicy.requireManaged(props, "转码源文件");
         List<SongFile> sources = files.findBySongIdOrderByPriorityDesc(songId);
         SongFile source = sources.stream().findFirst()
                 .orElseThrow(() -> new ApiException("FILE_NOT_FOUND", "歌曲没有可转码文件"));
+        if (LibraryModePolicy.EXTERNAL_FILE_ROLE.equals(source.getFileRole())) {
+            throw new ApiException(LibraryModePolicy.EXTERNAL_READ_ONLY_CODE,
+                    "EXTERNAL_READ_ONLY：禁止转码外部曲库源文件");
+        }
         Path input = Path.of(source.getFilePath());
         if (!Files.isReadable(input)) throw new ApiException("FILE_NOT_FOUND", "源文件不可读：" + input);
         Path output = uniqueOutput(input, "mkv");
@@ -45,6 +62,11 @@ public class TranscodeService {
             derivative.setFilePath(output.toString());
             derivative.setFormat("matroska");
             derivative.setAudioTracks(source.getAudioTracks());
+            derivative.setAudioLayout(source.getAudioLayout());
+            derivative.setOriginalTrackIndex(source.getOriginalTrackIndex());
+            derivative.setAccompanimentTrackIndex(source.getAccompanimentTrackIndex());
+            derivative.setOriginalChannel(source.getOriginalChannel());
+            derivative.setAccompanimentChannel(source.getAccompanimentChannel());
             derivative.setVocalTrackIndex(source.getVocalTrackIndex());
             derivative.setVocalConfidence(source.getVocalConfidence());
             derivative.setResolution(source.getResolution());

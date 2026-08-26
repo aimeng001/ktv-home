@@ -1,18 +1,19 @@
 <template>
   <AdminLayout active="dashboard">
-    <header class="page-head"><div><h1>仪表盘</h1><p>扫描源路径并查看曲库、转码与播放服务状态</p></div><button class="primary" :disabled="scanning" @click="scan">{{ scanning ? '扫描中…' : '扫描源路径' }}</button></header>
+    <header class="page-head"><div><h1>仪表盘</h1><p>扫描源路径并查看曲库、转码与播放服务状态</p></div><button class="primary" :disabled="scanning" @click="scan">{{ scanning ? '扫描中…' : externalMode ? '扫描外部只读曲库' : '扫描源路径' }}</button></header>
     <!-- 统计卡片 / Stats cards -->
-    <section class="stats"><article><span>原始素材</span><strong>{{ sourceTotal }}</strong><small>/source-music</small></article><article><span>KTV曲库</span><strong>{{ d.totalSongs ?? 0 }}</strong><small>/music，可点歌</small></article><article><span>待转码</span><strong>{{ pendingCount }}</strong><small>等待批量转码入库</small></article><article><span>未识别</span><strong>{{ d.unrecognizedCount ?? 0 }}</strong><small>需补录元数据</small></article></section>
+    <section class="stats"><article><span>{{ externalMode ? '外部曲库文件' : '原始素材' }}</span><strong>{{ sourceTotal }}</strong><small>{{ externalMode ? 'NAS 只读索引' : '/source-music' }}</small></article><article><span>KTV曲库</span><strong>{{ d.totalSongs ?? 0 }}</strong><small>/music，可点歌</small></article><article><span>{{ externalMode ? '源文件转码' : '待转码' }}</span><strong>{{ pendingCount }}</strong><small>{{ externalMode ? '只读模式已禁用' : '等待批量转码入库' }}</small></article><article><span>未识别</span><strong>{{ d.unrecognizedCount ?? 0 }}</strong><small>需补录元数据</small></article></section>
     <!-- 扫描进度 / Scan progress -->
     <section v-if="scanning || scanResult" class="scan-progress" :class="{complete:!scanning}">
       <div class="progress-head"><div><strong>{{ scanning ? '正在扫描源路径' : '扫描完成' }}</strong><span v-if="scanning">{{ scanProgress.currentFile || '正在读取文件列表…' }}</span><span v-else>{{ scanResult.finishedAt ? `完成于 ${formatTime(scanResult.finishedAt)}` : '' }}</span></div><b>{{ scanPercent }}%</b></div>
       <div class="track"><i :style="{width:`${scanPercent}%`}"></i></div>
-      <div class="progress-meta"><span>已处理 {{ scanProgress.completed || 0 }} / {{ scanProgress.total || 0 }}</span><span>直接移动 {{ scanProgress.copied || 0 }}</span><span>待转码 {{ scanProgress.pendingTranscode || 0 }}</span><span>重复 {{ duplicateCount }}</span><span>未识别 {{ scanProgress.unrecognized || 0 }}</span><span :class="{'failed':scanProgress.failed}">失败 {{ scanProgress.failed || 0 }}</span></div>
+      <div class="progress-meta"><span>已处理 {{ scanProgress.completed || 0 }} / {{ scanProgress.total || 0 }}</span><span>{{ scanSummary.primaryLabel }} {{ scanSummary.primaryCount }}</span><span>{{ scanSummary.secondaryLabel }} {{ scanSummary.secondaryCount }}</span><span v-if="scanSummary.mode === 'MANAGED'">重复 {{ scanSummary.duplicateCount }}</span><span>未识别 {{ scanSummary.unrecognizedCount }}</span><span v-if="scanSummary.mode === 'MANAGED'" :class="{'failed':scanSummary.failedCount}">失败 {{ scanSummary.failedCount }}</span></div>
     </section>
     <!-- 运行状态面板 / Status panel -->
     <section class="panel"><div class="panel-head"><strong>运行状态</strong><button class="text-btn" @click="load">刷新</button></div><table><thead><tr><th>模块</th><th>当前状态</th><th>详情</th><th>操作</th></tr></thead><tbody>
-      <tr><td><strong>源路径扫描</strong><small>分析、去重、兼容文件直接移动入库</small></td><td><span class="status green">{{ scanning ? '扫描中' : '就绪' }}</span></td><td>兼容文件扫描后移入 KTV 曲库；需转码文件只进入待处理列表。</td><td><button class="link" @click="scan" :disabled="scanning">重新扫描</button></td></tr>
-      <tr><td><strong>批量转码</strong><small>原始音乐管理任务</small></td><td><span class="status" :class="progress.running?'blue':'neutral'">{{ progress.running ? '进行中' : '空闲' }}</span></td><td>{{ progress.running ? `${progress.completed}/${progress.total}，当前：${progress.currentFile || '准备中'}` : lastProgressText }}</td><td><router-link class="link" :to="{name:'admin-source-library'}">查看进度</router-link></td></tr>
+      <tr><td><strong>源路径扫描</strong><small>{{ externalMode ? '分析并建立外部只读索引' : '分析、去重、兼容文件直接移动入库' }}</small></td><td><span class="status green">{{ scanning ? '扫描中' : '就绪' }}</span></td><td>{{ externalMode ? '只读取 NAS 文件并建立索引，不修改、移动或转码源文件。' : '兼容文件扫描后移入 KTV 曲库；需转码文件只进入待处理列表。' }}</td><td><button class="link" @click="scan" :disabled="scanning">重新扫描</button></td></tr>
+      <tr v-if="!externalMode"><td><strong>批量转码</strong><small>原始音乐管理任务</small></td><td><span class="status" :class="progress.running?'blue':'neutral'">{{ progress.running ? '进行中' : '空闲' }}</span></td><td>{{ progress.running ? `${progress.completed}/${progress.total}，当前：${progress.currentFile || '准备中'}` : lastProgressText }}</td><td><router-link class="link" :to="{name:'admin-source-library'}">查看进度</router-link></td></tr>
+      <tr v-else><td><strong>批量转码</strong><small>外部只读模式</small></td><td><span class="status neutral">已禁用</span></td><td>外部 NAS 源文件不可转码或生成源旁路输出。</td><td>—</td></tr>
       <tr><td><strong>播放服务</strong><small>TV 与手机点歌</small></td><td><span class="status green">{{ queueState }}</span></td><td>当前连接 {{ d.connectedClients ?? 0 }} 台客户端，正式曲库 KTV {{ d.ktvCount||0 }} / MV {{ d.mvCount||0 }} / 音频 {{ d.audioCount||0 }}。</td><td><router-link class="link" :to="{name:'admin-ktv-library'}">管理曲库</router-link></td></tr>
     </tbody></table></section>
   </AdminLayout>
@@ -28,7 +29,9 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog } from '../../composables/useDialog'
+import { normalizeScanProgress } from './scanProgress'
 const d=ref({}),queue=ref({}),progress=ref({}),scanning=ref(false),scanResult=ref(null),scanProgress=ref({}),sourceTotal=ref(0),pendingCount=ref(0)
+const libraryMode=ref('MANAGED')
 let scanTimer=null
 /**
  * 播放队列当前状态的中文映射。
@@ -53,7 +56,8 @@ const scanPercent=computed(()=>scanProgress.value.total?Math.round((scanProgress
  *
  * Total duplicate file count (source duplicates + output duplicates).
  */
-const duplicateCount=computed(()=>(scanProgress.value.skippedSourceDuplicate||0)+(scanProgress.value.skippedOutputDuplicate||0))
+const scanSummary=computed(()=>normalizeScanProgress(scanProgress.value))
+const externalMode=computed(()=>libraryMode.value==='EXTERNAL_READ_ONLY'||scanSummary.value.mode==='EXTERNAL_READ_ONLY')
 /**
  * 加载仪表盘全部数据：服务状态、队列、转码进度、源库统计、扫描进度。
  * 若扫描正在运行则自动开启轮询；若已完成则展示结果。
@@ -63,7 +67,7 @@ const duplicateCount=computed(()=>(scanProgress.value.skippedSourceDuplicate||0)
  * if a scan is running, or shows the result if one has finished.
  * @returns {Promise<void>}
  */
-async function load(){const [status,q,p,sources,pending,sp]=await Promise.all([api.adminStatus().catch(()=>({})),api.getQueue().catch(()=>({})),api.adminSourceTranscodeProgress().catch(()=>({})),api.adminSourceLibrary({page:0,size:1}).catch(()=>({})),api.adminSourceLibrary({status:'pending',page:0,size:1}).catch(()=>({})),api.adminScanProgress().catch(()=>({}))]);d.value=status;queue.value=q;progress.value=p;sourceTotal.value=sources.total||0;pendingCount.value=pending.total||0;scanProgress.value=sp;if(sp.running){scanning.value=true;startPolling()}else if(sp.finishedAt){scanResult.value=sp}}
+async function load(){const [status,q,p,sources,pending,sp]=await Promise.all([api.adminStatus().catch(()=>({})),api.getQueue().catch(()=>({})),api.adminSourceTranscodeProgress().catch(()=>({})),api.adminSourceLibrary({page:0,size:1}).catch(()=>({})),api.adminSourceLibrary({status:'pending',page:0,size:1}).catch(()=>({})),api.adminScanProgress().catch(()=>({}))]);d.value=status;queue.value=q;progress.value=p;libraryMode.value=sources.libraryMode||libraryMode.value;sourceTotal.value=sources.total||((libraryMode.value==='EXTERNAL_READ_ONLY'&&sp.total)||0);pendingCount.value=pending.total||0;scanProgress.value=sp;if(sp.running){scanning.value=true;startPolling()}else if(sp.finishedAt){scanResult.value=sp}}
 
 /**
  * 启动扫描进度轮询（每秒一次）。

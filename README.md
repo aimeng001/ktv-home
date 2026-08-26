@@ -132,7 +132,7 @@ KTV_DB_PASSWORD=请替换为强密码
 docker compose -f docker-compose.prebuilt.yml up -d --pull always --wait
 ```
 
-默认使用 `ghcr.io/zhayinggang/ktv-home:latest`。生产环境可在 `.env` 中将
+默认使用 `ghcr.io/aimeng001/ktv-home:latest`。生产环境可在 `.env` 中将
 `KTV_RELEASE_IMAGE` 设置为具体的发布标签，以避免 `latest` 自动变化。
 
 需要从源码构建时使用：
@@ -308,7 +308,7 @@ source-music/
 | `KTV_DB_PASSWORD` | `ktv` | PostgreSQL 密码，正式部署必须修改 |
 | `KTV_IMAGE_REGISTRY` | `docker.m.daocloud.io` | Docker 基础镜像仓库前缀 |
 | `KTV_APP_IMAGE` | `home-ktv:latest` | 应用镜像名称 |
-| `KTV_RELEASE_IMAGE` | `ghcr.io/zhayinggang/ktv-home:latest` | 预编译 Compose 使用的 GitHub 容器镜像 |
+| `KTV_RELEASE_IMAGE` | `ghcr.io/aimeng001/ktv-home:latest` | 预编译 Compose 使用的 GitHub 容器镜像 |
 | `JAVA_TOOL_OPTIONS` | `-XX:MaxRAMPercentage=70 -Xmx512m` | 容器 JVM 内存参数 |
 
 二维码默认使用 TV 访问服务端时的局域网 Host 地址。若网络中存在反向代理或多个网卡，可在管理后台设置“展示地址”，例如 `192.168.1.10:8080`。

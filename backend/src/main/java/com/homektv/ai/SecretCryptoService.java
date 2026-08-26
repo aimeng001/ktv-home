@@ -1,6 +1,7 @@
 package com.homektv.ai;
 
 import com.homektv.config.AppProperties;
+import com.homektv.library.LibraryModePolicy;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.Cipher;
@@ -55,6 +56,7 @@ public class SecretCryptoService {
         String environment = System.getenv("KTV_CONFIG_MASTER_KEY");
         if (environment != null && !environment.isBlank()) return normalizeKey(environment.trim());
         Path keyPath = Path.of(properties.getConfigMasterKeyPath()).toAbsolutePath().normalize();
+        LibraryModePolicy.requireCacheOutsideExternalSource(properties, keyPath);
         try {
             if (Files.exists(keyPath)) return normalizeKey(Files.readString(keyPath).trim());
             try {
@@ -63,11 +65,13 @@ public class SecretCryptoService {
                 // Local development may not be allowed to create /data; retain the
                 // same permissions policy under the configured application data path.
                 keyPath = Path.of(properties.getDataPath(), "secrets", "config.key").toAbsolutePath().normalize();
+                LibraryModePolicy.requireCacheOutsideExternalSource(properties, keyPath);
                 Files.createDirectories(keyPath.getParent());
             }
             byte[] generated = new byte[32];
             random.nextBytes(generated);
             String encoded = Base64.getEncoder().encodeToString(generated);
+            LibraryModePolicy.requireCacheOutsideExternalSource(properties, keyPath);
             try {
                 Files.writeString(keyPath, encoded, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             } catch (java.nio.file.FileAlreadyExistsException race) {

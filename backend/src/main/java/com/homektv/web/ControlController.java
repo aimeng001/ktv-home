@@ -88,9 +88,17 @@ public class ControlController {
                 cancelWithPermission(req.longParam("queue_id"), userId);
                 broadcast(WsEvent.QUEUE_UPDATED);
             }
-            case "play", "pause" -> {
+            case "play", "pause", "stop" -> {
                 dispatchPlayback(action);
                 broadcast(WsEvent.PLAYER_STATE);
+            }
+            case "seek" -> {
+                Long positionMs = req.longParam("position_ms");
+                if (positionMs == null) {
+                    throw new ApiException("INVALID_ACTION", "seek 缺少 position_ms");
+                }
+                playbackService.seek(positionMs);
+                broadcast(WsEvent.PLAYBACK_SEEKED);
             }
             case "restart" -> {
                 dispatchPlayback(action);
@@ -127,6 +135,7 @@ public class ControlController {
         switch (action) {
             case "play" -> playbackService.play();
             case "pause" -> playbackService.pause();
+            case "stop" -> playbackService.stop();
             case "restart" -> playbackService.restart();
             case "next" -> playbackService.next();
             case "finished" -> playbackService.onFinished();

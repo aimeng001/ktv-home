@@ -72,3 +72,57 @@ jobs:
         run: echo "9feed2a29f7717955f579eff0373503ef3f8681734b053797fbda3cf62b3a5ab  app/libs/media3-decoder-ffmpeg.aar" | sha256sum -c -
       - name: Run release-variant tests and lint
         run: ./gradlew --no-daemon testReleaseUnitTest lintRelease
+
+  windows-player:
+    name: Windows Player tests and build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Restore Windows Player
+        run: dotnet restore windows-player/HomeKtv.Windows.sln
+      - name: Run Windows Player tests
+        run: dotnet test windows-player/HomeKtv.Windows.sln --no-restore -c Release
+      - name: Build Windows Player
+        run: dotnet build windows-player/HomeKtv.Windows.sln --no-restore -c Release
+
+  compose-config:
+    name: Compose configuration checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate every Compose definition
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            docker-compose.yml
+            docker-compose.dev.yml
+            docker-compose.nas.yml
+            docker-compose.prebuilt.yml
+            docker-compose.hardware.yml
+            docker-compose.rockchip.yml
+          )
+          for file in "${files[@]}"; do
+            echo "Validating $file"
+            case "$file" in
+              docker-compose.hardware.yml|docker-compose.rockchip.yml)
+                docker compose -f docker-compose.yml -f "$file" config --quiet
+                ;;
+              *)
+                docker compose -f "$file" config --quiet
+                ;;
+            esac
+          done
+
+  release-config:
+    name: Release workflow contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test release workflow contracts
+        run: python scripts/release_workflow_test.py
+      - name: Test merge-gate contracts
+        run: python scripts/merge_gate_contract_test.py

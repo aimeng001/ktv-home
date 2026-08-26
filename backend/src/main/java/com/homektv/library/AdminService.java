@@ -3,6 +3,8 @@ package com.homektv.library;
 import com.homektv.config.AppProperties;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
+import com.homektv.domain.AudioLayout;
+import com.homektv.domain.AudioChannel;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
@@ -11,6 +13,8 @@ import com.homektv.repo.PlayerStateRepository;
 import com.homektv.web.ApiException;
 import com.homektv.web.dto.DashboardDto;
 import com.homektv.web.dto.AdminSongDto;
+import com.homektv.web.dto.AudioLayoutDto;
+import com.homektv.web.dto.AudioLayoutUpdateRequest;
 import com.homektv.web.dto.SongEditRequest;
 import com.homektv.web.dto.VocalReviewDto;
 import com.homektv.ws.WsBroadcaster;
@@ -176,14 +180,115 @@ public class AdminService {
             throw new ApiException("INVALID_ACTION",
                     "伴奏轨 index 越界：" + accompanimentIndex + "（共 " + file.getAudioTracks() + " 轨）");
         }
+        file.setAudioLayout(AudioLayout.DUAL_TRACK);
         file.setVocalTrackIndex(accompanimentIndex);
+        file.setAccompanimentTrackIndex(accompanimentIndex);
+        file.setOriginalTrackIndex(accompanimentIndex == 0 ? 1 : 0);
         file.setVocalConfidence("HIGH");
         fileRepo.save(file);
+    }
+
+    /**
+     * Update only the persisted audio semantics for one file. No media bytes,
+     * source path, or source-file metadata are written by this operation.
+     */
+    @Transactional
+    public AudioLayoutDto updateAudioLayout(Long fileId, AudioLayoutUpdateRequest request) {
+        SongFile file = findFile(fileId);
+        if (request == null) throw new ApiException("INVALID_AUDIO_LAYOUT", "缺少音频布局设置");
+
+        switch (request.layout()) {
+            case NORMAL_STEREO -> {
+                file.setAudioLayout(AudioLayout.NORMAL_STEREO);
+                clearTrackSemantics(file);
+                setDefaultChannels(file);
+            }
+            case DUAL_CHANNEL -> {
+                AudioChannel original = request.originalChannel();
+                AudioChannel accompaniment = request.accompanimentChannel();
+                if (original == accompaniment) {
+                    throw new ApiException("INVALID_AUDIO_LAYOUT", "原唱和伴唱必须使用不同声道");
+                }
+                file.setAudioLayout(AudioLayout.DUAL_CHANNEL);
+                file.setOriginalChannel(original);
+                file.setAccompanimentChannel(accompaniment);
+                clearTrackSemantics(file);
+            }
+            case DUAL_TRACK -> {
+                if (file.getAudioTracks() < 2) {
+                    throw new ApiException("INVALID_AUDIO_LAYOUT", "双音轨布局要求媒体至少有 2 条音轨");
+                }
+                int accompaniment = request.accompanimentTrackIndex() != null
+                        ? request.accompanimentTrackIndex()
+                        : defaultAccompanimentTrack(file);
+                int original = request.originalTrackIndex() != null
+                        ? request.originalTrackIndex()
+                        : defaultOriginalTrack(file, accompaniment);
+                validateTrackIndex(original, file.getAudioTracks(), "原唱");
+                validateTrackIndex(accompaniment, file.getAudioTracks(), "伴唱");
+                if (original == accompaniment) {
+                    throw new ApiException("INVALID_AUDIO_LAYOUT", "原唱和伴唱不能是同一条音轨");
+                }
+                file.setAudioLayout(AudioLayout.DUAL_TRACK);
+                file.setOriginalTrackIndex(original);
+                file.setAccompanimentTrackIndex(accompaniment);
+                setDefaultChannels(file);
+                file.setVocalConfidence("HIGH");
+            }
+        }
+        return AudioLayoutDto.from(fileRepo.save(file));
+    }
+
+    /** Swap the semantic original/accompaniment assignment in the database only. */
+    @Transactional
+    public AudioLayoutDto swapAudioLayout(Long fileId) {
+        SongFile file = findFile(fileId);
+        if (file.getAudioLayout() == AudioLayout.DUAL_TRACK
+                && (file.getOriginalTrackIndex() == null || file.getAccompanimentTrackIndex() == null)) {
+            throw new ApiException("INVALID_AUDIO_LAYOUT", "双音轨布局缺少原唱或伴唱音轨");
+        }
+        file.swapOriginalAndAccompaniment();
+        return AudioLayoutDto.from(fileRepo.save(file));
+    }
+
+    private SongFile findFile(Long fileId) {
+        return fileRepo.findById(fileId)
+                .orElseThrow(() -> new ApiException("FILE_NOT_FOUND", "文件源不存在"));
+    }
+
+    private static int defaultAccompanimentTrack(SongFile file) {
+        Integer current = file.getAccompanimentTrackIndex();
+        return current != null ? current : 1;
+    }
+
+    private static int defaultOriginalTrack(SongFile file, int accompaniment) {
+        Integer current = file.getOriginalTrackIndex();
+        return current != null ? current : accompaniment == 0 ? 1 : 0;
+    }
+
+    private static void validateTrackIndex(int index, int trackCount, String label) {
+        if (index < 0 || index >= trackCount) {
+            throw new ApiException("INVALID_AUDIO_LAYOUT", label + "音轨 index 越界：" + index
+                    + "（共 " + trackCount + " 轨）");
+        }
+    }
+
+    private static void clearTrackSemantics(SongFile file) {
+        file.setVocalTrackIndex(null);
+        file.setOriginalTrackIndex(null);
+        file.setAccompanimentTrackIndex(null);
+        file.setVocalConfidence(null);
+    }
+
+    private static void setDefaultChannels(SongFile file) {
+        file.setOriginalChannel(AudioChannel.LEFT);
+        file.setAccompanimentChannel(AudioChannel.RIGHT);
     }
 
     /** 删除正式曲库歌曲：删除 /music 下文件和数据库记录，不影响扫描源目录。 */
     @Transactional
     public void deleteSong(Long id) {
+        LibraryModePolicy.requireManaged(props, "删除曲库歌曲");
         Song song = songRepo.findById(id)
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         deleteLibraryFiles(id);
@@ -211,6 +316,7 @@ public class AdminService {
     }
 
     private void deleteLibraryFiles(Long songId) {
+        LibraryModePolicy.requireManaged(props, "删除曲库文件");
         Path root = Path.of(props.getKtvLibraryPath()).toAbsolutePath().normalize();
         for (SongFile file : fileRepo.findBySongIdOrderByPriorityDesc(songId)) {
             Path path = Path.of(file.getFilePath()).toAbsolutePath().normalize();

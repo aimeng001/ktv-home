@@ -23,6 +23,7 @@ server:
 app:
   source-library-path: ${KTV_SOURCE_LIBRARY_PATH:/source-music}
   ktv-library-path: ${KTV_LIBRARY_PATH:/music}
+  library-mode: ${KTV_LIBRARY_MODE:MANAGED}
   data-path: ${KTV_DATA_PATH:./data}
   config-master-key-path: ${KTV_CONFIG_MASTER_KEY_PATH:/data/secrets/config.key}
   ffprobe-path: ${KTV_FFPROBE_PATH:ffprobe}

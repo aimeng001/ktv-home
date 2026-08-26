@@ -82,12 +82,19 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
             case "progress" -> {
                 // TV 上行播放进度 → 转发给所有端（详设§4.2 progress）
                 long positionMs = node.path("payload").path("position_ms").asLong(0);
-                broadcaster.broadcast(WsEvent.of(WsEvent.PROGRESS,
-                        java.util.Map.of("position_ms", positionMs)));
+                Long queueId = node.path("payload").path("queue_id").isNumber()
+                        ? node.path("payload").path("queue_id").asLong() : null;
+                playbackService.updatePosition(queueId, positionMs);
+                java.util.Map<String, Object> progress = new java.util.LinkedHashMap<>();
+                progress.put("position_ms", Math.max(0, positionMs));
+                if (queueId != null) progress.put("queue_id", queueId);
+                broadcaster.broadcast(WsEvent.of(WsEvent.PROGRESS, progress));
             }
             case "finished" -> {
                 // TV 上报当前曲目播放完成 → 推进队列并广播
-                playbackService.onFinished();
+                Long queueId = node.path("payload").path("queue_id").isNumber()
+                        ? node.path("payload").path("queue_id").asLong() : null;
+                playbackService.onFinished(queueId);
                 broadcaster.broadcast(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
             }
             case "play_error" -> {
@@ -95,7 +102,9 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 String reason = node.path("payload").path("message").asText("媒体读取失败");
                 Long fileId = node.path("payload").path("file_id").isNumber()
                         ? node.path("payload").path("file_id").asLong() : null;
-                playbackService.onPlayError(fileId);
+                Long queueId = node.path("payload").path("queue_id").isNumber()
+                        ? node.path("payload").path("queue_id").asLong() : null;
+                playbackService.onPlayError(fileId, queueId);
                 broadcaster.broadcast(WsEvent.of(WsEvent.TOAST,
                         java.util.Map.of("text", "当前歌曲播放失败，已自动切换下一首：" + reason)));
                 broadcaster.broadcast(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));

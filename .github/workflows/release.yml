@@ -27,13 +27,45 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE_NAME: ghcr.io/zhayinggang/ktv-home
+  IMAGE_NAME: ghcr.io/aimeng001/ktv-home
   RAW_RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
+  release-source:
+    name: Verify release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require reviewed master source
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$GITHUB_REF_NAME" != "master" ]]; then
+              echo "Manual releases must run from master (got $GITHUB_REF_NAME)." >&2
+              exit 1
+            fi
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            git fetch --no-tags origin master:refs/remotes/origin/master
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/master; then
+              echo "Release tag must point to a commit reachable from master." >&2
+              exit 1
+            fi
+          else
+            echo "Unsupported release event: $GITHUB_EVENT_NAME." >&2
+            exit 1
+          fi
+
   release-meta:
     name: Resolve release metadata
     runs-on: ubuntu-latest
+    needs: release-source
     outputs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
       version_name: ${{ steps.meta.outputs.version_name }}
@@ -57,6 +89,13 @@ jobs:
           if [[ "$REQUESTED_CHANNEL" == "unstable" || "$version" == *-* ]]; then
             channel=unstable
             [[ "$version" == *-* ]] || version="${version}-unstable"
+          fi
+
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+            :
+          else
+            echo "Invalid release version: $version" >&2
+            exit 1
           fi
 
           release_tag="${prefix}${version}"
@@ -120,10 +159,54 @@ jobs:
           path: android-tv/staged-apks/*.apk
           if-no-files-found: error
 
+  windows-player:
+    name: Build Windows x64 Player
+    runs-on: windows-latest
+    needs: release-meta
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Restore Windows Player
+        run: dotnet restore windows-player/HomeKtv.Windows.sln
+      - name: Run Windows Player tests
+        run: dotnet test windows-player/HomeKtv.Windows.sln --no-restore -c Release
+      - name: Publish self-contained Windows x64 Player (mpv prerequisite)
+        run: >-
+          dotnet publish windows-player/src/HomeKtv.Windows/HomeKtv.Windows.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          -p:Version="${{ needs.release-meta.outputs.version_name }}"
+          -o windows-player/staged/win-x64
+      - name: Stage Windows Player prerequisites (mpv.exe instructions)
+        shell: pwsh
+        run: >-
+          Copy-Item windows-player/README.md
+          windows-player/staged/win-x64/README-WINDOWS-PLAYER.md
+      - name: Package Windows x64 Player
+        shell: pwsh
+        run: >-
+          Compress-Archive
+          -Path windows-player/staged/win-x64/*
+          -DestinationPath windows-player/staged/home-ktv-windows-player-${{ needs.release-meta.outputs.version_name }}-win-x64.zip
+          -Force
+      - name: Upload Windows x64 Release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: home-ktv-windows-player-${{ needs.release-meta.outputs.artifact_version }}-win-x64
+          path: windows-player/staged/*.zip
+          if-no-files-found: error
+
   image:
     name: Publish image with TV APKs
     runs-on: ubuntu-latest
-    needs: [release-meta, android-tv]
+    needs: [release-meta, android-tv, windows-player]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -167,14 +250,19 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [release-meta, android-tv]
+    needs: [release-meta, android-tv, windows-player, image]
     steps:
       - name: Download APK artifacts
         uses: actions/download-artifact@v4
         with:
           name: home-ktv-tv-${{ needs.release-meta.outputs.artifact_version }}-release
           path: release-assets
-      - name: Publish GitHub Release with APKs
+      - name: Download Windows Player artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: home-ktv-windows-player-${{ needs.release-meta.outputs.artifact_version }}-win-x64
+          path: release-assets
+      - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.release-meta.outputs.release_tag }}
@@ -182,4 +270,6 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ needs.release-meta.outputs.unstable == 'true' }}
           make_latest: ${{ needs.release-meta.outputs.unstable != 'true' }}
-          files: release-assets/*.apk
+          files: |
+            release-assets/*.apk
+            release-assets/*.zip

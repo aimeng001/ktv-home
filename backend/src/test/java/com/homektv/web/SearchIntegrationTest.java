@@ -45,13 +45,18 @@ class SearchIntegrationTest {
     @BeforeEach
     void seed() {
         songRepo.deleteAll();
-        save("晴天", "周杰伦", "KTV_VIDEO", 100);
+        save("晴天", "周杰伦", "KTV_VIDEO", 100, "国语", new String[]{"流行"});
         save("七里香", "周杰伦", "KTV_VIDEO", 80);
         save("后来", "刘若英", "AUDIO", 60);
-        save("海阔天空", "Beyond", "MV", 50);
+        save("海阔天空", "Beyond", "MV", 50, "粤语", new String[]{"摇滚"});
     }
 
     private void save(String title, String artist, String mediaType, int playCount) {
+        save(title, artist, mediaType, playCount, "未知", new String[0]);
+    }
+
+    private void save(String title, String artist, String mediaType, int playCount,
+                      String language, String[] tags) {
         Song s = new Song();
         s.setTitle(title);
         s.setArtist(artist);
@@ -59,6 +64,8 @@ class SearchIntegrationTest {
         s.setTitleInit(PinyinUtil.initials(title));
         s.setArtistPy(PinyinUtil.fullPinyin(artist));
         s.setArtistInit(PinyinUtil.initials(artist));
+        s.setLanguage(language);
+        s.setTags(tags);
         s.setMediaType(mediaType);
         s.setPlayCount(playCount);
         s.setFingerprint("fp-" + title);
@@ -94,6 +101,18 @@ class SearchIntegrationTest {
     void searchByArtistFullPinyin() {
         List<Song> r = searchService.search("zhoujielun", 0);
         assertThat(r).extracting(Song::getTitle).contains("晴天", "七里香");
+    }
+
+    @Test
+    void searchByLanguage() {
+        List<Song> r = searchService.search("国语", 0);
+        assertThat(r).extracting(Song::getTitle).contains("晴天");
+    }
+
+    @Test
+    void searchByCategoryTag() {
+        List<Song> r = searchService.search("摇滚", 0);
+        assertThat(r).extracting(Song::getTitle).contains("海阔天空");
     }
 
     @Test

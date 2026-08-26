@@ -5,6 +5,7 @@ import com.homektv.domain.PlayerState;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
+import com.homektv.domain.AudioLayout;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
@@ -73,6 +74,49 @@ public class PlaybackService {
         return playerRepo.save(ps);
     }
 
+    /** Stop playback without consuming or removing the current queue item. */
+    @Transactional
+    public PlayerState stop() {
+        PlayerState ps = playerRepo.getSingleton();
+        ps.setState("idle");
+        return playerRepo.save(ps);
+    }
+
+    /** Explicit seek requested by a remote controller. */
+    @Transactional
+    public PlayerState seek(long positionMs) {
+        if (positionMs < 0) {
+            throw new ApiException("INVALID_ACTION", "播放位置不能为负数");
+        }
+        PlayerState ps = playerRepo.getSingleton();
+        if (ps.getCurrentQueueId() == null) {
+            throw new ApiException("INVALID_ACTION", "当前没有正在播放的歌曲");
+        }
+        ps.setPositionMs(positionMs);
+        ps.setSeekSequence(ps.getSeekSequence() + 1);
+        return playerRepo.save(ps);
+    }
+
+    /**
+     * Persist a player-reported position. A queue id, when supplied by newer
+     * clients, prevents a late packet from an old song changing the state of
+     * the current song. Older Android clients may omit it.
+     */
+    @Transactional
+    public PlayerState updatePosition(Long expectedQueueId, long positionMs) {
+        PlayerState ps = playerRepo.getSingleton();
+        if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
+            return ps;
+        }
+        if (ps.getCurrentQueueId() == null || "idle".equals(ps.getState())) return ps;
+        long normalized = Math.max(0, positionMs);
+        if (ps.getPositionMs() != normalized) {
+            ps.setPositionMs(normalized);
+            return playerRepo.save(ps);
+        }
+        return ps;
+    }
+
     /** 切歌：当前行标记 skipped，推进到下一首（详设§9.2）。 */
     @Transactional
     public PlayerState next() {
@@ -85,7 +129,15 @@ public class PlaybackService {
     /** 播放完成（TV 上报）：当前行标记 done，写历史，推进下一首。 */
     @Transactional
     public PlayerState onFinished() {
+        return onFinished(null);
+    }
+
+    @Transactional
+    public PlayerState onFinished(Long expectedQueueId) {
         PlayerState ps = playerRepo.getSingleton();
+        if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
+            return ps;
+        }
         markCurrent(ps, QueueService.DONE, true);
         advanceToNext(ps);
         return playerRepo.save(ps);
@@ -93,13 +145,21 @@ public class PlaybackService {
 
     @Transactional
     public PlayerState onPlayError(Long fileId) {
+        return onPlayError(fileId, null);
+    }
+
+    @Transactional
+    public PlayerState onPlayError(Long fileId, Long expectedQueueId) {
+        PlayerState ps = playerRepo.getSingleton();
+        if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
+            return ps;
+        }
         if (fileId != null) {
             fileRepo.findById(fileId).ifPresent(file -> {
                 file.setValid(false);
                 fileRepo.save(file);
             });
         }
-        PlayerState ps = playerRepo.getSingleton();
         markCurrent(ps, QueueService.SKIPPED, false);
         advanceToNext(ps);
         return playerRepo.save(ps);
@@ -150,6 +210,8 @@ public class PlaybackService {
             throw new ApiException("INVALID_ACTION", "当前没有正在播放的歌曲");
         }
         ps.setState("playing");
+        ps.setPositionMs(0);
+        ps.setSeekSequence(ps.getSeekSequence() + 1);
         return playerRepo.save(ps);
     }
 
@@ -190,10 +252,15 @@ public class PlaybackService {
         SongFile file = fileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(current.getSongId()).stream()
                 .findFirst()
                 .orElseThrow(() -> new ApiException("FILE_NOT_FOUND", "当前歌曲没有可用文件源"));
-        if (file.getAudioTracks() < 2) {
+        if (file.getAudioLayout() != AudioLayout.DUAL_CHANNEL && file.getAudioTracks() < 2) {
             throw new ApiException("INVALID_ACTION", "当前歌曲没有可交换的双音轨");
         }
-        file.setVocalTrackIndex(Integer.valueOf(0).equals(file.getVocalTrackIndex()) ? 1 : 0);
+        if (file.getAudioLayout() == AudioLayout.NORMAL_STEREO) {
+            // Preserve the legacy two-track behavior for rows created before
+            // V17, while making the persisted layout explicit.
+            file.setAudioLayout(AudioLayout.DUAL_TRACK);
+        }
+        file.swapOriginalAndAccompaniment();
         // 用户手动交换即人工确认，标 HIGH，后续复核列表不再显示
         file.setVocalConfidence("HIGH");
         fileRepo.save(file);
@@ -215,6 +282,7 @@ public class PlaybackService {
         queueRepo.deleteAll(waiting);
         ps.setCurrentQueueId(null);
         ps.setState("idle");
+        ps.setPositionMs(0);
         playerRepo.save(ps);
         return true;
     }
@@ -250,6 +318,7 @@ public class PlaybackService {
         if (waiting.isEmpty()) {
             ps.setCurrentQueueId(null);
             ps.setState("idle");
+            ps.setPositionMs(0);
             return;
         }
         QueueItem nextItem = waiting.get(0);
@@ -257,5 +326,6 @@ public class PlaybackService {
         queueRepo.save(nextItem);
         ps.setCurrentQueueId(nextItem.getId());
         ps.setState("playing");
+        ps.setPositionMs(0);
     }
 }

@@ -34,6 +34,7 @@ import com.homektv.tv.BuildConfig
 import com.homektv.tv.R
 import com.homektv.tv.databinding.ActivityMainBinding
 import com.homektv.tv.net.AppConfig
+import com.homektv.tv.net.AudioLayout
 import com.homektv.tv.net.KtvSocket
 import com.homektv.tv.net.MediaApi
 import com.homektv.tv.net.ApkPackageInfo
@@ -182,11 +183,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 // UI 以高频本地时钟平滑刷新，服务端进度仍保持 1s 上报频率。
                 if (lastProgressReportMs == Long.MIN_VALUE || pos - lastProgressReportMs >= 1_000L) {
                     lastProgressReportMs = pos
-                    socket?.sendProgress(pos)
+                    socket?.sendProgress(pos, currentQueueId)
                 }
                 runOnUiThread { updateProgress(pos) }
             },
-            onFinished = { socket?.sendFinished() },
+            onFinished = { socket?.sendFinished(currentQueueId) },
             onError = { onPlayError() },
         ).also {
             it.attach(binding.playerView)
@@ -462,6 +463,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var currentVolume = 60
     private var currentMuted = false
     private var currentVocalMode = "accompaniment"
+    private var currentAudioLayout = AudioLayout.normalStereo()
 
     private fun togglePlayback() {
         sendControl(if (currentPlaybackState == "playing") "pause" else "play")
@@ -604,6 +606,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         currentVolume = snapshot.volume
         currentMuted = snapshot.muted
         currentVocalMode = snapshot.vocalMode
+        currentAudioLayout = snapshot.audioLayout
         if (binding.vocalPanel.visibility == View.VISIBLE) updateVocalPanelSelection()
         currentPlaybackState = snapshot.state
         val lyricsPlaying = snapshot.state == "playing"
@@ -618,6 +621,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             engine?.restart()
             lastLyricIndex = -1
             updateProgress(0L)
+        }
+        if (event == PLAYBACK_SEEKED_EVENT) {
+            engine?.seekTo(snapshot.positionMs)
+            lastLyricIndex = -1
+            updateProgress(snapshot.positionMs)
         }
         if (event == VOCAL_CHANGED_EVENT) refreshVocalTrackMapping(snapshot)
     }
@@ -675,6 +683,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         // idle 或无当前曲目：停止、回待机页
         if (snapshot.state == "idle" || playing == null || songId == null) {
             currentQueueId = null
+            currentAudioLayout = AudioLayout.normalStereo()
             engine?.stop()
             binding.txtLyricPrevious.stopAnimation()
             binding.txtAudioLyricCurrent.stopAnimation()
@@ -691,7 +700,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         // 同一首：只处理播放/暂停 + 音量，不重新装载
         if (playing.queueId == currentQueueId) {
             eng.applyVolume(volume, muted)
-            eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount)
+            eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
             if (snapshot.state == "paused") eng.pause() else eng.resume()
             return
         }
@@ -727,8 +736,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 onPlayError()
                 return@launch
             }
-            accompanimentTrackIndex = file.vocalTrackIndex
+            accompanimentTrackIndex = file.audioLayout.accompanimentTrackIndex ?: file.vocalTrackIndex
             audioTrackCount = file.audioTracks
+            currentAudioLayout = file.audioLayout
             currentFileId = file.id
             lyricLines = mediaApi.fetchLyric(songId)?.let(LrcParser::parse).orEmpty()
             if (currentQueueId != targetQueueId) return@launch
@@ -738,9 +748,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 }
                 if (lyricLines.isNotEmpty()) binding.txtAudioLyricNext.text = lyricLines.first().text
             }
+            eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
             eng.applyVolume(volume, muted)
             eng.play(file.id, mediaApi.streamUrl(file.id))
-            eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount)
             if (snapshot.state == "paused") eng.pause()
         }
     }
@@ -752,9 +762,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         lifecycleScope.launch {
             val file = mediaApi.bestFileSource(songId) ?: return@launch
             if (currentQueueId != targetQueueId || currentFileId != file.id) return@launch
-            accompanimentTrackIndex = file.vocalTrackIndex
+            accompanimentTrackIndex = file.audioLayout.accompanimentTrackIndex ?: file.vocalTrackIndex
             audioTrackCount = file.audioTracks
-            engine?.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount)
+            currentAudioLayout = file.audioLayout
+            engine?.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
         }
     }
 
@@ -1012,7 +1023,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     /** 播放失败：上报文件源，服务端标记失效并推进队列。 */
     private fun onPlayError() {
         Toast.makeText(this, R.string.play_error, Toast.LENGTH_SHORT).show()
-        socket?.sendPlayError("media playback failed", currentFileId)
+        socket?.sendPlayError("media playback failed", currentFileId, currentQueueId)
     }
 
     companion object {
@@ -1021,5 +1032,6 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         private const val PROGRESS_HIDE_DELAY_MS = 5_000L
         private const val VOCAL_CHANGED_EVENT = "vocal_changed"
         private const val PLAYBACK_RESTARTED_EVENT = "playback_restarted"
+        private const val PLAYBACK_SEEKED_EVENT = "playback_seeked"
     }
 }

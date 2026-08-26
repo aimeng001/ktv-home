@@ -32,7 +32,7 @@ services:
   ktv:
     # Override KTV_RELEASE_IMAGE to pin a release tag instead of latest.
     # 可通过 KTV_RELEASE_IMAGE 指定版本标签，避免始终使用 latest。
-    image: ${KTV_RELEASE_IMAGE:-ghcr.io/zhayinggang/ktv-home:latest}
+    image: ${KTV_RELEASE_IMAGE:-ghcr.io/aimeng001/ktv-home:latest}
     container_name: ${KTV_APP_CONTAINER_NAME:-ktv-app}
     environment:
       SERVER_PORT: ${KTV_HTTP_PORT:-8080}
@@ -41,6 +41,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${KTV_DB_PASSWORD:-ktv}
       KTV_SOURCE_LIBRARY_PATH: /source-music
       KTV_LIBRARY_PATH: /music
+      KTV_LIBRARY_MODE: ${KTV_LIBRARY_MODE:-MANAGED}
       KTV_DATA_PATH: /data
       KTV_DISCOVERY_ENABLED: ${KTV_DISCOVERY_ENABLED:-true}
       KTV_DISCOVERY_UDP_PORT: ${KTV_DISCOVERY_UDP_PORT:-18888}
@@ -62,6 +63,7 @@ services:
       - type: bind
         source: ${KTV_SOURCE_MUSIC_DIR:-./source-music}
         target: /source-music
+        read_only: ${KTV_SOURCE_MUSIC_READ_ONLY:-false}
         bind:
           create_host_path: true
       - type: bind

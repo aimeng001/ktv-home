@@ -35,12 +35,12 @@
 
     <!-- 原/伴唱 / Original/Accompaniment -->
     <section class="sec">
-      <div class="section-label"><b>演唱模式</b><span>{{ canVocal ? '支持双音轨' : '当前版本不可切换' }}</span></div>
+      <div class="section-label"><b>演唱模式</b><span>{{ canVocal ? '支持原唱/伴唱' : '当前版本不可切换' }}</span></div>
       <div class="seg" :class="{ disabled: !canVocal }">
         <div :class="{ on: player.vocalMode === 'original' }" @click="setVocal('original')">原唱</div>
         <div :class="{ on: player.vocalMode === 'accompaniment' }" @click="setVocal('accompaniment')">伴唱</div>
       </div>
-      <div class="note">{{ canVocal ? '当前为 KTV 版，支持音轨切换' : 'MV/音频版无伴唱音轨，此处禁用' }}</div>
+      <div class="note">{{ canVocal ? '当前曲目支持原唱/伴唱切换' : '当前曲目无伴唱语义，此处禁用' }}</div>
       <button v-if="canVocal" class="track-fix" @click="swapVocalTracks">原唱和伴唱弄反了？纠正并记住</button>
     </section>
 
@@ -89,7 +89,8 @@ const coverStyle = computed(() => coverUrl.value ? { backgroundImage: `url(${cov
  *
  * Whether vocal track switching is supported (KTV version).
  */
-const canVocal = computed(() => song.value?.hasVocalTrack === true)
+const canVocal = computed(() => song.value?.hasVocalTrack === true ||
+  ['DUAL_TRACK', 'DUAL_CHANNEL'].includes(player.audioLayout?.layout))
 /**
  * 播放进度百分比（0–100）。
  *
@@ -168,7 +169,7 @@ async function setVocal(mode) {
  * Swap the original/accompaniment track labels (persist the correction).
  */
 async function swapVocalTracks() {
-  if (!canVocal.value) { toast('该歌曲没有双音轨'); return }
+  if (!canVocal.value) { toast('该歌曲没有原唱/伴唱语义'); return }
   if (!await confirmDialog(`将永久更正《${song.value?.title || ''}》的原唱和伴唱标记。`, { title: '纠正音轨标记' })) return
   try { await controls.swapVocalTracks(); toast('已纠正，本歌曲下次播放继续生效') }
   catch (e) { toast(e.message || '纠正失败') }

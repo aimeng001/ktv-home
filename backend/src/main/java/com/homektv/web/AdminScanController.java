@@ -1,7 +1,9 @@
 package com.homektv.web;
 
+import com.homektv.config.AppProperties;
 import com.homektv.library.AdminService;
 import com.homektv.library.LibraryScanService;
+import com.homektv.library.LibraryModePolicy;
 import com.homektv.library.LibraryWatchService;
 import com.homektv.library.MediaImportService;
 import com.homektv.library.SettingService;
@@ -13,6 +15,8 @@ import com.homektv.domain.Song;
 import com.homektv.domain.MediaImportRecord;
 import com.homektv.web.dto.DashboardDto;
 import com.homektv.web.dto.AdminSongDto;
+import com.homektv.web.dto.AudioLayoutDto;
+import com.homektv.web.dto.AudioLayoutUpdateRequest;
 import com.homektv.web.dto.MediaImportRecordDto;
 import com.homektv.web.dto.SongDto;
 import com.homektv.web.dto.SongEditRequest;
@@ -41,13 +45,14 @@ public class AdminScanController {
     private final TranscodeHardwareService transcodeHardwareService;
     private final SongReparseService reparseService;
     private final SongMergeService songMergeService;
+    private final AppProperties props;
 
     public AdminScanController(LibraryScanService scanService, LibraryWatchService libraryWatchService,
                                AdminService adminService,
                                MediaImportService mediaImportService,
                                SettingService settingService, TranscodeService transcodeService,
                                TranscodeHardwareService transcodeHardwareService, SongReparseService reparseService,
-                               SongMergeService songMergeService) {
+                               SongMergeService songMergeService, AppProperties props) {
         this.scanService = scanService;
         this.libraryWatchService = libraryWatchService;
         this.adminService = adminService;
@@ -57,16 +62,22 @@ public class AdminScanController {
         this.transcodeHardwareService = transcodeHardwareService;
         this.reparseService = reparseService;
         this.songMergeService = songMergeService;
+        this.props = props;
     }
 
     /**
      * 触发全量/增量扫描（P1.8）。
      *
      * Trigger a full/incremental scan (P1.8).
-     * @return scan result containing source scan details
+     * @return asynchronous scan progress for an external read-only library
      */
     @PostMapping("/scan")
     public Map<String, Object> scan() {
+        if (LibraryModePolicy.isExternalReadOnly(props)) {
+            // Fast Index is persisted before the background Media Probe queue;
+            // do not hold this HTTP request open for NAS FFprobe work.
+            return Map.of("libraryScan", scanService.startScan());
+        }
         MediaImportService.SourceScanResult sourceScan = mediaImportService.scanSourceLibrary();
         return Map.of("sourceScan", sourceScan);
     }
@@ -78,7 +89,8 @@ public class AdminScanController {
      * @return scan progress indicating current status
      */
     @PostMapping("/scan/start")
-    public MediaImportService.SourceScanProgress startScan() {
+    public Object startScan() {
+        if (LibraryModePolicy.isExternalReadOnly(props)) return scanService.startScan();
         return mediaImportService.startSourceScan();
     }
 
@@ -89,7 +101,8 @@ public class AdminScanController {
      * @return scan progress details
      */
     @GetMapping("/scan/progress")
-    public MediaImportService.SourceScanProgress scanProgress() {
+    public Object scanProgress() {
+        if (LibraryModePolicy.isExternalReadOnly(props)) return scanService.getScanProgress();
         return mediaImportService.getScanProgress();
     }
 
@@ -112,13 +125,23 @@ public class AdminScanController {
                                              @RequestParam(required = false) Boolean sourceDeleted,
                                              @RequestParam(defaultValue = "0") int page,
                                              @RequestParam(defaultValue = "20") int size) {
+        if (LibraryModePolicy.isExternalReadOnly(props)) {
+            return Map.of(
+                    "content", List.of(),
+                    "total", 0L,
+                    "page", page,
+                    "totalPages", 0,
+                    "libraryMode", props.getLibraryMode().name()
+            );
+        }
         Page<MediaImportRecord> records = mediaImportService.listSourceLibrary(
                 keyword, status, formatAnalysis, sourceDeleted, page, size);
         return Map.of(
                 "content", records.getContent().stream().map(MediaImportRecordDto::from).toList(),
                 "total", records.getTotalElements(),
                 "page", records.getNumber(),
-                "totalPages", records.getTotalPages()
+                "totalPages", records.getTotalPages(),
+                "libraryMode", props.getLibraryMode().name()
         );
     }
 
@@ -361,6 +384,19 @@ public class AdminScanController {
         int index = ((Number) body.getOrDefault("accompanimentIndex", 1)).intValue();
         adminService.confirmVocalTrack(fileId, index);
         return Map.of("status", "confirmed", "fileId", fileId, "accompanimentIndex", index);
+    }
+
+    /** Update one file's audio layout semantics without touching the media file. */
+    @PutMapping("/files/{fileId}/audio-layout")
+    public AudioLayoutDto updateAudioLayout(@PathVariable Long fileId,
+                                            @RequestBody AudioLayoutUpdateRequest request) {
+        return adminService.updateAudioLayout(fileId, request);
+    }
+
+    /** Swap original/accompaniment semantic assignment without reopening or rewriting media. */
+    @PostMapping("/files/{fileId}/audio-layout/swap")
+    public AudioLayoutDto swapAudioLayout(@PathVariable Long fileId) {
+        return adminService.swapAudioLayout(fileId);
     }
 
     /**
