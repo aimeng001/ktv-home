@@ -327,14 +327,12 @@ class PlaybackEngine(
                 if (awaitingTracks) return
             }
         }
-        val accompanimentIndex = requestedAccompanimentIndex
-        val index = if (requestedVocalMode == "accompaniment") {
-            accompanimentIndex
-        } else if (accompanimentIndex == 0 && requestedAudioTrackCount > 1) {
-            1
-        } else {
-            0
-        }
+        val index = resolveAudioTrackIndex(
+            audioLayout = requestedAudioLayout,
+            vocalMode = requestedVocalMode,
+            audioTrackCount = requestedAudioTrackCount,
+            legacyAccompanimentIndex = requestedAccompanimentIndex,
+        )
         if (index == null || index < 0) return
         val audioGroups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
         if (audioGroups.isEmpty()) return
