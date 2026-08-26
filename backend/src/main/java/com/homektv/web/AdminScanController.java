@@ -28,9 +28,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 管理后台 API（P2.1-P2.6/P1.8，详设§8/§11.1）。局域网免登录。
+ * 管理后台 API（P2.1-P2.6/P1.8，详设§8/§11.1）。由统一管理会话拦截器保护。
  *
- * Admin backend API (P2.1-P2.6/P1.8, design spec §8/§11.1). LAN access without login.
+ * Admin backend API (P2.1-P2.6/P1.8, design spec §8/§11.1). Protected by the shared admin session interceptor.
  */
 @RestController
 @RequestMapping("/api/admin")

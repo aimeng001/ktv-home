@@ -7,6 +7,8 @@
  *
  * @module api/client
  */
+import { clearAdminToken, getAdminToken } from '../stores/adminAuth'
+
 const BASE = '/api'
 
 /**
@@ -19,14 +21,27 @@ const BASE = '/api'
  * @returns {Promise<object|string|null>} 解析后的响应体 / parsed response body
  */
 async function request(path, options = {}) {
-  const isFormData = options.body instanceof FormData
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
+  const { headers: optionHeaders, ...fetchOptions } = options
+  const headers = {
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(optionHeaders || {})
+  }
+  if (path === '/admin' || path.startsWith('/admin/')) {
+    const token = getAdminToken()
+    if (token) headers['X-Admin-Token'] = token
+  }
   const res = await fetch(BASE + path, {
-    headers: { ...(isFormData ? {} : { 'Content-Type': 'application/json' }), ...(options.headers || {}) },
-    ...options
+    ...fetchOptions,
+    headers
   })
   if (!res.ok) {
     let body = null
     try { body = await res.json() } catch { /* ignore */ }
+    if (res.status === 401 && body?.code === 'ADMIN_AUTH_REQUIRED') {
+      clearAdminToken()
+      window.dispatchEvent(new CustomEvent('home-ktv-admin-auth-required'))
+    }
     const err = new Error(body?.message || `HTTP ${res.status}`)
     err.code = body?.code
     err.status = res.status
@@ -86,6 +101,9 @@ export const api = {
 
   // 管理后台（P2）
   // Admin dashboard (P2)
+  adminAuthStatus: () => request('/admin/auth/status'),
+  adminLogin: (password) => request('/admin/auth/login', { method: 'POST', body: JSON.stringify({ password }) }),
+  adminLogout: () => request('/admin/auth/logout', { method: 'POST' }),
   adminStatus: () => request('/admin/status'),
   adminSongs: (params = {}) => request('/admin/songs?' + new URLSearchParams(
     Object.entries(params).filter(([, value]) => value !== '' && value != null)

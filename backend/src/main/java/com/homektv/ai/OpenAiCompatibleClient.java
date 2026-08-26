@@ -184,7 +184,11 @@ public class OpenAiCompatibleClient {
     }
 
     private JsonNode request(AiConfigService.ResolvedConfig config, String method, String path, Object body) {
-        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(Math.min(30, config.timeoutSeconds()))).build();
+        configService.validateOutboundBaseUrl(config.baseUrl());
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(Math.min(30, config.timeoutSeconds())))
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(Duration.ofSeconds(config.timeoutSeconds()));
         RestClient client = restClientBuilder.baseUrl(config.baseUrl()).requestFactory(requestFactory).build();

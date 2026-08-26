@@ -50,6 +50,9 @@ services:
       KTV_LIBRARY_PATH: /music
       KTV_LIBRARY_MODE: EXTERNAL_READ_ONLY
       KTV_DATA_PATH: /data
+      # Set this before deployment to unlock /m/admin; empty keeps admin APIs disabled.
+      # 部署前请设置此项以解锁 /m/admin；留空会关闭管理接口。
+      KTV_ADMIN_PASSWORD: ""
       KTV_DISCOVERY_ENABLED: "true"
       KTV_DISCOVERY_UDP_PORT: 18888
       KTV_DISCOVERY_NAME: 家庭KTV
@@ -58,6 +61,7 @@ services:
       KTV_AI_API_KEY: ""
       KTV_AI_MODEL: deepseek-v4-flash
       KTV_AI_AUTO_APPLY_CONFIDENCE: "0.90"
+      KTV_AI_ALLOW_PRIVATE_NETWORK: "false"
       JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=70 -Xmx512m
       TZ: *timezone
     ports:

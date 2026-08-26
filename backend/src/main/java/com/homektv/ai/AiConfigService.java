@@ -11,7 +11,6 @@ import com.homektv.web.ApiException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.net.URI;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -106,6 +105,12 @@ public class AiConfigService {
         if (config.baseUrl().isBlank()) throw new ApiException("AI_BASE_URL_MISSING", "AI API Base URL 未配置，请先配置 AI 模型");
         if (config.apiKey().isBlank()) throw new ApiException("AI_KEY_MISSING", "AI API Key 未配置，请先配置 AI 模型");
         if (config.bulkModel().isBlank()) throw new ApiException("AI_MODEL_MISSING", "批量模型 ID 未配置，请先配置 AI 模型");
+        validateOutboundBaseUrl(config.baseUrl());
+    }
+
+    /** Validates the destination immediately before a request can carry the API key. */
+    public void validateOutboundBaseUrl(String baseUrl) {
+        AiBaseUrlPolicy.requireSafe(baseUrl, properties.getAi().isAllowPrivateNetwork());
     }
 
     /** Returns whether an AI request can be made without throwing a user-facing configuration error. */
@@ -119,7 +124,7 @@ public class AiConfigService {
         String baseUrl = value.baseUrl() == null ? "" : value.baseUrl().trim();
         if (Boolean.TRUE.equals(value.enabled()) && baseUrl.isBlank())
             throw new ApiException("INVALID_AI_CONFIG", "启用 AI 时必须填写 API Base URL");
-        if (!baseUrl.isBlank()) normalizeBaseUrl(baseUrl);
+        if (!baseUrl.isBlank()) AiBaseUrlPolicy.normalizeAndValidate(baseUrl, properties.getAi().isAllowPrivateNetwork());
         if (value.bulkModel() == null || value.bulkModel().isBlank() || value.bulkModel().length() > 200)
             throw new ApiException("INVALID_AI_CONFIG", "批量模型 ID 不能为空且不能超过 200 个字符");
         if (value.reasoningModel() != null && value.reasoningModel().length() > 200)
@@ -137,17 +142,7 @@ public class AiConfigService {
     private boolean between(double value) { return value >= 0 && value <= 1; }
 
     private String normalizeBaseUrl(String value) {
-        if (value == null || value.trim().isBlank()) return "";
-        try {
-            String normalized = value == null ? "" : value.trim().replaceAll("/+$", "");
-            URI uri = URI.create(normalized);
-            if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
-                    || uri.getHost() == null || uri.getUserInfo() != null)
-                throw new IllegalArgumentException();
-            return normalized;
-        } catch (Exception e) {
-            throw new ApiException("INVALID_AI_CONFIG", "API Base URL 必须是完整的 HTTP(S) 地址");
-        }
+        return AiBaseUrlPolicy.normalize(value);
     }
 
     private Map<String, String> sourceMap() {

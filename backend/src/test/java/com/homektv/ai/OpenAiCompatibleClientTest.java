@@ -3,6 +3,7 @@ package com.homektv.ai;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.repo.SongFileRepository;
+import com.homektv.web.ApiException;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -17,6 +18,8 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -126,6 +129,23 @@ class OpenAiCompatibleClientTest {
         assertThat(client.completeJson("BULK", "system", "user", 100).path("ok").asBoolean()).isTrue();
         assertThat(client.listModels()).containsExactly("a-model", "z-model");
         assertThat(completions.get()).isEqualTo(2);
+    }
+
+    @Test
+    void validatesDestinationBeforeSendingBearerToken() {
+        AiConfigService configService = mock(AiConfigService.class);
+        AiConfigService.ResolvedConfig config = new AiConfigService.ResolvedConfig(
+                true, "http://127.0.0.1:11434/v1", "vendor/model", "",
+                5, 0.97, 0.92, AiConfigService.JsonMode.PROMPT_ONLY, 2, 1, "test-key");
+        when(configService.resolve()).thenReturn(config);
+        doThrow(new ApiException("INVALID_AI_CONFIG", "unsafe destination"))
+                .when(configService).validateOutboundBaseUrl(config.baseUrl());
+        OpenAiCompatibleClient client = new OpenAiCompatibleClient(
+                configService, new ObjectMapper(), RestClient.builder(), mock(SongFileRepository.class));
+
+        assertThatThrownBy(() -> client.completeJson("BULK", "system", "user", 100))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("unsafe destination");
     }
 
     private OpenAiCompatibleClient client(AiConfigService.JsonMode mode) {

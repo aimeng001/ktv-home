@@ -45,6 +45,7 @@ services:
       KTV_LIBRARY_PATH: /music
       KTV_LIBRARY_MODE: ${KTV_LIBRARY_MODE:-MANAGED}
       KTV_DATA_PATH: /data
+      KTV_ADMIN_PASSWORD: ${KTV_ADMIN_PASSWORD:-}
       KTV_DISCOVERY_ENABLED: ${KTV_DISCOVERY_ENABLED:-true}
       # The TV client scans this UDP port to discover the server.
       # 电视端通过扫描此 UDP 端口发现服务端。
@@ -55,6 +56,7 @@ services:
       KTV_AI_API_KEY: ${KTV_AI_API_KEY:-}
       KTV_AI_MODEL: ${KTV_AI_MODEL:-deepseek-v4-flash}
       KTV_AI_AUTO_APPLY_CONFIDENCE: ${KTV_AI_AUTO_APPLY_CONFIDENCE:-0.90}
+      KTV_AI_ALLOW_PRIVATE_NETWORK: ${KTV_AI_ALLOW_PRIVATE_NETWORK:-false}
       JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=70 -Xmx512m}
       TZ: ${TZ:-Asia/Shanghai}
     ports:

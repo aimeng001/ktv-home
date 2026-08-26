@@ -26,6 +26,7 @@ app:
   library-mode: ${KTV_LIBRARY_MODE:MANAGED}
   data-path: ${KTV_DATA_PATH:./data}
   config-master-key-path: ${KTV_CONFIG_MASTER_KEY_PATH:/data/secrets/config.key}
+  admin-password: ${KTV_ADMIN_PASSWORD:}
   ffprobe-path: ${KTV_FFPROBE_PATH:ffprobe}
   transcode:
     ffmpeg-path: ${KTV_FFMPEG_PATH:ffmpeg}
@@ -57,6 +58,7 @@ app:
     bulk-concurrency: ${KTV_AI_BULK_CONCURRENCY:2}
     reasoning-concurrency: ${KTV_AI_REASONING_CONCURRENCY:1}
     auto-apply-confidence: ${KTV_AI_AUTO_APPLY_CONFIDENCE:0.90}
+    allow-private-network: ${KTV_AI_ALLOW_PRIVATE_NETWORK:false}
     connect-timeout-seconds: 10
     read-timeout-seconds: 60
 

@@ -45,6 +45,10 @@ backend/data/
 /data/
 backend/src/main/resources/application-local.yml
 
+# ===== Local deployment secrets =====
+/.env
+**/.env
+
 # Local development instructions and agent prompts; never publish these files.
 /AGENTS.md
 /ARCHITECTURE.md

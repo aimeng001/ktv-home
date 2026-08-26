@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useUserStore } from '../stores/user'
+import { useAdminAuthStore } from '../stores/adminAuth'
 
 /**
  * 应用路由配置模块。
@@ -25,8 +26,10 @@ const routes = [
   { path: '/remote', name: 'remote', component: () => import('../views/RemoteView.vue') },                        // H5-06
   { path: '/lyric', name: 'lyric', component: () => import('../views/LyricView.vue') },                           // H5-07
 
-  // 管理后台（免登录，PC/手机浏览器）
-  // Admin panel (no login required, accessible from PC/mobile browser)
+  // 管理后台登录页；管理 API 令牌由服务端签发。
+  { path: '/admin/login', name: 'admin-login', component: () => import('../views/admin/AdminLoginView.vue'), meta: { public: true, adminLogin: true } },
+  // 管理后台（管理员登录后访问，PC/手机浏览器）
+  // Admin panel (requires an admin session, accessible from PC/mobile browser)
   { path: '/admin', name: 'admin-dashboard', component: () => import('../views/admin/DashboardView.vue'), meta: { public: true, admin: true } },
   { path: '/admin/source-library', name: 'admin-source-library', component: () => import('../views/admin/SourceLibraryView.vue'), meta: { public: true, admin: true } },
   { path: '/admin/ktv-library', name: 'admin-ktv-library', component: () => import('../views/admin/KtvLibraryView.vue'), meta: { public: true, admin: true } },
@@ -61,6 +64,11 @@ const router = createRouter({
  * Design spec H5-01.
  */
 router.beforeEach((to) => {
+  const admin = useAdminAuthStore()
+  if (to.meta.adminLogin && admin.isAuthenticated) return { name: 'admin-dashboard' }
+  if (to.meta.admin && !admin.isAuthenticated) {
+    return { name: 'admin-login', query: { redirect: to.fullPath } }
+  }
   const user = useUserStore()
   if (!to.meta.public && !user.isRegistered) {
     return { name: 'entry' }

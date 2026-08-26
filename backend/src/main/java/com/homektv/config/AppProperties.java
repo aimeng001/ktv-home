@@ -29,6 +29,9 @@ public class AppProperties {
     /** Encrypted application-secret master key file. */
     private String configMasterKeyPath = "/data/secrets/config.key";
 
+    /** 管理后台密码；为空时管理接口安全关闭。Admin password; blank disables admin APIs. */
+    private String adminPassword = "";
+
     /** AI 曲库分析配置。AI music library analysis configuration. */
     private Ai ai = new Ai();
 
@@ -51,6 +54,8 @@ public class AppProperties {
     public void setFfprobePath(String ffprobePath) { this.ffprobePath = ffprobePath; }
     public String getConfigMasterKeyPath() { return configMasterKeyPath; }
     public void setConfigMasterKeyPath(String configMasterKeyPath) { this.configMasterKeyPath = configMasterKeyPath; }
+    public String getAdminPassword() { return adminPassword; }
+    public void setAdminPassword(String adminPassword) { this.adminPassword = adminPassword; }
     public Ai getAi() { return ai; }
     public void setAi(Ai ai) { this.ai = ai; }
     public Discovery getDiscovery() { return discovery; }
@@ -139,6 +144,8 @@ public class AppProperties {
         private int connectTimeoutSeconds = 10;
         /** 读取超时秒数。Read timeout in seconds. */
         private int readTimeoutSeconds = 60;
+        /** 是否明确允许访问本机/内网 AI 服务。Whether private-network AI endpoints are explicitly allowed. */
+        private boolean allowPrivateNetwork = false;
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
@@ -164,5 +171,7 @@ public class AppProperties {
         public void setConnectTimeoutSeconds(int connectTimeoutSeconds) { this.connectTimeoutSeconds = connectTimeoutSeconds; }
         public int getReadTimeoutSeconds() { return readTimeoutSeconds; }
         public void setReadTimeoutSeconds(int readTimeoutSeconds) { this.readTimeoutSeconds = readTimeoutSeconds; }
+        public boolean isAllowPrivateNetwork() { return allowPrivateNetwork; }
+        public void setAllowPrivateNetwork(boolean allowPrivateNetwork) { this.allowPrivateNetwork = allowPrivateNetwork; }
     }
 }

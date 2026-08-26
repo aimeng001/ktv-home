@@ -17,7 +17,7 @@ Home KTV 是一套运行在家庭 NAS 或 Linux 主机上的局域网点歌系�
 - **手机端**：Vue 3 H5 点歌页和管理后台，无需安装 App
 - **电视端**：Android TV 客户端，基于 Media3/ExoPlayer
 
-> 项目面向可信家庭局域网，未提供公网登录和安全防护，请勿直接暴露到互联网。
+> 项目面向可信家庭局域网；管理后台支持独立密码，但普通点歌和遥控仍按局域网信任模型工作，请勿直接暴露到互联网。
 
 ## 典型使用流程
 
@@ -117,10 +117,12 @@ cp .env.example .env
 KTV_SOURCE_MUSIC_DIR=/volume1/home-ktv/source-music
 KTV_MUSIC_DIR=/volume1/home-ktv/music
 KTV_DB_PASSWORD=请替换为强密码
+KTV_ADMIN_PASSWORD=请替换为管理后台强密码
 ```
 
 - `KTV_SOURCE_MUSIC_DIR`：放置未经处理的原始视频和音频。
 - `KTV_MUSIC_DIR`：存放已直拷或转码完成、可以点播的文件。
+- `KTV_ADMIN_PASSWORD`：管理后台密码。设置后访问 `/m/admin` 会先登录；普通搜歌、点歌、播放和遥控仍不需要账号。
 
 两个目录不要配置成同一路径。服务端会向曲库目录写入处理结果，请确保容器具有写权限。
 
@@ -357,11 +359,14 @@ KTV_AI_JSON_MODE=AUTO
 KTV_AI_BULK_CONCURRENCY=2
 KTV_AI_REASONING_CONCURRENCY=1
 KTV_AI_AUTO_APPLY_CONFIDENCE=0.90
+KTV_AI_ALLOW_PRIVATE_NETWORK=false
 ```
 
 模型 ID 不做固定枚举限制；增强模型留空时复用批量模型。后台可以尝试获取模型列表并检测鉴权、Chat Completions 和 JSON 输出能力，不支持模型列表或 JSON Mode 的服务仍可手工配置和自动回退。
 
 管理后台保存的 API Key 使用 AES-256-GCM 加密，接口只返回配置状态和尾号。主密钥优先读取 `KTV_CONFIG_MASTER_KEY`，否则生成到数据目录的 `secrets/config.key`。不要删除或丢失该文件，否则已保存的 API Key 无法解密。
+
+公网 AI 服务默认要求 HTTPS，并会拒绝本机和内网地址，以避免把 API Key 发到意外目标。若使用可信局域网内的本地 AI 服务（例如 HTTP 地址），需要明确设置 `KTV_AI_ALLOW_PRIVATE_NETWORK=true`；不要把服务端口暴露到公网。
 
 未配置 AI 或调用超时、限流、失败时，本地标签、文件名、歌词标签和目录解析仍可继续工作，不阻塞入库。自然语言主题歌单、歌手性别推断等没有等价本地判断能力的操作会提示先配置模型，不会伪造结果。
 
@@ -493,7 +498,7 @@ scripts/      备份、恢复和媒体辅助脚本
 
 ## 已知限制
 
-- 系统只适用于可信局域网，不应直接暴露到公网。
+- 系统只适用于可信局域网，不应直接暴露到公网；管理接口有独立密码保护，但普通家庭遥控协议仍按局域网信任模型工作。
 - AI 人声分离或声道相减生成的伴奏可能残留主唱，无法达到官方母带效果。
 - 蓝牙麦克风延迟和音质取决于电视盒子固件，实时演唱优先使用 USB 或有线设备。
 - 不同 KTV 视频的音轨顺序并不统一，首次导入后建议抽查。

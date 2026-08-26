@@ -102,7 +102,7 @@ class MediaApi(private val config: AppConfig) {
 
     suspend fun fetchLibraryCount(): Long? = withContext(Dispatchers.IO) {
         try {
-            http.newCall(Request.Builder().url("${config.apiBase()}/admin/status").build()).execute().use { resp ->
+            http.newCall(Request.Builder().url("${config.apiBase()}/library/status").build()).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     Log.w(TAG, "library status http ${resp.code}")
                     return@withContext null

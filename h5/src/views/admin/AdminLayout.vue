@@ -5,6 +5,7 @@
       <div class="brand">
         <strong>家庭KTV</strong>
         <span>管理后台</span>
+        <button class="logout" type="button" @click="logout">退出管理</button>
       </div>
       <!-- 侧边栏导航菜单 / Sidebar navigation menu -->
       <nav>
@@ -56,8 +57,10 @@
  *
  * Admin layout component — fixed left sidebar with right content area.
  */
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api/client'
+import { useAdminAuthStore } from '../../stores/adminAuth'
 
 /**
  * active 当前激活的菜单项标识（dashboard | source | ktv | settings）
@@ -71,8 +74,23 @@ const READ_KEY = 'home-ktv.admin.releaseNoticeRead'
 const DISMISSED_KEY = 'home-ktv.admin.releaseNoticeDismissed'
 const releaseInfo = ref(null)
 const releaseNoticeOpen = ref(false)
+const adminAuth = useAdminAuthStore()
+const router = useRouter()
+const route = useRoute()
+
+function handleAuthRequired() {
+  adminAuth.clearToken()
+  router.replace({ name: 'admin-login', query: { redirect: route.fullPath } })
+}
 
 onMounted(async () => {
+  window.addEventListener('home-ktv-admin-auth-required', handleAuthRequired)
+  try {
+    const status = await api.adminAuthStatus()
+    if (!status?.authenticated) handleAuthRequired()
+  } catch {
+    // The API client handles expired admin sessions and redirects via the event above.
+  }
   try {
     const info = await api.releaseInfo()
     const noticeId = info?.announcement?.id
@@ -87,6 +105,14 @@ onMounted(async () => {
     // Release notices must never block the administration UI.
   }
 })
+
+onUnmounted(() => window.removeEventListener('home-ktv-admin-auth-required', handleAuthRequired))
+
+async function logout() {
+  try { await api.adminLogout() } catch { /* local logout must still complete */ }
+  adminAuth.clearToken()
+  router.replace({ name: 'admin-login' })
+}
 
 function dismissReleaseNotice() {
   const noticeId = releaseInfo.value?.announcement?.id
@@ -111,6 +137,7 @@ function formatBytes(bytes) {
 .side { width:220px; flex:none; background:#fff; border-right:1px solid var(--admin-border); }
 .brand { height:76px; padding:18px 20px; border-bottom:1px solid var(--admin-border); display:flex; flex-direction:column; justify-content:center; }
 .brand strong { font-size:18px; line-height:1; }.brand span { margin-top:7px; color:#94a3b8; font-size:11px; }
+.logout { align-self:flex-start; margin-top:9px; padding:0; border:0; background:transparent; color:#64748b; font-size:11px; cursor:pointer; }.logout:hover { color:#1d4ed8; }
 nav { padding:16px 12px; }.nav-label { padding:0 10px 8px; font-size:11px; color:#94a3b8; }
 .mi { display:flex; align-items:center; gap:10px; min-height:42px; padding:0 12px; margin-bottom:4px; border-radius:6px; color:#475569; font-size:13px; border:1px solid transparent; }
 .mi span { width:18px; text-align:center; font-size:16px; color:#64748b; }.mi:hover { background:#f8fafc; color:#172033; }
