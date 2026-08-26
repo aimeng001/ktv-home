@@ -80,6 +80,28 @@ class StreamControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
+    @Test
+    void externalModeDoesNotStreamLexicalPathOutsideSourceRoot() throws Exception {
+        Path source = Files.createDirectory(tempDir.resolve("nas-copy"));
+        Path outside = Files.createDirectory(tempDir.resolve("outside"));
+        Path outsideMedia = outside.resolve("outside.mkv");
+        Files.write(outsideMedia, new byte[]{0x01, 0x02});
+
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(source.resolve("..").resolve("outside").resolve("outside.mkv").toString());
+        songFile.setFileRole(LibraryModePolicy.EXTERNAL_FILE_ROLE);
+        SongFileRepository repository = org.mockito.Mockito.mock(SongFileRepository.class);
+        when(repository.findById(3L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setLibraryMode(LibraryMode.EXTERNAL_READ_ONLY);
+        props.setSourceLibraryPath(source.toString());
+
+        var response = new StreamController(repository, props).stream(3L, null);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(Files.readAllBytes(outsideMedia)).containsExactly((byte) 0x01, (byte) 0x02);
+    }
+
     private static void createDirectoryLinkOrSkip(Path link, Path target) throws Exception {
         try {
             Files.createSymbolicLink(link, target);

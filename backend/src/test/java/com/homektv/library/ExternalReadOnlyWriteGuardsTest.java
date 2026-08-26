@@ -24,6 +24,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -114,15 +115,17 @@ class ExternalReadOnlyWriteGuardsTest {
     }
 
     @Test
-    void deletingA曲库SongIsRejected() {
+    void deletingA曲库SongIsRejected() throws Exception {
         SongRepository songs = mock(SongRepository.class);
         SongFileRepository files = mock(SongFileRepository.class);
         AdminService service = new AdminService(songs, files, mock(PlayHistoryRepository.class),
                 mock(WsBroadcaster.class), mock(AssetWriter.class), mock(QueueItemRepository.class),
                 mock(PlayerStateRepository.class), props);
+        byte[] originalBytes = Files.readAllBytes(sourceFile);
 
         assertReadOnly(() -> service.deleteSong(1L));
 
+        assertThat(Files.readAllBytes(sourceFile)).containsExactly(originalBytes);
         verifyNoInteractions(songs, files);
     }
 

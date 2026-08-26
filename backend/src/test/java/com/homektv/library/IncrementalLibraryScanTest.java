@@ -316,6 +316,33 @@ class IncrementalLibraryScanTest {
     }
 
     @Test
+    void successfulProbeKeepsAnUnrecognizedFilenameForReview() throws Exception {
+        Path file = Files.write(sourceDir.resolve("名称不规范.mkv"), new byte[]{1, 2, 3});
+
+        scanService.scanAll();
+
+        SongFile indexed = filesByPath.get(file.toString());
+        assertThat(indexed).isNotNull();
+        assertThat(songsById.get(indexed.getSongId()).getStatus()).isEqualTo("unrecognized");
+        assertThat(songsById.get(indexed.getSongId()).isNeedsAiOptimization()).isTrue();
+    }
+
+    @Test
+    void unavailableExternalRootDoesNotMarkTrackedFilesMissing() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        scanService.scanAll();
+        SongFile indexed = filesByPath.get(file.toString());
+        assertThat(indexed.isValid()).isTrue();
+
+        props.setSourceLibraryPath(tempDir.resolve("temporarily-unavailable").toString());
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.missing()).isZero();
+        assertThat(indexed.isValid()).isTrue();
+        verify(songFileRepository, times(2)).save(any(SongFile.class));
+    }
+
+    @Test
     void retryReconcilesAnOldFastIndexRowThatWasPersistedAsOk() throws Exception {
         Path file = Files.write(sourceDir.resolve("名称不规范.mkv"), new byte[]{1, 2, 3});
         when(ffprobe.probe(any(Path.class)))
