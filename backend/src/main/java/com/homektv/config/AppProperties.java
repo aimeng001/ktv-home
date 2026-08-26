@@ -86,7 +86,7 @@ public class AppProperties {
         private boolean enabled = true;
         private String id = "";
         private String title = "Android TV 客户端已更新";
-        private String message = "新版本已随服务端发布，请根据电视设备架构下载并安装对应的 Android TV APK。升级后请进入“原始音乐管理”，先执行“自动清理”，再重新扫描原始音乐路径。";
+        private String message = "新版本已随服务端发布，请根据电视设备架构下载并安装对应的 Android TV APK。升级后请重新扫描曲库；外部只读曲库请保持源文件不变，Managed 曲库请按管理页面提示操作。";
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }

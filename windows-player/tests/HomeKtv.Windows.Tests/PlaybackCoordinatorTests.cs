@@ -93,6 +93,31 @@ public sealed class PlaybackCoordinatorTests
         Assert.Equal(1, output.StopCount);
     }
 
+    [Fact]
+    public async Task Missing_file_source_has_no_file_identity_for_play_error()
+    {
+        var coordinator = new PlaybackCoordinator(new MissingFileServerApi(), new RecordingPlaybackOutput());
+
+        var exception = await Assert.ThrowsAsync<PlaybackAttemptException>(() =>
+            coordinator.ApplySnapshotAsync("sync_full", Snapshot("original")));
+
+        Assert.Equal(1, exception.QueueId);
+        Assert.Null(exception.FileId);
+    }
+
+    [Fact]
+    public async Task Load_failure_reports_the_file_that_was_selected()
+    {
+        var output = new RecordingPlaybackOutput { ThrowOnLoad = true };
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 10)), output);
+
+        var exception = await Assert.ThrowsAsync<PlaybackAttemptException>(() =>
+            coordinator.ApplySnapshotAsync("sync_full", Snapshot("original")));
+
+        Assert.Equal(10, exception.FileId);
+    }
+
     private static QueueSnapshot Snapshot(
         string vocalMode,
         long queueId = 1,
@@ -133,11 +158,20 @@ public sealed class PlaybackCoordinatorTests
         public string StreamUrl(long fileId) => $"http://server/api/stream/{fileId}";
     }
 
+    private sealed class MissingFileServerApi : IPlaybackServerApi
+    {
+        public Task<SongDetail?> GetSongDetailAsync(long songId, CancellationToken cancellationToken = default)
+            => Task.FromResult<SongDetail?>(null);
+
+        public string StreamUrl(long fileId) => $"http://server/api/stream/{fileId}";
+    }
+
     private sealed class RecordingPlaybackOutput : IPlaybackOutput
     {
         public int LoadCount { get; private set; }
         public int SeekCount => SeekPositions.Count;
         public int StopCount { get; private set; }
+        public bool ThrowOnLoad { get; init; }
         public List<long> LoadedFileIds { get; } = new();
         public List<long> SeekPositions { get; } = new();
         public List<int> AudioTrackIndices { get; } = new();
@@ -145,6 +179,7 @@ public sealed class PlaybackCoordinatorTests
 
         public Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default)
         {
+            if (ThrowOnLoad) throw new InvalidOperationException("fake output load failed");
             LoadCount++;
             LoadedFileIds.Add(fileId);
             return Task.CompletedTask;

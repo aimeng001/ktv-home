@@ -38,6 +38,7 @@ import com.homektv.tv.net.AudioLayout
 import com.homektv.tv.net.KtvSocket
 import com.homektv.tv.net.MediaApi
 import com.homektv.tv.net.ApkPackageInfo
+import com.homektv.tv.net.PlaybackErrorContext
 import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.StandbyContent
 import com.homektv.tv.player.PlaybackEngine
@@ -188,7 +189,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 runOnUiThread { updateProgress(pos) }
             },
             onFinished = { socket?.sendFinished(currentQueueId) },
-            onError = { onPlayError() },
+            onError = { _, context -> onPlayError(context) },
         ).also {
             it.attach(binding.playerView)
             // 遥控音量键在此 ROM 上直达系统媒体会话：监听系统音量变化上行同步服务端
@@ -683,6 +684,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         // idle 或无当前曲目：停止、回待机页
         if (snapshot.state == "idle" || playing == null || songId == null) {
             currentQueueId = null
+            currentFileId = null
             currentAudioLayout = AudioLayout.normalStereo()
             engine?.stop()
             binding.txtLyricPrevious.stopAnimation()
@@ -707,6 +709,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
         // 换歌：拉详情取文件源 → 播放
         currentQueueId = playing.queueId
+        currentFileId = null
         val targetQueueId = playing.queueId
         val audioMode = playing.song?.mediaType.equals("AUDIO", ignoreCase = true)
         lyricLines = emptyList()
@@ -733,7 +736,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             val file = mediaApi.bestFileSource(songId)
             if (currentQueueId != targetQueueId) return@launch
             if (file == null) {
-                onPlayError()
+                onPlayError(PlaybackErrorContext.missingSource(targetQueueId))
                 return@launch
             }
             accompanimentTrackIndex = file.audioLayout.accompanimentTrackIndex ?: file.vocalTrackIndex
@@ -750,7 +753,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             }
             eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
             eng.applyVolume(volume, muted)
-            eng.play(file.id, mediaApi.streamUrl(file.id))
+            eng.play(file.id, mediaApi.streamUrl(file.id), targetQueueId)
             if (snapshot.state == "paused") eng.pause()
         }
     }
@@ -1021,9 +1024,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     /** 播放失败：上报文件源，服务端标记失效并推进队列。 */
-    private fun onPlayError() {
+    private fun onPlayError(context: PlaybackErrorContext) {
         Toast.makeText(this, R.string.play_error, Toast.LENGTH_SHORT).show()
-        socket?.sendPlayError("media playback failed", currentFileId, currentQueueId)
+        socket?.sendPlayError("media playback failed", context.fileId, context.queueId)
     }
 
     companion object {

@@ -23,6 +23,12 @@ class FilenameParserTest {
     }
 
     @Test
+    void recognizesOtherAndUnknownAsStandardLanguages() {
+        assertStandard("草蜢-爱-其他-流行.mkv", "草蜢", "爱", "其他", "流行");
+        assertStandard("草蜢-爱-未知-流行.mkv", "草蜢", "爱", "未知", "流行");
+    }
+
+    @Test
     void usesTheLongestExistingArtistMatch() {
         ParsedMeta parsed = FilenameParser.parse(
                 "A-Lin-给我一个理由忘记-国语-流行.mkv", EXISTING_ARTISTS);

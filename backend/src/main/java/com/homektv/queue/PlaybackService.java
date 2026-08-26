@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 播放控制状态机（P1.10/P1.11，详设§4.4/§9.2/§9.4）。
@@ -155,10 +156,17 @@ public class PlaybackService {
             return ps;
         }
         if (fileId != null) {
-            fileRepo.findById(fileId).ifPresent(file -> {
-                file.setValid(false);
-                fileRepo.save(file);
-            });
+            QueueItem current = ps.getCurrentQueueId() == null
+                    ? null
+                    : queueRepo.findById(ps.getCurrentQueueId()).orElse(null);
+            if (current != null) {
+                fileRepo.findById(fileId)
+                        .filter(file -> Objects.equals(file.getSongId(), current.getSongId()))
+                        .ifPresent(file -> {
+                            file.setValid(false);
+                            fileRepo.save(file);
+                        });
+            }
         }
         markCurrent(ps, QueueService.SKIPPED, false);
         advanceToNext(ps);

@@ -25,6 +25,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
 import com.homektv.tv.net.AudioLayout
+import com.homektv.tv.net.PlaybackErrorContext
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -44,7 +45,7 @@ class PlaybackEngine(
     context: Context,
     private val onProgress: (positionMs: Long) -> Unit,
     private val onFinished: () -> Unit,
-    private val onError: (message: String) -> Unit,
+    private val onError: (message: String, context: PlaybackErrorContext) -> Unit,
 ) {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -79,6 +80,8 @@ class PlaybackEngine(
 
     /** 当前正在播放的 fileId，用于避免同一首重复 setMediaItem 打断播放。 */
     private var currentFileId: Long? = null
+    /** 与当前媒体一起捕获的 queueId，避免迟到错误使用后来切歌后的队列状态。 */
+    private var currentQueueId: Long? = null
     private var requestedVocalMode: String = "original"
     private var requestedAccompanimentIndex: Int? = null
     private var requestedAudioTrackCount: Int = 1
@@ -180,7 +183,7 @@ class PlaybackEngine(
      * @param fileId song_files.id
      * @param streamUrl 完整拉流地址
      */
-    fun play(fileId: Long, streamUrl: String) {
+    fun play(fileId: Long, streamUrl: String, queueId: Long? = null) {
         if (currentFileId == fileId && player.playbackState != Player.STATE_IDLE) {
             player.playWhenReady = true
             return
@@ -190,6 +193,7 @@ class PlaybackEngine(
         videoStallRecoveries = 0
         lastVideoFrameAt = 0L
         playRequestAt = SystemClock.elapsedRealtime()
+        currentQueueId = queueId
         currentFileId = fileId
         awaitingTracks = true
         appliedSelectionFileId = null
@@ -229,6 +233,7 @@ class PlaybackEngine(
      * 使下次同 fileId 也会重新装载。
      */
     fun stop() {
+        currentQueueId = null
         currentFileId = null
         playRequestAt = 0L
         awaitingTracks = false
@@ -439,7 +444,7 @@ class PlaybackEngine(
             }
             transientRetryCount = 0
             stopProgressTicker()
-            onError(error.errorCodeName)
+            onError(error.errorCodeName, PlaybackErrorContext.forPlayback(currentQueueId, currentFileId))
         }
 
         private fun isTransient(error: PlaybackException): Boolean = when (error.errorCode) {

@@ -46,7 +46,7 @@ app:
       enabled: ${KTV_RELEASE_NOTICE_ENABLED:true}
       id: ${KTV_RELEASE_NOTICE_ID:${KTV_RELEASE_VERSION:0.1.0-dev}}
       title: ${KTV_RELEASE_NOTICE_TITLE:Android TV 客户端已更新}
-      message: ${KTV_RELEASE_NOTICE_MESSAGE:新版本已随服务端发布，请根据电视设备架构下载并安装对应的 Android TV APK。升级后请进入“原始音乐管理”，先执行“自动清理”，再重新扫描原始音乐路径。}
+      message: ${KTV_RELEASE_NOTICE_MESSAGE:新版本已随服务端发布，请根据电视设备架构下载并安装对应的 Android TV APK。升级后请重新扫描曲库；外部只读曲库请保持源文件不变，Managed 曲库请按管理页面提示操作。}
   ai:
     enabled: ${KTV_AI_ENABLED:false}
     base-url: ${KTV_AI_BASE_URL:}

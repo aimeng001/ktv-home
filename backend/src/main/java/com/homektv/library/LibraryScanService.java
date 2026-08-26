@@ -351,6 +351,7 @@ public class LibraryScanService {
                 existing.setRelativePath(relativePath);
                 changed = true;
             }
+            reconcilePendingFilenameStatus(entry, existing, counters);
             if (changed) {
                 fileRepo.save(existing);
                 counters.dbUpdates++;
@@ -377,8 +378,9 @@ public class LibraryScanService {
         provisional.setDurationMs(0);
         provisional.setLyricType(LyricType.NONE);
         provisional.setFingerprint(MediaClassifier.fastIndexFingerprint(entry.path()));
-        // Provisional rows remain searchable while their media details are pending.
-        provisional.setStatus("ok");
+        // Keep unrecognized filename metadata visible for review even if the
+        // later media probe fails before it can apply the final status.
+        provisional.setStatus(parsed.recognized() ? "ok" : "unrecognized");
         provisional.setTags(parsed.category() == null || parsed.category().isBlank()
                 ? new String[0] : new String[]{parsed.category()});
         provisional.setMetadataProvenance("{\"title\":{\"source\":\"filename_fast_index\"},"
@@ -407,6 +409,30 @@ public class LibraryScanService {
         indexed = fileRepo.save(indexed);
         counters.dbUpdates++;
         return entry.withExisting(indexed);
+    }
+
+    /**
+     * Repair rows created by an older Fast Index implementation that marked an
+     * unrecognized filename as {@code ok} before a failed probe left it pending.
+     * Only provisional rows are eligible, so a manually completed song is not
+     * rewritten merely because its filename is not parseable.
+     */
+    private void reconcilePendingFilenameStatus(FastIndexEntry entry, SongFile existing,
+                                                ScanCounters counters) {
+        if (!existing.isProbePending() || existing.getSongId() == null
+                || entry.filenameMeta().recognized()) {
+            return;
+        }
+        songRepo.findById(existing.getSongId()).ifPresent(song -> {
+            if (!isProvisionalSong(song)) return;
+            boolean changed = !"unrecognized".equals(song.getStatus())
+                    || !song.isNeedsAiOptimization();
+            if (!changed) return;
+            song.setStatus("unrecognized");
+            song.setNeedsAiOptimization(true);
+            songRepo.save(song);
+            counters.dbUpdates++;
+        });
     }
 
     private List<SongFile> trackedFiles(String role) {

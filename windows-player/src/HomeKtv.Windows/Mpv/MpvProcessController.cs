@@ -42,9 +42,13 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
             return null;
         }
 
-        return position.TryGetDouble(out var seconds)
-            ? Math.Max(0, (long)Math.Round(seconds * 1000, MidpointRounding.AwayFromZero))
-            : null;
+        if (!position.TryGetDouble(out var seconds))
+        {
+            return null;
+        }
+
+        positionMs = Math.Max(0, (long)Math.Round(seconds * 1000, MidpointRounding.AwayFromZero));
+        return positionMs;
     }
 
     public Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default) =>

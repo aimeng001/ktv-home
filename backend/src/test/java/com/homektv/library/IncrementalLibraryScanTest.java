@@ -301,6 +301,39 @@ class IncrementalLibraryScanTest {
         verify(ffprobe, times(2)).probe(any(Path.class));
     }
 
+    @Test
+    void failedProbeKeepsAnUnrecognizedFilenamePendingForReview() throws Exception {
+        Path file = Files.write(sourceDir.resolve("名称不规范.mkv"), new byte[]{1, 2, 3});
+        when(ffprobe.probe(any(Path.class)))
+                .thenThrow(new MediaProbeException("temporary probe failure"));
+
+        scanService.scanAll();
+
+        SongFile pending = filesByPath.get(file.toString());
+        assertThat(pending).isNotNull();
+        assertThat(pending.isProbePending()).isTrue();
+        assertThat(songsById.get(pending.getSongId()).getStatus()).isEqualTo("unrecognized");
+    }
+
+    @Test
+    void retryReconcilesAnOldFastIndexRowThatWasPersistedAsOk() throws Exception {
+        Path file = Files.write(sourceDir.resolve("名称不规范.mkv"), new byte[]{1, 2, 3});
+        when(ffprobe.probe(any(Path.class)))
+                .thenThrow(new MediaProbeException("temporary probe failure"));
+
+        scanService.scanAll();
+
+        SongFile pending = filesByPath.get(file.toString());
+        Song provisional = songsById.get(pending.getSongId());
+        provisional.setStatus("ok");
+        provisional.setNeedsAiOptimization(false);
+
+        scanService.scanAll();
+
+        assertThat(provisional.getStatus()).isEqualTo("unrecognized");
+        assertThat(provisional.isNeedsAiOptimization()).isTrue();
+    }
+
     private static String fileIdentity(Path file) throws Exception {
         Object key = Files.readAttributes(file, BasicFileAttributes.class).fileKey();
         return key == null ? null : key + "|null";

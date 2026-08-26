@@ -144,7 +144,8 @@ public sealed class PlaybackTerminal : IAsyncDisposable
             Error?.Invoke(exception);
             if (incoming.Playing?.QueueId is { } queueId)
             {
-                await socket.SendPlayErrorAsync(queueId, output.CurrentFileId, exception.Message, cancellationToken)
+                var fileId = exception is PlaybackAttemptException attempt ? attempt.FileId : null;
+                await socket.SendPlayErrorAsync(queueId, fileId, exception.Message, cancellationToken)
                     .ConfigureAwait(false);
             }
         }

@@ -1,5 +1,6 @@
-# Standalone NAS deployment. This file does not load or depend on .env.
-# NAS 独立部署文件，不读取也不依赖 .env。
+# Standalone NAS deployment. Set KTV_SOURCE_MUSIC_DIR to point at the existing
+# NAS library; it defaults to ./source-music for a local deployment.
+# NAS 独立部署文件。可用 KTV_SOURCE_MUSIC_DIR 指向现有 NAS 曲库，默认使用 ./source-music。
 # Before deployment, change x-db-password below. It is referenced by both
 # PostgreSQL and Home KTV, so the two services always use the same password.
 # 部署前请修改下方 x-db-password；数据库和应用会同时引用该密码，避免配置不一致。
@@ -37,10 +38,6 @@ services:
   ktv:
     image: ghcr.io/aimeng001/ktv-home:latest
     container_name: ktv-app
-    devices:
-      # Intel GPU passthrough for VAAPI hardware acceleration.
-      # Intel 核显透传，用于 VAAPI 硬件加速。
-      - /dev/dri:/dev/dri
     environment:
       SERVER_PORT: 8080
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/ktv
@@ -73,11 +70,11 @@ services:
       - type: bind
         # Relative to the directory containing this Compose project.
         # 相对于此 Compose 项目所在目录。
-        source: ./source-music
+        source: ${KTV_SOURCE_MUSIC_DIR:-./source-music}
         target: /source-music
         read_only: true
         bind:
-          create_host_path: true
+          create_host_path: false
       - type: bind
         source: ./music
         target: /music

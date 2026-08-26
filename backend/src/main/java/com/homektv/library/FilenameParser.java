@@ -51,7 +51,9 @@ public final class FilenameParser {
             Map.entry("ko", "韩语"),
             Map.entry("纯音乐", "纯音乐"),
             Map.entry("instrumental", "纯音乐"),
-            Map.entry("music", "纯音乐")
+            Map.entry("music", "纯音乐"),
+            Map.entry("其他", "其他"),
+            Map.entry("未知", "未知")
     );
 
     private FilenameParser() {}

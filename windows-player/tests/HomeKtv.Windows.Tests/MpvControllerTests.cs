@@ -97,6 +97,26 @@ public sealed class MpvControllerTests
     }
 
     [Fact]
+    public async Task Last_observed_position_is_restored_after_mpv_replacement()
+    {
+        var first = new FakeMpvSession { GetPropertyResponse = Json("123.4") };
+        var replacement = new FakeMpvSession();
+        var factory = new FakeMpvSessionFactory(first, replacement);
+        var controller = new MpvProcessController(factory);
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        Assert.Equal(123_400L, await controller.GetPositionMsAsync());
+        first.FailNextCommand = true;
+
+        await controller.PlayAsync();
+
+        Assert.Contains(replacement.Commands,
+            command => command[0]?.ToString() == "seek"
+                && command[1] is double seconds
+                && Math.Abs(seconds - 123.4d) < 0.001d);
+    }
+
+    [Fact]
     public async Task Only_eof_notification_reports_playback_finished()
     {
         var session = new FakeMpvSession();

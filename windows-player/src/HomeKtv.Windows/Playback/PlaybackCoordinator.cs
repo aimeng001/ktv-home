@@ -67,11 +67,25 @@ public sealed class PlaybackCoordinator
             var file = detail?.Files.OrderByDescending(item => item.Priority).FirstOrDefault();
             if (file is null)
             {
-                throw new InvalidOperationException($"No playable file source for song {playing.Song.Id}.");
+                throw new PlaybackAttemptException(
+                    playing.QueueId.Value,
+                    null,
+                    $"No playable file source for song {playing.Song.Id}.");
             }
 
-            await output.LoadAsync(server.StreamUrl(file.Id), file.Id, cancellationToken)
-                .ConfigureAwait(false);
+            try
+            {
+                await output.LoadAsync(server.StreamUrl(file.Id), file.Id, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                throw new PlaybackAttemptException(
+                    playing.QueueId.Value,
+                    file.Id,
+                    $"Failed to load file {file.Id} for queue item {playing.QueueId.Value}.",
+                    exception);
+            }
             loadedQueueId = playing.QueueId;
             loadedFile = file;
             lastVocalMode = null;

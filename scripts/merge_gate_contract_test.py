@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -79,6 +80,25 @@ class MergeGateContractTests(unittest.TestCase):
             'docker compose -f docker-compose.yml -f "$file" config --quiet',
             workflow,
         )
+
+    def test_standalone_nas_source_path_is_configurable_and_read_only(self) -> None:
+        compose = (REPOSITORY / "docker-compose.nas.yml").read_text(encoding="utf-8")
+        source_target = compose.index("        target: /source-music")
+        mount_start = compose.rfind("      - type: bind", 0, source_target)
+        mount_end = compose.find("      - type: bind", source_target)
+        source_mount = compose[mount_start:mount_end if mount_end >= 0 else len(compose)]
+
+        self.assertIn("${KTV_SOURCE_MUSIC_DIR:-./source-music}", source_mount)
+        self.assertIn("target: /source-music", source_mount)
+        self.assertIn("read_only: true", source_mount)
+        self.assertIn("create_host_path: false", source_mount)
+
+    def test_standalone_nas_deployment_does_not_require_a_gpu_device(self) -> None:
+        compose = (REPOSITORY / "docker-compose.nas.yml").read_text(encoding="utf-8")
+        ktv_block = re.search(r"(?ms)^  ktv:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", compose)
+
+        self.assertIsNotNone(ktv_block)
+        self.assertNotIn("\n    devices:", ktv_block.group(1))
 
 
 if __name__ == "__main__":
