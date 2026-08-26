@@ -117,6 +117,49 @@ public sealed class MpvControllerTests
     }
 
     [Fact]
+    public async Task Stop_projection_is_serialized_before_a_waiting_load()
+    {
+        var session = new GatedMpvSession();
+        var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.GateStop = true;
+        var stopTask = controller.StopAsync();
+        await session.StopStarted.Task;
+
+        var loadTask = controller.LoadAsync("http://server/stream/20", 20);
+        session.ReleaseStop.TrySetResult(true);
+
+        await Task.WhenAll(stopTask, loadTask);
+
+        Assert.Equal(20L, controller.CurrentFileId);
+    }
+
+    [Fact]
+    public async Task Position_projection_is_serialized_before_a_waiting_load()
+    {
+        var first = new GatedMpvSession { GetPropertyResponse = Json("123.4") };
+        var replacement = new FakeMpvSession();
+        var factory = new FakeMpvSessionFactory(first, replacement);
+        var controller = new MpvProcessController(factory);
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        first.GatePositionQuery = true;
+        var positionTask = controller.GetPositionMsAsync();
+        await first.PositionQueryStarted.Task;
+
+        var loadTask = controller.LoadAsync("http://server/stream/20", 20);
+        first.ReleasePositionQuery.TrySetResult(true);
+
+        await Task.WhenAll(positionTask, loadTask);
+        first.FailNextCommand = true;
+        await controller.PlayAsync();
+
+        Assert.DoesNotContain(replacement.Commands,
+            command => command[0]?.ToString() == "seek");
+    }
+
+    [Fact]
     public async Task Only_eof_notification_reports_playback_finished()
     {
         var session = new FakeMpvSession();
@@ -137,7 +180,7 @@ public sealed class MpvControllerTests
         return document.RootElement.Clone();
     }
 
-    private sealed class FakeMpvSessionFactory(params FakeMpvSession[] sessions) : IMpvDisplaySessionFactory
+    private sealed class FakeMpvSessionFactory(params IMpvSession[] sessions) : IMpvDisplaySessionFactory
     {
         private int next;
 
@@ -155,6 +198,72 @@ public sealed class MpvControllerTests
 
             return Task.FromResult<IMpvSession>(sessions[next++]);
         }
+    }
+
+    private sealed class GatedMpvSession : IMpvSession
+    {
+        public List<IReadOnlyList<object?>> Commands { get; } = new();
+        public JsonElement? GetPropertyResponse { get; init; }
+        public bool GateStop { get; set; }
+        public bool GatePositionQuery { get; set; }
+        public TaskCompletionSource<bool> StopStarted { get; } = NewSignal();
+        public TaskCompletionSource<bool> ReleaseStop { get; } = NewSignal();
+        public TaskCompletionSource<bool> PositionQueryStarted { get; } = NewSignal();
+        public TaskCompletionSource<bool> ReleasePositionQuery { get; } = NewSignal();
+        public bool FailNextCommand { get; set; }
+        public bool IsAlive { get; private set; } = true;
+
+        public event Action<MpvNotification>? NotificationReceived;
+        public event Action<Exception>? Disconnected;
+
+        public async Task<JsonElement?> ExecuteAsync(
+            IReadOnlyList<object?> command,
+            CancellationToken cancellationToken = default)
+        {
+            if (FailNextCommand)
+            {
+                FailNextCommand = false;
+                IsAlive = false;
+                var error = new MpvConnectionException("fake mpv exited");
+                Disconnected?.Invoke(error);
+                throw error;
+            }
+
+            Commands.Add(command.ToArray());
+            if (command[0]?.ToString() == "stop" && GateStop)
+            {
+                StopStarted.TrySetResult(true);
+                await ReleaseStop.Task.WaitAsync(cancellationToken);
+            }
+
+            if (command.Count > 1 && command[0]?.ToString() == "get_property")
+            {
+                if (GatePositionQuery)
+                {
+                    PositionQueryStarted.TrySetResult(true);
+                    await ReleasePositionQuery.Task.WaitAsync(cancellationToken);
+                }
+
+                return GetPropertyResponse;
+            }
+
+            return null;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            IsAlive = false;
+            return ValueTask.CompletedTask;
+        }
+
+        public void Notify(string name, string data)
+        {
+            using var document = JsonDocument.Parse(data);
+            NotificationReceived?.Invoke(new MpvNotification(name, document.RootElement.Clone()));
+        }
+
+        private static TaskCompletionSource<bool> NewSignal() =>
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private sealed class FakeMpvSession : IMpvSession

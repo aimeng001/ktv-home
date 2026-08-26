@@ -67,7 +67,6 @@ class PlaybackServiceTest {
     @Test
     void playErrorDoesNotInvalidateFileBelongingToAnotherSong() {
         SongFile fileOfAnotherSong = file(200L, 1L);
-        when(fileRepository.findById(200L)).thenReturn(Optional.of(fileOfAnotherSong));
 
         playbackService.onPlayError(200L, 100L);
 
@@ -75,13 +74,14 @@ class PlaybackServiceTest {
     }
 
     @Test
-    void playErrorInvalidatesFileBelongingToCurrentSong() {
+    void clientPlayErrorDoesNotInvalidateOrSaveCurrentFile() {
         SongFile fileOfCurrentSong = file(201L, 2L);
-        when(fileRepository.findById(201L)).thenReturn(Optional.of(fileOfCurrentSong));
 
         playbackService.onPlayError(201L, 100L);
 
-        assertThat(fileOfCurrentSong.isValid()).isFalse();
+        assertThat(fileOfCurrentSong.isValid()).isTrue();
+        verify(fileRepository, never()).findById(anyLong());
+        verify(fileRepository, never()).save(any(SongFile.class));
     }
 
     @Test

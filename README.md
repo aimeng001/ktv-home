@@ -120,15 +120,39 @@ KTV_DB_PASSWORD=请替换为强密码
 KTV_ADMIN_PASSWORD=请替换为管理后台强密码
 ```
 
-- `KTV_SOURCE_MUSIC_DIR`：放置未经处理的原始视频和音频。
+- `KTV_SOURCE_MUSIC_DIR`：Managed 模式下放置未经处理的原始视频和音频。
 - `KTV_MUSIC_DIR`：存放已直拷或转码完成、可以点播的文件。
 - `KTV_ADMIN_PASSWORD`：管理后台密码。设置后访问 `/m/admin` 会先登录；普通搜歌、点歌、播放和遥控仍不需要账号。
 
-两个目录不要配置成同一路径。服务端会向曲库目录写入处理结果，请确保容器具有写权限。
+Managed 模式下两个目录不要配置成同一路径，服务端会向曲库目录写入处理结果，请确保容器具有写权限。
+
+### 选择曲库模式
+
+Home KTV 支持两种互相独立的曲库部署方式，请根据你的文件来源选择对应的 Compose 文件。
+
+#### 已有 NAS 曲库：只读接入
+
+如果 NAS 中已经有可直接播放的歌曲，并且不允许 Home KTV 改动源文件，请使用：
+
+```bash
+docker compose -f docker-compose.nas.yml up -d --wait
+```
+
+这个文件使用 `KTV_LIBRARY_MODE=EXTERNAL_READ_ONLY`，并将 `/source-music` 以 `read_only: true` 挂载。服务端只建立索引并读取/播放现有文件；源曲库不参与导入流水线。
+
+#### Managed：导入和整理源文件
+
+如果希望 Home KTV 负责导入、直拷、转码和整理源文件，请使用：
+
+```bash
+docker compose -f docker-compose.prebuilt.yml up -d --pull always --wait
+```
+
+这个文件默认使用 `KTV_LIBRARY_MODE=MANAGED`。请确保 `KTV_SOURCE_MUSIC_DIR` 和 `KTV_MUSIC_DIR` 是不同目录，并允许容器按 Managed 流程写入。
 
 ### 2. 启动服务
 
-推荐直接拉取 GitHub Actions 发布的多架构镜像，无需在 NAS 或主机上编译：
+请使用上面选择的曲库模式对应的 Compose 文件。选择 `MANAGED` 模式时，推荐直接拉取 GitHub Actions 发布的多架构镜像，无需在 NAS 或主机上编译：
 
 ```bash
 docker compose -f docker-compose.prebuilt.yml up -d --pull always --wait
@@ -137,7 +161,7 @@ docker compose -f docker-compose.prebuilt.yml up -d --pull always --wait
 默认使用 `ghcr.io/aimeng001/ktv-home:latest`。生产环境可在 `.env` 中将
 `KTV_RELEASE_IMAGE` 设置为具体的发布标签，以避免 `latest` 自动变化。
 
-需要从源码构建时使用：
+选择 `EXTERNAL_READ_ONLY` 模式时，请继续使用上面的 `docker-compose.nas.yml` 命令。需要从源码构建 Managed 模式时使用：
 
 ```bash
 docker compose up -d --build --wait
@@ -157,7 +181,9 @@ curl http://127.0.0.1:${KTV_HTTP_PORT:-8080}/api/health
 
 NAS 防火墙需要允许这两个端口；使用自定义端口时以 `.env` 为准。
 
-### 3. 导入歌曲
+### 3. 导入歌曲（仅 MANAGED 模式）
+
+以下步骤仅适用于 `MANAGED` 模式。已有 NAS 曲库请按上面的 `EXTERNAL_READ_ONLY` 只读接入方式部署。
 
 1. 把原始歌曲放入 `KTV_SOURCE_MUSIC_DIR`。
 2. 打开 `http://<主机IP>:8080/m/admin`。
@@ -170,7 +196,7 @@ NAS 防火墙需要允许这两个端口；使用自定义端口时以 `.env` �
 
 源目录自动监听默认关闭。是否启用请在管理后台“系统设置”中的“源目录自动扫描”开关调整；关闭时只有手动点击“扫描源路径”才会扫描，不通过 Compose 或环境变量配置。
 
-确认入库结果后，可点击批量转码按钮右侧的“自动清理”释放原始素材目录空间。系统只会删除已成功入库、关联曲库记录有效且曲库输出文件真实存在的源文件；待转码、失败、重复、未识别、曲库文件缺失或路径校验不通过的素材会保留。转码任务运行期间不能执行自动清理。清理完成后，请回到仪表盘重新执行“扫描源路径”，同步原始目录中的最新文件。
+以下自动清理流程仅适用于 `MANAGED` 模式：确认入库结果后，可点击批量转码按钮右侧的“自动清理”释放原始素材目录空间。系统只会删除已成功入库、关联曲库记录有效且曲库输出文件真实存在的源文件；待转码、失败、重复、未识别、曲库文件缺失或路径校验不通过的素材会保留。转码任务运行期间不能执行自动清理。清理完成后，请回到仪表盘重新执行“扫描源路径”，同步原始目录中的最新文件。
 
 ### 4. 安装 Android TV 客户端
 
@@ -183,9 +209,9 @@ Release APK。发布流水线使用发布标签生成 `versionName`，使用 Git
 “标记已读”会在当前浏览器保存该公告 ID，直到公告 ID 或版本号变化。公告仅在启用且镜像内
 至少存在一份 APK 时弹出；源码开发镜像未放入 APK 时不会显示无效的下载公告。
 
-默认公告除了提示下载 TV APK，还会提醒管理员：升级后进入“原始音乐管理”执行“自动清理”，
-再回到仪表盘重新扫描原始音乐路径。公告配置随镜像内的 `application.yml` 发布，不依赖用户更新
-`docker-compose.yml` 或 `.env`；拉取新镜像即可获得新版本号和公告内容。
+默认公告除了提示下载 TV APK，还会提醒使用 `MANAGED` 模式的管理员：升级后进入“原始音乐管理”执行“自动清理”，
+再回到仪表盘重新扫描原始音乐路径。使用 `EXTERNAL_READ_ONLY` 的 NAS 曲库不要执行源文件清理。
+公告配置随镜像内的 `application.yml` 发布，不依赖用户更新 `docker-compose.yml` 或 `.env`；拉取新镜像即可获得新版本号和公告内容。
 
 TV 每次连接服务端成功后会检查 `versionCode`。版本不一致时根据设备 ABI 选择安装包，用户点击
 “去下载”后，客户端会校验下载大小、申请未知来源安装权限，并打开系统安装程序。查询或下载失败

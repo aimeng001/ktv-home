@@ -32,23 +32,31 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
 
     public async Task<long?> GetPositionMsAsync(CancellationToken cancellationToken = default)
     {
-        if (loadedUrl is null) return null;
-        var value = await ExecuteWithRecoveryAsync(
-                active => active.ExecuteAsync(["get_property", "time-pos"], cancellationToken),
-                cancellationToken)
-            .ConfigureAwait(false);
-        if (value is not { } position || position.ValueKind != JsonValueKind.Number)
+        await commandLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return null;
-        }
+            if (loadedUrl is null) return null;
+            var value = await ExecuteWithRecoveryLockedAsync(
+                    active => active.ExecuteAsync(["get_property", "time-pos"], cancellationToken),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (value is not { } position || position.ValueKind != JsonValueKind.Number)
+            {
+                return null;
+            }
 
-        if (!position.TryGetDouble(out var seconds))
+            if (!position.TryGetDouble(out var seconds))
+            {
+                return null;
+            }
+
+            positionMs = Math.Max(0, (long)Math.Round(seconds * 1000, MidpointRounding.AwayFromZero));
+            return positionMs;
+        }
+        finally
         {
-            return null;
+            commandLock.Release();
         }
-
-        positionMs = Math.Max(0, (long)Math.Round(seconds * 1000, MidpointRounding.AwayFromZero));
-        return positionMs;
     }
 
     public Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default) =>
@@ -83,12 +91,13 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
         await ExecuteWithRecoveryAsync(async active =>
         {
             await active.ExecuteAsync(MpvCommands.Stop(), cancellationToken).ConfigureAwait(false);
+            loadedUrl = null;
+            loadedFileId = null;
+            positionMs = 0;
+            audioTrackRelativeIndex = null;
+            channelMode = ChannelMapMode.STEREO;
+            paused = null;
         }, cancellationToken).ConfigureAwait(false);
-        loadedUrl = null;
-        loadedFileId = null;
-        positionMs = 0;
-        audioTrackRelativeIndex = null;
-        paused = null;
     }
 
     public Task SeekAsync(long requestedPositionMs, CancellationToken cancellationToken = default) =>
@@ -185,25 +194,33 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
         await commandLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            for (var attempt = 0; attempt < 2; attempt++)
-            {
-                try
-                {
-                    var active = await EnsureSessionLockedAsync(cancellationToken).ConfigureAwait(false);
-                    return await operation(active).ConfigureAwait(false);
-                }
-                catch (Exception exception) when (attempt == 0 && IsRecoverable(exception))
-                {
-                    await ReplaceSessionLockedAsync(cancellationToken).ConfigureAwait(false);
-                }
-            }
-
-            throw new MpvConnectionException("mpv command could not be recovered.");
+            return await ExecuteWithRecoveryLockedAsync(operation, cancellationToken)
+                .ConfigureAwait(false);
         }
         finally
         {
             commandLock.Release();
         }
+    }
+
+    private async Task<T> ExecuteWithRecoveryLockedAsync<T>(
+        Func<IMpvSession, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                var active = await EnsureSessionLockedAsync(cancellationToken).ConfigureAwait(false);
+                return await operation(active).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (attempt == 0 && IsRecoverable(exception))
+            {
+                await ReplaceSessionLockedAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        throw new MpvConnectionException("mpv command could not be recovered.");
     }
 
     private async Task<IMpvSession> EnsureSessionLockedAsync(CancellationToken cancellationToken)

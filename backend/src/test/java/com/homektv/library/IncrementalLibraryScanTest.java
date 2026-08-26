@@ -316,6 +316,76 @@ class IncrementalLibraryScanTest {
     }
 
     @Test
+    void manualIdentityLocksSurviveProbeRetryWhileUnlockedMediaFieldsRefresh() throws Exception {
+        Path file = Files.write(sourceDir.resolve("名称不规范.mkv"), new byte[]{1, 2, 3});
+        when(ffprobe.probe(any(Path.class)))
+                .thenThrow(new MediaProbeException("temporary probe failure"))
+                .thenReturn(probe());
+
+        scanService.scanAll();
+
+        SongFile pending = filesByPath.get(file.toString());
+        Song song = songsById.get(pending.getSongId());
+        song.setTitle("人工歌名");
+        song.setArtist("人工歌手");
+        song.setTitlePy("manual-title-py");
+        song.setTitleInit("M");
+        song.setArtistPy("manual-artist-py");
+        song.setArtistInit("A");
+        song.setLanguage("粤语");
+        song.setMetadataProvenance("{\"title\":{\"source\":\"manual\"},"
+                + "\"artist\":{\"source\":\"manual\"}}");
+        song.setStatus("ok");
+        song.setNeedsAiOptimization(false);
+        song.lockMetadata("title");
+        song.lockMetadata("artist");
+        song.lockMetadata("language");
+
+        LibraryScanService.ScanResult recovered = scanService.scanAll();
+
+        assertThat(recovered.probeCalls()).isEqualTo(1);
+        assertThat(pending.isProbePending()).isFalse();
+        assertThat(song.getTitle()).isEqualTo("人工歌名");
+        assertThat(song.getArtist()).isEqualTo("人工歌手");
+        assertThat(song.getTitlePy()).isEqualTo("manual-title-py");
+        assertThat(song.getTitleInit()).isEqualTo("M");
+        assertThat(song.getArtistPy()).isEqualTo("manual-artist-py");
+        assertThat(song.getArtistInit()).isEqualTo("A");
+        assertThat(song.getLanguage()).isEqualTo("粤语");
+        assertThat(song.getMetadataProvenance()).contains("manual");
+        assertThat(song.getStatus()).isEqualTo("ok");
+        assertThat(song.getDurationMs()).isEqualTo(180_000);
+        assertThat(song.isMetadataLocked("title")).isTrue();
+        assertThat(song.isMetadataLocked("artist")).isTrue();
+        assertThat(song.isMetadataLocked("language")).isTrue();
+    }
+
+    @Test
+    void reconciliationDoesNotDemoteManuallyConfirmedIdentityWhenProbeStillFails() throws Exception {
+        Path file = Files.write(sourceDir.resolve("名称不规范.mkv"), new byte[]{1, 2, 3});
+        when(ffprobe.probe(any(Path.class)))
+                .thenThrow(new MediaProbeException("temporary probe failure"));
+
+        scanService.scanAll();
+
+        SongFile pending = filesByPath.get(file.toString());
+        Song song = songsById.get(pending.getSongId());
+        song.setTitle("人工歌名");
+        song.setArtist("人工歌手");
+        song.setStatus("ok");
+        song.setNeedsAiOptimization(false);
+        song.lockMetadata("title");
+        song.lockMetadata("artist");
+
+        scanService.scanAll();
+
+        assertThat(song.getStatus()).isEqualTo("ok");
+        assertThat(song.isNeedsAiOptimization()).isFalse();
+        assertThat(song.getTitle()).isEqualTo("人工歌名");
+        assertThat(song.getArtist()).isEqualTo("人工歌手");
+    }
+
+    @Test
     void successfulProbeKeepsAnUnrecognizedFilenameForReview() throws Exception {
         Path file = Files.write(sourceDir.resolve("名称不规范.mkv"), new byte[]{1, 2, 3});
 

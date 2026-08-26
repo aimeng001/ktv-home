@@ -82,6 +82,8 @@ class PlaybackEngine(
     private var currentFileId: Long? = null
     /** 与当前媒体一起捕获的 queueId，避免迟到错误使用后来切歌后的队列状态。 */
     private var currentQueueId: Long? = null
+    /** 只有同一队列中的同一文件才允许复用已加载的媒体。 */
+    private var currentRequest: PlaybackRequestIdentity? = null
     private var requestedVocalMode: String = "original"
     private var requestedAccompanimentIndex: Int? = null
     private var requestedAudioTrackCount: Int = 1
@@ -179,12 +181,13 @@ class PlaybackEngine(
     }
 
     /**
-     * 播放指定文件源。若已在播同一 fileId 则不打断（只确保处于播放态）。
+     * 播放指定文件源。若已在同一队列播放同一文件则不打断（只确保处于播放态）。
      * @param fileId song_files.id
      * @param streamUrl 完整拉流地址
      */
     fun play(fileId: Long, streamUrl: String, queueId: Long? = null) {
-        if (currentFileId == fileId && player.playbackState != Player.STATE_IDLE) {
+        val requested = PlaybackRequestIdentity(queueId = queueId, fileId = fileId)
+        if (shouldReusePlaybackRequest(currentRequest, requested, player.playbackState)) {
             player.playWhenReady = true
             return
         }
@@ -193,6 +196,7 @@ class PlaybackEngine(
         videoStallRecoveries = 0
         lastVideoFrameAt = 0L
         playRequestAt = SystemClock.elapsedRealtime()
+        currentRequest = requested
         currentQueueId = queueId
         currentFileId = fileId
         awaitingTracks = true
@@ -233,6 +237,7 @@ class PlaybackEngine(
      * 使下次同 fileId 也会重新装载。
      */
     fun stop() {
+        currentRequest = null
         currentQueueId = null
         currentFileId = null
         playRequestAt = 0L

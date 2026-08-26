@@ -17,7 +17,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.Objects;
 
 /**
  * 播放控制状态机（P1.10/P1.11，详设§4.4/§9.2/§9.4）。
@@ -155,19 +154,9 @@ public class PlaybackService {
         if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
             return ps;
         }
-        if (fileId != null) {
-            QueueItem current = ps.getCurrentQueueId() == null
-                    ? null
-                    : queueRepo.findById(ps.getCurrentQueueId()).orElse(null);
-            if (current != null) {
-                fileRepo.findById(fileId)
-                        .filter(file -> Objects.equals(file.getSongId(), current.getSongId()))
-                        .ifPresent(file -> {
-                            file.setValid(false);
-                            fileRepo.save(file);
-                        });
-            }
-        }
+        // fileId is retained for wire compatibility, but a client playback
+        // error does not prove that the source file is invalid. Server-side
+        // scanning remains responsible for marking disappeared files.
         markCurrent(ps, QueueService.SKIPPED, false);
         advanceToNext(ps);
         return playerRepo.save(ps);

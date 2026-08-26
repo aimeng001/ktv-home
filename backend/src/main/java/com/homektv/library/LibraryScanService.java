@@ -425,6 +425,7 @@ public class LibraryScanService {
         }
         songRepo.findById(existing.getSongId()).ifPresent(song -> {
             if (!isProvisionalSong(song)) return;
+            if (hasManualIdentityOverride(song)) return;
             boolean changed = !"unrecognized".equals(song.getStatus())
                     || !song.isNeedsAiOptimization();
             if (!changed) return;
@@ -830,36 +831,55 @@ public class LibraryScanService {
                 || song.getFingerprint() != null && song.getFingerprint().startsWith("fast-index-"));
     }
 
+    private static boolean hasManualIdentityOverride(Song song) {
+        return song.isMetadataLocked("title") || song.isMetadataLocked("artist");
+    }
+
     private static void applyProbedMetadata(Song song, String title, String artist, String mediaType,
                                             boolean hasVocal, MediaProbe probe, String fingerprint,
                                             boolean recognized, TagInfo tag, ParsedMeta filenameMeta,
                                             String identitySource) {
-        song.setTitle(title);
-        song.setArtist(artist);
-        song.setTitlePy(PinyinUtil.fullPinyin(title));
-        song.setTitleInit(PinyinUtil.initials(title));
-        song.setArtistPy(PinyinUtil.fullPinyin(artist));
-        song.setArtistInit(PinyinUtil.initials(artist));
+        boolean titleLocked = song.isMetadataLocked("title");
+        boolean artistLocked = song.isMetadataLocked("artist");
+        boolean languageLocked = song.isMetadataLocked("language");
+        if (!titleLocked) {
+            song.setTitle(title);
+            song.setTitlePy(PinyinUtil.fullPinyin(title));
+            song.setTitleInit(PinyinUtil.initials(title));
+        }
+        if (!artistLocked) {
+            song.setArtist(artist);
+            song.setArtistPy(PinyinUtil.fullPinyin(artist));
+            song.setArtistInit(PinyinUtil.initials(artist));
+        }
         song.setMediaType(mediaType);
         song.setHasVocalTrack(hasVocal);
         song.setDurationMs((int) probe.durationMs());
         song.setLyricType(LyricType.NONE);
         song.setFingerprint(fingerprint);
-        song.setStatus(recognized ? "ok" : "unrecognized");
-        if (tag.getLanguage() != null && !tag.getLanguage().isBlank()) {
-            song.setLanguage(normalizeLanguage(tag.getLanguage()));
-        } else if (probe.language() != null && !probe.language().isBlank()) {
-            song.setLanguage(normalizeLanguage(probe.language()));
-        } else if (filenameMeta != null && !filenameMeta.language().isBlank()) {
-            song.setLanguage(normalizeLanguage(filenameMeta.language()));
+        if (!hasManualIdentityOverride(song)) {
+            song.setStatus(recognized ? "ok" : "unrecognized");
+        }
+        if (!languageLocked) {
+            if (tag.getLanguage() != null && !tag.getLanguage().isBlank()) {
+                song.setLanguage(normalizeLanguage(tag.getLanguage()));
+            } else if (probe.language() != null && !probe.language().isBlank()) {
+                song.setLanguage(normalizeLanguage(probe.language()));
+            } else if (filenameMeta != null && !filenameMeta.language().isBlank()) {
+                song.setLanguage(normalizeLanguage(filenameMeta.language()));
+            }
         }
         if (filenameMeta != null && !filenameMeta.category().isBlank()) {
             song.setTags(new String[]{filenameMeta.category()});
         }
-        song.setMetadataProvenance("{\"title\":{\"source\":\"" + identitySource
-                + "\"},\"artist\":{\"source\":\"" + identitySource + "\"}}");
-        song.setNeedsAiOptimization(!recognized || "未知".equals(song.getLanguage())
-                || "未知歌手".equals(song.getArtist()));
+        if (!titleLocked && !artistLocked) {
+            song.setMetadataProvenance("{\"title\":{\"source\":\"" + identitySource
+                    + "\"},\"artist\":{\"source\":\"" + identitySource + "\"}}");
+        }
+        if (!hasManualIdentityOverride(song)) {
+            song.setNeedsAiOptimization(!recognized || "未知".equals(song.getLanguage())
+                    || "未知歌手".equals(song.getArtist()));
+        }
     }
 
     public static boolean isMediaFile(Path file) {

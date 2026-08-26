@@ -317,7 +317,7 @@ class QueuePlaybackIntegrationTest {
     }
 
     @Test
-    void playErrorInvalidatesSourceWithoutRecordingSuccessfulPlay() {
+    void clientPlayErrorSkipsQueueWithoutInvalidatingSourceOrRecordingPlay() {
         SongFile file = new SongFile();
         file.setSongId(song1);
         file.setFilePath("/tmp/ktv-error-" + song1 + ".mpg");
@@ -334,7 +334,7 @@ class QueuePlaybackIntegrationTest {
 
         PlayerState advanced = playbackService.onPlayError(file.getId());
 
-        assertThat(fileRepo.findById(file.getId()).orElseThrow().isValid()).isFalse();
+        assertThat(fileRepo.findById(file.getId()).orElseThrow().isValid()).isTrue();
         assertThat(queueRepo.findById(failedQueueId).orElseThrow().getStatus())
                 .isEqualTo(QueueService.SKIPPED);
         assertThat(advanced.getCurrentQueueId()).isNotEqualTo(failedQueueId);

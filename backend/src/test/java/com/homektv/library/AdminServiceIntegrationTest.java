@@ -106,6 +106,8 @@ class AdminServiceIntegrationTest {
         assertThat(updated.getTitle()).isEqualTo("怎么了");
         assertThat(updated.getArtistInit()).isEqualTo("zjl");   // 重算拼音
         assertThat(updated.getStatus()).isEqualTo("ok");        // 未识别转正
+        assertThat(updated.isMetadataLocked("title")).isTrue();
+        assertThat(updated.isMetadataLocked("artist")).isTrue();
     }
 
     @Test

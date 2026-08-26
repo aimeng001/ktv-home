@@ -31,6 +31,34 @@ def head_paths() -> set[str]:
 
 
 class MergeGateContractTests(unittest.TestCase):
+    def test_readme_separates_existing_nas_and_managed_deployments(self) -> None:
+        readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+        mode_heading = "### 选择曲库模式"
+        mode_start = readme.index(mode_heading)
+        next_heading = readme.find("\n### ", mode_start + len(mode_heading))
+        mode_section = readme[mode_start:next_heading if next_heading >= 0 else len(readme)]
+
+        self.assertIn("docker-compose.nas.yml", mode_section)
+        self.assertIn("EXTERNAL_READ_ONLY", mode_section)
+        self.assertTrue(
+            "read-only" in mode_section.lower()
+            or "只读" in mode_section
+            or "read_only" in mode_section
+        )
+        self.assertNotIn("自动清理", mode_section)
+        self.assertIn("docker-compose.prebuilt.yml", mode_section)
+        self.assertIn("MANAGED", mode_section)
+
+    def test_readme_limits_source_cleanup_to_managed_workflow(self) -> None:
+        readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+        import_section_start = readme.index("### 3. 导入歌曲")
+        import_section_end = readme.index("### 4. 安装 Android TV 客户端", import_section_start)
+        import_section = readme[import_section_start:import_section_end]
+
+        self.assertIn("MANAGED", import_section)
+        self.assertIn("自动清理", import_section)
+        self.assertIn("仅", import_section)
+
     def test_local_development_documents_are_not_in_release_tree(self) -> None:
         leaked = sorted(LOCAL_ONLY_DOCUMENTS & head_paths())
         self.assertEqual([], leaked, f"local-only files are tracked in HEAD: {leaked}")
