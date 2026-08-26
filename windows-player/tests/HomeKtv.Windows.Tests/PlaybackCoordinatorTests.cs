@@ -94,6 +94,48 @@ public sealed class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public async Task Paused_snapshot_pauses_without_reloading_the_current_media()
+    {
+        var output = new RecordingPlaybackOutput();
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO)), output);
+
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original"));
+        await coordinator.ApplySnapshotAsync("player_state", Snapshot("original", state: "paused"));
+
+        Assert.Equal(1, output.LoadCount);
+        Assert.Equal(1, output.PauseCount);
+        Assert.Equal(1, output.PlayCount);
+    }
+
+    [Fact]
+    public async Task Unchanged_snapshot_does_not_repeat_volume_or_mute_commands()
+    {
+        var output = new RecordingPlaybackOutput();
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO)), output);
+
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original"));
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original"));
+
+        Assert.Single(output.VolumeChanges);
+    }
+
+    [Fact]
+    public async Task Explicit_negative_seek_is_normalized_to_zero()
+    {
+        var output = new RecordingPlaybackOutput();
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO)), output);
+
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original"));
+        await coordinator.ApplySnapshotAsync(
+            "playback_seeked", Snapshot("original", positionMs: -1, seekSequence: 1));
+
+        Assert.Equal(new long[] { 0 }, output.SeekPositions);
+    }
+
+    [Fact]
     public async Task Missing_file_source_has_no_file_identity_for_play_error()
     {
         var coordinator = new PlaybackCoordinator(new MissingFileServerApi(), new RecordingPlaybackOutput());
@@ -171,11 +213,14 @@ public sealed class PlaybackCoordinatorTests
         public int LoadCount { get; private set; }
         public int SeekCount => SeekPositions.Count;
         public int StopCount { get; private set; }
+        public int PlayCount { get; private set; }
+        public int PauseCount { get; private set; }
         public bool ThrowOnLoad { get; init; }
         public List<long> LoadedFileIds { get; } = new();
         public List<long> SeekPositions { get; } = new();
         public List<int> AudioTrackIndices { get; } = new();
         public List<ChannelMapMode> ChannelModes { get; } = new();
+        public List<(int Volume, bool Muted)> VolumeChanges { get; } = new();
 
         public Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default)
         {
@@ -185,8 +230,17 @@ public sealed class PlaybackCoordinatorTests
             return Task.CompletedTask;
         }
 
-        public Task PlayAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task PauseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task PlayAsync(CancellationToken cancellationToken = default)
+        {
+            PlayCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task PauseAsync(CancellationToken cancellationToken = default)
+        {
+            PauseCount++;
+            return Task.CompletedTask;
+        }
 
         public Task StopAsync(CancellationToken cancellationToken = default)
         {
@@ -200,7 +254,11 @@ public sealed class PlaybackCoordinatorTests
             return Task.CompletedTask;
         }
 
-        public Task SetVolumeAsync(int volume, bool muted, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SetVolumeAsync(int volume, bool muted, CancellationToken cancellationToken = default)
+        {
+            VolumeChanges.Add((volume, muted));
+            return Task.CompletedTask;
+        }
 
         public Task SetAudioTrackAsync(int audioRelativeIndex, CancellationToken cancellationToken = default)
         {

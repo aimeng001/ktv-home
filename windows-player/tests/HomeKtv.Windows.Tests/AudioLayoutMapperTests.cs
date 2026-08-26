@@ -1,4 +1,5 @@
 using HomeKtv.Windows.Playback;
+using HomeKtv.Windows.Protocol;
 
 namespace HomeKtv.Windows.Tests;
 
@@ -12,5 +13,27 @@ public sealed class AudioLayoutMapperTests
         int expectedLeft, int expectedRight)
     {
         Assert.Equal(new[] { expectedLeft, expectedRight }, AudioLayoutMapper.MapStereoFrame(left, right, mode));
+    }
+
+    [Fact]
+    public void Non_dual_channel_layouts_keep_stereo_output()
+    {
+        Assert.Equal(
+            ChannelMapMode.STEREO,
+            AudioLayoutMapper.ChannelModeFor(
+                "original",
+                new AudioLayoutDto(AudioLayout.DUAL_TRACK)));
+    }
+
+    [Fact]
+    public void Swapped_dual_channel_definition_changes_the_selected_role()
+    {
+        var layout = new AudioLayoutDto(
+            AudioLayout.DUAL_CHANNEL,
+            OriginalChannel: AudioChannel.RIGHT,
+            AccompanimentChannel: AudioChannel.LEFT);
+
+        Assert.Equal(ChannelMapMode.RIGHT_MONO, AudioLayoutMapper.ChannelModeFor("original", layout));
+        Assert.Equal(ChannelMapMode.LEFT_MONO, AudioLayoutMapper.ChannelModeFor("accompaniment", layout));
     }
 }

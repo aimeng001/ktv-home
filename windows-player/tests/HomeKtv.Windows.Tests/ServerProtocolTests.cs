@@ -59,6 +59,28 @@ public sealed class ServerProtocolTests
     }
 
     [Fact]
+    public void Progress_message_clamps_negative_position_and_keeps_queue_identity()
+    {
+        using var document = JsonDocument.Parse(ServerMessageFactory.Progress(-1, 42));
+        var payload = document.RootElement.GetProperty("payload");
+
+        Assert.Equal(0, payload.GetProperty("position_ms").GetInt64());
+        Assert.Equal(42, payload.GetProperty("queue_id").GetInt64());
+    }
+
+    [Fact]
+    public void Play_error_message_escapes_text_and_preserves_nullable_file_identity()
+    {
+        using var document = JsonDocument.Parse(
+            ServerMessageFactory.PlayError(42, null, "bad \\\"source\\\""));
+        var payload = document.RootElement.GetProperty("payload");
+
+        Assert.Equal(42, payload.GetProperty("queue_id").GetInt64());
+        Assert.Equal(JsonValueKind.Null, payload.GetProperty("file_id").ValueKind);
+        Assert.Equal("bad \\\"source\\\"", payload.GetProperty("message").GetString());
+    }
+
+    [Fact]
     public void Upstream_finished_message_contains_queue_identity_for_retry_safety()
     {
         var json = ServerMessageFactory.Finished(42);
