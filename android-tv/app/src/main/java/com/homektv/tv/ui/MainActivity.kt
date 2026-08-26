@@ -1023,7 +1023,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         return "%02d:%02d".format(seconds / 60, seconds % 60)
     }
 
-    /** 播放失败：上报文件源，服务端标记失效并推进队列。 */
+    /** 播放失败：通知服务端推进队列，不将一次客户端播放失败视为源文件失效。 */
     private fun onPlayError(context: PlaybackErrorContext) {
         Toast.makeText(this, R.string.play_error, Toast.LENGTH_SHORT).show()
         socket?.sendPlayError("media playback failed", context.fileId, context.queueId)

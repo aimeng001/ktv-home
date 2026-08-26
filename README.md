@@ -140,6 +140,10 @@ docker compose -f docker-compose.nas.yml up -d --wait
 
 这个文件使用 `KTV_LIBRARY_MODE=EXTERNAL_READ_ONLY`，并将 `/source-music` 以 `read_only: true` 挂载。服务端只建立索引并读取/播放现有文件；源曲库不参与导入流水线。
 
+如果 NAS 已经有现成曲库，例如 `/volume1/KTV`，请直接设置
+`KTV_SOURCE_MUSIC_DIR=/volume1/KTV` 指向该目录。外部只读模式只能读取和播放已有文件，
+不要复制、不要移动、不要重命名、不要删除、不要覆盖源文件，也不要对源文件转码或执行自动清理。
+
 #### Managed：导入和整理源文件
 
 如果希望 Home KTV 负责导入、直拷、转码和整理源文件，请使用：

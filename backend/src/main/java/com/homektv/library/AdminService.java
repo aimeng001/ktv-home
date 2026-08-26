@@ -119,17 +119,20 @@ public class AdminService {
     public Song editSong(Long id, SongEditRequest req) {
         Song song = songRepo.findById(id)
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
+        boolean manualIdentityEdited = false;
         if (req.title() != null && !req.title().isBlank()) {
             song.setTitle(req.title().trim());
             song.setTitlePy(PinyinUtil.fullPinyin(req.title()));
             song.setTitleInit(PinyinUtil.initials(req.title()));
             song.lockMetadata("title");
+            manualIdentityEdited = true;
         }
         if (req.artist() != null && !req.artist().isBlank()) {
             song.setArtist(req.artist().trim());
             song.setArtistPy(PinyinUtil.fullPinyin(req.artist()));
             song.setArtistInit(PinyinUtil.initials(req.artist()));
             song.lockMetadata("artist");
+            manualIdentityEdited = true;
         }
         if (req.language() != null) { song.setLanguage(req.language()); song.lockMetadata("language"); }
         if (req.vocalForm() != null && !req.vocalForm().isBlank()) { song.setVocalForm(req.vocalForm()); song.lockMetadata("vocalForm"); }
@@ -146,8 +149,10 @@ public class AdminService {
             song.setLyricPath(path);
             song.setLyricType(LyricType.detect(req.lyricText()));
         }
-        // 编辑后若原为未识别 → 转正
-        if ("unrecognized".equals(song.getStatus())) song.setStatus("ok");
+        // 只有人工确认歌名或歌手时，才允许未识别歌曲转正
+        if (manualIdentityEdited && "unrecognized".equals(song.getStatus())) {
+            song.setStatus("ok");
+        }
         return songRepo.save(song);
     }
 

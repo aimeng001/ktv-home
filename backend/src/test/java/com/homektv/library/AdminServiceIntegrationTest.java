@@ -111,6 +111,41 @@ class AdminServiceIntegrationTest {
     }
 
     @Test
+    void languageOnlyEditDoesNotPromoteUnrecognized() {
+        Song track = songRepo.findByFingerprint("fp-TRACK_001").orElseThrow();
+
+        adminService.editSong(track.getId(),
+                new SongEditRequest(null, null, "粤语", null, null, null, null));
+
+        Song updated = songRepo.findById(track.getId()).orElseThrow();
+        assertThat(updated.getLanguage()).isEqualTo("粤语");
+        assertThat(updated.isMetadataLocked("language")).isTrue();
+        assertThat(updated.getStatus()).isEqualTo("unrecognized");
+    }
+
+    @Test
+    void vocalFormOnlyEditDoesNotPromoteUnrecognized() {
+        Song track = songRepo.findByFingerprint("fp-TRACK_001").orElseThrow();
+
+        adminService.editSong(track.getId(),
+                new SongEditRequest(null, null, null, null, null, "DUAL_CHANNEL", null));
+
+        assertThat(songRepo.findById(track.getId()).orElseThrow().getStatus())
+                .isEqualTo("unrecognized");
+    }
+
+    @Test
+    void artistGenderOnlyEditDoesNotPromoteUnrecognized() {
+        Song track = songRepo.findByFingerprint("fp-TRACK_001").orElseThrow();
+
+        adminService.editSong(track.getId(),
+                new SongEditRequest(null, null, null, null, null, null, "组合"));
+
+        assertThat(songRepo.findById(track.getId()).orElseThrow().getStatus())
+                .isEqualTo("unrecognized");
+    }
+
+    @Test
     void deleteRemovesRecord() {
         Song s = songRepo.findByFingerprint("fp-后来").orElseThrow();
         adminService.deleteSong(s.getId());

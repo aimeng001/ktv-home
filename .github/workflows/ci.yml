@@ -91,6 +91,8 @@ jobs:
   compose-config:
     name: Compose configuration checks
     runs-on: ubuntu-latest
+    env:
+      KTV_DB_PASSWORD: ci-validation-only
     steps:
       - uses: actions/checkout@v4
       - name: Validate every Compose definition

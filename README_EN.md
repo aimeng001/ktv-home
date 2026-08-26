@@ -89,6 +89,23 @@ KTV_DB_PASSWORD=replace-with-a-strong-password
 The server writes processed files into `KTV_MUSIC_DIR`, so ensure the container
 has write access. Never point both directory variables at the same path.
 
+### Existing NAS library: read-only mode
+
+Use `docker-compose.nas.yml` when the NAS already contains the karaoke files.
+For example:
+
+```dotenv
+KTV_SOURCE_MUSIC_DIR=/volume1/KTV
+```
+
+This uses `EXTERNAL_READ_ONLY` and mounts the existing source directory
+read-only. Home KTV indexes and plays the existing files without copying,
+without moving, without renaming, without deleting, without overwriting, and
+without transcoding or automatically cleaning the source files.
+
+Use the Managed workflow only when Home KTV is allowed to import and organize
+source media.
+
 ### 2. Start the stack
 
 The recommended deployment pulls the multi-architecture image published by
@@ -120,9 +137,9 @@ UDP discovery port configured by `KTV_DISCOVERY_UDP_PORT`; when changing it,
 update the TV scan configuration at the same time. Use the values in `.env` if
 you override the defaults.
 
-### 3. Add songs and connect the TV
+### 3. Add songs and connect the TV (Managed mode)
 
-1. Copy source media to `KTV_SOURCE_MUSIC_DIR`.
+1. In `MANAGED` mode, copy source media to `KTV_SOURCE_MUSIC_DIR`.
 2. Open `http://<host-ip>:8080/m/admin` and choose **Scan source path**.
 3. Review files in **Source Library** and start transcoding where needed.
 4. Install the Android TV APK, then let it discover the server or enter
@@ -148,8 +165,9 @@ the current browser until the ID or version changes. The administration UI only
 opens the notice when announcements are enabled and the image contains at least
 one APK, so source-built development images do not present dead download links.
 
-The default notice also asks the administrator to run **Auto cleanup** in
-**Source Library**, then return to the dashboard and scan the source path again.
+The default notice for `MANAGED` mode asks the administrator to run **Auto
+cleanup** in **Source Library**, then return to the dashboard and scan the
+source path again. Do not run source cleanup when using `EXTERNAL_READ_ONLY`.
 The notice ships in the image's `application.yml`; it does not depend on users
 updating `docker-compose.yml` or `.env`. Pulling the new image is sufficient to
 receive its version and announcement.

@@ -1,20 +1,20 @@
 # Standalone NAS deployment. Set KTV_SOURCE_MUSIC_DIR to point at the existing
 # NAS library; it defaults to ./source-music for a local deployment.
 # NAS 独立部署文件。可用 KTV_SOURCE_MUSIC_DIR 指向现有 NAS 曲库，默认使用 ./source-music。
-# Before deployment, change x-db-password below. It is referenced by both
+# Before deployment, set KTV_DB_PASSWORD in .env. It is referenced by both
 # PostgreSQL and Home KTV, so the two services always use the same password.
-# 部署前请修改下方 x-db-password；数据库和应用会同时引用该密码，避免配置不一致。
+# 部署前请在 .env 中设置 KTV_DB_PASSWORD；数据库和应用会同时引用该密码，避免配置不一致。
 name: home-ktv
 
-x-db-name: &db-name ktv
-x-db-user: &db-user ktv
-x-db-password: &db-password change-me-before-deploy
-x-timezone: &timezone Asia/Shanghai
+x-db-name: &db-name "${KTV_DB_NAME:-ktv}"
+x-db-user: &db-user "${KTV_DB_USER:-ktv}"
+x-db-password: &db-password "${KTV_DB_PASSWORD:?KTV_DB_PASSWORD must be set}"
+x-timezone: &timezone "${TZ:-Asia/Shanghai}"
 
 services:
   db:
     image: docker.m.daocloud.io/library/postgres:16-alpine
-    container_name: ktv-db
+    container_name: ${KTV_DB_CONTAINER_NAME:-ktv-db}
     environment:
       POSTGRES_DB: *db-name
       POSTGRES_USER: *db-user
@@ -22,12 +22,12 @@ services:
       TZ: *timezone
     volumes:
       - type: bind
-        source: ./postgres
+        source: "${KTV_PG_DIR:-./postgres}"
         target: /var/lib/postgresql/data
         bind:
           create_host_path: true
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ktv -d ktv"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -36,11 +36,11 @@ services:
     stop_grace_period: 1m
 
   ktv:
-    image: ghcr.io/aimeng001/ktv-home:latest
-    container_name: ktv-app
+    image: "${KTV_RELEASE_IMAGE:-ghcr.io/aimeng001/ktv-home:latest}"
+    container_name: ${KTV_APP_CONTAINER_NAME:-ktv-app}
     environment:
-      SERVER_PORT: 8080
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/ktv
+      SERVER_PORT: "${KTV_HTTP_PORT:-8080}"
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://db:5432/${KTV_DB_NAME:-ktv}"
       SPRING_DATASOURCE_USERNAME: *db-user
       SPRING_DATASOURCE_PASSWORD: *db-password
       KTV_SOURCE_LIBRARY_PATH: /source-music
@@ -49,39 +49,39 @@ services:
       KTV_DATA_PATH: /data
       # Set this before deployment to unlock /m/admin; empty keeps admin APIs disabled.
       # 部署前请设置此项以解锁 /m/admin；留空会关闭管理接口。
-      KTV_ADMIN_PASSWORD: ""
+      KTV_ADMIN_PASSWORD: "${KTV_ADMIN_PASSWORD:-}"
       KTV_DISCOVERY_ENABLED: "true"
-      KTV_DISCOVERY_UDP_PORT: 18888
-      KTV_DISCOVERY_NAME: 家庭KTV
-      KTV_AI_ENABLED: "false"
-      KTV_AI_BASE_URL: https://api.deepseek.com
-      KTV_AI_API_KEY: ""
-      KTV_AI_MODEL: deepseek-v4-flash
-      KTV_AI_AUTO_APPLY_CONFIDENCE: "0.90"
-      KTV_AI_ALLOW_PRIVATE_NETWORK: "false"
-      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=70 -Xmx512m
+      KTV_DISCOVERY_UDP_PORT: "${KTV_DISCOVERY_UDP_PORT:-18888}"
+      KTV_DISCOVERY_NAME: "${KTV_DISCOVERY_NAME:-家庭KTV}"
+      KTV_AI_ENABLED: "${KTV_AI_ENABLED:-false}"
+      KTV_AI_BASE_URL: "${KTV_AI_BASE_URL:-https://api.deepseek.com}"
+      KTV_AI_API_KEY: "${KTV_AI_API_KEY:-}"
+      KTV_AI_MODEL: "${KTV_AI_MODEL:-deepseek-v4-flash}"
+      KTV_AI_AUTO_APPLY_CONFIDENCE: "${KTV_AI_AUTO_APPLY_CONFIDENCE:-0.90}"
+      KTV_AI_ALLOW_PRIVATE_NETWORK: "${KTV_AI_ALLOW_PRIVATE_NETWORK:-false}"
+      JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=70 -Xmx512m}"
       TZ: *timezone
     ports:
       # Web/API/WebSocket/media / 网页、API、WebSocket 与媒体流
-      - "8080:8080/tcp"
+      - "${KTV_HTTP_PORT:-8080}:${KTV_HTTP_PORT:-8080}/tcp"
       # The TV client scans this exact UDP port / 电视端只扫描此 UDP 端口
-      - "18888:18888/udp"
+      - "${KTV_DISCOVERY_UDP_PORT:-18888}:${KTV_DISCOVERY_UDP_PORT:-18888}/udp"
     volumes:
       - type: bind
         # Relative to the directory containing this Compose project.
         # 相对于此 Compose 项目所在目录。
-        source: ${KTV_SOURCE_MUSIC_DIR:-./source-music}
+        source: "${KTV_SOURCE_MUSIC_DIR:-./source-music}"
         target: /source-music
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: ./music
+        source: "${KTV_MUSIC_DIR:-./music}"
         target: /music
         bind:
           create_host_path: true
       - type: bind
-        source: ./data
+        source: "${KTV_DATA_DIR:-./data}"
         target: /data
         bind:
           create_host_path: true
@@ -89,7 +89,7 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health | grep -q '\"status\":\"UP\"'"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${SERVER_PORT}/api/health | grep -q '\"status\":\"UP\"'"]
       interval: 10s
       timeout: 5s
       retries: 20
