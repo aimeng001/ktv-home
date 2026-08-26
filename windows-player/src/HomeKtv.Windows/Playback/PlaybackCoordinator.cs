@@ -10,8 +10,11 @@ public sealed class PlaybackCoordinator
 {
     private readonly IPlaybackServerApi server;
     private readonly IPlaybackOutput output;
+    private readonly object projectionStateLock = new();
     private long? loadedQueueId;
     private FileSource? loadedFile;
+    private long outputGeneration;
+    private ActiveOutputIdentity? activeOutput;
     private string? lastVocalMode;
     private AudioLayoutDto? lastAudioLayout;
     private int? lastVolume;
@@ -22,6 +25,35 @@ public sealed class PlaybackCoordinator
     {
         this.server = server;
         this.output = output;
+    }
+
+    public ActiveOutputIdentity? ActiveOutput
+    {
+        get
+        {
+            lock (projectionStateLock)
+            {
+                return activeOutput;
+            }
+        }
+    }
+
+    public long? ActiveOutputQueueId => ActiveOutput?.QueueId;
+
+    /** Rechecks the same output generation after an asynchronous position read. */
+    public bool TryGetActiveQueueId(ActiveOutputIdentity expected, out long queueId)
+    {
+        lock (projectionStateLock)
+        {
+            if (activeOutput == expected && expected.QueueId is { } activeQueueId)
+            {
+                queueId = activeQueueId;
+                return true;
+            }
+        }
+
+        queueId = default;
+        return false;
     }
 
     public async Task ApplySnapshotAsync(
@@ -62,6 +94,7 @@ public sealed class PlaybackCoordinator
         var queueChanged = loadedQueueId != playing.QueueId;
         if (queueChanged)
         {
+            ClearActiveOutput();
             var detail = await server.GetSongDetailAsync(playing.Song.Id, cancellationToken)
                 .ConfigureAwait(false);
             var file = detail?.Files.OrderByDescending(item => item.Priority).FirstOrDefault();
@@ -88,6 +121,7 @@ public sealed class PlaybackCoordinator
             }
             loadedQueueId = playing.QueueId;
             loadedFile = file;
+            CommitActiveOutput(playing.QueueId, file.Id);
             lastVocalMode = null;
             lastAudioLayout = null;
             lastVolume = null;
@@ -161,9 +195,26 @@ public sealed class PlaybackCoordinator
     {
         loadedQueueId = null;
         loadedFile = null;
+        ClearActiveOutput();
         lastVocalMode = null;
         lastAudioLayout = null;
         lastVolume = null;
         lastMuted = null;
+    }
+
+    private void ClearActiveOutput()
+    {
+        lock (projectionStateLock)
+        {
+            activeOutput = null;
+        }
+    }
+
+    private void CommitActiveOutput(long? queueId, long fileId)
+    {
+        lock (projectionStateLock)
+        {
+            activeOutput = new ActiveOutputIdentity(queueId, fileId, ++outputGeneration);
+        }
     }
 }

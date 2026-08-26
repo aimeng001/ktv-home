@@ -40,7 +40,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
             PositionChanged?.Invoke(position);
         };
         socket.SnapshotReceived += ApplySnapshotFromSocketAsync;
-        output.PlaybackFinished += () => _ = ReportFinishedAsync();
+        output.PlaybackFinished += fileId => _ = ReportFinishedAsync(fileId);
         output.SessionFaulted += exception => _ = RecoverOutputAsync(exception);
     }
 
@@ -165,13 +165,18 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         }
     }
 
-    private async Task ReportFinishedAsync()
+    private async Task ReportFinishedAsync(long fileId)
     {
-        var queueId = snapshot?.Playing?.QueueId;
-        if (queueId is null) return;
+        var identity = coordinator.ActiveOutput;
+        if (identity is null || identity.FileId != fileId
+            || !coordinator.TryGetActiveQueueId(identity, out var queueId))
+        {
+            return;
+        }
+
         try
         {
-            await socket.SendFinishedAsync(queueId.Value, lifetime.Token).ConfigureAwait(false);
+            await socket.SendFinishedAsync(queueId, lifetime.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException)
         {
@@ -204,11 +209,19 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         {
             try
             {
+                var identity = coordinator.ActiveOutput;
+                if (identity is null) continue;
+
                 var position = await output.GetPositionMsAsync(cancellationToken).ConfigureAwait(false);
-                if (position is not { } currentPosition) continue;
+                if (position is not { } currentPosition
+                    || !coordinator.TryGetActiveQueueId(identity, out var queueId))
+                {
+                    continue;
+                }
+
                 CurrentPositionMs = currentPosition;
                 PositionChanged?.Invoke(currentPosition);
-                await socket.SendProgressAsync(currentPosition, snapshot?.Playing?.QueueId,
+                await socket.SendProgressAsync(currentPosition, queueId,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

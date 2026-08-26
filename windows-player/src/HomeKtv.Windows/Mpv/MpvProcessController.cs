@@ -8,6 +8,7 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
 {
     private readonly IMpvSessionFactory sessionFactory;
     private readonly SemaphoreSlim commandLock = new(1, 1);
+    private readonly object mediaIdentityLock = new();
     private IMpvSession? session;
     private string? loadedUrl;
     private long? loadedFileId;
@@ -17,6 +18,8 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
     private int? audioTrackRelativeIndex;
     private long positionMs;
     private bool? paused;
+    private long? playlistEntryId;
+    private bool mediaReady;
     private int disposed;
 
     public MpvProcessController(IMpvSessionFactory sessionFactory)
@@ -27,7 +30,7 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
     public bool IsMpvRunning => session?.IsAlive == true;
     public long? CurrentFileId => loadedFileId;
 
-    public event Action? PlaybackFinished;
+    public event Action<long>? PlaybackFinished;
     public event Action<Exception>? SessionFaulted;
 
     public async Task<long?> GetPositionMsAsync(CancellationToken cancellationToken = default)
@@ -66,6 +69,7 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
                 .ConfigureAwait(false);
             loadedUrl = streamUrl;
             loadedFileId = fileId;
+            ResetMediaIdentity();
             positionMs = 0;
             audioTrackRelativeIndex = null;
             channelMode = ChannelMapMode.STEREO;
@@ -93,6 +97,7 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
             await active.ExecuteAsync(MpvCommands.Stop(), cancellationToken).ConfigureAwait(false);
             loadedUrl = null;
             loadedFileId = null;
+            ResetMediaIdentity();
             positionMs = 0;
             audioTrackRelativeIndex = null;
             channelMode = ChannelMapMode.STEREO;
@@ -275,6 +280,7 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
     private async Task RestoreProjectionLockedAsync(IMpvSession active,
         CancellationToken cancellationToken)
     {
+        ResetMediaIdentity();
         await active.ExecuteAsync(MpvCommands.LoadFile(loadedUrl!), cancellationToken)
             .ConfigureAwait(false);
         if (volume is { } targetVolume && muted is { } targetMuted)
@@ -331,12 +337,70 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
     private void HandleNotification(IMpvSession source, MpvNotification notification)
     {
         if (!ReferenceEquals(source, session)) return;
-        if (!string.Equals(notification.Name, "end-file", StringComparison.OrdinalIgnoreCase)) return;
-        if (notification.Data is { } data
-            && data.TryGetProperty("reason", out var reason)
-            && string.Equals(reason.GetString(), "eof", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(notification.Name, "file-loaded", StringComparison.OrdinalIgnoreCase))
         {
-            PlaybackFinished?.Invoke();
+            if (TryGetPlaylistEntryId(notification.Data, out var entryId))
+            {
+                lock (mediaIdentityLock)
+                {
+                    if (loadedFileId is not null)
+                    {
+                        playlistEntryId = entryId;
+                        mediaReady = true;
+                    }
+                }
+            }
+
+            return;
+        }
+
+        if (!string.Equals(notification.Name, "end-file", StringComparison.OrdinalIgnoreCase)
+            || notification.Data is not { } data
+            || !data.TryGetProperty("reason", out var reason)
+            || !string.Equals(reason.GetString(), "eof", StringComparison.OrdinalIgnoreCase)
+            || !TryGetPlaylistEntryId(notification.Data, out var finishedEntryId))
+        {
+            return;
+        }
+
+        long? fileId;
+        lock (mediaIdentityLock)
+        {
+            if (!mediaReady || playlistEntryId != finishedEntryId || loadedFileId is not { } currentFileId)
+            {
+                return;
+            }
+
+            mediaReady = false;
+            fileId = currentFileId;
+        }
+
+        if (fileId is { } completedFileId)
+        {
+            PlaybackFinished?.Invoke(completedFileId);
+        }
+    }
+
+    private static bool TryGetPlaylistEntryId(JsonElement? data, out long entryId)
+    {
+        if (data is { ValueKind: JsonValueKind.Object } value
+            && value.TryGetProperty("playlist_entry_id", out var entry)
+            && entry.ValueKind == JsonValueKind.Number
+            && entry.TryGetInt64(out entryId))
+        {
+            return true;
+        }
+
+        entryId = default;
+        return false;
+    }
+
+    private void ResetMediaIdentity()
+    {
+        lock (mediaIdentityLock)
+        {
+            playlistEntryId = null;
+            mediaReady = false;
         }
     }
 

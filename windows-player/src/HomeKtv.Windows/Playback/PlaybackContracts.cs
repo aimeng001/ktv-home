@@ -9,6 +9,9 @@ public enum ChannelMapMode
     RIGHT_MONO,
 }
 
+/** Identifies the media instance currently committed to the local output. */
+public sealed record ActiveOutputIdentity(long? QueueId, long FileId, long Generation);
+
 public interface IPlaybackServerApi
 {
     Task<SongDetail?> GetSongDetailAsync(long songId, CancellationToken cancellationToken = default);

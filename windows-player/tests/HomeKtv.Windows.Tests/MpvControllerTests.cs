@@ -164,14 +164,35 @@ public sealed class MpvControllerTests
     {
         var session = new FakeMpvSession();
         var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
-        var finished = 0;
-        controller.PlaybackFinished += () => finished++;
+        var finished = new List<long>();
+        controller.PlaybackFinished += fileId => finished.Add(fileId);
 
         await controller.LoadAsync("http://server/stream/10", 10);
+        session.Notify("file-loaded", "{\"playlist_entry_id\":1}");
         session.Notify("end-file", "{\"reason\":\"stop\"}");
         session.Notify("end-file", "{\"reason\":\"eof\"}");
+        session.Notify("end-file", "{\"reason\":\"eof\",\"playlist_entry_id\":1}");
 
-        Assert.Equal(1, finished);
+        Assert.Equal(new long[] { 10 }, finished);
+    }
+
+    [Fact]
+    public async Task Eof_for_an_old_playlist_entry_is_ignored_after_a_replacement_load()
+    {
+        var session = new FakeMpvSession();
+        var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+        var finished = new List<long>();
+        controller.PlaybackFinished += fileId => finished.Add(fileId);
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.Notify("file-loaded", "{\"playlist_entry_id\":1}");
+
+        await controller.LoadAsync("http://server/stream/20", 20);
+        session.Notify("file-loaded", "{\"playlist_entry_id\":2}");
+        session.Notify("end-file", "{\"reason\":\"eof\",\"playlist_entry_id\":1}");
+        session.Notify("end-file", "{\"reason\":\"eof\",\"playlist_entry_id\":2}");
+
+        Assert.Equal(new long[] { 20 }, finished);
     }
 
     private static JsonElement Json(string value)
