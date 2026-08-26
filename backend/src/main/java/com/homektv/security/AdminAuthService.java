@@ -2,6 +2,7 @@ package com.homektv.security;
 
 import com.homektv.config.AppProperties;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -29,6 +30,7 @@ public class AdminAuthService {
     private final SecureRandom random = new SecureRandom();
     private final Map<String, Instant> sessions = new ConcurrentHashMap<>();
 
+    @Autowired
     public AdminAuthService(AppProperties properties) {
         this(properties, Clock.systemUTC());
     }
