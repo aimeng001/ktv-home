@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { api } from './client'
+import { api, makeControls } from './client'
 
 function jsonResponse(body, status = 200) {
   return {
@@ -43,5 +43,37 @@ describe('api client admin authentication', () => {
     expect(localStorage.getItem('home-ktv.admin.token')).toBeNull()
     expect(required).toHaveBeenCalledTimes(1)
     window.removeEventListener('home-ktv-admin-auth-required', required)
+  })
+
+  it('serializes control commands with the client token and clamps negative seeks', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ok: true }))
+    const controls = makeControls('client-123')
+
+    await controls.seek(-50)
+    await controls.setVocal('original')
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/control')
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      action: 'seek',
+      params: { position_ms: 0 },
+      client_token: 'client-123'
+    })
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      action: 'set_vocal',
+      params: { mode: 'original' },
+      client_token: 'client-123'
+    })
+  })
+
+  it('does not add a JSON content type to multipart uploads', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ok: true }))
+    const file = new File(['logo'], 'logo.png', { type: 'image/png' })
+
+    await api.adminUploadStandbyLogo(file)
+
+    const [, options] = fetchMock.mock.calls[0]
+    expect(options.headers['Content-Type']).toBeUndefined()
+    expect(options.body).toBeInstanceOf(FormData)
+    expect(options.body.get('file').name).toBe('logo.png')
   })
 })
