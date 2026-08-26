@@ -77,6 +77,7 @@ class IncrementalLibraryScanTest {
         when(songRepository.save(any(Song.class))).thenAnswer(invocation -> {
             Song song = invocation.getArgument(0);
             if (song.getId() == null) song.setId(ids.getAndIncrement());
+            songsByFingerprint.entrySet().removeIf(entry -> entry.getValue() == song);
             songsById.put(song.getId(), song);
             songsByFingerprint.put(song.getFingerprint(), song);
             return song;
@@ -122,6 +123,14 @@ class IncrementalLibraryScanTest {
         assertThat(result.hashCalls()).isZero();
         assertThat(result.dbUpdates()).isEqualTo(4);
         verify(ffprobe, times(1)).probe(any(Path.class));
+    }
+
+    @Test
+    void directIngestWithoutAnExistingSongRemainsSupported() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+
+        assertThat(scanService.ingest(file)).isEqualTo(LibraryScanService.IngestOutcome.ADDED);
+        assertThat(filesByPath.get(file.toString())).isNotNull();
     }
 
     @Test
@@ -358,6 +367,52 @@ class IncrementalLibraryScanTest {
         assertThat(song.isMetadataLocked("title")).isTrue();
         assertThat(song.isMetadataLocked("artist")).isTrue();
         assertThat(song.isMetadataLocked("language")).isTrue();
+    }
+
+    @Test
+    void reprobeKeepsManuallyLockedSongIdentityAndFileBinding() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        scanService.scanAll();
+
+        SongFile indexed = filesByPath.get(file.toString());
+        Song song = songsById.get(indexed.getSongId());
+        Long originalSongId = song.getId();
+        song.setTitle("爱");
+        song.setArtist("草蜢");
+        song.setFingerprint(MediaClassifier.fingerprint("草蜢", "爱", song.getDurationMs()));
+        song.lockMetadata("title");
+        song.lockMetadata("artist");
+        songRepository.save(song);
+
+        FileTime originalMtime = Files.getLastModifiedTime(file);
+        Files.setLastModifiedTime(file, FileTime.fromMillis(originalMtime.toMillis() + 2_000));
+
+        scanService.scanAll();
+
+        assertThat(indexed.getSongId()).isEqualTo(originalSongId);
+        assertThat(song.getTitle()).isEqualTo("爱");
+        assertThat(song.getArtist()).isEqualTo("草蜢");
+        assertThat(song.getFingerprint())
+                .isEqualTo(MediaClassifier.fingerprint("草蜢", "爱", song.getDurationMs()));
+    }
+
+    @Test
+    void reprobePreservesManuallyLockedTags() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        scanService.scanAll();
+
+        SongFile indexed = filesByPath.get(file.toString());
+        Song song = songsById.get(indexed.getSongId());
+        song.setTags(new String[]{"经典粤语"});
+        song.lockMetadata("tags");
+        songRepository.save(song);
+
+        FileTime originalMtime = Files.getLastModifiedTime(file);
+        Files.setLastModifiedTime(file, FileTime.fromMillis(originalMtime.toMillis() + 2_000));
+
+        scanService.scanAll();
+
+        assertThat(song.getTags()).containsExactly("经典粤语");
     }
 
     @Test

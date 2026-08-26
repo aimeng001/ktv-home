@@ -111,6 +111,45 @@ class AdminServiceIntegrationTest {
     }
 
     @Test
+    void editIdentityRecomputesFingerprintFromTheFinalBusinessIdentity() {
+        Song track = songRepo.findByFingerprint("fp-TRACK_001").orElseThrow();
+        track.setDurationMs(180_000);
+        songRepo.save(track);
+
+        adminService.editSong(track.getId(),
+                new SongEditRequest("爱", "草蜢", null, null, null));
+
+        Song updated = songRepo.findById(track.getId()).orElseThrow();
+        assertThat(updated.getFingerprint())
+                .isEqualTo(MediaClassifier.fingerprint("草蜢", "爱", 180_000));
+    }
+
+    @Test
+    void editIdentityRejectsFingerprintConflict() {
+        Song target = songRepo.findByFingerprint("fp-TRACK_001").orElseThrow();
+        Song other = save("临时歌名", "临时歌手", "AUDIO", "ok");
+        other.setFingerprint(MediaClassifier.fingerprint("草蜢", "爱", target.getDurationMs()));
+        songRepo.save(other);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> adminService.editSong(target.getId(),
+                        new SongEditRequest("爱", "草蜢", null, null, null)))
+                .isInstanceOf(com.homektv.web.ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SONG_FINGERPRINT_CONFLICT");
+    }
+
+    @Test
+    void editingTagsLocksThemEvenWhenTheRequestedListIsEmpty() {
+        Song track = songRepo.findByFingerprint("fp-TRACK_001").orElseThrow();
+
+        adminService.editSong(track.getId(),
+                new SongEditRequest(null, null, null, new String[0], null));
+
+        Song updated = songRepo.findById(track.getId()).orElseThrow();
+        assertThat(updated.getTags()).isEmpty();
+        assertThat(updated.isMetadataLocked("tags")).isTrue();
+    }
+
+    @Test
     void languageOnlyEditDoesNotPromoteUnrecognized() {
         Song track = songRepo.findByFingerprint("fp-TRACK_001").orElseThrow();
 

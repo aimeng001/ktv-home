@@ -631,7 +631,16 @@ public class LibraryScanService {
         String mediaType = MediaClassifier.classify(probe);
         boolean hasVocal = MediaClassifier.hasVocalTrack(probe);
         VocalTrackDetector.Result vocalDetect = VocalTrackDetector.detect(probe);
-        String fingerprint = MediaClassifier.fingerprint(artist, title, probe.durationMs());
+        Song existingSong = existing.map(SongFile::getSongId)
+                .filter(Objects::nonNull)
+                .flatMap(songRepo::findById)
+                .orElse(null);
+        boolean manualIdentity = hasManualIdentityOverride(existingSong);
+        String effectiveTitle = existingSong != null && existingSong.isMetadataLocked("title")
+                ? existingSong.getTitle() : title;
+        String effectiveArtist = existingSong != null && existingSong.isMetadataLocked("artist")
+                ? existingSong.getArtist() : artist;
+        String fingerprint = MediaClassifier.fingerprint(effectiveArtist, effectiveTitle, probe.durationMs());
 
         // 5) 指纹去重：同指纹已存在 → 作为多文件源加入，按 priority 择优
         Optional<Song> dup = songRepo.findByFingerprint(fingerprint);
@@ -643,7 +652,17 @@ public class LibraryScanService {
         Song song;
         boolean isNew;
         Song provisionalToDelete = null;
-        if (dup.isPresent() && !sameSong(dup.get(), provisional)) {
+        if (manualIdentity) {
+            Optional<Song> conflict = dup.filter(other -> !sameSong(other, existingSong));
+            if (conflict.isPresent()) {
+                throw new ApiException("FINGERPRINT_CONFLICT",
+                        "人工确认的歌曲身份与歌曲 #" + conflict.get().getId() + " 冲突");
+            }
+            song = existingSong;
+            applyProbedMetadata(song, title, artist, mediaType, hasVocal, probe,
+                    fingerprint, recognized, tag, filenameMeta, identitySource);
+            isNew = false;
+        } else if (dup.isPresent() && !sameSong(dup.get(), provisional)) {
             song = dup.get();
             isNew = false;
             provisionalToDelete = provisional;
@@ -832,7 +851,7 @@ public class LibraryScanService {
     }
 
     private static boolean hasManualIdentityOverride(Song song) {
-        return song.isMetadataLocked("title") || song.isMetadataLocked("artist");
+        return song != null && (song.isMetadataLocked("title") || song.isMetadataLocked("artist"));
     }
 
     private static void applyProbedMetadata(Song song, String title, String artist, String mediaType,
@@ -842,6 +861,7 @@ public class LibraryScanService {
         boolean titleLocked = song.isMetadataLocked("title");
         boolean artistLocked = song.isMetadataLocked("artist");
         boolean languageLocked = song.isMetadataLocked("language");
+        boolean tagsLocked = song.isMetadataLocked("tags");
         if (!titleLocked) {
             song.setTitle(title);
             song.setTitlePy(PinyinUtil.fullPinyin(title));
@@ -869,7 +889,7 @@ public class LibraryScanService {
                 song.setLanguage(normalizeLanguage(filenameMeta.language()));
             }
         }
-        if (filenameMeta != null && !filenameMeta.category().isBlank()) {
+        if (!tagsLocked && filenameMeta != null && !filenameMeta.category().isBlank()) {
             song.setTags(new String[]{filenameMeta.category()});
         }
         if (!titleLocked && !artistLocked) {

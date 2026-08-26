@@ -76,7 +76,9 @@ public class AiClassificationApplier {
         song.setAiAgeRange(normalize(result.ageRange()));
         song.setAiVocalForm(validVocalForm(result.vocalForm()) ? result.vocalForm() : "未知");
         song.setAiAnalyzedAt(OffsetDateTime.now());
-        song.setTags(mergeTags(song.getTags(), result));
+        if (!song.isMetadataLocked("tags")) {
+            song.setTags(mergeTags(song.getTags(), result));
+        }
         double classificationThreshold = configService.resolve().classificationThreshold();
         if (!song.isMetadataLocked("artistGender") && validArtistGender(result.artistGender())
                 && !"未知".equals(result.artistGender())

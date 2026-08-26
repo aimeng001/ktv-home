@@ -143,7 +143,21 @@ public class AdminService {
             song.setArtistGender(gender);
             song.lockMetadata("artistGender");
         }
-        if (req.tags() != null) song.setTags(req.tags());
+        if (req.tags() != null) {
+            song.setTags(req.tags());
+            song.lockMetadata("tags");
+        }
+        if (manualIdentityEdited) {
+            String fingerprint = MediaClassifier.fingerprint(
+                    song.getArtist(), song.getTitle(), song.getDurationMs());
+            songRepo.findByFingerprint(fingerprint)
+                    .filter(other -> !java.util.Objects.equals(other.getId(), song.getId()))
+                    .ifPresent(other -> {
+                        throw new ApiException("SONG_FINGERPRINT_CONFLICT",
+                                "修改后的歌曲身份与歌曲 #" + other.getId() + " 重复");
+                    });
+            song.setFingerprint(fingerprint);
+        }
         if (req.lyricText() != null && !req.lyricText().isBlank()) {
             String path = assetWriter.writeLyric(song.getFingerprint(), req.lyricText());
             song.setLyricPath(path);
