@@ -122,9 +122,24 @@ public class LibraryScanService {
             String activeRole = activeFileRole();
             List<SongFile> trackedFiles = trackedFiles(activeRole);
             Map<String, SongFile> trackedByPath = new HashMap<>();
+            Map<String, SongFile> trackedByRelativePath = new HashMap<>();
+            Set<String> ambiguousRelativePaths = new HashSet<>();
             for (SongFile tracked : trackedFiles) {
                 if (tracked != null && tracked.getFilePath() != null) {
                     trackedByPath.put(tracked.getFilePath(), tracked);
+                }
+                if (tracked != null && !isBlank(tracked.getRelativePath())) {
+                    String relativePath = tracked.getRelativePath();
+                    if (ambiguousRelativePaths.contains(relativePath)) continue;
+                    SongFile previous = trackedByRelativePath.putIfAbsent(relativePath, tracked);
+                    if (previous != null && previous != tracked) {
+                        // A relative path is only a safe remount key when it is unique
+                        // within the active role. Fall back to the absolute path or add
+                        // a new row for ambiguous legacy data rather than reassigning a
+                        // song file arbitrarily.
+                        trackedByRelativePath.remove(relativePath);
+                        ambiguousRelativePaths.add(relativePath);
+                    }
                 }
             }
             List<FastIndexEntry> indexedEntries = new ArrayList<>();
@@ -144,7 +159,8 @@ public class LibraryScanService {
                     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                         if (isMediaFile(file) && isExternalPathAllowed(file)) {
                             try {
-                                FastIndexEntry entry = fastIndex(file, attrs, artistIndex, trackedByPath);
+                                FastIndexEntry entry = fastIndex(file, attrs, artistIndex,
+                                        trackedByPath, trackedByRelativePath);
                                 indexedEntries.add(entry);
                                 currentPaths.add(entry.path());
                                 counters.fastIndexed++;
@@ -251,7 +267,7 @@ public class LibraryScanService {
     private FastIndexEntry fastIndex(Path file, Collection<String> knownArtists) {
         try {
             BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class);
-            return fastIndex(file, attrs, artistIndexFor(knownArtists), null);
+            return fastIndex(file, attrs, artistIndexFor(knownArtists), null, null);
         } catch (IOException e) {
             throw new IllegalStateException("读取文件属性失败：" + file, e);
         }
@@ -259,13 +275,18 @@ public class LibraryScanService {
 
     private FastIndexEntry fastIndex(Path file, BasicFileAttributes attrs,
                                      FilenameParser.ArtistIndex artistIndex,
-                                     Map<String, SongFile> trackedByPath) {
+                                     Map<String, SongFile> trackedByPath,
+                                     Map<String, SongFile> trackedByRelativePath) {
         String path = file.toString();
         Path sidecarLyric = sidecarLyricOf(file);
         OffsetDateTime mediaMtime = attrs.lastModifiedTime().toInstant().atOffset(ZoneOffset.UTC);
+        String relativePath = relativePathOf(file);
         SongFile tracked = trackedByPath == null
                 ? fileRepo.findByFilePath(path).orElse(null)
                 : trackedByPath.get(path);
+        if (tracked == null && trackedByRelativePath != null && !isBlank(relativePath)) {
+            tracked = trackedByRelativePath.get(relativePath);
+        }
         return new FastIndexEntry(file, path, attrs.size(), newestMtime(file, sidecarLyric, mediaMtime),
                 fileIdentity(attrs, sidecarLyric),
                 FilenameParser.parse(file.getFileName().toString(), artistIndex),
@@ -312,11 +333,13 @@ public class LibraryScanService {
         SongFile existing = entry.existing().orElse(null);
         OffsetDateTime normalizedMtime = normalizeMtime(entry.mtime());
         if (existing != null) {
-            boolean changed = existing.getFileSize() != entry.size()
+            boolean changed = !Objects.equals(existing.getFilePath(), entry.path())
+                    || existing.getFileSize() != entry.size()
                     || !sameMtime(existing.getFileMtime(), entry.mtime())
                     || !sameFileIdentity(existing.getFileIdentity(), entry.fileIdentity())
                     || !existing.isProbePending() || !existing.isValid();
             if (changed) {
+                existing.setFilePath(entry.path());
                 existing.setFileSize(entry.size());
                 existing.setFileMtime(normalizedMtime);
                 existing.setFileIdentity(entry.fileIdentity());
@@ -402,6 +425,10 @@ public class LibraryScanService {
 
         boolean wasInvalid = !existing.isValid();
         boolean changed = false;
+        if (!Objects.equals(existing.getFilePath(), entry.path())) {
+            existing.setFilePath(entry.path());
+            changed = true;
+        }
         String relativePath = relativePathOf(entry.file());
         if (isBlank(existing.getRelativePath()) && relativePath != null) {
             existing.setRelativePath(relativePath);

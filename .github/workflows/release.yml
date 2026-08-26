@@ -172,7 +172,7 @@ jobs:
         run: dotnet restore windows-player/HomeKtv.Windows.sln
       - name: Run Windows Player tests
         run: dotnet test windows-player/HomeKtv.Windows.sln --no-restore -c Release
-      - name: Publish self-contained Windows x64 Player
+      - name: Publish self-contained Windows x64 Player (mpv prerequisite)
         run: >-
           dotnet publish windows-player/src/HomeKtv.Windows/HomeKtv.Windows.csproj
           -c Release
@@ -184,6 +184,11 @@ jobs:
           -p:DebugSymbols=false
           -p:Version="${{ needs.release-meta.outputs.version_name }}"
           -o windows-player/staged/win-x64
+      - name: Stage Windows Player prerequisites (mpv.exe instructions)
+        shell: pwsh
+        run: >-
+          Copy-Item windows-player/README.md
+          windows-player/staged/win-x64/README-WINDOWS-PLAYER.md
       - name: Package Windows x64 Player
         shell: pwsh
         run: >-

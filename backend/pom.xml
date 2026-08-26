@@ -128,6 +128,20 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <!--
+                            On Windows, JDK NIO uses this directory for the
+                            selector wake-up socket. Keeping it under target
+                            avoids restricted/virtualized system temp paths.
+                        -->
+                        <jdk.net.unixdomain.tmpdir>${project.build.directory}</jdk.net.unixdomain.tmpdir>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>

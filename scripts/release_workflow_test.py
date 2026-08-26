@@ -61,6 +61,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIsNone(SAFE_VERSION.fullmatch("1.0.0/rc1"))
         self.assertIsNone(SAFE_VERSION.fullmatch("1.0.0:rc1"))
 
+    def test_windows_package_explains_the_mpv_prerequisite(self) -> None:
+        windows_player = job_block(self.workflow, "windows-player")
+
+        self.assertIn("mpv.exe", windows_player)
+        self.assertIn("Copy-Item windows-player/README.md", windows_player)
+        self.assertIn("README-WINDOWS-PLAYER.md", windows_player)
+
 
 if __name__ == "__main__":
     unittest.main()

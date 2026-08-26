@@ -42,11 +42,17 @@ public sealed class MpvProcessSessionFactory : IMpvDisplaySessionFactory
         {
             if (!process.Start())
             {
-                throw new MpvConnectionException("Unable to start mpv.exe.");
+                throw new MpvConnectionException(MissingExecutableMessage(process));
             }
 
             await pipe.ConnectAsync(5_000, cancellationToken).ConfigureAwait(false);
             return new MpvJsonIpcSession(pipe, process);
+        }
+        catch (MpvConnectionException)
+        {
+            pipe.Dispose();
+            DisposeProcess(process);
+            throw;
         }
         catch (OperationCanceledException)
         {
@@ -54,8 +60,15 @@ public sealed class MpvProcessSessionFactory : IMpvDisplaySessionFactory
             DisposeProcess(process);
             throw;
         }
+        catch (Exception exception) when (exception is FileNotFoundException
+            or System.ComponentModel.Win32Exception)
+        {
+            pipe.Dispose();
+            DisposeProcess(process);
+            throw new MpvConnectionException(MissingExecutableMessage(process), exception);
+        }
         catch (Exception exception) when (exception is MpvConnectionException or IOException or TimeoutException
-            or InvalidOperationException or System.ComponentModel.Win32Exception)
+            or InvalidOperationException)
         {
             pipe.Dispose();
             DisposeProcess(process);
@@ -73,7 +86,7 @@ public sealed class MpvProcessSessionFactory : IMpvDisplaySessionFactory
 
         var startInfo = new ProcessStartInfo
         {
-            FileName = currentOptions.ExecutablePath,
+            FileName = MpvExecutableResolver.Resolve(currentOptions.ExecutablePath),
             UseShellExecute = false,
             CreateNoWindow = true,
         };
@@ -92,6 +105,11 @@ public sealed class MpvProcessSessionFactory : IMpvDisplaySessionFactory
         startInfo.ArgumentList.Add("--osd-level=0");
         return startInfo;
     }
+
+    private static string MissingExecutableMessage(Process process) =>
+        $"Unable to start mpv executable '{process.StartInfo.FileName}'. "
+        + "Install mpv and place mpv.exe next to HomeKtv.Windows.exe, "
+        + "or set MpvExecutablePath in settings.json.";
 
     private static void DisposeProcess(Process process)
     {

@@ -25,6 +25,7 @@ android-tv/third_party/
 # ===== Windows Player =====
 windows-player/**/bin/
 windows-player/**/obj/
+/windows-player/staged/
 windows-player/.dotnet-cli-home/
 .dotnet-cli-home/
 
@@ -43,3 +44,11 @@ music/
 backend/data/
 /data/
 backend/src/main/resources/application-local.yml
+
+# Local development instructions and agent prompts; never publish these files.
+/AGENTS.md
+/ARCHITECTURE.md
+/PLAN.md
+/REQUIREMENTS.md
+/TASK_STATE.md
+/KTV_AGENT_PROMPTS.txt

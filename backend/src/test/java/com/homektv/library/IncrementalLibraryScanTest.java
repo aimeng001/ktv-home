@@ -93,6 +93,7 @@ class IncrementalLibraryScanTest {
         when(songFileRepository.save(any(SongFile.class))).thenAnswer(invocation -> {
             SongFile file = invocation.getArgument(0);
             if (file.getId() == null) file.setId(ids.getAndIncrement());
+            filesByPath.entrySet().removeIf(entry -> entry.getValue() == file);
             filesByPath.put(file.getFilePath(), file);
             return file;
         });
@@ -158,6 +159,31 @@ class IncrementalLibraryScanTest {
         verify(ffprobe, times(1)).probe(any(Path.class));
         verify(songRepository, times(2)).save(any(Song.class));
         verify(songFileRepository, times(2)).save(any(SongFile.class));
+    }
+
+    @Test
+    void sameRelativePathSurvivesLibraryRootRemountWithoutReprobe() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        scanService.scanAll();
+        FileTime originalMtime = Files.getLastModifiedTime(file);
+
+        Path remountedRoot = Files.createDirectory(tempDir.resolve("remounted-library"));
+        Path remountedFile = remountedRoot.resolve(file.getFileName());
+        Files.move(file, remountedFile);
+        Files.setLastModifiedTime(remountedFile, originalMtime);
+        props.setSourceLibraryPath(remountedRoot.toString());
+
+        LibraryScanService.ScanResult second = scanService.scanAll();
+
+        assertThat(second.skipped()).isEqualTo(1);
+        assertThat(second.probeQueued()).isZero();
+        assertThat(second.probeCalls()).isZero();
+        assertThat(second.dbUpdates()).isEqualTo(1);
+        assertThat(filesByPath).hasSize(1);
+        assertThat(filesByPath.get(remountedFile.toString())).isNotNull();
+        assertThat(filesByPath.get(remountedFile.toString()).getRelativePath())
+                .isEqualTo("周杰伦-晴天-国语-流行.mkv");
+        verify(ffprobe, times(1)).probe(any(Path.class));
     }
 
     @Test

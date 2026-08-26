@@ -34,6 +34,21 @@ class MergeGateContractTests(unittest.TestCase):
         leaked = sorted(LOCAL_ONLY_DOCUMENTS & head_paths())
         self.assertEqual([], leaked, f"local-only files are tracked in HEAD: {leaked}")
 
+    def test_local_development_documents_are_gitignored(self) -> None:
+        result = subprocess.run(
+            ["git", "check-ignore", "--no-index", *sorted(LOCAL_ONLY_DOCUMENTS)],
+            cwd=REPOSITORY,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        ignored = {line for line in result.stdout.splitlines() if line}
+        self.assertEqual(
+            sorted(LOCAL_ONLY_DOCUMENTS),
+            sorted(ignored),
+            "every local-only development document must be protected by .gitignore",
+        )
+
     def test_ci_validates_every_compose_definition(self) -> None:
         workflow = (REPOSITORY / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
