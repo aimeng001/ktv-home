@@ -19,6 +19,10 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -53,9 +57,11 @@ class PlaybackServiceTest {
         currentQueue.setStatus(QueueService.PLAYING);
 
         when(playerRepository.getSingleton()).thenReturn(playerState);
-        when(playerRepository.save(any(PlayerState.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(queueRepository.findById(100L)).thenReturn(Optional.of(currentQueue));
-        when(queueRepository.findByStatusOrderByOrderIndexAsc(QueueService.WAITING)).thenReturn(List.of());
+        lenient().when(playerRepository.save(any(PlayerState.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        lenient().when(queueRepository.findById(100L)).thenReturn(Optional.of(currentQueue));
+        lenient().when(queueRepository.findByStatusOrderByOrderIndexAsc(QueueService.WAITING))
+                .thenReturn(List.of());
     }
 
     @Test
@@ -76,6 +82,16 @@ class PlaybackServiceTest {
         playbackService.onPlayError(201L, 100L);
 
         assertThat(fileOfCurrentSong.isValid()).isFalse();
+    }
+
+    @Test
+    void stalePlayErrorDoesNotInvalidateOrAdvanceTheCurrentQueue() {
+        PlayerState result = playbackService.onPlayError(202L, 999L);
+
+        assertThat(result).isSameAs(playerState);
+        assertThat(playerState.getCurrentQueueId()).isEqualTo(100L);
+        assertThat(currentQueue.getStatus()).isEqualTo(QueueService.PLAYING);
+        verify(fileRepository, never()).findById(anyLong());
     }
 
     private static SongFile file(long id, long songId) {
