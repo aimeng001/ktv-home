@@ -10,9 +10,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.*;
 import java.util.Map;
 import java.util.concurrent.*;
+import java.util.stream.Stream;
 
 import static java.nio.file.StandardWatchEventKinds.*;
 
@@ -83,21 +85,24 @@ public class LibraryWatchService {
             });
             watchExecutor.submit(this::watchLoop);
             log.info("曲库目录自动监听已启动：{}", root);
-        } catch (IOException e) {
+        } catch (IOException | UncheckedIOException e) {
             log.warn("无法启动目录监听（降级为手动扫描）：{}", e.getMessage());
         }
     }
 
     private void registerRecursive(Path root) throws IOException {
-        Files.walk(root)
-                .filter(Files::isDirectory)
-                .forEach(dir -> {
-                    try {
-                        dir.register(watchService, ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY);
-                    } catch (IOException e) {
-                        log.debug("注册监听失败：{}", dir);
-                    }
-                });
+        try (Stream<Path> paths = Files.walk(root)) {
+            paths.filter(dir -> Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS))
+                    .forEach(this::registerDirectory);
+        }
+    }
+
+    private void registerDirectory(Path directory) {
+        try {
+            directory.register(watchService, ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY);
+        } catch (IOException e) {
+            log.debug("注册监听失败：{}", directory);
+        }
     }
 
     private void watchLoop() {
@@ -111,11 +116,30 @@ public class LibraryWatchService {
             } catch (ClosedWatchServiceException e) {
                 return;
             }
+            Path watchedDirectory = (Path) key.watchable();
             boolean relevant = false;
             for (WatchEvent<?> event : key.pollEvents()) {
-                if (event.kind() != OVERFLOW) relevant = true;
+                if (event.kind() == OVERFLOW) {
+                    relevant = true;
+                    continue;
+                }
+                relevant = true;
+                if (event.kind() == ENTRY_CREATE && event.context() instanceof Path context) {
+                    Path changed = watchedDirectory.resolve(context);
+                    if (Files.isDirectory(changed, LinkOption.NOFOLLOW_LINKS)) {
+                        try {
+                            registerRecursive(changed);
+                        } catch (IOException | UncheckedIOException e) {
+                            // A directory may disappear between CREATE and registration;
+                            // the next scan will reconcile the database state.
+                            log.debug("新目录注册监听失败：{}", changed);
+                        }
+                    }
+                }
             }
-            key.reset();
+            if (!key.reset()) {
+                log.debug("目录监听已失效：{}", watchedDirectory);
+            }
             if (relevant) scheduleScan();
         }
     }
