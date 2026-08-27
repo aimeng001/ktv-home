@@ -16,6 +16,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
     private readonly KtvWebSocketClient socket;
     private readonly MpvProcessController output;
     private readonly PlaybackCoordinator coordinator;
+    private readonly PlaybackSnapshotPump snapshotPump;
     private readonly CancellationTokenSource lifetime = new();
     private Task? socketTask;
     private Task? progressTask;
@@ -31,6 +32,10 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         this.socket = socket;
         this.output = output;
         coordinator = new PlaybackCoordinator(server, output);
+        snapshotPump = new PlaybackSnapshotPump(
+            (work, cancellationToken) => coordinator.ApplySnapshotAsync(
+                work.EventType, work.Snapshot, cancellationToken, work.IsCurrent));
+        snapshotPump.ProjectionFailed += OnProjectionFailed;
 
         socket.ConnectionChanged += connected => ConnectionChanged?.Invoke(connected);
         socket.ConnectionError += exception => Error?.Invoke(exception);
@@ -46,7 +51,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
 
     public bool IsConnected => socket.IsConnected;
     public bool IsOutputRunning => output.IsMpvRunning;
-    public QueueSnapshot? CurrentSnapshot => snapshot;
+    public QueueSnapshot? CurrentSnapshot => Volatile.Read(ref snapshot);
     public long CurrentPositionMs { get; private set; }
 
     public event Action<bool>? ConnectionChanged;
@@ -72,6 +77,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         if (initial is not null)
         {
             await ApplySnapshotAsync("sync_full", initial, cancellationToken).ConfigureAwait(false);
+            await snapshotPump.WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -121,12 +127,13 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         await ApplySnapshotAsync(eventType, incoming, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task ApplySnapshotAsync(
+    private Task ApplySnapshotAsync(
         string eventType,
         QueueSnapshot incoming,
         CancellationToken cancellationToken)
     {
-        snapshot = incoming;
+        cancellationToken.ThrowIfCancellationRequested();
+        Interlocked.Exchange(ref snapshot, incoming);
         if (eventType is "sync_full" or "playback_seeked" or "playback_restarted")
         {
             CurrentPositionMs = Math.Max(0, incoming.PositionMs);
@@ -136,19 +143,13 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         SnapshotChanged?.Invoke(incoming);
         try
         {
-            await coordinator.ApplySnapshotAsync(eventType, incoming, cancellationToken)
-                .ConfigureAwait(false);
+            snapshotPump.Submit(eventType, incoming);
         }
-        catch (Exception exception)
+        catch (ObjectDisposedException) when (lifetime.IsCancellationRequested)
         {
-            Error?.Invoke(exception);
-            if (incoming.Playing?.QueueId is { } queueId)
-            {
-                var fileId = exception is PlaybackAttemptException attempt ? attempt.FileId : null;
-                await socket.SendPlayErrorAsync(queueId, fileId, exception.Message, cancellationToken)
-                    .ConfigureAwait(false);
-            }
         }
+
+        return Task.CompletedTask;
     }
 
     private async Task SendControlAsync(
@@ -162,6 +163,33 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         if (result is not null)
         {
             await ApplySnapshotAsync(eventType, result, cancellationToken).ConfigureAwait(false);
+            await snapshotPump.WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private void OnProjectionFailed(PlaybackSnapshotWork work, Exception exception)
+    {
+        _ = ReportProjectionFailureAsync(work, exception);
+    }
+
+    private async Task ReportProjectionFailureAsync(
+        PlaybackSnapshotWork work,
+        Exception exception)
+    {
+        if (lifetime.IsCancellationRequested) return;
+        Error?.Invoke(exception);
+        if (work.Snapshot.Playing?.QueueId is not { } queueId) return;
+
+        var fileId = exception is PlaybackAttemptException attempt ? attempt.FileId : null;
+        try
+        {
+            await socket.SendPlayErrorAsync(queueId, fileId, exception.Message, lifetime.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (Exception sendException) when (sendException is IOException or InvalidOperationException)
+        {
+            Error?.Invoke(sendException);
         }
     }
 
@@ -187,14 +215,23 @@ public sealed class PlaybackTerminal : IAsyncDisposable
     private async Task RecoverOutputAsync(Exception exception)
     {
         Error?.Invoke(exception);
-        var current = snapshot;
+        var current = Volatile.Read(ref snapshot);
         if (current is null || lifetime.IsCancellationRequested) return;
 
         try
         {
-            coordinator.InvalidateOutputProjection();
-            await coordinator.ApplySnapshotAsync("sync_full", current, lifetime.Token)
-                .ConfigureAwait(false);
+            await coordinator.InvalidateOutputProjectionAsync(lifetime.Token).ConfigureAwait(false);
+            var latest = Volatile.Read(ref snapshot);
+            if (latest is not null)
+            {
+                snapshotPump.Submit("sync_full", latest);
+                await snapshotPump.WaitForIdleAsync(lifetime.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (Exception recoveryException) when (recoveryException is IOException or InvalidOperationException)
+        {
+            Error?.Invoke(recoveryException);
         }
         catch (Exception recoveryException)
         {
@@ -248,6 +285,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         {
             try { await progressTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
         }
+        await snapshotPump.DisposeAsync().ConfigureAwait(false);
         await output.DisposeAsync().ConfigureAwait(false);
         server.Dispose();
         lifetime.Dispose();

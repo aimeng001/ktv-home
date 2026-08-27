@@ -19,6 +19,7 @@ public sealed class PlaybackCoordinator
     private AudioLayoutDto? lastAudioLayout;
     private int? lastVolume;
     private bool? lastMuted;
+    private long lastSeekSequence = -1;
     private readonly SemaphoreSlim snapshotLock = new(1, 1);
 
     public PlaybackCoordinator(IPlaybackServerApi server, IPlaybackOutput output)
@@ -56,15 +57,25 @@ public sealed class PlaybackCoordinator
         return false;
     }
 
+    public Task ApplySnapshotAsync(
+        string eventType,
+        QueueSnapshot snapshot,
+        CancellationToken cancellationToken = default) =>
+        ApplySnapshotAsync(eventType, snapshot, cancellationToken, static () => true);
+
     public async Task ApplySnapshotAsync(
         string eventType,
         QueueSnapshot snapshot,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken,
+        Func<bool> isCurrent)
     {
+        ArgumentNullException.ThrowIfNull(isCurrent);
         await snapshotLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await ApplySnapshotCoreAsync(eventType, snapshot, cancellationToken).ConfigureAwait(false);
+            EnsureCurrent(cancellationToken, isCurrent);
+            await ApplySnapshotCoreAsync(snapshot, cancellationToken, isCurrent)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -73,10 +84,11 @@ public sealed class PlaybackCoordinator
     }
 
     private async Task ApplySnapshotCoreAsync(
-        string eventType,
         QueueSnapshot snapshot,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<bool> isCurrent)
     {
+        EnsureCurrent(cancellationToken, isCurrent);
         var playing = snapshot.Playing;
         if (snapshot.State.Equals("idle", StringComparison.OrdinalIgnoreCase)
             || playing?.QueueId is null
@@ -85,6 +97,7 @@ public sealed class PlaybackCoordinator
             if (loadedQueueId is not null)
             {
                 await output.StopAsync(cancellationToken).ConfigureAwait(false);
+                EnsureCurrent(cancellationToken, isCurrent);
             }
 
             ResetLocalProjection();
@@ -94,9 +107,11 @@ public sealed class PlaybackCoordinator
         var queueChanged = loadedQueueId != playing.QueueId;
         if (queueChanged)
         {
+            EnsureCurrent(cancellationToken, isCurrent);
             ClearActiveOutput();
             var detail = await server.GetSongDetailAsync(playing.Song.Id, cancellationToken)
                 .ConfigureAwait(false);
+            EnsureCurrent(cancellationToken, isCurrent);
             var file = detail?.Files.OrderByDescending(item => item.Priority).FirstOrDefault();
             if (file is null)
             {
@@ -108,8 +123,14 @@ public sealed class PlaybackCoordinator
 
             try
             {
+                if (loadedQueueId is not null)
+                {
+                    await output.PauseAsync(cancellationToken).ConfigureAwait(false);
+                    EnsureCurrent(cancellationToken, isCurrent);
+                }
                 await output.LoadAsync(server.StreamUrl(file.Id), file.Id, cancellationToken)
                     .ConfigureAwait(false);
+                EnsureCurrent(cancellationToken, isCurrent);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -126,6 +147,7 @@ public sealed class PlaybackCoordinator
             lastAudioLayout = null;
             lastVolume = null;
             lastMuted = null;
+            lastSeekSequence = -1;
         }
 
         if (loadedFile is null)
@@ -138,7 +160,9 @@ public sealed class PlaybackCoordinator
             || lastAudioLayout != loadedFile.AudioLayout;
         if (audioChanged)
         {
-            await ApplyAudioAsync(snapshot.VocalMode, loadedFile, cancellationToken).ConfigureAwait(false);
+            await ApplyAudioAsync(snapshot.VocalMode, loadedFile, cancellationToken, isCurrent)
+                .ConfigureAwait(false);
+            EnsureCurrent(cancellationToken, isCurrent);
             lastVocalMode = snapshot.VocalMode;
             lastAudioLayout = loadedFile.AudioLayout;
         }
@@ -147,48 +171,72 @@ public sealed class PlaybackCoordinator
         {
             await output.SetVolumeAsync(snapshot.Volume, snapshot.Muted, cancellationToken)
                 .ConfigureAwait(false);
+            EnsureCurrent(cancellationToken, isCurrent);
             lastVolume = snapshot.Volume;
             lastMuted = snapshot.Muted;
         }
 
-        var explicitSeek = eventType is "playback_seeked" or "playback_restarted";
-        if (explicitSeek || (queueChanged && snapshot.PositionMs > 0))
+        if ((queueChanged && snapshot.PositionMs > 0)
+            || (!queueChanged && snapshot.SeekSequence > lastSeekSequence))
         {
             await output.SeekAsync(Math.Max(0, snapshot.PositionMs), cancellationToken)
                 .ConfigureAwait(false);
+            EnsureCurrent(cancellationToken, isCurrent);
+        }
+
+        if (queueChanged || snapshot.SeekSequence > lastSeekSequence)
+        {
+            lastSeekSequence = Math.Max(lastSeekSequence, snapshot.SeekSequence);
         }
 
         if (snapshot.State.Equals("paused", StringComparison.OrdinalIgnoreCase))
         {
             await output.PauseAsync(cancellationToken).ConfigureAwait(false);
+            EnsureCurrent(cancellationToken, isCurrent);
         }
         else
         {
             await output.PlayAsync(cancellationToken).ConfigureAwait(false);
+            EnsureCurrent(cancellationToken, isCurrent);
         }
     }
 
     /** Marks the local output as lost without changing the server's state. */
-    public void InvalidateOutputProjection() => ResetLocalProjection();
+    public async Task InvalidateOutputProjectionAsync(CancellationToken cancellationToken = default)
+    {
+        await snapshotLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ResetLocalProjection();
+        }
+        finally
+        {
+            snapshotLock.Release();
+        }
+    }
 
     private async Task ApplyAudioAsync(
         string vocalMode,
         FileSource file,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<bool> isCurrent)
     {
         if (file.AudioLayout.Layout == AudioLayout.DUAL_TRACK)
         {
             await output.SetChannelModeAsync(ChannelMapMode.STEREO, cancellationToken)
                 .ConfigureAwait(false);
+            EnsureCurrent(cancellationToken, isCurrent);
             await output.SetAudioTrackAsync(
                     AudioLayoutMapper.AudioTrackIndexFor(vocalMode, file), cancellationToken)
                 .ConfigureAwait(false);
+            EnsureCurrent(cancellationToken, isCurrent);
             return;
         }
 
         await output.SetChannelModeAsync(
                 AudioLayoutMapper.ChannelModeFor(vocalMode, file.AudioLayout), cancellationToken)
             .ConfigureAwait(false);
+        EnsureCurrent(cancellationToken, isCurrent);
     }
 
     private void ResetLocalProjection()
@@ -200,6 +248,13 @@ public sealed class PlaybackCoordinator
         lastAudioLayout = null;
         lastVolume = null;
         lastMuted = null;
+        lastSeekSequence = -1;
+    }
+
+    private static void EnsureCurrent(CancellationToken cancellationToken, Func<bool> isCurrent)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!isCurrent()) throw new OperationCanceledException(cancellationToken);
     }
 
     private void ClearActiveOutput()

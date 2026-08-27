@@ -7,6 +7,23 @@ namespace HomeKtv.Windows.Tests;
 public sealed class MpvControllerTests
 {
     [Fact]
+    public async Task Load_pauses_before_replacing_media()
+    {
+        var session = new FakeMpvSession();
+        var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+
+        var pauseIndex = session.Commands.ToList().FindIndex(
+            command => command.SequenceEqual(MpvCommands.Pause()));
+        var loadIndex = session.Commands.ToList().FindIndex(
+            command => command.SequenceEqual(MpvCommands.LoadFile("http://server/stream/10")));
+
+        Assert.True(pauseIndex >= 0);
+        Assert.True(loadIndex > pauseIndex);
+    }
+
+    [Fact]
     public async Task Channel_mode_changes_filter_without_reload_or_seek()
     {
         var session = new FakeMpvSession();

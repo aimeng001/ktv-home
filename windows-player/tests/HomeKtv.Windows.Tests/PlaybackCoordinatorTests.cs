@@ -126,6 +126,20 @@ public sealed class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public async Task A_new_seek_sequence_is_applied_independently_of_event_name()
+    {
+        var output = new RecordingPlaybackOutput();
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO)), output);
+
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original"));
+        await coordinator.ApplySnapshotAsync(
+            "player_state", Snapshot("original", positionMs: 8_765, seekSequence: 1));
+
+        Assert.Equal(new long[] { 8_765 }, output.SeekPositions);
+    }
+
+    [Fact]
     public async Task Idle_snapshot_stops_the_current_media()
     {
         var output = new RecordingPlaybackOutput();
@@ -205,18 +219,79 @@ public sealed class PlaybackCoordinatorTests
         Assert.Equal(10, exception.FileId);
     }
 
+    [Fact]
+    public async Task Superseded_load_cannot_commit_or_start_the_old_song()
+    {
+        var output = new SupersededLoadOutput();
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(
+                FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 10),
+                FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 11)), output);
+
+        await using var pump = new PlaybackSnapshotPump(
+            (work, cancellationToken) => coordinator.ApplySnapshotAsync(
+                work.EventType, work.Snapshot, cancellationToken, work.IsCurrent));
+
+        pump.Submit("now_playing", Snapshot("original", queueId: 1, songId: 100));
+        await output.FirstLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        pump.Submit("now_playing", Snapshot("original", queueId: 2, songId: 101));
+        output.ReleaseFirstLoad.TrySetResult(true);
+        await pump.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(new long[] { 10, 11 }, output.LoadedFileIds);
+        Assert.Equal(new long[] { 11 }, output.PlayedFileIds);
+        Assert.Equal(2L, coordinator.ActiveOutputQueueId);
+    }
+
+    [Fact]
+    public async Task Superseded_load_uses_latest_pause_volume_vocal_and_position_state()
+    {
+        var output = new SupersededLoadOutput();
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(FileSourceFor(AudioLayout.DUAL_CHANNEL)), output);
+
+        await using var pump = new PlaybackSnapshotPump(
+            (work, cancellationToken) => coordinator.ApplySnapshotAsync(
+                work.EventType, work.Snapshot, cancellationToken, work.IsCurrent));
+
+        pump.Submit("now_playing", Snapshot("accompaniment", state: "playing"));
+        await output.FirstLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        pump.Submit(
+            "player_state",
+            Snapshot(
+                "original",
+                state: "paused",
+                volume: 22,
+                muted: true,
+                positionMs: 4_321,
+                seekSequence: 1));
+        output.ReleaseFirstLoad.TrySetResult(true);
+        await pump.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(new long[] { 10, 10 }, output.LoadedFileIds);
+        Assert.Empty(output.PlayedFileIds);
+        Assert.Equal(1, output.PauseCount);
+        Assert.Equal(new[] { (22, true) }, output.VolumeChanges);
+        Assert.Equal(new long[] { 4_321 }, output.SeekPositions);
+        Assert.Equal(new[] { ChannelMapMode.LEFT_MONO }, output.ChannelModes);
+    }
+
     private static QueueSnapshot Snapshot(
         string vocalMode,
         long queueId = 1,
         long songId = 100,
         string state = "playing",
+        int volume = 60,
+        bool muted = false,
         long positionMs = 0,
         long seekSequence = 0) => new(
         new NowPlaying(queueId, new SongDto(songId, $"Song {songId}", "Artist"), null),
         Array.Empty<QueueEntry>(),
         state,
-        60,
-        false,
+        volume,
+        muted,
         vocalMode,
         new AudioLayoutDto(AudioLayout.NORMAL_STEREO, null, null, AudioChannel.LEFT, AudioChannel.RIGHT),
         true,
@@ -316,6 +391,59 @@ public sealed class PlaybackCoordinatorTests
             return Task.CompletedTask;
         }
 
+        public Task SetChannelModeAsync(ChannelMapMode mode, CancellationToken cancellationToken = default)
+        {
+            ChannelModes.Add(mode);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class SupersededLoadOutput : IPlaybackOutput
+    {
+        public TaskCompletionSource<bool> FirstLoadStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> ReleaseFirstLoad { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public List<long> LoadedFileIds { get; } = new();
+        public List<long> PlayedFileIds { get; } = new();
+        public int PauseCount { get; private set; }
+        public List<(int Volume, bool Muted)> VolumeChanges { get; } = new();
+        public List<long> SeekPositions { get; } = new();
+        public List<ChannelMapMode> ChannelModes { get; } = new();
+
+        public async Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default)
+        {
+            LoadedFileIds.Add(fileId);
+            if (fileId == 10)
+            {
+                FirstLoadStarted.TrySetResult(true);
+                await ReleaseFirstLoad.Task.WaitAsync(cancellationToken);
+            }
+        }
+
+        public Task PlayAsync(CancellationToken cancellationToken = default)
+        {
+            PlayedFileIds.Add(LoadedFileIds[^1]);
+            return Task.CompletedTask;
+        }
+
+        public Task PauseAsync(CancellationToken cancellationToken = default)
+        {
+            PauseCount++;
+            return Task.CompletedTask;
+        }
+        public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SeekAsync(long positionMs, CancellationToken cancellationToken = default)
+        {
+            SeekPositions.Add(positionMs);
+            return Task.CompletedTask;
+        }
+        public Task SetVolumeAsync(int volume, bool muted, CancellationToken cancellationToken = default)
+        {
+            VolumeChanges.Add((volume, muted));
+            return Task.CompletedTask;
+        }
+        public Task SetAudioTrackAsync(int audioRelativeIndex, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SetChannelModeAsync(ChannelMapMode mode, CancellationToken cancellationToken = default)
         {
             ChannelModes.Add(mode);

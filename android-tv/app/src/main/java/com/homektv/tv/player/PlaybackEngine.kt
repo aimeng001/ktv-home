@@ -187,10 +187,16 @@ class PlaybackEngine(
      * @param fileId song_files.id
      * @param streamUrl 完整拉流地址
      */
-    fun play(fileId: Long, streamUrl: String, queueId: Long? = null) {
+    fun play(
+        fileId: Long,
+        streamUrl: String,
+        queueId: Long? = null,
+        playWhenReady: Boolean = true,
+        initialPositionMs: Long = 0L,
+    ) {
         val requested = PlaybackRequestIdentity(queueId = queueId, fileId = fileId)
         if (shouldReusePlaybackRequest(currentRequest, requested, player.playbackState)) {
-            player.playWhenReady = true
+            player.playWhenReady = playWhenReady
             return
         }
         Log.d(TAG, "play fileId=$fileId url=$streamUrl")
@@ -217,6 +223,9 @@ class PlaybackEngine(
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .build()
         stopProgressTicker()
+        // Load the replacement silently; the caller applies the latest server state before
+        // allowing playback to start. This prevents a stale playing snapshot from winning.
+        player.playWhenReady = false
         player.setMediaItem(
             MediaItem.Builder()
                 .setMediaId(fileId.toString())
@@ -224,7 +233,8 @@ class PlaybackEngine(
                 .build(),
         )
         player.prepare()
-        player.playWhenReady = true
+        if (initialPositionMs > 0L) player.seekTo(initialPositionMs.coerceAtLeast(0L))
+        player.playWhenReady = playWhenReady
     }
 
     fun pause() {

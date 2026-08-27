@@ -65,6 +65,10 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
     public Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default) =>
         ExecuteWithRecoveryAsync(async active =>
         {
+            // A replacement must never become audible before the coordinator has applied the
+            // latest server snapshot. This also protects callers other than PlaybackCoordinator.
+            await active.ExecuteAsync(MpvCommands.Pause(), cancellationToken)
+                .ConfigureAwait(false);
             await active.ExecuteAsync(MpvCommands.LoadFile(streamUrl), cancellationToken)
                 .ConfigureAwait(false);
             loadedUrl = streamUrl;
@@ -281,6 +285,8 @@ public sealed class MpvProcessController : IPlaybackOutput, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         ResetMediaIdentity();
+        await active.ExecuteAsync(MpvCommands.Pause(), cancellationToken)
+            .ConfigureAwait(false);
         await active.ExecuteAsync(MpvCommands.LoadFile(loadedUrl!), cancellationToken)
             .ConfigureAwait(false);
         if (volume is { } targetVolume && muted is { } targetMuted)

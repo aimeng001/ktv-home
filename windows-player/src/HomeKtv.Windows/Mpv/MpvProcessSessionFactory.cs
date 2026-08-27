@@ -94,6 +94,7 @@ public sealed class MpvProcessSessionFactory : IMpvDisplaySessionFactory
         startInfo.ArgumentList.Add("--no-terminal");
         startInfo.ArgumentList.Add("--really-quiet");
         startInfo.ArgumentList.Add("--idle=yes");
+        startInfo.ArgumentList.Add("--pause");
         startInfo.ArgumentList.Add("--force-window=immediate");
         startInfo.ArgumentList.Add("--input-ipc-server=\\\\.\\pipe\\" + pipeName);
         startInfo.ArgumentList.Add($"--fs-screen={Math.Max(0, currentOptions.ScreenIndex)}");

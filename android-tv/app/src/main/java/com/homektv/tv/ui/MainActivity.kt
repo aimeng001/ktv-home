@@ -48,6 +48,9 @@ import com.homektv.tv.player.LyricLine
 import com.homektv.tv.player.MicrophoneMonitor
 import com.homektv.tv.player.PlaybackLoadGate
 import com.homektv.tv.player.PlaybackLoadTicket
+import com.homektv.tv.player.DesiredPlaybackState
+import com.homektv.tv.player.PlaybackLoadProjection
+import com.homektv.tv.player.PlaybackSeekGate
 import com.homektv.tv.player.supportsVocalSwitch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -106,6 +109,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var currentFileId: Long? = null
     private val playbackLoadGate = PlaybackLoadGate()
     private var playbackLoadJob: Job? = null
+    private val desiredPlaybackState = DesiredPlaybackState()
+    private val playbackLoadProjection = PlaybackLoadProjection(desiredPlaybackState)
+    private val playbackSeekGate = PlaybackSeekGate()
     private var accompanimentTrackIndex: Int? = null
     private var audioTrackCount: Int = 1
     private var lyricLines: List<LyricLine> = emptyList()
@@ -608,6 +614,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var snapshotReceived = false
 
     override fun onSnapshot(event: String, snapshot: QueueSnapshot) {
+        // Metadata/cover requests below may suspend for several seconds. Always publish the
+        // newest complete server state before starting or continuing that asynchronous work.
+        desiredPlaybackState.update(snapshot)
         // 音量/静音变化（遥控音量键、H5、遥控菜单任何来源）→ 顶部 OSD；首个快照不弹
         if (snapshotReceived && (snapshot.volume != currentVolume || snapshot.muted != currentMuted)) {
             showVolumeOsd(snapshot.volume, snapshot.muted)
@@ -627,16 +636,6 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.txtPhones.text =
             getString(R.string.status_phones, snapshot.connectedPhones.toInt())
         applyPlayback(snapshot)
-        if (event == PLAYBACK_RESTARTED_EVENT) {
-            engine?.restart()
-            lastLyricIndex = -1
-            updateProgress(0L)
-        }
-        if (event == PLAYBACK_SEEKED_EVENT) {
-            engine?.seekTo(snapshot.positionMs)
-            lastLyricIndex = -1
-            updateProgress(snapshot.positionMs)
-        }
         if (event == VOCAL_CHANGED_EVENT) refreshVocalTrackMapping(snapshot)
     }
 
@@ -696,6 +695,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             currentQueueId = null
             loadedQueueId = null
             currentFileId = null
+            playbackSeekGate.reset()
             currentAudioLayout = AudioLayout.normalStereo()
             engine?.stop()
             binding.txtLyricPrevious.stopAnimation()
@@ -717,6 +717,12 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         if (playing.queueId == currentQueueId && loadedQueueId == playing.queueId) {
             eng.applyVolume(volume, muted)
             eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
+            if (playbackSeekGate.shouldApply(snapshot.seekSequence)) {
+                eng.seekTo(snapshot.positionMs)
+                playbackSeekGate.markApplied(snapshot.seekSequence)
+                lastLyricIndex = -1
+                updateProgress(snapshot.positionMs)
+            }
             if (snapshot.state == "paused") eng.pause() else eng.resume()
             return
         }
@@ -770,12 +776,32 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 if (lyricLines.isNotEmpty()) binding.txtAudioLyricNext.text = lyricLines.first().text
             }
             if (!isCurrentPlaybackLoad(loadTicket)) return@launch
-            eng.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
-            eng.applyVolume(volume, muted)
+            val command = playbackLoadProjection.commandForLoadedFile(
+                queueId = targetQueueId,
+                fileId = file.id,
+                streamUrl = mediaApi.streamUrl(file.id),
+                accompanimentTrackIndex = accompanimentTrackIndex,
+                audioTrackCount = audioTrackCount,
+                audioLayout = currentAudioLayout,
+            ) ?: return@launch
+            eng.setVocalMode(
+                command.vocalMode,
+                command.accompanimentTrackIndex,
+                command.audioTrackCount,
+                command.audioLayout,
+            )
+            eng.applyVolume(command.volume, command.muted)
             if (!isCurrentPlaybackLoad(loadTicket)) return@launch
-            eng.play(file.id, mediaApi.streamUrl(file.id), targetQueueId)
+            eng.play(
+                command.fileId,
+                command.streamUrl,
+                command.queueId,
+                command.playWhenReady,
+                command.positionMs,
+            )
+            if (!isCurrentPlaybackLoad(loadTicket)) return@launch
             loadedQueueId = targetQueueId
-            if (snapshot.state == "paused") eng.pause()
+            playbackSeekGate.markApplied(command.seekSequence)
         }
     }
 
@@ -804,7 +830,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             accompanimentTrackIndex = file.audioLayout.accompanimentTrackIndex ?: file.vocalTrackIndex
             audioTrackCount = file.audioTracks
             currentAudioLayout = file.audioLayout
-            engine?.setVocalMode(snapshot.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
+            val latest = desiredPlaybackState.forQueue(targetQueueId) ?: return@launch
+            engine?.setVocalMode(latest.vocalMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
         }
     }
 
@@ -1070,7 +1097,5 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         private const val QR_SIZE_PX = 540
         private const val PROGRESS_HIDE_DELAY_MS = 5_000L
         private const val VOCAL_CHANGED_EVENT = "vocal_changed"
-        private const val PLAYBACK_RESTARTED_EVENT = "playback_restarted"
-        private const val PLAYBACK_SEEKED_EVENT = "playback_seeked"
     }
 }
