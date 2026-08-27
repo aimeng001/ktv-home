@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.OffsetDateTime;
@@ -182,11 +183,23 @@ public class LibraryScanService {
             int added = 0, updated = 0, skipped = 0, unrecognized = 0;
             ArrayDeque<FastIndexEntry> probeQueue = new ArrayDeque<>();
             for (FastIndexEntry entry : indexedEntries) {
-                if (hasUnchangedSnapshot(entry)) {
-                    reactivateIfNeeded(entry, counters);
-                    skipped++;
-                } else {
-                    probeQueue.addLast(prepareFastIndex(entry, counters, externalDefault));
+                switch (snapshotChange(entry)) {
+                    case UNCHANGED -> {
+                        reactivateIfNeeded(entry, counters);
+                        skipped++;
+                    }
+                    case LYRIC_ONLY -> {
+                        LyricRefreshOutcome outcome = refreshSidecarLyric(entry, counters);
+                        if (outcome == LyricRefreshOutcome.NEEDS_MEDIA_PROBE) {
+                            probeQueue.addLast(prepareFastIndex(entry, counters, externalDefault, true));
+                        } else if (outcome == LyricRefreshOutcome.UPDATED) {
+                            updated++;
+                        } else {
+                            skipped++;
+                        }
+                    }
+                    case MEDIA_CHANGED ->
+                            probeQueue.addLast(prepareFastIndex(entry, counters, externalDefault));
                 }
             }
             counters.probeQueued = probeQueue.size();
@@ -280,6 +293,8 @@ public class LibraryScanService {
         String path = file.toString();
         Path sidecarLyric = sidecarLyricOf(file);
         OffsetDateTime mediaMtime = attrs.lastModifiedTime().toInstant().atOffset(ZoneOffset.UTC);
+        String mediaIdentity = mediaFileIdentity(attrs);
+        LyricSnapshot lyricSnapshot = lyricSnapshotOf(sidecarLyric);
         String relativePath = relativePathOf(file);
         SongFile tracked = trackedByPath == null
                 ? fileRepo.findByFilePath(path).orElse(null)
@@ -287,24 +302,59 @@ public class LibraryScanService {
         if (tracked == null && trackedByRelativePath != null && !isBlank(relativePath)) {
             tracked = trackedByRelativePath.get(relativePath);
         }
-        return new FastIndexEntry(file, path, attrs.size(), newestMtime(file, sidecarLyric, mediaMtime),
-                fileIdentity(attrs, sidecarLyric),
+        return new FastIndexEntry(file, path, attrs.size(), newestMtime(mediaMtime, lyricSnapshot),
+                legacyFileIdentity(mediaIdentity, lyricSnapshot.fileIdentity()),
                 FilenameParser.parse(file.getFileName().toString(), artistIndex),
+                mediaMtime, mediaIdentity, lyricSnapshot,
                 Optional.ofNullable(tracked), tracked != null, tracked != null && tracked.isProbePending());
     }
 
     /**
-     * Stable snapshot identity is path + media size + effective input mtime.
-     * The effective mtime includes a valid LRC sidecar because it is another scan input.
-     * PostgreSQL TIMESTAMPTZ stores microseconds, so compare and persist at that same
-     * precision. This avoids false changes after database truncation while remaining
-     * much finer than the old seconds-only comparison.
+     * Compare media and sidecar snapshots independently. A sidecar-only change must not
+     * enqueue a media probe, while an old row without independent snapshots is handled
+     * conservatively and upgraded during the next safe fast-index pass.
      */
-    private static boolean hasUnchangedSnapshot(FastIndexEntry entry) {
-        return entry.existing().filter(existing -> existing.getFileSize() == entry.size()
+    private static SnapshotChange snapshotChange(FastIndexEntry entry) {
+        SongFile existing = entry.existing().orElse(null);
+        if (existing == null || existing.isProbePending()) return SnapshotChange.MEDIA_CHANGED;
+        if (!mediaSnapshotMatches(existing, entry)) return SnapshotChange.MEDIA_CHANGED;
+
+        if (existing.getLyricSnapshotVersion() == null) {
+            // Legacy rows do not tell us whether an in-place LRC edit occurred.
+            // Probe only rows that actually have a sidecar; rows without one can be
+            // upgraded without opening the media payload.
+            if (!entry.lyricSnapshot().readable()) return SnapshotChange.LYRIC_ONLY;
+            return entry.lyricSnapshot().present()
+                    ? SnapshotChange.MEDIA_CHANGED : SnapshotChange.UNCHANGED;
+        }
+        if (!entry.lyricSnapshot().readable()
+                || !lyricSnapshotMatches(existing, entry.lyricSnapshot())) {
+            return SnapshotChange.LYRIC_ONLY;
+        }
+        return SnapshotChange.UNCHANGED;
+    }
+
+    private static boolean mediaSnapshotMatches(SongFile existing, FastIndexEntry entry) {
+        if (existing.getMediaMtime() != null || existing.getMediaFileIdentity() != null) {
+            return existing.getFileSize() == entry.size()
+                    && sameMtime(existing.getMediaMtime(), entry.mediaMtime())
+                    && sameFileIdentity(existing.getMediaFileIdentity(), entry.mediaIdentity());
+        }
+        // V20 is additive. Keep interpreting pre-V20 rows through their legacy
+        // composite fields until their first safe fast-index pass.
+        return existing.getFileSize() == entry.size()
                 && sameMtime(existing.getFileMtime(), entry.mtime())
-                && sameFileIdentity(existing.getFileIdentity(), entry.fileIdentity())
-                && !existing.isProbePending()).isPresent();
+                && sameFileIdentity(existing.getFileIdentity(), entry.fileIdentity());
+    }
+
+    private static boolean lyricSnapshotMatches(SongFile existing, LyricSnapshot current) {
+        return Objects.equals(existing.getLyricSize(), current.size())
+                && sameNullableMtime(existing.getLyricMtime(), current.mtime())
+                && sameFileIdentity(existing.getLyricFileIdentity(), current.fileIdentity());
+    }
+
+    private static boolean sameNullableMtime(OffsetDateTime left, OffsetDateTime right) {
+        return left == null && right == null || sameMtime(left, right);
     }
 
     private static boolean sameFileIdentity(String stored, String current) {
@@ -330,19 +380,24 @@ public class LibraryScanService {
     /** Persist filename metadata before opening the media file for FFprobe. */
     private FastIndexEntry prepareFastIndex(FastIndexEntry entry, ScanCounters counters,
                                             AudioLayout externalDefault) {
+        return prepareFastIndex(entry, counters, externalDefault, false);
+    }
+
+    private FastIndexEntry prepareFastIndex(FastIndexEntry entry, ScanCounters counters,
+                                            AudioLayout externalDefault, boolean forceMediaProbe) {
         SongFile existing = entry.existing().orElse(null);
         OffsetDateTime normalizedMtime = normalizeMtime(entry.mtime());
         if (existing != null) {
-            boolean changed = !Objects.equals(existing.getFilePath(), entry.path())
-                    || existing.getFileSize() != entry.size()
-                    || !sameMtime(existing.getFileMtime(), entry.mtime())
-                    || !sameFileIdentity(existing.getFileIdentity(), entry.fileIdentity())
-                    || !existing.isProbePending() || !existing.isValid();
+            boolean changed = forceMediaProbe
+                    || snapshotChange(entry) == SnapshotChange.MEDIA_CHANGED
+                    || !Objects.equals(existing.getFilePath(), entry.path())
+                    || !existing.isValid();
             if (changed) {
                 existing.setFilePath(entry.path());
                 existing.setFileSize(entry.size());
                 existing.setFileMtime(normalizedMtime);
                 existing.setFileIdentity(entry.fileIdentity());
+                applySnapshots(existing, entry);
                 existing.setProbePending(true);
                 existing.setValid(true);
             }
@@ -377,6 +432,7 @@ public class LibraryScanService {
         provisional.setHasVocalTrack(false);
         provisional.setDurationMs(0);
         provisional.setLyricType(LyricType.NONE);
+        provisional.setLyricSource(Song.LYRIC_SOURCE_NONE);
         provisional.setFingerprint(MediaClassifier.fastIndexFingerprint(entry.path()));
         // Keep unrecognized filename metadata visible for review even if the
         // later media probe fails before it can apply the final status.
@@ -397,6 +453,7 @@ public class LibraryScanService {
         indexed.setFileSize(entry.size());
         indexed.setFileMtime(normalizedMtime);
         indexed.setFileIdentity(entry.fileIdentity());
+        applySnapshots(indexed, entry);
         indexed.setFileRole(activeFileRole());
         if (LibraryModePolicy.isExternalReadOnly(props)) {
             // Store the configured default on the pending row so a later retry
@@ -461,6 +518,10 @@ public class LibraryScanService {
             existing.setRelativePath(relativePath);
             changed = true;
         }
+        if (existing.getMediaMtime() == null || existing.getLyricSnapshotVersion() == null) {
+            applySnapshots(existing, entry);
+            changed = true;
+        }
         if (wasInvalid) {
             existing.setValid(true);
             changed = true;
@@ -478,6 +539,57 @@ public class LibraryScanService {
                 counters.dbUpdates++;
             }
         });
+    }
+
+    /** Refreshes only the sidecar cache and snapshot; the media file is never opened. */
+    private LyricRefreshOutcome refreshSidecarLyric(FastIndexEntry entry, ScanCounters counters) {
+        SongFile file = entry.existing().orElse(null);
+        if (file == null || file.getSongId() == null) return LyricRefreshOutcome.UNAVAILABLE;
+
+        SidecarLyricContent sidecar = readSidecarLyric(sidecarLyricOf(entry.file()));
+        if (!sidecar.readable()) {
+            // Keep the old snapshot so a transient permissions/network failure is retried.
+            return LyricRefreshOutcome.UNAVAILABLE;
+        }
+        if (sidecar.text() != null && containsIdentityTag(sidecar.text())) {
+            // LRC title/artist tags participate in identity selection. Reuse the normal
+            // media path so a changed tag cannot leave the song bound to stale metadata.
+            return LyricRefreshOutcome.NEEDS_MEDIA_PROBE;
+        }
+        Song song = songRepo.findById(file.getSongId()).orElse(null);
+        if (song == null) return LyricRefreshOutcome.UNAVAILABLE;
+
+        boolean songChanged = false;
+        if (sidecar.text() != null) {
+            String fingerprint = isBlank(song.getFingerprint())
+                    ? MediaClassifier.fastIndexFingerprint(entry.path()) : song.getFingerprint();
+            String lyricPath = assetWriter.writeLyric(fingerprint, sidecar.text());
+            if (!Objects.equals(song.getLyricPath(), lyricPath)
+                    || !Objects.equals(song.getLyricType(), LyricType.detect(sidecar.text()))
+                    || !Objects.equals(song.getLyricSource(), Song.LYRIC_SOURCE_SIDECAR)) {
+                song.setLyricPath(lyricPath);
+                song.setLyricType(LyricType.detect(sidecar.text()));
+                song.setLyricSource(Song.LYRIC_SOURCE_SIDECAR);
+                songChanged = true;
+            }
+        } else if (Song.LYRIC_SOURCE_SIDECAR.equals(song.getLyricSource())) {
+            song.setLyricPath(null);
+            song.setLyricType(LyricType.NONE);
+            song.setLyricSource(Song.LYRIC_SOURCE_NONE);
+            songChanged = true;
+        }
+
+        if (songChanged) {
+            songRepo.save(song);
+            counters.dbUpdates++;
+        }
+        file.setFileSize(entry.size());
+        file.setFileMtime(normalizeMtime(entry.mtime()));
+        file.setFileIdentity(entry.fileIdentity());
+        applySnapshots(file, entry);
+        fileRepo.save(file);
+        counters.dbUpdates++;
+        return LyricRefreshOutcome.UPDATED;
     }
 
     /** Mark disappeared records invalid; never delete or touch a source path. */
@@ -531,8 +643,19 @@ public class LibraryScanService {
         LibraryModePolicy.requireExternalPathInsideSource(props, file);
         Collection<String> knownArtists = existingArtistNames();
         FastIndexEntry entry = fastIndex(file, knownArtists);
-        if (hasUnchangedSnapshot(entry)) {
-            return IngestOutcome.SKIPPED;
+        switch (snapshotChange(entry)) {
+            case UNCHANGED -> { return IngestOutcome.SKIPPED; }
+            case LYRIC_ONLY -> {
+                ScanCounters counters = new ScanCounters();
+                LyricRefreshOutcome outcome = refreshSidecarLyric(entry, counters);
+                if (outcome == LyricRefreshOutcome.UPDATED) return IngestOutcome.UPDATED;
+                if (outcome == LyricRefreshOutcome.UNAVAILABLE) return IngestOutcome.SKIPPED;
+                AudioLayout externalDefault = LibraryModePolicy.isExternalReadOnly(props)
+                        ? configuredExternalDefaultAudioLayout() : null;
+                FastIndexEntry prepared = prepareFastIndex(entry, counters, externalDefault, true);
+                return ingest(prepared, knownArtists, counters, externalDefault);
+            }
+            case MEDIA_CHANGED -> { /* continue through the media probe path */ }
         }
         AudioLayout externalDefault = LibraryModePolicy.isExternalReadOnly(props)
                 ? configuredExternalDefaultAudioLayout() : null;
@@ -561,10 +684,27 @@ public class LibraryScanService {
         LibraryModePolicy.requireManaged(props, "导入");
         Collection<String> knownArtists = existingArtistNames();
         FastIndexEntry entry = fastIndex(file, knownArtists);
-        if (hasUnchangedSnapshot(entry)) {
+        SnapshotChange change = snapshotChange(entry);
+        if (change == SnapshotChange.UNCHANGED) {
             SongFile existing = entry.existing().orElse(null);
             return new IngestResult(false, existing == null ? null : existing.getSongId(),
                     existing == null ? null : existing.getId());
+        }
+        if (change == SnapshotChange.LYRIC_ONLY) {
+            ScanCounters counters = new ScanCounters();
+            LyricRefreshOutcome outcome = refreshSidecarLyric(entry, counters);
+            SongFile existing = entry.existing().orElse(null);
+            if (outcome == LyricRefreshOutcome.UPDATED || outcome == LyricRefreshOutcome.UNAVAILABLE) {
+                return new IngestResult(outcome == LyricRefreshOutcome.UPDATED,
+                        existing == null ? null : existing.getSongId(),
+                        existing == null ? null : existing.getId());
+            }
+            FastIndexEntry prepared = prepareFastIndex(entry, counters, null, true);
+            IngestState state = ingestInternal(prepared, sourceFile, sourceMd5, outputMd5,
+                    transcodeRequired, knownArtists, counters, null);
+            return new IngestResult(
+                    state.outcome() == IngestOutcome.ADDED || state.outcome() == IngestOutcome.UPDATED,
+                    state.songId(), state.songFileId());
         }
         IngestState state = ingestInternal(entry, sourceFile, sourceMd5, outputMd5,
                 transcodeRequired, knownArtists, new ScanCounters(), null);
@@ -596,7 +736,8 @@ public class LibraryScanService {
 
         // 2) 标签解析 + 容器标签 + LRC + 3) 文件名兜底
         TagInfo tag = tagReader.read(file.toFile());
-        String sidecarLyricText = readValidSidecarLyric(sidecarLyric);
+        SidecarLyricContent sidecarLyricContent = readSidecarLyric(sidecarLyric);
+        String sidecarLyricText = sidecarLyricContent.text();
         String lrcTitle = lrcTag(sidecarLyricText, "ti");
         String lrcArtist = lrcTag(sidecarLyricText, "ar");
         boolean recognized;
@@ -708,6 +849,14 @@ public class LibraryScanService {
             String lyricPath = assetWriter.writeLyric(fingerprint, sidecarLyricText);
             song.setLyricPath(lyricPath);
             song.setLyricType(LyricType.detect(sidecarLyricText));
+            song.setLyricSource(Song.LYRIC_SOURCE_SIDECAR);
+        } else if (sidecarLyricContent.readable()
+                && Song.LYRIC_SOURCE_SIDECAR.equals(song.getLyricSource())) {
+            // Only clear a cache that this scanner previously established from this
+            // sidecar. Legacy/embedded/manual lyric caches remain fail-closed.
+            song.setLyricPath(null);
+            song.setLyricType(LyricType.NONE);
+            song.setLyricSource(Song.LYRIC_SOURCE_NONE);
         }
         if (isNew) {
             String lyricText = sidecarLyricText == null ? tag.getEmbeddedLyric() : null;
@@ -715,6 +864,11 @@ public class LibraryScanService {
                 String lyricPath = assetWriter.writeLyric(fingerprint, lyricText);
                 song.setLyricPath(lyricPath);
                 song.setLyricType(LyricType.detect(lyricText));
+                song.setLyricSource(Song.LYRIC_SOURCE_EMBEDDED);
+            } else if (sidecarLyricText == null && !sidecarLyricContent.readable()) {
+                song.setLyricSource(Song.LYRIC_SOURCE_UNKNOWN);
+            } else if (sidecarLyricText == null) {
+                song.setLyricSource(Song.LYRIC_SOURCE_NONE);
             }
             if (tag.getCoverImage() != null) {
                 String coverPath = assetWriter.writeCover(fingerprint, tag.getCoverImage(), tag.getCoverExt());
@@ -792,6 +946,7 @@ public class LibraryScanService {
         sf.setFileSize(entry.size());
         sf.setFileMtime(normalizeMtime(mtime));
         sf.setFileIdentity(entry.fileIdentity());
+        applySnapshots(sf, entry);
         sf.setPriority(priority);
         // 文件重新被成功探测，说明之前的瞬时播放失败不应永久屏蔽该源。
         sf.setValid(true);
@@ -875,7 +1030,6 @@ public class LibraryScanService {
         song.setMediaType(mediaType);
         song.setHasVocalTrack(hasVocal);
         song.setDurationMs((int) probe.durationMs());
-        song.setLyricType(LyricType.NONE);
         song.setFingerprint(fingerprint);
         if (!hasManualIdentityOverride(song)) {
             song.setStatus(recognized ? "ok" : "unrecognized");
@@ -912,14 +1066,6 @@ public class LibraryScanService {
         return dot > 0 ? name.substring(dot + 1).toLowerCase() : "";
     }
 
-    private static OffsetDateTime mtimeOf(Path file) {
-        try {
-            return Files.getLastModifiedTime(file).toInstant().atOffset(ZoneOffset.UTC);
-        } catch (IOException e) {
-            return OffsetDateTime.now();
-        }
-    }
-
     private static Path sidecarLyricOf(Path mediaFile) {
         String name = mediaFile.getFileName().toString();
         int dot = name.lastIndexOf('.');
@@ -927,10 +1073,9 @@ public class LibraryScanService {
         return mediaFile.resolveSibling(stem + ".lrc");
     }
 
-    private static OffsetDateTime newestMtime(Path mediaFile, Path sidecarLyric, OffsetDateTime mediaMtime) {
-        if (!Files.isRegularFile(sidecarLyric)) return mediaMtime;
-        OffsetDateTime lyricMtime = mtimeOf(sidecarLyric);
-        return lyricMtime.isAfter(mediaMtime) ? lyricMtime : mediaMtime;
+    private static OffsetDateTime newestMtime(OffsetDateTime mediaMtime, LyricSnapshot lyricSnapshot) {
+        OffsetDateTime lyricMtime = lyricSnapshot.mtime();
+        return lyricMtime != null && lyricMtime.isAfter(mediaMtime) ? lyricMtime : mediaMtime;
     }
 
     /** Returns a portable relative path for files below the active library root. */
@@ -945,28 +1090,56 @@ public class LibraryScanService {
         return value == null || value.isBlank();
     }
 
-    private static String fileIdentity(BasicFileAttributes mediaAttrs, Path sidecarLyric) {
+    private static String mediaFileIdentity(BasicFileAttributes mediaAttrs) {
         Object mediaKey = mediaAttrs.fileKey();
-        Object lyricKey = null;
-        if (Files.isRegularFile(sidecarLyric)) {
-            try {
-                lyricKey = Files.readAttributes(sidecarLyric, BasicFileAttributes.class).fileKey();
-            } catch (IOException ignored) {
-                // The mtime snapshot still detects ordinary sidecar changes.
-            }
-        }
-        if (mediaKey == null && lyricKey == null) return null;
-        return String.valueOf(mediaKey) + "|" + String.valueOf(lyricKey);
+        return mediaKey == null ? null : String.valueOf(mediaKey);
     }
 
-    private static String readValidSidecarLyric(Path sidecarLyric) {
-        if (!Files.isRegularFile(sidecarLyric)) return null;
+    private static String legacyFileIdentity(String mediaIdentity, String lyricIdentity) {
+        if (mediaIdentity == null && lyricIdentity == null) return null;
+        return String.valueOf(mediaIdentity) + "|" + String.valueOf(lyricIdentity);
+    }
+
+    private static LyricSnapshot lyricSnapshotOf(Path sidecarLyric) {
         try {
-            String text = Files.readString(sidecarLyric);
-            return LyricType.NONE.equals(LyricType.detect(text)) ? null : text;
+            BasicFileAttributes attrs = Files.readAttributes(sidecarLyric, BasicFileAttributes.class,
+                    LinkOption.NOFOLLOW_LINKS);
+            if (!attrs.isRegularFile()) return LyricSnapshot.missing();
+            Object fileKey = attrs.fileKey();
+            return new LyricSnapshot(true, true, attrs.size(),
+                    attrs.lastModifiedTime().toInstant().atOffset(ZoneOffset.UTC),
+                    fileKey == null ? null : String.valueOf(fileKey));
+        } catch (NoSuchFileException e) {
+            return LyricSnapshot.missing();
+        } catch (IOException e) {
+            log.warn("读取同名歌词属性失败：{} - {}", sidecarLyric, e.getMessage());
+            return LyricSnapshot.unreadable();
+        }
+    }
+
+    private static SidecarLyricContent readSidecarLyric(Path sidecarLyric) {
+        LyricSnapshot snapshot = lyricSnapshotOf(sidecarLyric);
+        if (!snapshot.present()) return SidecarLyricContent.absent();
+        if (!snapshot.readable()) return SidecarLyricContent.unreadable();
+        try {
+            String text = Files.readString(sidecarLyric, StandardCharsets.UTF_8);
+            return new SidecarLyricContent(true, true,
+                    LyricType.NONE.equals(LyricType.detect(text)) ? null : text);
         } catch (IOException e) {
             log.warn("读取同名歌词失败：{} - {}", sidecarLyric, e.getMessage());
-            return null;
+            return SidecarLyricContent.unreadable();
+        }
+    }
+
+    private static void applySnapshots(SongFile file, FastIndexEntry entry) {
+        file.setMediaMtime(normalizeMtime(entry.mediaMtime()));
+        file.setMediaFileIdentity(entry.mediaIdentity());
+        LyricSnapshot lyric = entry.lyricSnapshot();
+        if (lyric.readable()) {
+            file.setLyricSize(lyric.size());
+            file.setLyricMtime(normalizeMtime(lyric.mtime()));
+            file.setLyricFileIdentity(lyric.fileIdentity());
+            file.setLyricSnapshotVersion(LYRIC_SNAPSHOT_VERSION);
         }
     }
 
@@ -974,6 +1147,10 @@ public class LibraryScanService {
         if (lyric == null) return null;
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(?im)^\\[" + key + "\\s*:\\s*(.+?)\\]\\s*$").matcher(lyric);
         return matcher.find() ? matcher.group(1).trim() : null;
+    }
+
+    private static boolean containsIdentityTag(String lyric) {
+        return lrcTag(lyric, "ti") != null || lrcTag(lyric, "ar") != null;
     }
 
     private static String normalizeLanguage(String raw) {
@@ -989,12 +1166,42 @@ public class LibraryScanService {
         return Set.of("国语", "粤语", "闽南语", "英语", "日语", "韩语", "纯音乐", "其他", "未知").contains(raw) ? raw : "其他";
     }
 
+    private static final int LYRIC_SNAPSHOT_VERSION = 1;
+
+    private enum SnapshotChange { UNCHANGED, LYRIC_ONLY, MEDIA_CHANGED }
+
+    private enum LyricRefreshOutcome { UPDATED, NEEDS_MEDIA_PROBE, UNAVAILABLE }
+
+    private record LyricSnapshot(boolean present, boolean readable, Long size,
+                                 OffsetDateTime mtime, String fileIdentity) {
+        private static LyricSnapshot missing() {
+            return new LyricSnapshot(false, true, null, null, null);
+        }
+
+        private static LyricSnapshot unreadable() {
+            return new LyricSnapshot(true, false, null, null, null);
+        }
+    }
+
+    private record SidecarLyricContent(boolean present, boolean readable, String text) {
+        private static SidecarLyricContent absent() {
+            return new SidecarLyricContent(false, true, null);
+        }
+
+        private static SidecarLyricContent unreadable() {
+            return new SidecarLyricContent(true, false, null);
+        }
+    }
+
     private record FastIndexEntry(Path file, String path, long size, OffsetDateTime mtime,
                                   String fileIdentity, ParsedMeta filenameMeta,
+                                  OffsetDateTime mediaMtime, String mediaIdentity,
+                                  LyricSnapshot lyricSnapshot,
                                   Optional<SongFile> existing, boolean existedBeforeScan,
                                   boolean pendingBeforeScan) {
         private FastIndexEntry withExisting(SongFile replacement) {
             return new FastIndexEntry(file, path, size, mtime, fileIdentity, filenameMeta,
+                    mediaMtime, mediaIdentity, lyricSnapshot,
                     Optional.ofNullable(replacement), existedBeforeScan, pendingBeforeScan);
         }
     }

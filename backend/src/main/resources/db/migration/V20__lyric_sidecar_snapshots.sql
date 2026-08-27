@@ -1,0 +1,10 @@
+ALTER TABLE song_files
+    ADD COLUMN IF NOT EXISTS media_mtime TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS media_file_identity TEXT,
+    ADD COLUMN IF NOT EXISTS lyric_size BIGINT,
+    ADD COLUMN IF NOT EXISTS lyric_mtime TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS lyric_file_identity TEXT,
+    ADD COLUMN IF NOT EXISTS lyric_snapshot_version SMALLINT;
+
+ALTER TABLE songs
+    ADD COLUMN IF NOT EXISTS lyric_source TEXT NOT NULL DEFAULT 'UNKNOWN';

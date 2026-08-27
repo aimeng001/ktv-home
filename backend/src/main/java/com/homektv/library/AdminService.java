@@ -162,6 +162,7 @@ public class AdminService {
             String path = assetWriter.writeLyric(song.getFingerprint(), req.lyricText());
             song.setLyricPath(path);
             song.setLyricType(LyricType.detect(req.lyricText()));
+            song.setLyricSource(Song.LYRIC_SOURCE_MANUAL);
         }
         // 只有人工确认歌名或歌手时，才允许未识别歌曲转正
         if (manualIdentityEdited && "unrecognized".equals(song.getStatus())) {

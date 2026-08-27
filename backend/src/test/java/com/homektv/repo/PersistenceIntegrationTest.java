@@ -84,6 +84,7 @@ class PersistenceIntegrationTest {
         assertThat(found.getTitle()).isEqualTo("晴天");
         assertThat(found.getTags()).containsExactly("华语", "经典");
         assertThat(found.getLyricType()).isEqualTo("word");
+        assertThat(found.getLyricSource()).isEqualTo(Song.LYRIC_SOURCE_UNKNOWN);
         assertThat(found.isHasVocalTrack()).isTrue();
     }
 
@@ -92,6 +93,10 @@ class PersistenceIntegrationTest {
         String suffix = String.valueOf(System.nanoTime());
         Song keep = songRepository.save(song("保留歌曲", "歌手甲", "merge-keep-" + suffix));
         Song source = songRepository.save(song("重复歌曲", "歌手乙", "merge-source-" + suffix));
+        source.setLyricPath("lyrics/source.lrc");
+        source.setLyricType("line");
+        source.setLyricSource(Song.LYRIC_SOURCE_SIDECAR);
+        songRepository.save(source);
         Long userId = jdbc.queryForObject("INSERT INTO users (client_token, nickname) VALUES (?, ?) RETURNING id",
                 Long.class, "merge-user-" + suffix, "测试用户");
         Long playlistId = jdbc.queryForObject("INSERT INTO playlists (name) VALUES (?) RETURNING id",
@@ -106,6 +111,10 @@ class PersistenceIntegrationTest {
         songMergeService.merge(keep.getId(), source.getId());
 
         assertThat(songRepository.findById(source.getId())).isEmpty();
+        Song merged = songRepository.findById(keep.getId()).orElseThrow();
+        assertThat(merged.getLyricPath()).isEqualTo("lyrics/source.lrc");
+        assertThat(merged.getLyricType()).isEqualTo("line");
+        assertThat(merged.getLyricSource()).isEqualTo(Song.LYRIC_SOURCE_SIDECAR);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM favorites WHERE user_id = ? AND song_id = ?", Long.class, userId, keep.getId())).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM playlist_songs WHERE playlist_id = ? AND song_id = ?", Long.class, playlistId, keep.getId())).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT manual FROM playlist_songs WHERE playlist_id = ? AND song_id = ?", Boolean.class, playlistId, keep.getId())).isTrue();

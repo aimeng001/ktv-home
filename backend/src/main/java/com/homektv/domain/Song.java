@@ -17,6 +17,12 @@ import java.time.OffsetDateTime;
 @Table(name = "songs")
 public class Song {
 
+    public static final String LYRIC_SOURCE_UNKNOWN = "UNKNOWN";
+    public static final String LYRIC_SOURCE_NONE = "NONE";
+    public static final String LYRIC_SOURCE_SIDECAR = "SIDECAR";
+    public static final String LYRIC_SOURCE_EMBEDDED = "EMBEDDED";
+    public static final String LYRIC_SOURCE_MANUAL = "MANUAL";
+
     /** 主键ID。 / Primary key ID. */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -105,6 +111,10 @@ public class Song {
     /** 歌词类型：word / line / sub / none。 / Lyric type: word / line / sub / none. */
     @Column(name = "lyric_type", nullable = false)
     private String lyricType = "none";
+
+    /** Provenance of the cached lyric; unknown legacy rows are never cleared automatically. */
+    @Column(name = "lyric_source", nullable = false)
+    private String lyricSource = LYRIC_SOURCE_UNKNOWN;
 
     /** 播放次数，默认0。 / Play count, defaults to 0. */
     @Column(name = "play_count", nullable = false)
@@ -213,6 +223,11 @@ public class Song {
     public void setLyricPath(String lyricPath) { this.lyricPath = lyricPath; }
     public String getLyricType() { return lyricType; }
     public void setLyricType(String lyricType) { this.lyricType = lyricType; }
+    public String getLyricSource() { return lyricSource; }
+    public void setLyricSource(String lyricSource) {
+        this.lyricSource = lyricSource == null || lyricSource.isBlank()
+                ? LYRIC_SOURCE_UNKNOWN : lyricSource;
+    }
     public int getPlayCount() { return playCount; }
     public void setPlayCount(int playCount) { this.playCount = playCount; }
     public String getAiLanguage() { return aiLanguage; }

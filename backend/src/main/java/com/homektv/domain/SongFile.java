@@ -109,6 +109,27 @@ public class SongFile {
     @Column(name = "file_identity")
     private String fileIdentity;
 
+    /** Media-only snapshot fields; kept separate from the legacy composite snapshot. */
+    @Column(name = "media_mtime")
+    private OffsetDateTime mediaMtime;
+
+    @Column(name = "media_file_identity")
+    private String mediaFileIdentity;
+
+    /** Same-stem LRC sidecar snapshot; null lyric_size means no sidecar was present. */
+    @Column(name = "lyric_size")
+    private Long lyricSize;
+
+    @Column(name = "lyric_mtime")
+    private OffsetDateTime lyricMtime;
+
+    @Column(name = "lyric_file_identity")
+    private String lyricFileIdentity;
+
+    /** Snapshot schema version; null identifies rows created before V20. */
+    @Column(name = "lyric_snapshot_version")
+    private Integer lyricSnapshotVersion;
+
     /** True while the row contains filename metadata but has not passed FFprobe. */
     @Column(name = "probe_pending", nullable = false)
     private boolean probePending;
@@ -199,6 +220,18 @@ public class SongFile {
     public void setSourceDeleted(boolean sourceDeleted) { this.sourceDeleted = sourceDeleted; }
     public String getFileIdentity() { return fileIdentity; }
     public void setFileIdentity(String fileIdentity) { this.fileIdentity = fileIdentity; }
+    public OffsetDateTime getMediaMtime() { return mediaMtime; }
+    public void setMediaMtime(OffsetDateTime mediaMtime) { this.mediaMtime = mediaMtime; }
+    public String getMediaFileIdentity() { return mediaFileIdentity; }
+    public void setMediaFileIdentity(String mediaFileIdentity) { this.mediaFileIdentity = mediaFileIdentity; }
+    public Long getLyricSize() { return lyricSize; }
+    public void setLyricSize(Long lyricSize) { this.lyricSize = lyricSize; }
+    public OffsetDateTime getLyricMtime() { return lyricMtime; }
+    public void setLyricMtime(OffsetDateTime lyricMtime) { this.lyricMtime = lyricMtime; }
+    public String getLyricFileIdentity() { return lyricFileIdentity; }
+    public void setLyricFileIdentity(String lyricFileIdentity) { this.lyricFileIdentity = lyricFileIdentity; }
+    public Integer getLyricSnapshotVersion() { return lyricSnapshotVersion; }
+    public void setLyricSnapshotVersion(Integer lyricSnapshotVersion) { this.lyricSnapshotVersion = lyricSnapshotVersion; }
     public boolean isProbePending() { return probePending; }
     public void setProbePending(boolean probePending) { this.probePending = probePending; }
 

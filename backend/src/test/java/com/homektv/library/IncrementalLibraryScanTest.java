@@ -171,6 +171,190 @@ class IncrementalLibraryScanTest {
     }
 
     @Test
+    void lrcOnlyChangeRefreshesLyricCacheWithoutReprobingMedia() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        Path lrc = sourceDir.resolve("周杰伦-晴天-国语-流行.lrc");
+        Files.writeString(lrc, "[00:01.00]旧歌词\n");
+        scanService.scanAll();
+
+        SongFile indexed = filesByPath.get(file.toString());
+        Song song = songsById.get(indexed.getSongId());
+        assertThat(song.getLyricPath()).isNotBlank();
+        assertThat(indexed.getLyricSnapshotVersion()).isEqualTo(1);
+
+        Files.writeString(lrc, "[00:01.00]新歌词\n");
+        Files.setLastModifiedTime(lrc, FileTime.fromMillis(
+                Files.getLastModifiedTime(lrc).toMillis() + 2_000));
+
+        LibraryScanService.ScanResult second = scanService.scanAll();
+
+        assertThat(second.updated()).isEqualTo(1);
+        assertThat(second.skipped()).isZero();
+        assertThat(second.probeQueued()).isZero();
+        assertThat(second.probeCalls()).isZero();
+        assertThat(second.hashCalls()).isZero();
+        assertThat(Files.readString(tempDir.resolve("data").resolve(song.getLyricPath())))
+                .contains("新歌词");
+        assertThat(Files.readAllBytes(file)).containsExactly((byte) 1, (byte) 2, (byte) 3);
+        verify(ffprobe, times(1)).probe(any(Path.class));
+        verify(tagReader, times(1)).read(any());
+    }
+
+    @Test
+    void unchangedSidecarDoesNotProbeOrWriteDatabase() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        Files.writeString(sourceDir.resolve("周杰伦-晴天-国语-流行.lrc"), "[00:01.00]歌词\n");
+        scanService.scanAll();
+
+        LibraryScanService.ScanResult second = scanService.scanAll();
+
+        assertThat(second.skipped()).isEqualTo(1);
+        assertThat(second.updated()).isZero();
+        assertThat(second.probeQueued()).isZero();
+        assertThat(second.probeCalls()).isZero();
+        assertThat(second.hashCalls()).isZero();
+        assertThat(second.dbUpdates()).isZero();
+        verify(ffprobe, times(1)).probe(any(Path.class));
+        verify(songRepository, times(2)).save(any(Song.class));
+        verify(songFileRepository, times(2)).save(any(SongFile.class));
+    }
+
+    @Test
+    void lrcIdentityTagChangeUsesMediaProbeToRefreshSongIdentity() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        Path lrc = sourceDir.resolve("周杰伦-晴天-国语-流行.lrc");
+        Files.writeString(lrc, "[ti:旧歌名]\n[ar:旧歌手]\n[00:01.00]歌词\n");
+        scanService.scanAll();
+
+        Files.writeString(lrc, "[ti:新歌名]\n[ar:新歌手]\n[00:01.00]歌词\n");
+        Files.setLastModifiedTime(lrc, FileTime.fromMillis(
+                Files.getLastModifiedTime(lrc).toMillis() + 2_000));
+
+        LibraryScanService.ScanResult second = scanService.scanAll();
+
+        assertThat(second.probeQueued()).isEqualTo(1);
+        assertThat(second.probeCalls()).isEqualTo(1);
+        assertThat(second.updated()).isEqualTo(1);
+        verify(ffprobe, times(2)).probe(any(Path.class));
+    }
+
+    @Test
+    void addingLrcRefreshesLyricCacheWithoutReprobingMedia() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        scanService.scanAll();
+
+        Path lrc = sourceDir.resolve("周杰伦-晴天-国语-流行.lrc");
+        Files.writeString(lrc, "[00:01.00]新增歌词\n");
+        Files.setLastModifiedTime(lrc, FileTime.fromMillis(
+                Files.getLastModifiedTime(lrc).toMillis() + 2_000));
+
+        LibraryScanService.ScanResult second = scanService.scanAll();
+
+        SongFile indexed = filesByPath.get(file.toString());
+        Song song = songsById.get(indexed.getSongId());
+        assertThat(second.updated()).isEqualTo(1);
+        assertThat(second.probeCalls()).isZero();
+        assertThat(song.getLyricPath()).isNotBlank();
+        assertThat(song.getLyricSource()).isEqualTo(Song.LYRIC_SOURCE_SIDECAR);
+        assertThat(Files.readString(tempDir.resolve("data").resolve(song.getLyricPath())))
+                .contains("新增歌词");
+        verify(ffprobe, times(1)).probe(any(Path.class));
+    }
+
+    @Test
+    void deletingSidecarClearsOnlySidecarOwnedLyricWithoutReprobingMedia() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        Path lrc = sourceDir.resolve("周杰伦-晴天-国语-流行.lrc");
+        Files.writeString(lrc, "[00:01.00]待删除歌词\n");
+        scanService.scanAll();
+        SongFile indexed = filesByPath.get(file.toString());
+        Song song = songsById.get(indexed.getSongId());
+        assertThat(song.getLyricSource()).isEqualTo(Song.LYRIC_SOURCE_SIDECAR);
+
+        Files.delete(lrc);
+
+        LibraryScanService.ScanResult second = scanService.scanAll();
+
+        assertThat(second.updated()).isEqualTo(1);
+        assertThat(second.probeCalls()).isZero();
+        assertThat(song.getLyricPath()).isNull();
+        assertThat(song.getLyricType()).isEqualTo(LyricType.NONE);
+        assertThat(song.getLyricSource()).isEqualTo(Song.LYRIC_SOURCE_NONE);
+        verify(ffprobe, times(1)).probe(any(Path.class));
+    }
+
+    @Test
+    void deletingSidecarDoesNotClearManualLyric() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        Path lrc = sourceDir.resolve("周杰伦-晴天-国语-流行.lrc");
+        Files.writeString(lrc, "[00:01.00]侧车歌词\n");
+        scanService.scanAll();
+        SongFile indexed = filesByPath.get(file.toString());
+        Song song = songsById.get(indexed.getSongId());
+        song.setLyricPath("lyrics/manual.lrc");
+        song.setLyricType(LyricType.LINE);
+        song.setLyricSource(Song.LYRIC_SOURCE_MANUAL);
+        songRepository.save(song);
+
+        Files.delete(lrc);
+
+        LibraryScanService.ScanResult second = scanService.scanAll();
+
+        assertThat(second.probeCalls()).isZero();
+        assertThat(song.getLyricPath()).isEqualTo("lyrics/manual.lrc");
+        assertThat(song.getLyricType()).isEqualTo(LyricType.LINE);
+        assertThat(song.getLyricSource()).isEqualTo(Song.LYRIC_SOURCE_MANUAL);
+        verify(ffprobe, times(1)).probe(any(Path.class));
+    }
+
+    @Test
+    void legacyRowWithoutSidecarBootstrapsSnapshotsWithoutProbingMedia() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        scanService.scanAll();
+
+        SongFile indexed = filesByPath.get(file.toString());
+        indexed.setMediaMtime(null);
+        indexed.setMediaFileIdentity(null);
+        indexed.setLyricSize(null);
+        indexed.setLyricMtime(null);
+        indexed.setLyricFileIdentity(null);
+        indexed.setLyricSnapshotVersion(null);
+
+        LibraryScanService.ScanResult second = scanService.scanAll();
+
+        assertThat(second.skipped()).isEqualTo(1);
+        assertThat(second.probeQueued()).isZero();
+        assertThat(second.probeCalls()).isZero();
+        assertThat(second.dbUpdates()).isEqualTo(1);
+        assertThat(indexed.getMediaMtime()).isNotNull();
+        assertThat(indexed.getLyricSnapshotVersion()).isEqualTo(1);
+        verify(ffprobe, times(1)).probe(any(Path.class));
+    }
+
+    @Test
+    void mediaReprobePreservesManualLyricCache() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        scanService.scanAll();
+
+        SongFile indexed = filesByPath.get(file.toString());
+        Song song = songsById.get(indexed.getSongId());
+        song.setLyricPath("lyrics/manual.lrc");
+        song.setLyricType(LyricType.LINE);
+        song.setLyricSource(Song.LYRIC_SOURCE_MANUAL);
+        songRepository.save(song);
+        FileTime originalMtime = Files.getLastModifiedTime(file);
+        Files.setLastModifiedTime(file, FileTime.fromMillis(originalMtime.toMillis() + 2_000));
+
+        LibraryScanService.ScanResult second = scanService.scanAll();
+
+        assertThat(second.probeCalls()).isEqualTo(1);
+        assertThat(song.getLyricPath()).isEqualTo("lyrics/manual.lrc");
+        assertThat(song.getLyricType()).isEqualTo(LyricType.LINE);
+        assertThat(song.getLyricSource()).isEqualTo(Song.LYRIC_SOURCE_MANUAL);
+        verify(ffprobe, times(2)).probe(any(Path.class));
+    }
+
+    @Test
     void sameRelativePathSurvivesLibraryRootRemountWithoutReprobe() throws Exception {
         Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
         scanService.scanAll();

@@ -53,6 +53,7 @@ public class SongMergeService {
                     cover_path = COALESCE(keep.cover_path, source.cover_path),
                     lyric_path = COALESCE(keep.lyric_path, source.lyric_path),
                     lyric_type = CASE WHEN keep.lyric_path IS NULL THEN source.lyric_type ELSE keep.lyric_type END,
+                    lyric_source = CASE WHEN keep.lyric_path IS NULL THEN source.lyric_source ELSE keep.lyric_source END,
                     updated_at = now()
                 FROM songs source
                 WHERE keep.id = ? AND source.id = ?
