@@ -1,6 +1,8 @@
 <template>
   <AdminLayout active="ktv">
     <header class="page-head"><div><h1>KTV曲库管理</h1><p>正式可播放曲库，手机点歌和 TV 播放均从这里读取</p></div></header>
+    <div v-if="libraryMode === 'EXTERNAL_READ_ONLY'" class="readonly-notice">外部只读曲库不能在 Home KTV 中删除源歌曲；如需移除歌曲，请在 NAS 中处理后重新扫描。</div>
+    <div v-else-if="libraryMode === null" class="readonly-notice">曲库模式尚未确认，删除操作已隐藏；请检查服务连接后重试。</div>
     <!-- 筛选面板 / Filter Panel -->
     <section class="filter-panel">
       <label><span>关键词</span><input v-model.trim="filters.keyword" placeholder="歌名或歌手" @keyup.enter="search" /></label>
@@ -10,9 +12,9 @@
     </section>
     <!-- 歌曲列表表格 / Song List Table -->
     <section class="table-panel">
-      <div class="toolbar"><span>共 {{ total }} 首可点歌曲</span><div class="toolbar-actions"><button class="secondary scrape-batch" :disabled="!selected.size" @click="goScrape([...selected])"><Tags :size="14" />刮削已选（{{ selected.size }}）</button><button class="danger" :disabled="!selected.size" @click="deleteSelected">批量删除（{{ selected.size }}）</button></div></div>
+      <div class="toolbar"><span>共 {{ total }} 首可点歌曲</span><div class="toolbar-actions"><button class="secondary scrape-batch" :disabled="!selected.size" @click="goScrape([...selected])"><Tags :size="14" />刮削已选（{{ selected.size }}）</button><button v-if="canDelete" class="danger" :disabled="!selected.size" @click="deleteSelected">批量删除（{{ selected.size }}）</button></div></div>
       <div class="table-scroll"><table><thead><tr><th><input type="checkbox" :checked="allSelected" @change="toggleAll" /></th><th>歌名</th><th>歌手</th><th>类型</th><th>语种 / 标签</th><th>KTV 文件</th><th>来源</th><th>AudioLayout</th><th>点唱</th><th class="action-cell">操作</th></tr></thead><tbody>
-        <tr v-for="song in songs" :key="song.id"><td><input type="checkbox" :checked="selected.has(song.id)" @change="toggle(song.id)" /></td><td><strong>{{ song.title }}</strong></td><td>{{ song.artist }}</td><td><span class="status" :class="typeClass(song.mediaType)">{{ typeText(song.mediaType) }}</span></td><td>{{ song.language || '—' }}<small>{{ (song.tags || []).join(' / ') || '无标签' }}</small></td><td class="path">{{ song.filePath || '—' }}</td><td>{{ sourceText(song.importSource) }}</td><td><span class="status neutral">{{ audioLayoutText(song.audioLayout) }}</span><small>{{ audioLayoutDetail(song.audioLayout) }}</small></td><td>{{ song.playCount || 0 }}</td><td class="action-cell"><div class="row-actions"><AudioLayoutEditor :song="song" @updated="updateSongAudioLayout(song, $event)" /><button class="link playlist-link" title="加入已有歌单" @click="openPlaylistPicker(song)"><ListPlus :size="14" />歌单</button><button class="link match-link" title="搜索、筛选并审核平台元数据" @click="goScrape([song.id],true)"><Tags :size="14" />元数据刮削</button><button class="link danger-text" title="删除歌曲" @click="deleteOne(song)"><Trash2 :size="14" />删除</button></div></td></tr>
+        <tr v-for="song in songs" :key="song.id"><td><input type="checkbox" :checked="selected.has(song.id)" @change="toggle(song.id)" /></td><td><strong>{{ song.title }}</strong></td><td>{{ song.artist }}</td><td><span class="status" :class="typeClass(song.mediaType)">{{ typeText(song.mediaType) }}</span></td><td>{{ song.language || '—' }}<small>{{ (song.tags || []).join(' / ') || '无标签' }}</small></td><td class="path">{{ song.filePath || '—' }}</td><td>{{ sourceText(song.importSource) }}</td><td><span class="status neutral">{{ audioLayoutText(song.audioLayout) }}</span><small>{{ audioLayoutDetail(song.audioLayout) }}</small></td><td>{{ song.playCount || 0 }}</td><td class="action-cell"><div class="row-actions"><AudioLayoutEditor :song="song" @updated="updateSongAudioLayout(song, $event)" /><button class="link playlist-link" title="加入已有歌单" @click="openPlaylistPicker(song)"><ListPlus :size="14" />歌单</button><button class="link match-link" title="搜索、筛选并审核平台元数据" @click="goScrape([song.id],true)"><Tags :size="14" />元数据刮削</button><button v-if="canDelete" class="link danger-text" title="删除歌曲" @click="deleteOne(song)"><Trash2 :size="14" />删除</button></div></td></tr>
         <tr v-if="!songs.length"><td colspan="10" class="empty">暂无符合条件的 KTV 曲库歌曲</td></tr>
       </tbody></table></div>
       <div class="pager"><span>第 {{ page + 1 }} / {{ totalPages || 1 }} 页</span><div><button class="secondary" :disabled="page===0" @click="go(page-1)">上一页</button><button class="secondary" :disabled="page>=totalPages-1" @click="go(page+1)">下一页</button></div></div>
@@ -85,6 +87,7 @@ import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import AudioLayoutEditor from './AudioLayoutEditor.vue'
 import { audioLayoutLabel } from './audioLayout'
+import { canDeleteSongs } from './libraryMode'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
 /** 歌曲列表、总数、当前页、总页数、已选集合 / Song list, total, page, total pages, selected set */
 const songs=ref([]),total=ref(0),page=ref(0),totalPages=ref(1),selected=ref(new Set())
@@ -92,6 +95,8 @@ const router=useRouter()
 const matchingSong=ref(null),matches=ref([]),selectedMatch=ref(null),matchLoading=ref(false),applyingMatch=ref(false),applyFields=ref([])
 const scrapeOpen=ref(false),scrapeLoading=ref(false),scrapeApplying=ref(false),scrapeResults=ref([]),scrapeApplyIds=ref(new Set())
 const playlistPickerOpen=ref(false),playlistPickerSong=ref(null),playlistOptions=ref([]),playlistLoading=ref(false),playlistAddingId=ref(null)
+const libraryMode=ref(null)
+const canDelete=computed(()=>canDeleteSongs(libraryMode.value))
 const metadataFields=[{key:'title',label:'歌名'},{key:'artist',label:'歌手'},{key:'album',label:'专辑'},{key:'releaseDate',label:'发行时间'},{key:'aliases',label:'别名'},{key:'cover',label:'封面'}]
 /** 筛选条件 / Filter criteria */
 const filters=reactive({keyword:'',type:'',source:''})
@@ -103,7 +108,16 @@ const allSelected=computed(()=>songs.value.length>0&&songs.value.every(s=>select
  * Loads the song list based on filter criteria and pagination,
  * and cleans up selected items that no longer exist.
  */
-async function load(){const r=await api.adminSongs({...filters,page:page.value,size:20});songs.value=r.content||[];total.value=r.total||0;totalPages.value=r.totalPages||1;selected.value=new Set([...selected.value].filter(id=>songs.value.some(s=>s.id===id)))}
+async function load(){
+  libraryMode.value=null
+  try{
+    const mode=await api.adminSourceLibrary({page:0,size:1})
+    libraryMode.value=mode?.libraryMode||null
+  }catch(e){
+    libraryMode.value=null
+  }
+  const r=await api.adminSongs({...filters,page:page.value,size:20});songs.value=r.content||[];total.value=r.total||0;totalPages.value=r.totalPages||1;selected.value=new Set([...selected.value].filter(id=>songs.value.some(s=>s.id===id)))
+}
 /** 搜索：重置到第一页并加载 / Search: reset to first page and load */
 function search(){page.value=0;load()}
 /** 重置筛选条件并搜索 / Reset filter criteria and search */
@@ -176,13 +190,13 @@ async function applyScraped(){
  * Deletes a single song after confirmation, including the actual file.
  * @param {Object} song - 歌曲对象 / Song object
  */
-async function deleteOne(song){if(!await confirmDialog(`《${song.title}》及 /music 中的实际文件将被删除。`,{title:'删除 KTV 歌曲',tone:'warning'}))return;try{await api.adminDeleteSong(song.id);await load()}catch(e){await alertDialog(e.message||'删除失败')}}
+async function deleteOne(song){if(!canDelete.value){await alertDialog('当前曲库不是已确认的 Managed 模式，已禁止删除。');return}if(!await confirmDialog(`《${song.title}》及 /music 中的实际文件将被删除。`,{title:'删除 KTV 歌曲',tone:'warning'}))return;try{await api.adminDeleteSong(song.id);await load()}catch(e){await alertDialog(e.message||'删除失败')}}
 /**
  * 批量删除选中的歌曲，确认后删除歌曲及文件。
  *
  * Batch deletes selected songs after confirmation, including actual files.
  */
-async function deleteSelected(){if(!await confirmDialog(`将删除 ${selected.value.size} 首歌曲及其 /music 中的实际文件。`,{title:'批量删除 KTV 歌曲',tone:'warning'}))return;try{await api.adminDeleteSongs([...selected.value]);selected.value=new Set();await load()}catch(e){await alertDialog(e.message||'批量删除失败')}}
+async function deleteSelected(){if(!canDelete.value){await alertDialog('当前曲库不是已确认的 Managed 模式，已禁止删除。');return}if(!await confirmDialog(`将删除 ${selected.value.size} 首歌曲及其 /music 中的实际文件。`,{title:'批量删除 KTV 歌曲',tone:'warning'}))return;try{await api.adminDeleteSongs([...selected.value]);selected.value=new Set();await load()}catch(e){await alertDialog(e.message||'批量删除失败')}}
 /** 媒体类型文本映射 / Media type text mapping */
 function typeText(v){return{KTV_VIDEO:'KTV版',MV:'MV版',AUDIO:'音频版'}[v]||v}
 /** 媒体类型样式类名 / Media type CSS class */
@@ -200,7 +214,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page-head{margin-bottom:18px}.page-head h1{font-size:22px}.page-head p{color:#64748b;font-size:13px;margin-top:6px}
+.page-head{margin-bottom:18px}.page-head h1{font-size:22px}.page-head p{color:#64748b;font-size:13px;margin-top:6px}.readonly-notice{margin-bottom:14px;padding:11px 14px;border:1px solid #fed7aa;border-radius:8px;background:#fff7ed;color:#9a3412;font-size:12px;line-height:1.6}
 .primary,.secondary,.danger{height:34px;padding:0 14px;border-radius:6px;font-size:13px}.primary{background:#2563eb;color:#fff}.secondary{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #cbd5e1;color:#334155}.danger{background:#fff;border:1px solid #fecaca;color:#b91c1c}.primary:disabled,.secondary:disabled,.danger:disabled{opacity:.45;cursor:not-allowed}
 .filter-panel{display:flex;align-items:flex-end;flex-wrap:wrap;gap:10px;padding:12px 14px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:14px}.filter-panel label{display:flex;flex:0 0 180px;flex-direction:column;gap:5px;color:#475569;font-size:12px}.filter-panel label:first-child{flex-basis:280px}.filter-panel input,.filter-panel select{width:100%;height:36px;border:1px solid #cbd5e1;border-radius:6px;padding:0 10px;background:#fff;color:#172033;font:inherit;font-size:13px;line-height:normal;box-shadow:0 1px 2px rgba(15,23,42,.03)}.filter-panel select{appearance:none;padding-right:34px;cursor:pointer}.select-control{position:relative;display:block}.select-control svg{position:absolute;right:10px;top:50%;color:#64748b;pointer-events:none;transform:translateY(-50%)}.filter-panel input:focus,.filter-panel select:focus{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(37,99,235,.1);outline:0}.filter-actions{display:flex;align-items:flex-end;gap:8px}.filter-actions button{height:36px}
 .table-panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px}.toolbar,.pager{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;color:#64748b;font-size:12px}.toolbar{border-bottom:1px solid #e2e8f0}.toolbar-actions{display:flex;align-items:center;gap:8px}.scrape-batch{color:#0f766e;border-color:#99f6e4;background:#f0fdfa}.pager{border-top:1px solid #e2e8f0}.pager div{display:flex;gap:8px}.table-scroll{position:relative;overflow:auto}table{width:100%;border-collapse:separate;border-spacing:0;min-width:1200px;font-size:12px}th{padding:11px 10px;text-align:left;background:#f8fafc;color:#64748b;border-bottom:1px solid #e2e8f0}td{padding:12px 10px;border-bottom:1px solid #eef2f7;color:#334155;background:#fff}td small{display:block;color:#94a3b8;margin-top:4px}.path{max-width:260px;word-break:break-all;color:#64748b}.action-cell{position:sticky;right:0;z-index:2;width:280px;min-width:280px;border-left:1px solid #e2e8f0;box-shadow:-10px 0 14px -14px rgba(15,23,42,.55)}th.action-cell{z-index:3}.status{display:inline-flex;padding:3px 8px;border-radius:999px;font-weight:600}.green{background:#dcfce7;color:#166534}.blue{background:#dbeafe;color:#1d4ed8}.neutral{background:#f1f5f9;color:#475569}.row-actions{display:flex;align-items:center;gap:6px}.link{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:30px;padding:0 9px;border:1px solid #dbe3ee;border-radius:6px;background:#fff;color:#2563eb;font-size:11px;font-weight:600;white-space:nowrap}.link:hover:not(:disabled){border-color:#bfdbfe;background:#eff6ff}.link:disabled{opacity:.5}.playlist-link{color:#7c3aed}.playlist-link:hover:not(:disabled){border-color:#ddd6fe;background:#f5f3ff}.match-link{color:#0f766e}.match-link:hover:not(:disabled){border-color:#99f6e4;background:#f0fdfa}.danger-text{color:#b91c1c}.danger-text:hover:not(:disabled){border-color:#fecaca;background:#fef2f2}.empty{text-align:center;padding:36px;color:#94a3b8}
