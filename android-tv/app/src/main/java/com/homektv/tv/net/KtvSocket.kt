@@ -40,6 +40,8 @@ class KtvSocket(
         fun onToast(text: String) {}
         /** 连接状态变化：true=已连上并完成一次同步，false=断开/重连中。 */
         fun onConnectionChanged(connected: Boolean) {}
+        /** 当前终端是否拥有播放租约；false 时必须停止本地投影。 */
+        fun onPlayerRole(active: Boolean) {}
     }
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -54,11 +56,14 @@ class KtvSocket(
     private var ws: WebSocket? = null
     private var closed = false
     private var attempt = 0
+    private val leaseGate = ActivePlayerLeaseGate()
 
     // 15s 应用层心跳
     private val heartbeat = object : Runnable {
         override fun run() {
-            ws?.send("""{"type":"ping"}""")
+            val generation = leaseGate.activeGeneration()
+            if (generation == null) listener.onPlayerRole(false)
+            ws?.send("""{"type":"ping","payload":{"generation":${generation ?: "null"}}}""")
             main.postDelayed(this, HEARTBEAT_MS)
         }
     }
@@ -73,26 +78,31 @@ class KtvSocket(
         main.removeCallbacks(heartbeat)
         ws?.close(1000, "client closing")
         ws = null
+        leaseGate.disconnect()
+        listener.onPlayerRole(false)
     }
 
     /** 上行播放进度（P1.28 播放引擎每 1s 调用）。 */
     fun sendProgress(positionMs: Long, queueId: Long? = null) {
+        val generation = leaseGate.activeGeneration() ?: return
         val id = queueId?.let { ",\"queue_id\":$it" } ?: ""
-        ws?.send("""{"type":"progress","payload":{"position_ms":$positionMs$id}}""")
+        ws?.send("""{"type":"progress","payload":{"position_ms":$positionMs$id,"generation":$generation}}""")
     }
 
     /** 上行播放完成（P1.33 自动连播）。 */
     fun sendFinished(queueId: Long? = null) {
-        val payload = queueId?.let { ",\"payload\":{\"queue_id\":$it}" } ?: ""
-        ws?.send("""{"type":"finished"$payload}""")
+        val generation = leaseGate.activeGeneration() ?: return
+        val id = queueId?.let { "\"queue_id\":$it," } ?: ""
+        ws?.send("""{"type":"finished","payload":{$id"generation":$generation}}""")
     }
 
     /** 播放文件不可读时上报，服务端会标记当前项异常并推进队列。 */
     fun sendPlayError(message: String, fileId: Long? = null, queueId: Long? = null) {
+        val generation = leaseGate.activeGeneration() ?: return
         val safe = message.replace("\\", "\\\\").replace("\"", "\\\"")
         val id = fileId?.let { ",\"file_id\":$it" } ?: ""
         val queue = queueId?.let { ",\"queue_id\":$it" } ?: ""
-        ws?.send("""{"type":"play_error","payload":{"message":"$safe"$id$queue}}""")
+        ws?.send("""{"type":"play_error","payload":{"message":"$safe"$id$queue,"generation":$generation}}""")
     }
 
     private fun openSocket() {
@@ -133,6 +143,8 @@ class KtvSocket(
             Log.w(TAG, "ws failure: ${t.message}")
             main.post {
                 main.removeCallbacks(heartbeat)
+                leaseGate.disconnect()
+                listener.onPlayerRole(false)
                 listener.onConnectionChanged(false)
             }
             scheduleReconnect()
@@ -141,6 +153,8 @@ class KtvSocket(
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             main.post {
                 main.removeCallbacks(heartbeat)
+                leaseGate.disconnect()
+                listener.onPlayerRole(false)
                 listener.onConnectionChanged(false)
             }
             scheduleReconnect()
@@ -149,7 +163,14 @@ class KtvSocket(
 
     private fun dispatch(type: String, payload: kotlinx.serialization.json.JsonElement?) {
         when (type) {
-            "pong" -> {}
+            "player_role", "pong" -> {
+                val assignment = payload as? JsonObject ?: return
+                val role = assignment["role"]?.jsonPrimitive?.contentOrNullSafe() ?: return
+                val generation = runCatching { assignment["generation"]?.jsonPrimitive?.long }.getOrNull() ?: return
+                val leaseMs = runCatching { assignment["lease_ms"]?.jsonPrimitive?.long }.getOrNull() ?: return
+                leaseGate.apply(role, generation, leaseMs)
+                listener.onPlayerRole(leaseGate.activeGeneration() != null)
+            }
             "progress" -> {
                 val pos = (payload as? JsonObject)?.get("position_ms")?.jsonPrimitive?.long ?: 0L
                 listener.onProgress(pos)

@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -46,6 +47,26 @@ class WsBroadcasterTest {
         assertThat(broadcaster.sessionCount()).isZero();
         assertThat(broadcaster.isTvOnline()).isFalse();
         verify(session).sendMessage(any(TextMessage.class));
+    }
+
+    @Test
+    void playbackBroadcastReachesH5AndActivePlayerButNotStandby() throws Exception {
+        ActivePlayerRegistry registry = new ActivePlayerRegistry();
+        WsBroadcaster broadcaster = new WsBroadcaster(new ObjectMapper(), registry);
+        WebSocketSession active = session("active", "tv");
+        WebSocketSession standby = session("standby", "tv");
+        WebSocketSession h5 = session("h5", "h5");
+        broadcaster.register(active);
+        broadcaster.register(standby);
+        broadcaster.register(h5);
+        registry.register("active", new ActivePlayerRegistry.PlayerHello("a", "WINDOWS", 2));
+        registry.register("standby", new ActivePlayerRegistry.PlayerHello("b", "ANDROID_TV", 2));
+
+        broadcaster.broadcastPlayback(WsEvent.of(WsEvent.PLAYER_STATE, Map.of("state", "playing")));
+
+        verify(active).sendMessage(any(TextMessage.class));
+        verify(h5).sendMessage(any(TextMessage.class));
+        verify(standby, never()).sendMessage(any(TextMessage.class));
     }
 
     private static WebSocketSession session(String id, String type) {

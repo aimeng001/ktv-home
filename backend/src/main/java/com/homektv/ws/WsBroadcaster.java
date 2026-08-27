@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -26,9 +27,17 @@ public class WsBroadcaster {
 
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final ObjectMapper mapper;
+    private final ActivePlayerRegistry playerRegistry;
 
-    public WsBroadcaster(ObjectMapper mapper) {
+    @Autowired
+    public WsBroadcaster(ObjectMapper mapper, ActivePlayerRegistry playerRegistry) {
         this.mapper = mapper;
+        this.playerRegistry = playerRegistry;
+    }
+
+    /** Test/backward-compatible constructor; production uses the shared registry. */
+    public WsBroadcaster(ObjectMapper mapper) {
+        this(mapper, new ActivePlayerRegistry());
     }
 
     /** 记录每个会话的 client_type（tv/h5），用于 TV 在线检测（P2.13）。
@@ -94,6 +103,28 @@ public class WsBroadcaster {
         send(session, serialize(event));
     }
 
+    /** Removes and closes a fenced player session so the client can reconnect cleanly. */
+    public String disconnect(String sessionId) {
+        WebSocketSession session = sessions.remove(sessionId);
+        String type = sessionTypes.remove(sessionId);
+        if (session != null && session.isOpen()) {
+            try {
+                session.close(org.springframework.web.socket.CloseStatus.POLICY_VIOLATION);
+            } catch (IOException ignored) {
+                // The session is already unusable and has been removed locally.
+            }
+        }
+        return type;
+    }
+
+    /** Sends an event to a registered session without exposing the session map. */
+    public void sendTo(String sessionId, WsEvent event) {
+        WebSocketSession session = sessions.get(sessionId);
+        if (session != null) {
+            sendTo(session, event);
+        }
+    }
+
     /**
      * 向所有在线会话广播事件。
      *
@@ -104,6 +135,22 @@ public class WsBroadcaster {
         String json = serialize(event);
         for (WebSocketSession s : sessions.values()) {
             send(s, json);
+        }
+    }
+
+    /**
+     * Broadcasts playback commands/state to H5 observers and the single active
+     * TV player. Standby TV sessions never receive commands that could start a
+     * second projection.
+     */
+    public void broadcastPlayback(WsEvent event) {
+        String json = serialize(event);
+        String activeSessionId = playerRegistry.activeSessionId().orElse(null);
+        for (WebSocketSession session : sessions.values()) {
+            String type = sessionTypes.get(session.getId());
+            if (!"tv".equals(type) || session.getId().equals(activeSessionId)) {
+                send(session, json);
+            }
         }
     }
 

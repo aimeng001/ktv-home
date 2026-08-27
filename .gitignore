@@ -29,6 +29,10 @@ windows-player/**/obj/
 windows-player/.dotnet-cli-home/
 .dotnet-cli-home/
 
+# ===== Python tooling =====
+__pycache__/
+*.py[cod]
+
 # ===== IDE / OS =====
 .idea/
 *.iml

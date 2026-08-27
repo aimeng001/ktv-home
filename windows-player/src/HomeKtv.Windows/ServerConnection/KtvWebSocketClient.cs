@@ -4,6 +4,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using HomeKtv.Windows.Protocol;
+using HomeKtv.Windows.Playback;
 
 namespace HomeKtv.Windows.ServerConnection;
 
@@ -27,6 +28,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
     private readonly ConcurrentQueue<string> reliableMessages = new();
     private readonly CancellationTokenSource lifetime = new();
     private ClientWebSocket? socket;
+    private long generation;
 
     public KtvWebSocketClient(ServerEndpoint endpoint, string clientToken)
     {
@@ -38,6 +40,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
     public event Func<string, QueueSnapshot, CancellationToken, Task>? SnapshotReceived;
     public event Action<long>? ProgressReceived;
     public event Action<Exception>? ConnectionError;
+    public event Action<PlayerAssignment>? PlayerAssignmentReceived;
 
     public bool IsConnected => socket?.State == WebSocketState.Open;
 
@@ -72,15 +75,17 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         }
     }
 
-    public Task SendProgressAsync(long positionMs, long? queueId = null, CancellationToken cancellationToken = default) =>
-        SendTextAsync(ServerMessageFactory.Progress(positionMs, queueId), cancellationToken);
-
-    public Task<bool> SendFinishedAsync(long queueId, CancellationToken cancellationToken = default) =>
-        SendReliableAsync(ServerMessageFactory.Finished(queueId), cancellationToken);
-
-    public Task<bool> SendPlayErrorAsync(long queueId, long? fileId, string message,
+    public Task SendProgressAsync(long positionMs, long? queueId = null, long? activeGeneration = null,
         CancellationToken cancellationToken = default) =>
-        SendReliableAsync(ServerMessageFactory.PlayError(queueId, fileId, message), cancellationToken);
+        SendTextAsync(ServerMessageFactory.Progress(positionMs, queueId, activeGeneration), cancellationToken);
+
+    public Task<bool> SendFinishedAsync(long queueId, long? activeGeneration = null,
+        CancellationToken cancellationToken = default) =>
+        SendReliableAsync(ServerMessageFactory.Finished(queueId, activeGeneration), cancellationToken);
+
+    public Task<bool> SendPlayErrorAsync(long queueId, long? fileId, string message, long? activeGeneration = null,
+        CancellationToken cancellationToken = default) =>
+        SendReliableAsync(ServerMessageFactory.PlayError(queueId, fileId, message, activeGeneration), cancellationToken);
 
     private async Task ConnectAndReceiveAsync(CancellationToken cancellationToken)
     {
@@ -116,7 +121,9 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
         {
-            await SendTextAsync(ServerMessageFactory.Ping(), cancellationToken).ConfigureAwait(false);
+            var currentGeneration = Volatile.Read(ref generation);
+            await SendTextAsync(ServerMessageFactory.Ping(currentGeneration > 0 ? currentGeneration : null),
+                cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -152,6 +159,20 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         }
 
         if (message is null) return;
+        if ((message.Type == "player_role" || message.Type == "pong")
+            && message.Payload is { } rolePayload
+            && rolePayload.TryGetProperty("role", out var role)
+            && rolePayload.TryGetProperty("generation", out var assignedGeneration)
+            && rolePayload.TryGetProperty("lease_ms", out var leaseMs))
+        {
+            var assignment = new PlayerAssignment(
+                role.GetString() ?? "STANDBY", assignedGeneration.GetInt64(), leaseMs.GetInt64());
+            Volatile.Write(ref generation,
+                string.Equals(assignment.Role, "ACTIVE", StringComparison.OrdinalIgnoreCase)
+                    ? assignment.Generation : 0);
+            PlayerAssignmentReceived?.Invoke(assignment);
+            return;
+        }
         if (SnapshotEvents.Contains(message.Type))
         {
             var snapshot = message.Payload is { } payload

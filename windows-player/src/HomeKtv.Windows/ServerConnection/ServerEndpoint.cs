@@ -12,7 +12,7 @@ public sealed record ServerEndpoint(Uri BaseUri)
         var builder = new UriBuilder(scheme, BaseUri.Host, BaseUri.Port)
         {
             Path = "/ws",
-            Query = $"client_type=tv&client_token={Uri.EscapeDataString(clientToken)}",
+            Query = $"client_type=tv&client_token={Uri.EscapeDataString(clientToken)}&protocol_version=2&platform=WINDOWS",
         };
         return builder.Uri;
     }

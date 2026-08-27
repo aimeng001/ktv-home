@@ -34,15 +34,17 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
     private final SnapshotService snapshotService;
     private final PlaybackService playbackService;
     private final TvOfflineWatcher tvOfflineWatcher;
+    private final ActivePlayerRegistry playerRegistry;
     private final ObjectMapper mapper;
 
     public KtvWebSocketHandler(WsBroadcaster broadcaster, SnapshotService snapshotService,
                                PlaybackService playbackService, TvOfflineWatcher tvOfflineWatcher,
-                               ObjectMapper mapper) {
+                               ActivePlayerRegistry playerRegistry, ObjectMapper mapper) {
         this.broadcaster = broadcaster;
         this.snapshotService = snapshotService;
         this.playbackService = playbackService;
         this.tvOfflineWatcher = tvOfflineWatcher;
+        this.playerRegistry = playerRegistry;
         this.mapper = mapper;
     }
 
@@ -58,7 +60,13 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         broadcaster.register(session);
         if (isTv(session)) {
+            ActivePlayerRegistry.Assignment assignment = playerRegistry.register(
+                    session.getId(), playerHello(session));
             tvOfflineWatcher.onTvConnected();
+            sendRole(session, assignment);
+            if (assignment.role() == ActivePlayerRegistry.Role.STANDBY) {
+                return;
+            }
         }
         // 连接/重连即推全量快照（详设§4.1）
         broadcaster.sendTo(session, WsEvent.of(WsEvent.SYNC_FULL, snapshotService.snapshot()));
@@ -79,8 +87,13 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         JsonNode node = mapper.readTree(message.getPayload());
         String type = node.path("type").asText("");
 
+        if (("progress".equals(type) || "finished".equals(type) || "play_error".equals(type))
+                && !authorizesPlaybackReport(session, node)) {
+            return;
+        }
+
         switch (type) {
-            case "ping" -> broadcaster.sendTo(session, WsEvent.of("pong", null));
+            case "ping" -> handlePing(session, node);
             case "progress" -> {
                 // TV 上行播放进度 → 转发给所有端（详设§4.2 progress）
                 long positionMs = node.path("payload").path("position_ms").asLong(0);
@@ -93,14 +106,14 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 java.util.Map<String, Object> progress = new java.util.LinkedHashMap<>();
                 progress.put("position_ms", result.state().getPositionMs());
                 if (queueId != null) progress.put("queue_id", queueId);
-                broadcaster.broadcast(WsEvent.of(WsEvent.PROGRESS, progress));
+                broadcaster.broadcastPlayback(WsEvent.of(WsEvent.PROGRESS, progress));
             }
             case "finished" -> {
                 // TV 上报当前曲目播放完成 → 推进队列并广播
                 Long queueId = node.path("payload").path("queue_id").isNumber()
                         ? node.path("payload").path("queue_id").asLong() : null;
                 playbackService.onFinished(queueId);
-                broadcaster.broadcast(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
+                broadcaster.broadcastPlayback(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
             }
             case "play_error" -> {
                 // TV 无法读取当前媒体时按异常切歌，避免队列卡死；将原因同步给手机端。
@@ -113,7 +126,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 if (!result.accepted()) return;
                 broadcaster.broadcast(WsEvent.of(WsEvent.TOAST,
                         java.util.Map.of("text", "当前歌曲播放失败，已自动切换下一首：" + reason)));
-                broadcaster.broadcast(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
+                broadcaster.broadcastPlayback(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
             }
             default -> log.debug("未知 WS 消息类型: {}", type);
         }
@@ -130,7 +143,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
      */
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        notifyOfflineIfTv(broadcaster.unregister(session));
+        unregister(session);
         log.debug("WS 连接关闭: {}，剩余在线 {}", session.getId(), broadcaster.sessionCount());
     }
 
@@ -146,7 +159,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         log.debug("WS 传输错误 {}: {}", session.getId(), exception.getMessage());
-        notifyOfflineIfTv(broadcaster.unregister(session));
+        unregister(session);
     }
 
     private boolean isTv(WebSocketSession session) {
@@ -158,5 +171,97 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         if ("tv".equals(clientType)) {
             tvOfflineWatcher.onTvDisconnected();
         }
+    }
+
+    private void unregister(WebSocketSession session) {
+        String clientType = broadcaster.unregister(session);
+        if (!isTv(session) && !"tv".equals(clientType)) {
+            return;
+        }
+        ActivePlayerRegistry.Unregistration removal = playerRegistry.unregisterPlayer(session.getId());
+        if (!removal.removed()) {
+            return;
+        }
+        java.util.Optional<ActivePlayerRegistry.Promotion> promotion = removal.promotion();
+        if (promotion.isPresent()) {
+            ActivePlayerRegistry.Promotion next = promotion.get();
+            sendRole(next.sessionId(), next.assignment());
+            broadcaster.sendTo(next.sessionId(),
+                    WsEvent.of(WsEvent.SYNC_FULL, snapshotService.snapshot()));
+            tvOfflineWatcher.onTvConnected();
+            return;
+        }
+        if (playerRegistry.activeSessionId().isEmpty()) {
+            notifyOfflineIfTv(clientType);
+        }
+    }
+
+    private ActivePlayerRegistry.PlayerHello playerHello(WebSocketSession session) {
+        String token = attribute(session, "client_token", session.getId());
+        String platform = attribute(session, "platform", "LEGACY");
+        int protocolVersion;
+        try {
+            protocolVersion = Integer.parseInt(attribute(session, "protocol_version", "1"));
+        } catch (NumberFormatException ignored) {
+            protocolVersion = 1;
+        }
+        return new ActivePlayerRegistry.PlayerHello(token, platform, protocolVersion);
+    }
+
+    private boolean authorizesPlaybackReport(WebSocketSession session, JsonNode node) {
+        if (!isTv(session)) return false;
+        JsonNode generation = node.path("payload").path("generation");
+        Long value = generation.isIntegralNumber() ? generation.asLong() : null;
+        return playerRegistry.authorizesUpstream(session.getId(), value);
+    }
+
+    private void sendRole(WebSocketSession session, ActivePlayerRegistry.Assignment assignment) {
+        broadcaster.sendTo(session, WsEvent.of(WsEvent.PLAYER_ROLE,
+                assignmentPayload(assignment)));
+    }
+
+    private void sendRole(String sessionId, ActivePlayerRegistry.Assignment assignment) {
+        broadcaster.sendTo(sessionId, WsEvent.of(WsEvent.PLAYER_ROLE,
+                assignmentPayload(assignment)));
+    }
+
+    private void handlePing(WebSocketSession session, JsonNode node) {
+        if (!isTv(session)) {
+            broadcaster.sendTo(session, WsEvent.of("pong", null));
+            return;
+        }
+        playerRegistry.expireAndPromote().ifPresent(expiration -> {
+            broadcaster.disconnect(expiration.expiredSessionId());
+            if (expiration.promotion().isPresent()) {
+                promote(expiration.promotion().get());
+            } else {
+                tvOfflineWatcher.onTvDisconnected();
+            }
+        });
+        JsonNode generation = node.path("payload").path("generation");
+        Long value = generation.isIntegralNumber() ? generation.asLong() : null;
+        playerRegistry.heartbeat(session.getId(), value)
+                .ifPresent(assignment -> broadcaster.sendTo(session,
+                        WsEvent.of("pong", assignmentPayload(assignment))));
+    }
+
+    private void promote(ActivePlayerRegistry.Promotion next) {
+        sendRole(next.sessionId(), next.assignment());
+        broadcaster.sendTo(next.sessionId(),
+                WsEvent.of(WsEvent.SYNC_FULL, snapshotService.snapshot()));
+        tvOfflineWatcher.onTvConnected();
+    }
+
+    private java.util.Map<String, Object> assignmentPayload(
+            ActivePlayerRegistry.Assignment assignment) {
+        return java.util.Map.of(
+                "role", assignment.role().name(),
+                "generation", assignment.generation(),
+                "lease_ms", assignment.leaseMs());
+    }
+
+    private String attribute(WebSocketSession session, String name, String fallback) {
+        Object value = session.getAttributes().get(name);
+        return value == null || value.toString().isBlank() ? fallback : value.toString();
     }
 }

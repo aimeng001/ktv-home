@@ -124,8 +124,8 @@ public class HistoryController {
         int position = queueService.waitingPosition(item);
         boolean started = playbackService.startIfIdle();
         var snapshot = snapshotService.snapshot();
-        broadcaster.broadcast(WsEvent.of(WsEvent.QUEUE_UPDATED, snapshot));
-        if (started) broadcaster.broadcast(WsEvent.of(WsEvent.NOW_PLAYING, snapshot));
+        broadcaster.broadcastPlayback(WsEvent.of(WsEvent.QUEUE_UPDATED, snapshot));
+        if (started) broadcaster.broadcastPlayback(WsEvent.of(WsEvent.NOW_PLAYING, snapshot));
         return Map.of("queueId", item.getId(), "position", position, "snapshot", snapshot);
     }
 

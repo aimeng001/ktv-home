@@ -525,6 +525,16 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         if (connected) checkForTvUpdate()
     }
 
+    override fun onPlayerRole(active: Boolean) {
+        if (active) return
+        invalidatePlaybackLoad()
+        currentQueueId = null
+        loadedQueueId = null
+        currentFileId = null
+        engine?.stop()
+        showStandby()
+    }
+
     private fun checkForTvUpdate() {
         if (releaseCheckInFlight) return
         releaseCheckInFlight = true

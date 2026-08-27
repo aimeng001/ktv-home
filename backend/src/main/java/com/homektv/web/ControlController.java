@@ -124,7 +124,7 @@ public class ControlController {
                 playbackService.swapVocalTracks();
                 broadcast(WsEvent.VOCAL_CHANGED);
             }
-            case "effect" -> broadcaster.broadcast(
+            case "effect" -> broadcaster.broadcastPlayback(
                     WsEvent.of(WsEvent.EFFECT_PLAY, java.util.Map.of("effect_id", req.strParam("effect_id"))));
             default -> throw new ApiException("INVALID_ACTION", "未知指令：" + action);
         }
@@ -147,7 +147,7 @@ public class ControlController {
      * Broadcasts the current snapshot to all clients (detailed design §4.1: clients rely on broadcasts).
      */
     private void broadcast(String eventType) {
-        broadcaster.broadcast(WsEvent.of(eventType, snapshotService.snapshot()));
+        broadcaster.broadcastPlayback(WsEvent.of(eventType, snapshotService.snapshot()));
     }
 
     /**

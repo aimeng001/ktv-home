@@ -27,6 +27,8 @@ public sealed class ServerProtocolTests
         Assert.Equal("/ws", uri.AbsolutePath);
         Assert.Contains("client_type=tv", uri.Query);
         Assert.Contains("client_token=win%20player%2F1", uri.Query);
+        Assert.Contains("protocol_version=2", uri.Query);
+        Assert.Contains("platform=WINDOWS", uri.Query);
     }
 
     [Fact]
@@ -61,11 +63,12 @@ public sealed class ServerProtocolTests
     [Fact]
     public void Progress_message_clamps_negative_position_and_keeps_queue_identity()
     {
-        using var document = JsonDocument.Parse(ServerMessageFactory.Progress(-1, 42));
+        using var document = JsonDocument.Parse(ServerMessageFactory.Progress(-1, 42, 7));
         var payload = document.RootElement.GetProperty("payload");
 
         Assert.Equal(0, payload.GetProperty("position_ms").GetInt64());
         Assert.Equal(42, payload.GetProperty("queue_id").GetInt64());
+        Assert.Equal(7, payload.GetProperty("generation").GetInt64());
     }
 
     [Fact]

@@ -17,6 +17,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
     private readonly MpvProcessController output;
     private readonly PlaybackCoordinator coordinator;
     private readonly PlaybackSnapshotPump snapshotPump;
+    private readonly ActivePlayerLeaseGate leaseGate = new();
     private readonly CancellationTokenSource lifetime = new();
     private Task? socketTask;
     private Task? progressTask;
@@ -37,7 +38,16 @@ public sealed class PlaybackTerminal : IAsyncDisposable
                 work.EventType, work.Snapshot, cancellationToken, work.IsCurrent));
         snapshotPump.ProjectionFailed += OnProjectionFailed;
 
-        socket.ConnectionChanged += connected => ConnectionChanged?.Invoke(connected);
+        socket.ConnectionChanged += connected =>
+        {
+            if (!connected)
+            {
+                leaseGate.Disconnect();
+                _ = FenceOutputAsync();
+            }
+            ConnectionChanged?.Invoke(connected);
+        };
+        socket.PlayerAssignmentReceived += assignment => _ = ApplyAssignmentAsync(assignment);
         socket.ConnectionError += exception => Error?.Invoke(exception);
         socket.ProgressReceived += position =>
         {
@@ -74,7 +84,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         }
 
         var initial = await server.GetQueueAsync(cancellationToken).ConfigureAwait(false);
-        if (initial is not null)
+        if (initial is not null && leaseGate.TryGetGeneration(out _))
         {
             await ApplySnapshotAsync("sync_full", initial, cancellationToken).ConfigureAwait(false);
             await snapshotPump.WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
@@ -133,6 +143,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (!leaseGate.TryGetGeneration(out _)) return Task.CompletedTask;
         Interlocked.Exchange(ref snapshot, incoming);
         if (eventType is "sync_full" or "playback_seeked" or "playback_restarted")
         {
@@ -176,14 +187,14 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         PlaybackSnapshotWork work,
         Exception exception)
     {
-        if (lifetime.IsCancellationRequested) return;
+        if (lifetime.IsCancellationRequested || !leaseGate.TryGetGeneration(out var generation)) return;
         Error?.Invoke(exception);
         if (work.Snapshot.Playing?.QueueId is not { } queueId) return;
 
         var fileId = exception is PlaybackAttemptException attempt ? attempt.FileId : null;
         try
         {
-            await socket.SendPlayErrorAsync(queueId, fileId, exception.Message, lifetime.Token)
+            await socket.SendPlayErrorAsync(queueId, fileId, exception.Message, generation, lifetime.Token)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
@@ -202,9 +213,10 @@ public sealed class PlaybackTerminal : IAsyncDisposable
             return;
         }
 
+        if (!leaseGate.TryGetGeneration(out var generation)) return;
         try
         {
-            await socket.SendFinishedAsync(queueId, lifetime.Token).ConfigureAwait(false);
+            await socket.SendFinishedAsync(queueId, generation, lifetime.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException)
         {
@@ -246,6 +258,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         {
             try
             {
+                if (!leaseGate.TryGetGeneration(out var generation)) continue;
                 var identity = coordinator.ActiveOutput;
                 if (identity is null) continue;
 
@@ -258,7 +271,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
 
                 CurrentPositionMs = currentPosition;
                 PositionChanged?.Invoke(currentPosition);
-                await socket.SendProgressAsync(currentPosition, queueId,
+                await socket.SendProgressAsync(currentPosition, queueId, generation,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -270,6 +283,25 @@ public sealed class PlaybackTerminal : IAsyncDisposable
                 Error?.Invoke(exception);
             }
         }
+    }
+
+    private async Task ApplyAssignmentAsync(PlayerAssignment assignment)
+    {
+        leaseGate.Apply(assignment);
+        if (!leaseGate.TryGetGeneration(out _))
+        {
+            await FenceOutputAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task FenceOutputAsync()
+    {
+        try
+        {
+            await coordinator.InvalidateOutputProjectionAsync(lifetime.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (Exception exception) { Error?.Invoke(exception); }
     }
 
     public async ValueTask DisposeAsync()

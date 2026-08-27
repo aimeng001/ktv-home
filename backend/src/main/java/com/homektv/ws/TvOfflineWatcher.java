@@ -81,7 +81,7 @@ public class TvOfflineWatcher {
         boolean cleared = playbackService.clearOnTvOffline();
         if (cleared) {
             log.info("TV 离线超时，已清空播放队列");
-            broadcaster.broadcast(WsEvent.of(WsEvent.QUEUE_UPDATED, snapshotService.snapshot()));
+            broadcaster.broadcastPlayback(WsEvent.of(WsEvent.QUEUE_UPDATED, snapshotService.snapshot()));
             broadcaster.broadcast(WsEvent.of(WsEvent.TOAST,
                     java.util.Map.of("text", "电视已离线，播放队列已清空")));
         }

@@ -39,7 +39,8 @@ public class ClientTypeInterceptor implements HandshakeInterceptor {
                 if (eq > 0) {
                     String k = pair.substring(0, eq);
                     String v = pair.substring(eq + 1);
-                    if ("client_type".equals(k) || "client_token".equals(k)) {
+                    if ("client_type".equals(k) || "client_token".equals(k)
+                            || "protocol_version".equals(k) || "platform".equals(k)) {
                         attributes.put(k, v);
                     }
                 }

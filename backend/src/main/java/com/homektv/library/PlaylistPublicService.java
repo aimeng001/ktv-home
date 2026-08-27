@@ -98,8 +98,8 @@ public class PlaylistPublicService {
         boolean started = ordered > 0 && playbackService.startIfIdle();
         QueueSnapshot snapshot = snapshotService.snapshot();
         if (ordered > 0) {
-            broadcaster.broadcast(WsEvent.of(WsEvent.QUEUE_UPDATED, snapshot));
-            if (started) broadcaster.broadcast(WsEvent.of(WsEvent.NOW_PLAYING, snapshot));
+            broadcaster.broadcastPlayback(WsEvent.of(WsEvent.QUEUE_UPDATED, snapshot));
+            if (started) broadcaster.broadcastPlayback(WsEvent.of(WsEvent.NOW_PLAYING, snapshot));
         }
         return Map.of("ordered", ordered, "skipped", skipped, "snapshot", snapshot);
     }

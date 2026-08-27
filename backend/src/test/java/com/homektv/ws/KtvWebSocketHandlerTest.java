@@ -10,14 +10,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -27,6 +27,7 @@ class KtvWebSocketHandlerTest {
     private SnapshotService snapshotService;
     private PlaybackService playbackService;
     private TvOfflineWatcher offlineWatcher;
+    private ActivePlayerRegistry playerRegistry;
     private KtvWebSocketHandler handler;
 
     @BeforeEach
@@ -35,8 +36,9 @@ class KtvWebSocketHandlerTest {
         snapshotService = mock(SnapshotService.class);
         playbackService = mock(PlaybackService.class);
         offlineWatcher = mock(TvOfflineWatcher.class);
+        playerRegistry = new ActivePlayerRegistry();
         handler = new KtvWebSocketHandler(broadcaster, snapshotService, playbackService,
-                offlineWatcher, new ObjectMapper());
+                offlineWatcher, playerRegistry, new ObjectMapper());
     }
 
     @Test
@@ -49,7 +51,10 @@ class KtvWebSocketHandlerTest {
 
         verify(broadcaster).register(session);
         verify(offlineWatcher).onTvConnected();
-        verify(broadcaster).sendTo(eq(session), any(WsEvent.class));
+        var events = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster, org.mockito.Mockito.times(2)).sendTo(eq(session), events.capture());
+        assertThat(events.getAllValues()).extracting(WsEvent::type)
+                .containsExactly(WsEvent.PLAYER_ROLE, WsEvent.SYNC_FULL);
     }
 
     @Test
@@ -57,12 +62,12 @@ class KtvWebSocketHandlerTest {
         when(playbackService.updatePosition(21L, -4L))
                 .thenReturn(PositionUpdateResult.accepted(new com.homektv.domain.PlayerState()));
 
-        handler.handleTextMessage(mock(WebSocketSession.class), new TextMessage(
+        handler.handleTextMessage(activeLegacySession(), new TextMessage(
                 "{\"type\":\"progress\",\"payload\":{\"queue_id\":21,\"position_ms\":-4}}"));
 
         verify(playbackService).updatePosition(21L, -4L);
         var event = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
-        verify(broadcaster).broadcast(event.capture());
+        verify(broadcaster).broadcastPlayback(event.capture());
         assertThat(event.getValue().type()).isEqualTo(WsEvent.PROGRESS);
         assertThat(event.getValue().payload()).isInstanceOf(Map.class);
         Map<?, ?> payload = (Map<?, ?>) event.getValue().payload();
@@ -75,10 +80,10 @@ class KtvWebSocketHandlerTest {
         when(playbackService.updatePosition(21L, 500L))
                 .thenReturn(PositionUpdateResult.rejected(new com.homektv.domain.PlayerState()));
 
-        handler.handleTextMessage(mock(WebSocketSession.class), new TextMessage(
+        handler.handleTextMessage(activeLegacySession(), new TextMessage(
                 "{\"type\":\"progress\",\"payload\":{\"queue_id\":21,\"position_ms\":500}}"));
 
-        verify(broadcaster, org.mockito.Mockito.never()).broadcast(any(WsEvent.class));
+        verify(broadcaster, org.mockito.Mockito.never()).broadcastPlayback(any(WsEvent.class));
     }
 
     @Test
@@ -86,16 +91,17 @@ class KtvWebSocketHandlerTest {
         when(playbackService.onPlayError(7L, 8L))
                 .thenReturn(PlaybackTransitionResult.accepted(new com.homektv.domain.PlayerState()));
 
-        handler.handleTextMessage(mock(WebSocketSession.class), new TextMessage(
+        handler.handleTextMessage(activeLegacySession(), new TextMessage(
                 "{\"type\":\"play_error\",\"payload\":{\"file_id\":7,\"queue_id\":8,\"message\":\"读取失败\"}}"));
 
         verify(playbackService).onPlayError(7L, 8L);
-        var event = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
-        verify(broadcaster, org.mockito.Mockito.times(2)).broadcast(event.capture());
-        List<String> types = new ArrayList<>();
-        for (WsEvent value : event.getAllValues()) types.add(value.type());
-        assertThat(types).containsExactly(WsEvent.TOAST, WsEvent.NOW_PLAYING);
-        assertThat(((Map<?, ?>) event.getAllValues().get(0).payload()).get("text"))
+        var toast = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster).broadcast(toast.capture());
+        var playback = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster).broadcastPlayback(playback.capture());
+        assertThat(toast.getValue().type()).isEqualTo(WsEvent.TOAST);
+        assertThat(playback.getValue().type()).isEqualTo(WsEvent.NOW_PLAYING);
+        assertThat(((Map<?, ?>) toast.getValue().payload()).get("text"))
                 .asString().contains("读取失败");
     }
 
@@ -104,9 +110,95 @@ class KtvWebSocketHandlerTest {
         when(playbackService.onPlayError(10L, 100L))
                 .thenReturn(PlaybackTransitionResult.rejected(new com.homektv.domain.PlayerState()));
 
-        handler.handleTextMessage(mock(WebSocketSession.class), new TextMessage(
+        handler.handleTextMessage(activeLegacySession(), new TextMessage(
                 "{\"type\":\"play_error\",\"payload\":{\"file_id\":10,\"queue_id\":100,\"message\":\"旧歌曲读取失败\"}}"));
 
         verify(broadcaster, org.mockito.Mockito.never()).broadcast(any(WsEvent.class));
+    }
+
+    @Test
+    void standbyPlayerCannotReportProgress() throws Exception {
+        WebSocketSession active = playerSession("active", "active-token", 2);
+        WebSocketSession standby = playerSession("standby", "standby-token", 2);
+        handler.afterConnectionEstablished(active);
+        handler.afterConnectionEstablished(standby);
+
+        handler.handleTextMessage(standby, new TextMessage(
+                "{\"type\":\"progress\",\"payload\":{\"queue_id\":21,\"position_ms\":500,\"generation\":0}}"));
+
+        verify(playbackService, never()).updatePosition(any(), any(Long.class));
+    }
+
+    @Test
+    void activeDisconnectPromotesStandbyAndDoesNotStartOfflineCleanup() throws Exception {
+        WebSocketSession active = playerSession("active", "active-token", 2);
+        WebSocketSession standby = playerSession("standby", "standby-token", 2);
+        when(broadcaster.unregister(active)).thenReturn("tv");
+        handler.afterConnectionEstablished(active);
+        handler.afterConnectionEstablished(standby);
+
+        handler.afterConnectionClosed(active, org.springframework.web.socket.CloseStatus.NORMAL);
+
+        var events = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster, org.mockito.Mockito.times(2)).sendTo(eq("standby"), events.capture());
+        assertThat(events.getAllValues()).extracting(WsEvent::type)
+                .containsExactly(WsEvent.PLAYER_ROLE, WsEvent.SYNC_FULL);
+        verify(offlineWatcher, never()).onTvDisconnected();
+    }
+
+    @Test
+    void transportCloseStillUnregistersPlayerAfterBroadcasterAlreadyRemovedSession() throws Exception {
+        WebSocketSession active = playerSession("active", "active-token", 1);
+        WebSocketSession standby = playerSession("standby", "standby-token", 2);
+        handler.afterConnectionEstablished(active);
+        handler.afterConnectionEstablished(standby);
+
+        // A failed send may remove the broadcaster entry before Spring invokes
+        // the normal close callback. The player lease must still be removed.
+        handler.afterConnectionClosed(active, org.springframework.web.socket.CloseStatus.SERVER_ERROR);
+
+        var events = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster, org.mockito.Mockito.times(2)).sendTo(eq("standby"), events.capture());
+        assertThat(events.getAllValues()).extracting(WsEvent::type)
+                .containsExactly(WsEvent.PLAYER_ROLE, WsEvent.SYNC_FULL);
+        verify(offlineWatcher, never()).onTvDisconnected();
+    }
+
+    @Test
+    void activeV2HeartbeatRenewsItsLeaseAndReturnsCurrentGeneration() throws Exception {
+        WebSocketSession active = playerSession("active", "active-token", 2);
+        handler.afterConnectionEstablished(active);
+        clearInvocations(broadcaster);
+
+        handler.handleTextMessage(active, new TextMessage(
+                "{\"type\":\"ping\",\"payload\":{\"generation\":1}}"));
+
+        var event = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster).sendTo(eq(active), event.capture());
+        assertThat(event.getValue().type()).isEqualTo("pong");
+        Map<?, ?> payload = (Map<?, ?>) event.getValue().payload();
+        assertThat(payload.get("role")).isEqualTo("ACTIVE");
+        assertThat(payload.get("generation")).isEqualTo(1L);
+    }
+
+    private WebSocketSession playerSession(String id, String token, int protocolVersion) {
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.getId()).thenReturn(id);
+        when(session.getAttributes()).thenReturn(Map.of(
+                "client_type", "tv",
+                "client_token", token,
+                "protocol_version", String.valueOf(protocolVersion),
+                "platform", "WINDOWS"));
+        return session;
+    }
+
+    private WebSocketSession activeLegacySession() {
+        String id = "legacy-" + System.nanoTime();
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.getId()).thenReturn(id);
+        when(session.getAttributes()).thenReturn(Map.of("client_type", "tv"));
+        playerRegistry.register(id,
+                new ActivePlayerRegistry.PlayerHello(id, "LEGACY", 1));
+        return session;
     }
 }

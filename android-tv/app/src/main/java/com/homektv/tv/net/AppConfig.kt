@@ -63,8 +63,10 @@ class AppConfig(context: Context) {
         set(value) = prefs.edit { putBoolean(KEY_MICROPHONE_MONITOR, value) }
 
     /** WebSocket 地址：ws://host:port/ws?client_type=tv&client_token=xxx */
-    fun wsUrl(clientToken: String): String =
-        "ws://${serverHost}/ws?client_type=tv&client_token=$clientToken"
+    fun wsUrl(clientToken: String): String {
+        val encoded = android.net.Uri.encode(clientToken)
+        return "ws://${serverHost}/ws?client_type=tv&client_token=$encoded&protocol_version=2&platform=ANDROID_TV"
+    }
 
     /** REST/资源基址：http://host:port/api */
     fun apiBase(): String = "http://${serverHost}/api"

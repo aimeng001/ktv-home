@@ -41,7 +41,7 @@ class ControlControllerTest {
             @Override public Long resolveUserId(String clientToken) { return 42L; }
         };
         WsBroadcaster broadcaster = new WsBroadcaster(new ObjectMapper()) {
-            @Override public void broadcast(WsEvent event) { broadcast.set(event); }
+            @Override public void broadcastPlayback(WsEvent event) { broadcast.set(event); }
         };
         PlaybackService playbackService = new PlaybackService(null, null, null, null, null);
         ControlController controller = new ControlController(
@@ -70,7 +70,7 @@ class ControlControllerTest {
             @Override public Long resolveUserId(String clientToken) { return 42L; }
         };
         WsBroadcaster broadcaster = new WsBroadcaster(new ObjectMapper()) {
-            @Override public void broadcast(WsEvent event) { broadcast.set(event); }
+            @Override public void broadcastPlayback(WsEvent event) { broadcast.set(event); }
         };
         ControlController controller = new ControlController(
                 null, playbackService, snapshotService, userService, null, broadcaster);
@@ -99,7 +99,7 @@ class ControlControllerTest {
             @Override public Long resolveUserId(String clientToken) { return 42L; }
         };
         WsBroadcaster broadcaster = new WsBroadcaster(new ObjectMapper()) {
-            @Override public void broadcast(WsEvent event) { broadcast.set(event); }
+            @Override public void broadcastPlayback(WsEvent event) { broadcast.set(event); }
         };
         ControlController controller = new ControlController(
                 null, playbackService, snapshotService, userService, null, broadcaster);
@@ -129,7 +129,7 @@ class ControlControllerTest {
             @Override public Long resolveUserId(String clientToken) { return 42L; }
         };
         WsBroadcaster broadcaster = new WsBroadcaster(new ObjectMapper()) {
-            @Override public void broadcast(WsEvent event) { broadcast.set(event); }
+            @Override public void broadcastPlayback(WsEvent event) { broadcast.set(event); }
         };
         ControlController controller = new ControlController(
                 null, playbackService, snapshotService, userService, null, broadcaster);
