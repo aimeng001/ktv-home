@@ -128,6 +128,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Verify FFmpeg extension
         run: echo "9feed2a29f7717955f579eff0373503ef3f8681734b053797fbda3cf62b3a5ab  app/libs/media3-decoder-ffmpeg.aar" | sha256sum -c -
+      - name: Verify POSIX entrypoints
+        working-directory: .
+        run: python scripts/repo_portability_test.py
       - name: Prepare release signing keystore
         env:
           KTV_TV_KEYSTORE_BASE64: ${{ secrets.KTV_TV_KEYSTORE_BASE64 }}
