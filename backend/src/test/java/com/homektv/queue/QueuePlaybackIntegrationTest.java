@@ -332,12 +332,13 @@ class QueuePlaybackIntegrationTest {
         playbackService.play();
         Long failedQueueId = playerRepo.getSingleton().getCurrentQueueId();
 
-        PlayerState advanced = playbackService.onPlayError(file.getId());
+        PlaybackTransitionResult transition = playbackService.onPlayError(file.getId());
 
         assertThat(fileRepo.findById(file.getId()).orElseThrow().isValid()).isTrue();
         assertThat(queueRepo.findById(failedQueueId).orElseThrow().getStatus())
                 .isEqualTo(QueueService.SKIPPED);
-        assertThat(advanced.getCurrentQueueId()).isNotEqualTo(failedQueueId);
+        assertThat(transition.accepted()).isTrue();
+        assertThat(transition.state().getCurrentQueueId()).isNotEqualTo(failedQueueId);
         assertThat(songRepo.findById(song1).orElseThrow().getPlayCount()).isZero();
         assertThat(historyRepo.count()).isZero();
     }

@@ -146,22 +146,22 @@ public class PlaybackService {
     }
 
     @Transactional
-    public PlayerState onPlayError(Long fileId) {
+    public PlaybackTransitionResult onPlayError(Long fileId) {
         return onPlayError(fileId, null);
     }
 
     @Transactional
-    public PlayerState onPlayError(Long fileId, Long expectedQueueId) {
+    public PlaybackTransitionResult onPlayError(Long fileId, Long expectedQueueId) {
         PlayerState ps = playerRepo.getSingleton();
         if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
-            return ps;
+            return PlaybackTransitionResult.rejected(ps);
         }
         // fileId is retained for wire compatibility, but a client playback
         // error does not prove that the source file is invalid. Server-side
         // scanning remains responsible for marking disappeared files.
         markCurrent(ps, QueueService.SKIPPED, false);
         advanceToNext(ps);
-        return playerRepo.save(ps);
+        return PlaybackTransitionResult.accepted(playerRepo.save(ps));
     }
 
     @Transactional

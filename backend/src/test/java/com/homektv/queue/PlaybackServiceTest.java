@@ -86,9 +86,10 @@ class PlaybackServiceTest {
 
     @Test
     void stalePlayErrorDoesNotInvalidateOrAdvanceTheCurrentQueue() {
-        PlayerState result = playbackService.onPlayError(202L, 999L);
+        PlaybackTransitionResult result = playbackService.onPlayError(202L, 999L);
 
-        assertThat(result).isSameAs(playerState);
+        assertThat(result.accepted()).isFalse();
+        assertThat(result.state()).isSameAs(playerState);
         assertThat(playerState.getCurrentQueueId()).isEqualTo(100L);
         assertThat(currentQueue.getStatus()).isEqualTo(QueueService.PLAYING);
         verify(fileRepository, never()).findById(anyLong());

@@ -3,6 +3,7 @@ package com.homektv.ws;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.queue.PlaybackService;
+import com.homektv.queue.PlaybackTransitionResult;
 import com.homektv.queue.PositionUpdateResult;
 import com.homektv.queue.SnapshotService;
 import org.slf4j.Logger;
@@ -108,7 +109,8 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                         ? node.path("payload").path("file_id").asLong() : null;
                 Long queueId = node.path("payload").path("queue_id").isNumber()
                         ? node.path("payload").path("queue_id").asLong() : null;
-                playbackService.onPlayError(fileId, queueId);
+                PlaybackTransitionResult result = playbackService.onPlayError(fileId, queueId);
+                if (!result.accepted()) return;
                 broadcaster.broadcast(WsEvent.of(WsEvent.TOAST,
                         java.util.Map.of("text", "当前歌曲播放失败，已自动切换下一首：" + reason)));
                 broadcaster.broadcast(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));

@@ -2,6 +2,7 @@ package com.homektv.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.queue.PlaybackService;
+import com.homektv.queue.PlaybackTransitionResult;
 import com.homektv.queue.PositionUpdateResult;
 import com.homektv.queue.SnapshotService;
 import org.junit.jupiter.api.BeforeEach;
@@ -82,6 +83,9 @@ class KtvWebSocketHandlerTest {
 
     @Test
     void playErrorMessageForwardsBothFileAndQueueIdentity() throws Exception {
+        when(playbackService.onPlayError(7L, 8L))
+                .thenReturn(PlaybackTransitionResult.accepted(new com.homektv.domain.PlayerState()));
+
         handler.handleTextMessage(mock(WebSocketSession.class), new TextMessage(
                 "{\"type\":\"play_error\",\"payload\":{\"file_id\":7,\"queue_id\":8,\"message\":\"读取失败\"}}"));
 
@@ -93,5 +97,16 @@ class KtvWebSocketHandlerTest {
         assertThat(types).containsExactly(WsEvent.TOAST, WsEvent.NOW_PLAYING);
         assertThat(((Map<?, ?>) event.getAllValues().get(0).payload()).get("text"))
                 .asString().contains("读取失败");
+    }
+
+    @Test
+    void stalePlayErrorDoesNotBroadcastFeedback() throws Exception {
+        when(playbackService.onPlayError(10L, 100L))
+                .thenReturn(PlaybackTransitionResult.rejected(new com.homektv.domain.PlayerState()));
+
+        handler.handleTextMessage(mock(WebSocketSession.class), new TextMessage(
+                "{\"type\":\"play_error\",\"payload\":{\"file_id\":10,\"queue_id\":100,\"message\":\"旧歌曲读取失败\"}}"));
+
+        verify(broadcaster, org.mockito.Mockito.never()).broadcast(any(WsEvent.class));
     }
 }
