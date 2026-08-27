@@ -48,6 +48,7 @@ import com.homektv.tv.player.LyricLine
 import com.homektv.tv.player.MicrophoneMonitor
 import com.homektv.tv.player.PlaybackLoadGate
 import com.homektv.tv.player.PlaybackLoadTicket
+import com.homektv.tv.player.supportsVocalSwitch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
@@ -1012,7 +1013,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             binding.txtLyricCurrent.text = song.title
             binding.txtLyricPrevious.setLine(null, 0L)
         }
-        binding.txtVocalMode.text = if (song.hasVocalTrack) {
+        binding.txtVocalMode.text = if (supportsVocalSwitch(snapshot.audioLayout)) {
             if (snapshot.vocalMode == "original") "原唱中" else "伴唱中"
         } else ""
         binding.txtDuration.text = formatMs(song.durationMs.toLong())

@@ -1,5 +1,6 @@
 package com.homektv.library;
 
+import com.homektv.domain.AudioLayout;
 import com.homektv.media.MediaProbe;
 import org.junit.jupiter.api.Test;
 
@@ -39,6 +40,14 @@ class LibraryUnitTest {
     void hasVocalTrackNeedsTwoAudio() {
         assertThat(MediaClassifier.hasVocalTrack(new MediaProbe(1, 2, 0, true, null))).isTrue();
         assertThat(MediaClassifier.hasVocalTrack(new MediaProbe(1, 1, 0, true, null))).isFalse();
+    }
+
+    @Test
+    void vocalSwitchCapabilityFollowsAudioLayout() {
+        assertThat(MediaClassifier.supportsVocalSwitch(AudioLayout.DUAL_TRACK)).isTrue();
+        assertThat(MediaClassifier.supportsVocalSwitch(AudioLayout.DUAL_CHANNEL)).isTrue();
+        assertThat(MediaClassifier.supportsVocalSwitch(AudioLayout.NORMAL_STEREO)).isFalse();
+        assertThat(MediaClassifier.supportsVocalSwitch(null)).isFalse();
     }
 
     // ---- P1.3 指纹去重 ----

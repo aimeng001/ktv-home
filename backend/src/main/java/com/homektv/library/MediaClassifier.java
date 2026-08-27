@@ -1,5 +1,6 @@
 package com.homektv.library;
 
+import com.homektv.domain.AudioLayout;
 import com.homektv.media.MediaProbe;
 
 import java.nio.charset.StandardCharsets;
@@ -39,6 +40,15 @@ public final class MediaClassifier {
     /** 是否可切伴唱：含独立伴奏音轨（≥2 音轨） */
     public static boolean hasVocalTrack(MediaProbe probe) {
         return probe.audioTracks() >= 2;
+    }
+
+    /**
+     * Whether the client can switch between original and accompaniment audio.
+     * This is intentionally separate from {@link #hasVocalTrack(MediaProbe)}:
+     * DUAL_CHANNEL has one audio stream, while DUAL_TRACK has independent tracks.
+     */
+    public static boolean supportsVocalSwitch(AudioLayout layout) {
+        return layout == AudioLayout.DUAL_TRACK || layout == AudioLayout.DUAL_CHANNEL;
     }
 
     /**
