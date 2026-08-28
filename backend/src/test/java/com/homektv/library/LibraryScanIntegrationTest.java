@@ -19,6 +19,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -176,6 +177,33 @@ class LibraryScanIntegrationTest {
 
         assertThat(updated.updated()).isGreaterThanOrEqualTo(1);
         assertThat(Files.readString(cached)).contains("<00:02.50>词");
+    }
+
+    @Test
+    void equalFingerprintsAreMergedWithoutLeavingPendingRows() throws Exception {
+        assumeTrue(ffmpegAvailable, "ffmpeg 不可用，跳过");
+        Path duplicateDir = libraryDir.resolve("duplicate-source");
+        Path duplicate = duplicateDir.resolve("周杰伦 - 晴天.mkv");
+        Files.createDirectories(duplicateDir);
+        Files.copy(libraryDir.resolve("周杰伦 - 晴天.mkv"), duplicate,
+                StandardCopyOption.REPLACE_EXISTING);
+
+        try {
+            LibraryScanService.ScanResult result = scanService.scanAll();
+
+            assertThat(result.scanned()).isGreaterThanOrEqualTo(4);
+            List<Song> matchingSongs = songRepo.findAll().stream()
+                    .filter(song -> "晴天".equals(song.getTitle()))
+                    .toList();
+            assertThat(matchingSongs).hasSize(1);
+            List<SongFile> matchingFiles = fileRepo.findBySongIdOrderByPriorityDesc(
+                    matchingSongs.get(0).getId());
+            assertThat(matchingFiles).hasSize(2)
+                    .allMatch(file -> !file.isProbePending());
+        } finally {
+            Files.deleteIfExists(duplicate);
+            Files.deleteIfExists(duplicateDir);
+        }
     }
 
     @Test

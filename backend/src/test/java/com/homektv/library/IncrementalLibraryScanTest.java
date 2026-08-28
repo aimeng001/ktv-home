@@ -23,12 +23,19 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
+import java.util.Collections;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -57,9 +64,10 @@ class IncrementalLibraryScanTest {
     @Mock
     private SongFileRepository songFileRepository;
 
-    private final Map<String, Song> songsByFingerprint = new HashMap<>();
-    private final Map<Long, Song> songsById = new HashMap<>();
-    private final Map<String, SongFile> filesByPath = new HashMap<>();
+    private final Map<String, Song> songsByFingerprint = new ConcurrentHashMap<>();
+    private final Map<Long, Song> songsById = new ConcurrentHashMap<>();
+    private final Map<String, SongFile> filesByPath = new ConcurrentHashMap<>();
+    private final List<String> repositorySaveThreads = Collections.synchronizedList(new ArrayList<>());
     private final AtomicLong ids = new AtomicLong(100);
 
     private LibraryScanService scanService;
@@ -87,6 +95,7 @@ class IncrementalLibraryScanTest {
         lenient().when(songRepository.findById(anyLong())).thenAnswer(invocation ->
                 Optional.ofNullable(songsById.get(invocation.getArgument(0))));
         when(songRepository.save(any(Song.class))).thenAnswer(invocation -> {
+            repositorySaveThreads.add(Thread.currentThread().getName());
             Song song = invocation.getArgument(0);
             if (song.getId() == null) song.setId(ids.getAndIncrement());
             songsByFingerprint.entrySet().removeIf(entry -> entry.getValue() == song);
@@ -176,6 +185,7 @@ class IncrementalLibraryScanTest {
                         .filter(file -> invocation.getArgument(0).equals(file.getSongId()) && file.isValid())
                         .toList());
         when(songFileRepository.save(any(SongFile.class))).thenAnswer(invocation -> {
+            repositorySaveThreads.add(Thread.currentThread().getName());
             SongFile file = invocation.getArgument(0);
             if (file.getId() == null) file.setId(ids.getAndIncrement());
             filesByPath.entrySet().removeIf(entry -> entry.getValue() == file);
@@ -236,7 +246,66 @@ class IncrementalLibraryScanTest {
             return probe();
         });
 
-        scanService.scanAll();
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.scanned()).isEqualTo(500);
+        assertThat(result.added()).isEqualTo(500);
+        assertThat(result.skipped()).isZero();
+        assertThat(result.probeCalls()).isEqualTo(500);
+        assertThat(result.probeQueued()).isEqualTo(500);
+        assertThat(filesByPath).hasSize(500);
+        assertThat(filesByPath.values()).allMatch(file -> !file.isProbePending());
+    }
+
+    @Test
+    void probeWorkersOnlyProbeAndDatabaseMergeRunsOnScanThread() throws Exception {
+        for (int index = 0; index < 4; index++) {
+            Files.write(sourceDir.resolve("歌手-歌曲" + index + "-国语-流行.mkv"), new byte[]{1});
+        }
+        String scanThread = Thread.currentThread().getName();
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.probeCalls()).isEqualTo(4);
+        assertThat(repositorySaveThreads).isNotEmpty()
+                .allMatch(threadName -> threadName.equals(scanThread));
+    }
+
+    @Test
+    void probeConcurrencyIsBoundedToTwoWorkers() throws Exception {
+        for (int index = 0; index < 5; index++) {
+            Files.write(sourceDir.resolve("歌手-歌曲" + index + "-国语-流行.mkv"), new byte[]{1});
+        }
+        AtomicInteger active = new AtomicInteger();
+        AtomicInteger maxActive = new AtomicInteger();
+        CountDownLatch firstTwoStarted = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        when(ffprobe.probe(any(Path.class))).thenAnswer(invocation -> {
+            int current = active.incrementAndGet();
+            maxActive.accumulateAndGet(current, Math::max);
+            firstTwoStarted.countDown();
+            try {
+                if (!release.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("probe workers were not released");
+                }
+                return probe();
+            } finally {
+                active.decrementAndGet();
+            }
+        });
+
+        ExecutorService runner = Executors.newSingleThreadExecutor();
+        try {
+            Future<LibraryScanService.ScanResult> result = runner.submit(scanService::scanAll);
+            assertThat(firstTwoStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            release.countDown();
+            assertThat(result.get(20, TimeUnit.SECONDS).probeCalls()).isEqualTo(5);
+        } finally {
+            release.countDown();
+            runner.shutdownNow();
+        }
+
+        assertThat(maxActive).hasValue(2);
     }
 
     @Test

@@ -51,6 +51,31 @@ class FFprobeRealProbeTest {
         assertThat(p.durationMs()).isBetween(2800L, 3200L);
     }
 
+    @Test
+    void probeDelayedMpegTsKeepsAudioCodecAndChannels(@TempDir Path tmp) throws Exception {
+        assumeTrue(toolsAvailable, "ffmpeg/ffprobe 不可用，跳过真实探测测试");
+
+        Path media = tmp.resolve("delayed-audio.ts");
+        int gen = run(
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", "testsrc=duration=6:size=320x180:rate=25",
+                "-itsoffset", "3",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "mpeg2video", "-c:a", "mp2", "-f", "mpegts",
+                media.toString()
+        );
+        assumeTrue(gen == 0, "ffmpeg 生成延迟音频测试文件失败，跳过");
+
+        FFprobeService service = new FFprobeService(new com.homektv.config.AppProperties());
+        MediaProbe p = service.probe(media);
+
+        assertThat(p.audioTracks()).isEqualTo(1);
+        assertThat(p.audioCodec()).isEqualTo("mp2");
+        assertThat(p.audioStreams()).singleElement()
+                .extracting(AudioStreamInfo::channels).isEqualTo(1);
+    }
+
     private static boolean commandExists(String cmd) {
         try {
             Process p = new ProcessBuilder(cmd, "-version")

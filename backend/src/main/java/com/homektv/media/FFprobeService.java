@@ -8,9 +8,16 @@ import com.homektv.config.AppProperties;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * 通过 ProcessBuilder 调用 ffprobe 探测媒体文件（P0.7）。
@@ -24,12 +31,37 @@ import java.util.concurrent.TimeUnit;
 public class FFprobeService {
 
     private static final Logger log = LoggerFactory.getLogger(FFprobeService.class);
+    private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration OUTPUT_DRAIN_TIMEOUT = Duration.ofSeconds(5);
 
     private final String ffprobePath;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final ProcessStarter processStarter;
+    private final Duration timeout;
 
+    @Autowired
     public FFprobeService(AppProperties props) {
+        this(props, FFprobeService::startProcess, DEFAULT_TIMEOUT);
+    }
+
+    FFprobeService(AppProperties props, ProcessStarter processStarter, Duration timeout) {
         this.ffprobePath = props.getFfprobePath();
+        this.processStarter = processStarter;
+        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+            throw new IllegalArgumentException("ffprobe timeout must be positive");
+        }
+        this.timeout = timeout;
+    }
+
+    @FunctionalInterface
+    interface ProcessStarter {
+        Process start(List<String> command) throws IOException;
+    }
+
+    private static Process startProcess(List<String> command) throws IOException {
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.redirectErrorStream(false);
+        return builder.start();
     }
 
     /**
@@ -38,43 +70,59 @@ public class FFprobeService {
      * @throws MediaProbeException 探测失败（进程异常、超时、非媒体文件等）
      */
     public MediaProbe probe(Path file) {
-        ProcessBuilder pb = new ProcessBuilder(
+        List<String> command = List.of(
                 ffprobePath,
                 "-v", "error",
-                "-probesize", "1048576",
-                "-analyzeduration", "1000000",
                 "-print_format", "json",
                 "-show_format",
                 "-show_streams",
                 file.toString()
         );
-        pb.redirectErrorStream(false);
 
         Process process;
         try {
-            process = pb.start();
+            process = processStarter.start(command);
         } catch (IOException e) {
             throw new MediaProbeException("无法启动 ffprobe（请确认已安装并在 PATH 中）：" + ffprobePath, e);
         }
 
+        FutureTask<String> stdoutTask = new FutureTask<>(
+                () -> readUtf8(process.getInputStream()));
+        FutureTask<String> stderrTask = new FutureTask<>(
+                () -> readUtf8(process.getErrorStream()));
+        Thread.ofVirtual().name("ffprobe-stdout-reader").start(stdoutTask);
+        Thread.ofVirtual().name("ffprobe-stderr-reader").start(stderrTask);
         try {
-            String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-
-            boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+            boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
             if (!finished) {
                 process.destroyForcibly();
                 throw new MediaProbeException("ffprobe 探测超时：" + file);
             }
+            String stdout = stdoutTask.get(OUTPUT_DRAIN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            String stderr = stderrTask.get(OUTPUT_DRAIN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
             if (process.exitValue() != 0) {
                 throw new MediaProbeException("ffprobe 探测失败（exit=" + process.exitValue() + "）：" + stderr.trim());
             }
             return parse(stdout);
-        } catch (IOException e) {
+        } catch (ExecutionException e) {
             throw new MediaProbeException("读取 ffprobe 输出失败：" + file, e);
+        } catch (TimeoutException e) {
+            process.destroyForcibly();
+            throw new MediaProbeException("读取 ffprobe 输出超时：" + file, e);
         } catch (InterruptedException e) {
+            process.destroyForcibly();
             Thread.currentThread().interrupt();
             throw new MediaProbeException("ffprobe 探测被中断：" + file, e);
+        } finally {
+            if (process.isAlive()) process.destroyForcibly();
+            stdoutTask.cancel(true);
+            stderrTask.cancel(true);
+        }
+    }
+
+    private static String readUtf8(InputStream stream) throws IOException {
+        try (stream) {
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
 
