@@ -424,7 +424,7 @@ public class MediaImportService {
         }
 
         MediaProbe probe = ffprobeService.probe(source);
-        TagInfo tag = tagReader.read(source.toFile());
+        TagInfo tag = LibraryScanService.isAudioFile(source) ? tagReader.read(source.toFile()) : new TagInfo();
         ParsedMeta parsed = tag.hasTitle()
                 ? ParsedMeta.of(tag.getTitle(), tag.getArtist())
                 : parseFilename(source);

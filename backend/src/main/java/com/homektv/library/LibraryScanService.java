@@ -1240,7 +1240,9 @@ public class LibraryScanService {
             }
         }
         song = songRepo.save(song);
-        counters.dbUpdates++;
+        synchronized (counters) {
+            counters.dbUpdates++;
+        }
 
         // 7) 写 song_files（KTV 视频优先级高）
         int priority = switch (mediaType) {
@@ -1333,7 +1335,9 @@ public class LibraryScanService {
         sf.setSourceDeleted(false);
         sf.setProbePending(false);
         sf = fileRepo.save(sf);
-        counters.dbUpdates++;
+        synchronized (counters) {
+            counters.dbUpdates++;
+        }
         if (provisionalToDelete != null) songRepo.delete(provisionalToDelete);
 
         IngestOutcome outcome;
