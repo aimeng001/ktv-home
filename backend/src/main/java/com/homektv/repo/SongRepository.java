@@ -17,6 +17,8 @@ import java.util.List;
  */
 public interface SongRepository extends JpaRepository<Song, Long> {
 
+    List<String> findDistinctArtistByStatus(String status);
+
     Optional<Song> findByFingerprint(String fingerprint);
 
     List<Song> findTop10ByTitleIgnoreCase(String title);

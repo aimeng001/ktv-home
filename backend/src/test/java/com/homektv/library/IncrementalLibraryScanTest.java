@@ -7,6 +7,7 @@ import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
 import com.homektv.media.MediaProbeException;
 import com.homektv.repo.SongFileRepository;
+import com.homektv.repo.SongFileScanSnapshot;
 import com.homektv.repo.SongRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,11 +22,16 @@ import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -70,6 +76,12 @@ class IncrementalLibraryScanTest {
         props.setLibraryMode(LibraryMode.EXTERNAL_READ_ONLY);
 
         lenient().when(songRepository.findAll()).thenAnswer(invocation -> new ArrayList<>(songsById.values()));
+        lenient().when(songRepository.findDistinctArtistByStatus(anyString()))
+                .thenAnswer(invocation -> songsById.values().stream()
+                        .filter(song -> invocation.getArgument(0).equals(song.getStatus()))
+                        .map(Song::getArtist)
+                        .filter(java.util.Objects::nonNull)
+                        .toList());
         lenient().when(songRepository.findByFingerprint(anyString())).thenAnswer(invocation ->
                 Optional.ofNullable(songsByFingerprint.get(invocation.getArgument(0))));
         lenient().when(songRepository.findById(anyLong())).thenAnswer(invocation ->
@@ -87,6 +99,78 @@ class IncrementalLibraryScanTest {
                 Optional.ofNullable(filesByPath.get(invocation.getArgument(0))));
         lenient().when(songFileRepository.findByFileRoleOrderByImportedAtDesc(anyString())).thenAnswer(invocation ->
                 filesByPath.values().stream().filter(file -> invocation.getArgument(0).equals(file.getFileRole())).toList());
+        lenient().when(songFileRepository.findByFileRoleAndFilePathIn(anyString(), org.mockito.ArgumentMatchers.anyCollection()))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    Collection<String> paths = invocation.getArgument(1);
+                    return filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()) && paths.contains(file.getFilePath()))
+                            .toList();
+                });
+        lenient().when(songFileRepository.findByFileRoleAndRelativePathIn(anyString(), org.mockito.ArgumentMatchers.anyCollection()))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    Collection<String> relativePaths = invocation.getArgument(1);
+                    return filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()) && relativePaths.contains(file.getRelativePath()))
+                            .toList();
+                });
+        lenient().when(songFileRepository.findScanSnapshotsByFileRoleAndFilePathGreaterThanOrderByFilePath(
+                anyString(), anyString(), org.mockito.ArgumentMatchers.any(Pageable.class)))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    String after = invocation.getArgument(1);
+                    Pageable page = invocation.getArgument(2);
+                    List<SongFileScanSnapshot> snapshots = filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()))
+                            .filter(file -> file.getFilePath() != null && file.getFilePath().compareTo(after) > 0)
+                            .sorted(java.util.Comparator.comparing(SongFile::getFilePath))
+                            .<SongFileScanSnapshot>map(file -> new SongFileScanSnapshot() {
+                                public Long getId() { return file.getId(); }
+                                public String getFilePath() { return file.getFilePath(); }
+                                public Boolean getProbePending() { return file.isProbePending(); }
+                            }).toList();
+                    int from = Math.min((int) page.getOffset(), snapshots.size());
+                    int to = Math.min(from + page.getPageSize(), snapshots.size());
+                    return new PageImpl<>(snapshots.subList(from, to), page, snapshots.size());
+                });
+        lenient().when(songFileRepository.findByFileRoleAndFilePathGreaterThanOrderByFilePath(
+                anyString(), anyString(), org.mockito.ArgumentMatchers.any(Pageable.class)))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    String after = invocation.getArgument(1);
+                    Pageable page = invocation.getArgument(2);
+                    List<SongFile> rows = filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()))
+                            .filter(file -> file.getFilePath() != null && file.getFilePath().compareTo(after) > 0)
+                            .sorted(java.util.Comparator.comparing(SongFile::getFilePath))
+                            .toList();
+                    int from = Math.min((int) page.getOffset(), rows.size());
+                    int to = Math.min(from + page.getPageSize(), rows.size());
+                    return new PageImpl<>(rows.subList(from, to), page, rows.size());
+                });
+        lenient().when(songFileRepository
+                .findByFileRoleAndProbePendingTrueAndFilePathGreaterThanOrderByFilePath(
+                        anyString(), anyString(), any(Pageable.class)))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    String after = invocation.getArgument(1);
+                    Pageable page = invocation.getArgument(2);
+                    List<SongFile> pending = filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()))
+                            .filter(SongFile::isProbePending)
+                            .filter(file -> file.getFilePath() != null && file.getFilePath().compareTo(after) > 0)
+                            .sorted(java.util.Comparator.comparing(SongFile::getFilePath))
+                            .toList();
+                    int from = Math.min((int) page.getOffset(), pending.size());
+                    int to = Math.min(from + page.getPageSize(), pending.size());
+                    return new PageImpl<>(pending.subList(from, to), page, pending.size());
+                });
+        lenient().when(songFileRepository.countByFileRoleAndProbePendingTrue(anyString()))
+                .thenAnswer(invocation -> filesByPath.values().stream()
+                        .filter(file -> invocation.getArgument(0).equals(file.getFileRole()))
+                        .filter(SongFile::isProbePending)
+                        .count());
         lenient().when(songFileRepository.findBySongIdAndValidTrueOrderByPriorityDesc(anyLong())).thenAnswer(invocation ->
                 filesByPath.values().stream()
                         .filter(file -> invocation.getArgument(0).equals(file.getSongId()) && file.isValid())
@@ -123,6 +207,36 @@ class IncrementalLibraryScanTest {
         assertThat(result.hashCalls()).isZero();
         assertThat(result.dbUpdates()).isEqualTo(4);
         verify(ffprobe, times(1)).probe(any(Path.class));
+    }
+
+    @Test
+    void scanUsesBoundedArtistQueryInsteadOfLoadingTheWholeSongEntityTable() throws Exception {
+        Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+
+        scanService.scanAll();
+
+        verify(songRepository).findDistinctArtistByStatus("ok");
+        verify(songRepository, org.mockito.Mockito.never()).findAll();
+        verify(songFileRepository, org.mockito.Mockito.never())
+                .findByFileRoleOrderByImportedAtDesc(anyString());
+    }
+
+    @Test
+    void firstFastIndexBatchIsVisibleBeforeTheFirstMediaProbe() throws Exception {
+        for (int index = 0; index < 500; index++) {
+            Files.write(sourceDir.resolve("歌手-歌曲" + index + "-国语-流行.mkv"), new byte[]{1});
+        }
+        AtomicBoolean firstProbe = new AtomicBoolean(true);
+        when(ffprobe.probe(any(Path.class))).thenAnswer(invocation -> {
+            if (firstProbe.getAndSet(false)) {
+                assertThat(scanService.getScanProgress().completed())
+                        .as("first Fast Index batch must be visible before FFprobe")
+                        .isGreaterThan(0);
+            }
+            return probe();
+        });
+
+        scanService.scanAll();
     }
 
     @Test

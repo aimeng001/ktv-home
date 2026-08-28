@@ -8,10 +8,17 @@ import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
 import com.homektv.media.MediaProbeException;
 import com.homektv.repo.SongFileRepository;
+import com.homektv.repo.SongFileScanSnapshot;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Slice;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import jakarta.annotation.PreDestroy;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -49,6 +56,12 @@ public class LibraryScanService {
             "mp3", "mp2", "aac", "flac", "wav", "m4a", "ape", "ogg", "oga", "opus",
             "ac3", "eac3", "dts", "mka", "wma", "aiff", "aif", "alac" // 音频
     );
+    static final int FAST_INDEX_BATCH_SIZE = 500;
+    static final int PROBE_PAGE_SIZE = 64;
+    private static final String PHASE_DISCOVERING = "DISCOVERING";
+    private static final String PHASE_FAST_INDEX = "FAST_INDEX";
+    private static final String PHASE_MEDIA_PROBE = "MEDIA_PROBE";
+    private static final String PHASE_COMPLETED = "COMPLETED";
 
     private final AppProperties props;
     private final FFprobeService ffprobe;
@@ -65,19 +78,28 @@ public class LibraryScanService {
     private final AtomicReference<ScanProgress> scanProgress = new AtomicReference<>(ScanProgress.idle());
     private final Object scanLock = new Object();
     private final Object artistIndexLock = new Object();
+    private final TransactionTemplate batchTransaction;
+    @PersistenceContext
+    private EntityManager entityManager;
     private volatile Set<String> cachedArtistNames = Set.of();
     private volatile FilenameParser.ArtistIndex cachedArtistIndex =
             FilenameParser.prepareKnownArtists(Set.of());
 
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter) {
-        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, null);
+        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, null, null);
+    }
+
+    public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
+                              SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
+                              SettingService settingService) {
+        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, settingService, null);
     }
 
     @Autowired
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
-                              SettingService settingService) {
+                              SettingService settingService, PlatformTransactionManager transactionManager) {
         this.props = props;
         this.ffprobe = ffprobe;
         this.tagReader = tagReader;
@@ -85,6 +107,7 @@ public class LibraryScanService {
         this.fileRepo = fileRepo;
         this.assetWriter = assetWriter;
         this.settingService = settingService;
+        this.batchTransaction = transactionManager == null ? null : new TransactionTemplate(transactionManager);
     }
 
     public record ScanResult(int scanned, int added, int updated, int skipped, int unrecognized,
@@ -97,79 +120,106 @@ public class LibraryScanService {
     public record IngestResult(boolean imported, Long songId, Long songFileId) {}
     public record ScanProgress(boolean running, int total, int completed, String currentFile,
                                int added, int updated, int skipped, int unrecognized,
-                               OffsetDateTime startedAt, OffsetDateTime finishedAt) {
+                               OffsetDateTime startedAt, OffsetDateTime finishedAt,
+                               String phase, int discovered, int fastIndexed, int probeQueued,
+                               int probeCompleted) {
+        public ScanProgress(boolean running, int total, int completed, String currentFile,
+                            int added, int updated, int skipped, int unrecognized,
+                            OffsetDateTime startedAt, OffsetDateTime finishedAt) {
+            this(running, total, completed, currentFile, added, updated, skipped, unrecognized,
+                    startedAt, finishedAt,
+                    finishedAt != null ? PHASE_COMPLETED
+                            : running && total == 0 ? PHASE_DISCOVERING
+                            : running ? PHASE_MEDIA_PROBE : PHASE_COMPLETED,
+                    total, total, 0, Math.max(0, completed));
+        }
+
         static ScanProgress idle() {
-            return new ScanProgress(false, 0, 0, null, 0, 0, 0, 0, null, null);
+            return new ScanProgress(false, 0, 0, null, 0, 0, 0, 0,
+                    null, null, "IDLE", 0, 0, 0, 0);
         }
     }
 
-    /** 全量/增量扫描曲库根目录。Fast Index 与串行 Media Probe Queue 分阶段执行。 */
+    /** 全量/增量扫描曲库根目录。Fast Index 与数据库持久化 Media Probe Queue 分阶段执行。 */
     public ScanResult scanAll() {
         synchronized (scanLock) {
             OffsetDateTime startedAt = OffsetDateTime.now();
-            scanProgress.set(new ScanProgress(true, 0, 0, null, 0, 0, 0, 0, startedAt, null));
-            Path root = LibraryModePolicy.activeLibraryRoot(props);
+            publishProgress(true, 0, 0, null, new ScanTotals(), PHASE_DISCOVERING,
+                    0, 0, 0, startedAt, null);
+            Path root = LibraryModePolicy.activeLibraryRoot(props).toAbsolutePath().normalize();
             if (!Files.isDirectory(root)) {
                 log.warn("曲库目录不存在：{}", root);
                 ScanResult result = new ScanResult(0, 0, 0, 0, 0);
-                scanProgress.set(new ScanProgress(false, 0, 0, null, 0, 0, 0, 0,
-                        startedAt, OffsetDateTime.now()));
+                publishProgress(false, 0, 0, null, new ScanTotals(), PHASE_COMPLETED,
+                        0, 0, 0, startedAt, OffsetDateTime.now());
                 return result;
             }
+
+            ScanRootContext rootContext;
+            try {
+                rootContext = ScanRootContext.create(root, LibraryModePolicy.isExternalReadOnly(props));
+            } catch (RuntimeException failure) {
+                log.error("无法安全解析曲库根目录，停止本轮扫描：{}", failure.getMessage());
+                publishProgress(false, 0, 0, null, new ScanTotals(), PHASE_COMPLETED,
+                        0, 0, 0, startedAt, OffsetDateTime.now());
+                return new ScanResult(0, 0, 0, 0, 0);
+            }
+
             Set<String> knownArtists = existingArtistNames();
             AudioLayout externalDefault = LibraryModePolicy.isExternalReadOnly(props)
                     ? configuredExternalDefaultAudioLayout() : null;
             FilenameParser.ArtistIndex artistIndex = artistIndexFor(knownArtists);
             String activeRole = activeFileRole();
-            List<SongFile> trackedFiles = trackedFiles(activeRole);
-            Map<String, SongFile> trackedByPath = new HashMap<>();
-            Map<String, SongFile> trackedByRelativePath = new HashMap<>();
-            Set<String> ambiguousRelativePaths = new HashSet<>();
-            for (SongFile tracked : trackedFiles) {
-                if (tracked != null && tracked.getFilePath() != null) {
-                    trackedByPath.put(tracked.getFilePath(), tracked);
-                }
-                if (tracked != null && !isBlank(tracked.getRelativePath())) {
-                    String relativePath = tracked.getRelativePath();
-                    if (ambiguousRelativePaths.contains(relativePath)) continue;
-                    SongFile previous = trackedByRelativePath.putIfAbsent(relativePath, tracked);
-                    if (previous != null && previous != tracked) {
-                        // A relative path is only a safe remount key when it is unique
-                        // within the active role. Fall back to the absolute path or add
-                        // a new row for ambiguous legacy data rather than reassigning a
-                        // song file arbitrarily.
-                        trackedByRelativePath.remove(relativePath);
-                        ambiguousRelativePaths.add(relativePath);
-                    }
-                }
-            }
-            List<FastIndexEntry> indexedEntries = new ArrayList<>();
+            ScanStartSnapshot scanStart = loadScanStart(activeRole);
+            Set<Long> trackedIdsAtScanStart = scanStart.ids();
+            Set<String> trackedPathsAtScanStart = scanStart.paths();
+            Set<Long> pendingIdsAtScanStart = scanStart.pendingIds();
+            Set<String> pendingPathsAtScanStart = scanStart.pendingPaths();
+
+            List<FastIndexEntry> batch = new ArrayList<>(FAST_INDEX_BATCH_SIZE);
             Set<String> currentPaths = new HashSet<>();
             ScanCounters counters = new ScanCounters();
+            ScanTotals totals = new ScanTotals();
+            int[] discovered = {0};
             boolean[] enumerationComplete = {true};
             try {
                 Files.walkFileTree(root, new SimpleFileVisitor<>() {
                     @Override
                     public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                        return isExternalPathAllowed(dir)
-                                ? FileVisitResult.CONTINUE
-                                : FileVisitResult.SKIP_SUBTREE;
+                        return rootContext.allowsVisitedDirectory(dir)
+                                ? FileVisitResult.CONTINUE : FileVisitResult.SKIP_SUBTREE;
                     }
 
                     @Override
                     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                        if (isMediaFile(file) && isExternalPathAllowed(file)) {
-                            try {
-                                FastIndexEntry entry = fastIndex(file, attrs, artistIndex,
-                                        trackedByPath, trackedByRelativePath);
-                                indexedEntries.add(entry);
-                                currentPaths.add(entry.path());
-                                counters.fastIndexed++;
-                            } catch (RuntimeException failure) {
-                                enumerationComplete[0] = false;
-                                log.warn("快速索引失败，跳过：{} - {}", file, failure.getMessage());
-                            }
+                        if (!attrs.isRegularFile() || Files.isSymbolicLink(file)
+                                || !isMediaFile(file) || !rootContext.allowsVisitedFile(file)) {
+                            return FileVisitResult.CONTINUE;
                         }
+                        try {
+                            FastIndexEntry entry = fastIndex(file, attrs, artistIndex,
+                                    Map.of(), Map.of(), rootContext.configuredRoot());
+                            batch.add(entry);
+                            currentPaths.add(entry.path());
+                            counters.fastIndexed++;
+                            discovered[0]++;
+                            if (batch.size() >= FAST_INDEX_BATCH_SIZE) {
+                                processFastIndexBatch(batch, externalDefault, counters, totals,
+                                        startedAt, discovered[0], activeRole,
+                                        trackedIdsAtScanStart, trackedPathsAtScanStart);
+                                batch.clear();
+                            }
+                        } catch (RuntimeException failure) {
+                            enumerationComplete[0] = false;
+                            log.warn("快速索引失败，跳过：{} - {}", file, failure.getMessage());
+                        }
+                        return FileVisitResult.CONTINUE;
+                    }
+
+                    @Override
+                    public FileVisitResult visitFileFailed(Path file, IOException failure) {
+                        enumerationComplete[0] = false;
+                        log.warn("读取曲库文件失败，保留待重试：{} - {}", file, failure.getMessage());
                         return FileVisitResult.CONTINUE;
                     }
                 });
@@ -177,69 +227,294 @@ public class LibraryScanService {
                 enumerationComplete[0] = false;
                 log.error("遍历曲库失败：{}", e.getMessage());
             }
-            scanProgress.set(new ScanProgress(true, indexedEntries.size(), 0, null, 0, 0, 0, 0,
-                    startedAt, null));
+            if (!batch.isEmpty()) {
+                processFastIndexBatch(batch, externalDefault, counters, totals,
+                        startedAt, discovered[0], activeRole,
+                        trackedIdsAtScanStart, trackedPathsAtScanStart);
+                batch.clear();
+            }
 
-            int added = 0, updated = 0, skipped = 0, unrecognized = 0;
-            ArrayDeque<FastIndexEntry> probeQueue = new ArrayDeque<>();
-            for (FastIndexEntry entry : indexedEntries) {
+            if (enumerationComplete[0]) {
+                markMissingFiles(root, currentPaths, counters, activeRole);
+            } else {
+                log.warn("曲库枚举未完整结束，本轮不标记消失文件，等待下次扫描重试：{}", root);
+            }
+
+            long pendingCount = fileRepo.countByFileRoleAndProbePendingTrue(activeRole);
+            counters.probeQueued = safeInt(pendingCount);
+            publishProgress(true, discovered[0], counters.fastIndexed, null, totals,
+                    PHASE_MEDIA_PROBE, counters.fastIndexed, counters.probeQueued, 0,
+                    startedAt, null);
+            processPendingProbes(rootContext, artistIndex, knownArtists, externalDefault,
+                    activeRole, trackedIdsAtScanStart, trackedPathsAtScanStart,
+                    pendingIdsAtScanStart, pendingPathsAtScanStart,
+                    counters, totals, startedAt, discovered[0]);
+
+            log.info("扫描完成：共 {} 文件，新增 {}，更新 {}，跳过 {}，未识别 {}",
+                    discovered[0], totals.added, totals.updated, totals.skipped, totals.unrecognized);
+            ScanResult result = new ScanResult(discovered[0], totals.added, totals.updated,
+                    totals.skipped, totals.unrecognized, counters.fastIndexed,
+                    counters.probeQueued, counters.probeCalls, counters.hashCalls,
+                    counters.dbUpdates, counters.missing);
+            publishProgress(false, discovered[0], discovered[0], null, totals, PHASE_COMPLETED,
+                    counters.fastIndexed, counters.probeQueued, totals.probeCompleted,
+                    startedAt, OffsetDateTime.now());
+            return result;
+        }
+    }
+
+    private void processFastIndexBatch(List<FastIndexEntry> batch, AudioLayout externalDefault,
+                                       ScanCounters counters, ScanTotals totals,
+                                       OffsetDateTime startedAt, int discovered, String activeRole,
+                                       Set<Long> trackedIdsAtScanStart,
+                                       Set<String> trackedPathsAtScanStart) {
+        if (batch.isEmpty()) return;
+        List<FastIndexEntry> resolvedBatch;
+        try {
+            resolvedBatch = resolveExistingEntries(batch, activeRole,
+                    trackedIdsAtScanStart, trackedPathsAtScanStart);
+        } catch (RuntimeException failure) {
+            // Do not treat a failed lookup as "all new". That could create
+            // duplicate provisional rows or bind the wrong remounted file.
+            log.warn("读取当前扫描批次的已有记录失败，等待下次扫描重试：{}", failure.getMessage());
+            publishProgress(true, discovered, counters.fastIndexed, null, totals,
+                    PHASE_FAST_INDEX, counters.fastIndexed, 0, totals.probeCompleted,
+                    startedAt, null);
+            return;
+        }
+        Runnable work = () -> {
+            for (FastIndexEntry entry : resolvedBatch) {
                 switch (snapshotChange(entry)) {
                     case UNCHANGED -> {
                         reactivateIfNeeded(entry, counters);
-                        skipped++;
+                        totals.skipped++;
                     }
                     case LYRIC_ONLY -> {
                         LyricRefreshOutcome outcome = refreshSidecarLyric(entry, counters);
                         if (outcome == LyricRefreshOutcome.NEEDS_MEDIA_PROBE) {
-                            probeQueue.addLast(prepareFastIndex(entry, counters, externalDefault, true));
+                            prepareFastIndex(entry, counters, externalDefault, true);
                         } else if (outcome == LyricRefreshOutcome.UPDATED) {
-                            updated++;
+                            totals.updated++;
                         } else {
-                            skipped++;
+                            totals.skipped++;
                         }
                     }
-                    case MEDIA_CHANGED ->
-                            probeQueue.addLast(prepareFastIndex(entry, counters, externalDefault));
+                    case MEDIA_CHANGED -> prepareFastIndex(entry, counters, externalDefault);
                 }
             }
-            counters.probeQueued = probeQueue.size();
-            if (enumerationComplete[0]) {
-                markMissingFiles(root, currentPaths, counters, trackedFiles);
+        };
+        try {
+            if (batchTransaction == null) {
+                work.run();
             } else {
-                log.warn("曲库枚举未完整结束，本轮不标记消失文件，等待下次扫描重试：{}", root);
+                batchTransaction.executeWithoutResult(status -> {
+                    work.run();
+                    if (entityManager != null) entityManager.flush();
+                });
             }
-            scanProgress.set(new ScanProgress(true, indexedEntries.size(), skipped, null, 0, 0, skipped, 0,
-                    startedAt, null));
-
-            int completed = skipped;
-            while (!probeQueue.isEmpty()) {
-                FastIndexEntry entry = probeQueue.removeFirst();
-                try {
-                    IngestOutcome outcome = ingest(entry, knownArtists, counters, externalDefault);
-                    switch (outcome) {
-                        case ADDED -> added++;
-                        case UPDATED -> updated++;
-                        case SKIPPED -> skipped++;
-                        case UNRECOGNIZED -> { added++; unrecognized++; }
-                    }
-                } catch (Exception e) {
-                    log.warn("入库失败，跳过：{} - {}", entry.file(), e.getMessage());
-                    skipped++;
-                }
-                completed++;
-                scanProgress.set(new ScanProgress(true, indexedEntries.size(), completed,
-                        entry.file().getFileName().toString(), added, updated, skipped, unrecognized,
-                        startedAt, null));
-            }
-            log.info("扫描完成：共 {} 文件，新增 {}，更新 {}，跳过 {}，未识别 {}",
-                    indexedEntries.size(), added, updated, skipped, unrecognized);
-            ScanResult result = new ScanResult(indexedEntries.size(), added, updated, skipped, unrecognized,
-                    counters.fastIndexed, counters.probeQueued, counters.probeCalls, counters.hashCalls,
-                    counters.dbUpdates, counters.missing);
-            scanProgress.set(new ScanProgress(false, indexedEntries.size(), indexedEntries.size(), null, added, updated,
-                    skipped, unrecognized, startedAt, OffsetDateTime.now()));
-            return result;
+        } catch (RuntimeException failure) {
+            // The batch is intentionally isolated. A failed batch is retried by the
+            // next scan; do not turn a single bad file or a transient DB error into a
+            // destructive "all files disappeared" result.
+            log.warn("快速索引批次失败，等待下次扫描重试：{}", failure.getMessage());
         }
+        publishProgress(true, discovered, counters.fastIndexed, null, totals,
+                PHASE_FAST_INDEX, counters.fastIndexed, 0, totals.probeCompleted,
+                startedAt, null);
+    }
+
+    /**
+     * Resolve only the current Fast Index batch.  The old implementation loaded
+     * every SongFile entity before walking the filesystem; on a large NAS library
+     * that duplicated the same unbounded-result-set failure as Song.findAll().
+     */
+    private List<FastIndexEntry> resolveExistingEntries(List<FastIndexEntry> batch,
+                                                        String activeRole,
+                                                        Set<Long> trackedIdsAtScanStart,
+                                                        Set<String> trackedPathsAtScanStart) {
+        Set<String> paths = batch.stream().map(FastIndexEntry::path)
+                .filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        List<SongFile> exactRows = fileRepo.findByFileRoleAndFilePathIn(activeRole, paths);
+        Map<String, SongFile> byPath = new HashMap<>();
+        if (exactRows != null) {
+            for (SongFile row : exactRows) {
+                if (row != null && row.getFilePath() != null) byPath.put(row.getFilePath(), row);
+            }
+        }
+
+        Set<String> relativePaths = batch.stream()
+                .filter(entry -> !byPath.containsKey(entry.path()))
+                .map(FastIndexEntry::relativePath)
+                .filter(path -> !isBlank(path))
+                .collect(java.util.stream.Collectors.toSet());
+        Map<String, SongFile> byUniqueRelativePath = new HashMap<>();
+        Set<String> ambiguous = new HashSet<>();
+        if (!relativePaths.isEmpty()) {
+            List<SongFile> relativeRows = fileRepo.findByFileRoleAndRelativePathIn(activeRole, relativePaths);
+            if (relativeRows != null) {
+                for (SongFile row : relativeRows) {
+                    if (row == null || isBlank(row.getRelativePath())
+                            || ambiguous.contains(row.getRelativePath())) continue;
+                    SongFile previous = byUniqueRelativePath.putIfAbsent(row.getRelativePath(), row);
+                    if (previous != null && !Objects.equals(previous.getId(), row.getId())) {
+                        byUniqueRelativePath.remove(row.getRelativePath());
+                        ambiguous.add(row.getRelativePath());
+                    }
+                }
+            }
+        }
+
+        List<FastIndexEntry> resolved = new ArrayList<>(batch.size());
+        for (FastIndexEntry entry : batch) {
+            SongFile existing = byPath.get(entry.path());
+            if (existing == null && !isBlank(entry.relativePath())) {
+                existing = byUniqueRelativePath.get(entry.relativePath());
+            }
+            boolean existedAtScanStart = wasPresentAtScanStart(existing,
+                    trackedIdsAtScanStart, trackedPathsAtScanStart);
+            resolved.add(entry.withExisting(existing)
+                    .withScanHistory(existedAtScanStart, existedAtScanStart
+                            && existing != null && existing.isProbePending()));
+        }
+        return resolved;
+    }
+
+    /** Load only the scan-start identity set and pending flags, not full entities. */
+    private ScanStartSnapshot loadScanStart(String activeRole) {
+        Set<Long> ids = new HashSet<>();
+        Set<String> paths = new HashSet<>();
+        Set<Long> pendingIds = new HashSet<>();
+        Set<String> pendingPaths = new HashSet<>();
+        String afterPath = "";
+        while (true) {
+            Slice<SongFileScanSnapshot> page;
+            try {
+                page = fileRepo.findScanSnapshotsByFileRoleAndFilePathGreaterThanOrderByFilePath(
+                        activeRole, afterPath, PageRequest.of(0, FAST_INDEX_BATCH_SIZE));
+            } catch (RuntimeException failure) {
+                log.warn("读取扫描快照失败，停止本轮扫描以避免误判已有记录：{}", failure.getMessage());
+                return new ScanStartSnapshot(Set.of(), Set.of(), Set.of(), Set.of());
+            }
+            if (page == null || page.getContent().isEmpty()) break;
+            for (SongFileScanSnapshot snapshot : page.getContent()) {
+                if (snapshot == null || isBlank(snapshot.getFilePath())) continue;
+                afterPath = snapshot.getFilePath();
+                if (snapshot.getId() != null) ids.add(snapshot.getId());
+                paths.add(snapshot.getFilePath());
+                if (Boolean.TRUE.equals(snapshot.getProbePending())) {
+                    if (snapshot.getId() != null) pendingIds.add(snapshot.getId());
+                    pendingPaths.add(snapshot.getFilePath());
+                }
+            }
+            if (page.getContent().size() < FAST_INDEX_BATCH_SIZE) break;
+        }
+        return new ScanStartSnapshot(Set.copyOf(ids), Set.copyOf(paths),
+                Set.copyOf(pendingIds), Set.copyOf(pendingPaths));
+    }
+
+    private void processPendingProbes(ScanRootContext rootContext,
+                                      FilenameParser.ArtistIndex artistIndex,
+                                      Collection<String> knownArtists,
+                                      AudioLayout externalDefault,
+                                      String activeRole,
+                                      Set<Long> trackedIdsAtScanStart,
+                                      Set<String> trackedPathsAtScanStart,
+                                      Set<Long> pendingIdsAtScanStart,
+                                      Set<String> pendingPathsAtScanStart,
+                                      ScanCounters counters,
+                                      ScanTotals totals,
+                                      OffsetDateTime startedAt,
+                                      int discovered) {
+        String afterPath = "";
+        while (true) {
+            Slice<SongFile> page;
+            try {
+                page = fileRepo.findByFileRoleAndProbePendingTrueAndFilePathGreaterThanOrderByFilePath(
+                        activeRole, afterPath, PageRequest.of(0, PROBE_PAGE_SIZE));
+            } catch (RuntimeException failure) {
+                log.warn("读取媒体探测队列失败，保留 pending 记录等待重试：{}", failure.getMessage());
+                return;
+            }
+            if (page == null || page.getContent().isEmpty()) return;
+
+            for (SongFile tracked : page.getContent()) {
+                if (tracked == null || isBlank(tracked.getFilePath())) continue;
+                afterPath = tracked.getFilePath();
+                Path file;
+                try {
+                    file = Path.of(tracked.getFilePath());
+                } catch (RuntimeException invalidPath) {
+                    log.warn("探测队列存在无效路径，保留 pending：{}", tracked.getFilePath());
+                    continue;
+                }
+                if (!rootContext.allowsExistingFile(file) || !Files.isRegularFile(file)
+                        || Files.isSymbolicLink(file) || !isMediaFile(file)) {
+                    continue;
+                }
+                try {
+                    BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class,
+                            LinkOption.NOFOLLOW_LINKS);
+                    Map<String, SongFile> byPath = Map.of(tracked.getFilePath(), tracked);
+                    Map<String, SongFile> byRelativePath = isBlank(tracked.getRelativePath())
+                            ? Map.of() : Map.of(tracked.getRelativePath(), tracked);
+                    FastIndexEntry entry = fastIndex(file, attrs, artistIndex, byPath,
+                            byRelativePath, rootContext.configuredRoot());
+                    SongFile resolved = entry.existing().orElse(null);
+                    boolean existedAtScanStart = wasPresentAtScanStart(resolved,
+                            trackedIdsAtScanStart, trackedPathsAtScanStart);
+                    boolean pendingAtScanStart = resolved != null
+                            && (resolved.getId() != null && pendingIdsAtScanStart.contains(resolved.getId())
+                            || resolved.getId() == null && pendingPathsAtScanStart.contains(resolved.getFilePath()));
+                    entry = entry.withScanHistory(existedAtScanStart,
+                            pendingAtScanStart);
+                    IngestOutcome outcome = ingestInternal(entry, null, null, null, false,
+                            knownArtists, counters, externalDefault).outcome();
+                    recordOutcome(totals, outcome);
+                } catch (Exception failure) {
+                    // Failed media reads stay pending. Advancing the local cursor makes
+                    // one bad file unable to starve the rest of this run; the next run
+                    // starts at the beginning and retries it.
+                    totals.skipped++;
+                    log.warn("媒体探测失败，保留 pending：{} - {}", file, failure.getMessage());
+                }
+                totals.probeCompleted++;
+                publishProgress(true, discovered, counters.fastIndexed, file.getFileName().toString(), totals,
+                        PHASE_MEDIA_PROBE, counters.fastIndexed, counters.probeQueued,
+                        totals.probeCompleted, startedAt, null);
+            }
+            if (page.getContent().size() < PROBE_PAGE_SIZE) return;
+        }
+    }
+
+    private static void recordOutcome(ScanTotals totals, IngestOutcome outcome) {
+        switch (outcome) {
+            case ADDED -> totals.added++;
+            case UPDATED -> totals.updated++;
+            case SKIPPED -> totals.skipped++;
+            case UNRECOGNIZED -> {
+                totals.added++;
+                totals.unrecognized++;
+            }
+        }
+    }
+
+    private static boolean wasPresentAtScanStart(SongFile file, Set<Long> ids, Set<String> paths) {
+        if (file == null) return false;
+        return file.getId() != null && ids.contains(file.getId())
+                || file.getId() == null && paths.contains(file.getFilePath());
+    }
+
+    private void publishProgress(boolean running, int total, int completed, String currentFile,
+                                 ScanTotals totals, String phase, int fastIndexed, int probeQueued,
+                                 int probeCompleted, OffsetDateTime startedAt,
+                                 OffsetDateTime finishedAt) {
+        scanProgress.set(new ScanProgress(running, total, completed, currentFile,
+                totals.added, totals.updated, totals.skipped, totals.unrecognized,
+                startedAt, finishedAt, phase, total, fastIndexed, probeQueued, probeCompleted));
+    }
+
+    private static int safeInt(long value) {
+        return value > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) Math.max(0, value);
     }
 
     /** Starts the active library scan asynchronously for the admin progress endpoint. */
@@ -280,7 +555,8 @@ public class LibraryScanService {
     private FastIndexEntry fastIndex(Path file, Collection<String> knownArtists) {
         try {
             BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class);
-            return fastIndex(file, attrs, artistIndexFor(knownArtists), null, null);
+            return fastIndex(file, attrs, artistIndexFor(knownArtists), null, null,
+                    LibraryModePolicy.activeLibraryRoot(props).toAbsolutePath().normalize());
         } catch (IOException e) {
             throw new IllegalStateException("读取文件属性失败：" + file, e);
         }
@@ -289,20 +565,21 @@ public class LibraryScanService {
     private FastIndexEntry fastIndex(Path file, BasicFileAttributes attrs,
                                      FilenameParser.ArtistIndex artistIndex,
                                      Map<String, SongFile> trackedByPath,
-                                     Map<String, SongFile> trackedByRelativePath) {
+                                     Map<String, SongFile> trackedByRelativePath,
+                                     Path scanRoot) {
         String path = file.toString();
         Path sidecarLyric = sidecarLyricOf(file);
         OffsetDateTime mediaMtime = attrs.lastModifiedTime().toInstant().atOffset(ZoneOffset.UTC);
         String mediaIdentity = mediaFileIdentity(attrs);
         LyricSnapshot lyricSnapshot = lyricSnapshotOf(sidecarLyric);
-        String relativePath = relativePathOf(file);
+        String relativePath = relativePathOf(file, scanRoot);
         SongFile tracked = trackedByPath == null
                 ? fileRepo.findByFilePath(path).orElse(null)
                 : trackedByPath.get(path);
         if (tracked == null && trackedByRelativePath != null && !isBlank(relativePath)) {
             tracked = trackedByRelativePath.get(relativePath);
         }
-        return new FastIndexEntry(file, path, attrs.size(), newestMtime(mediaMtime, lyricSnapshot),
+        return new FastIndexEntry(file, path, relativePath, attrs.size(), newestMtime(mediaMtime, lyricSnapshot),
                 legacyFileIdentity(mediaIdentity, lyricSnapshot.fileIdentity()),
                 FilenameParser.parse(file.getFileName().toString(), artistIndex),
                 mediaMtime, mediaIdentity, lyricSnapshot,
@@ -401,7 +678,7 @@ public class LibraryScanService {
                 existing.setProbePending(true);
                 existing.setValid(true);
             }
-            String relativePath = relativePathOf(entry.file());
+            String relativePath = entry.relativePath();
             if (isBlank(existing.getRelativePath()) && relativePath != null) {
                 existing.setRelativePath(relativePath);
                 changed = true;
@@ -448,7 +725,7 @@ public class LibraryScanService {
         SongFile indexed = new SongFile();
         indexed.setSongId(provisional.getId());
         indexed.setFilePath(entry.path());
-        indexed.setRelativePath(relativePathOf(entry.file()));
+        indexed.setRelativePath(entry.relativePath());
         indexed.setFormat(extOf(entry.file()));
         indexed.setFileSize(entry.size());
         indexed.setFileMtime(normalizedMtime);
@@ -493,11 +770,6 @@ public class LibraryScanService {
         });
     }
 
-    private List<SongFile> trackedFiles(String role) {
-        List<SongFile> tracked = fileRepo.findByFileRoleOrderByImportedAtDesc(role);
-        return tracked == null ? List.of() : tracked;
-    }
-
     private String activeFileRole() {
         return LibraryModePolicy.isExternalReadOnly(props)
                 ? LibraryModePolicy.EXTERNAL_FILE_ROLE : "LIBRARY";
@@ -513,7 +785,7 @@ public class LibraryScanService {
             existing.setFilePath(entry.path());
             changed = true;
         }
-        String relativePath = relativePathOf(entry.file());
+        String relativePath = entry.relativePath();
         if (isBlank(existing.getRelativePath()) && relativePath != null) {
             existing.setRelativePath(relativePath);
             changed = true;
@@ -594,17 +866,31 @@ public class LibraryScanService {
 
     /** Mark disappeared records invalid; never delete or touch a source path. */
     private void markMissingFiles(Path root, Set<String> currentPaths, ScanCounters counters,
-                                  List<SongFile> tracked) {
-        if (tracked == null) return;
-        for (SongFile file : tracked) {
-            String path = file == null ? null : file.getFilePath();
-            if (path == null || !file.isValid() || currentPaths.contains(path)
-                    || !isPathInsideActiveRoot(root, path)) continue;
-            file.setValid(false);
-            fileRepo.save(file);
-            counters.dbUpdates++;
-            counters.missing++;
-            markSongMissingIfNeeded(file.getSongId(), counters);
+                                  String activeRole) {
+        String afterPath = "";
+        while (true) {
+            Slice<SongFile> page;
+            try {
+                page = fileRepo.findByFileRoleAndFilePathGreaterThanOrderByFilePath(
+                        activeRole, afterPath, PageRequest.of(0, FAST_INDEX_BATCH_SIZE));
+            } catch (RuntimeException failure) {
+                log.warn("读取消失文件候选失败，本轮不标记缺失：{}", failure.getMessage());
+                return;
+            }
+            if (page == null || page.getContent().isEmpty()) return;
+            for (SongFile file : page.getContent()) {
+                if (file == null || isBlank(file.getFilePath())) continue;
+                afterPath = file.getFilePath();
+                String path = file.getFilePath();
+                if (!file.isValid() || currentPaths.contains(path)
+                        || !isPathInsideActiveRoot(root, path)) continue;
+                file.setValid(false);
+                fileRepo.save(file);
+                counters.dbUpdates++;
+                counters.missing++;
+                markSongMissingIfNeeded(file.getSongId(), counters);
+            }
+            if (page.getContent().size() < FAST_INDEX_BATCH_SIZE) return;
         }
     }
 
@@ -887,7 +1173,7 @@ public class LibraryScanService {
         SongFile sf = existing.orElseGet(SongFile::new);
         sf.setSongId(song.getId());
         sf.setFilePath(pathStr);
-        String relativePath = relativePathOf(file);
+        String relativePath = entry.relativePath();
         if (relativePath != null) sf.setRelativePath(relativePath);
         sf.setFormat(extOf(file));
         sf.setAudioTracks(probe.audioTracks());
@@ -1081,6 +1367,10 @@ public class LibraryScanService {
     /** Returns a portable relative path for files below the active library root. */
     private String relativePathOf(Path file) {
         Path root = LibraryModePolicy.activeLibraryRoot(props).toAbsolutePath().normalize();
+        return relativePathOf(file, root);
+    }
+
+    private static String relativePathOf(Path file, Path root) {
         Path candidate = file.toAbsolutePath().normalize();
         if (!candidate.startsWith(root)) return null;
         return root.relativize(candidate).toString().replace('\\', '/');
@@ -1193,16 +1483,22 @@ public class LibraryScanService {
         }
     }
 
-    private record FastIndexEntry(Path file, String path, long size, OffsetDateTime mtime,
+    private record FastIndexEntry(Path file, String path, String relativePath, long size, OffsetDateTime mtime,
                                   String fileIdentity, ParsedMeta filenameMeta,
                                   OffsetDateTime mediaMtime, String mediaIdentity,
                                   LyricSnapshot lyricSnapshot,
                                   Optional<SongFile> existing, boolean existedBeforeScan,
                                   boolean pendingBeforeScan) {
         private FastIndexEntry withExisting(SongFile replacement) {
-            return new FastIndexEntry(file, path, size, mtime, fileIdentity, filenameMeta,
+            return new FastIndexEntry(file, path, relativePath, size, mtime, fileIdentity, filenameMeta,
                     mediaMtime, mediaIdentity, lyricSnapshot,
                     Optional.ofNullable(replacement), existedBeforeScan, pendingBeforeScan);
+        }
+
+        private FastIndexEntry withScanHistory(boolean existed, boolean pending) {
+            return new FastIndexEntry(file, path, relativePath, size, mtime, fileIdentity, filenameMeta,
+                    mediaMtime, mediaIdentity, lyricSnapshot,
+                    existing, existed, pending);
         }
     }
 
@@ -1217,6 +1513,58 @@ public class LibraryScanService {
         private int missing;
     }
 
+    private static final class ScanTotals {
+        private int added;
+        private int updated;
+        private int skipped;
+        private int unrecognized;
+        private int probeCompleted;
+    }
+
+    private record ScanStartSnapshot(Set<Long> ids, Set<String> paths,
+                                     Set<Long> pendingIds, Set<String> pendingPaths) {}
+
+    private record ScanRootContext(Path configuredRoot, Path realRoot, boolean external) {
+        private static ScanRootContext create(Path root, boolean external) {
+            try {
+                Path configured = root.toAbsolutePath().normalize();
+                Path real = external ? configured.toRealPath() : configured;
+                return new ScanRootContext(configured, real, external);
+            } catch (IOException failure) {
+                throw new IllegalStateException("曲库根目录无法解析：" + root, failure);
+            }
+        }
+
+        private boolean allowsVisitedDirectory(Path directory) {
+            Path candidate = directory.toAbsolutePath().normalize();
+            if (!candidate.startsWith(configuredRoot) || Files.isSymbolicLink(directory)) return false;
+            if (!external) return true;
+            try {
+                return directory.toRealPath().startsWith(realRoot);
+            } catch (IOException failure) {
+                return false;
+            }
+        }
+
+        /** Fast-path for walkFileTree: the parent directory was already boundary-checked. */
+        private boolean allowsVisitedFile(Path file) {
+            return file.toAbsolutePath().normalize().startsWith(configuredRoot)
+                    && !Files.isSymbolicLink(file);
+        }
+
+        /** Queue rows may come from a previous process, so re-check their real target. */
+        private boolean allowsExistingFile(Path file) {
+            if (!file.toAbsolutePath().normalize().startsWith(configuredRoot)
+                    || Files.isSymbolicLink(file)) return false;
+            if (!external) return true;
+            try {
+                return file.toRealPath().startsWith(realRoot);
+            } catch (IOException failure) {
+                return false;
+            }
+        }
+    }
+
     @PreDestroy
     void shutdown() {
         scanExecutor.shutdownNow();
@@ -1225,11 +1573,11 @@ public class LibraryScanService {
     private Set<String> existingArtistNames() {
         Set<String> artists = new LinkedHashSet<>();
         try {
-            for (Song song : songRepo.findAll()) {
-                if (song != null && "ok".equals(song.getStatus())
-                        && song.getArtist() != null && !song.getArtist().isBlank()
-                        && !"未知歌手".equals(song.getArtist().trim())) {
-                    artists.add(song.getArtist().trim());
+            List<String> storedArtists = songRepo.findDistinctArtistByStatus("ok");
+            if (storedArtists == null) return artists;
+            for (String artist : storedArtists) {
+                if (artist != null && !artist.isBlank() && !"未知歌手".equals(artist.trim())) {
+                    artists.add(artist.trim());
                 }
             }
         } catch (RuntimeException failure) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeScanProgress } from './scanProgress'
+import { normalizeScanProgress, scanPercent, scanPhaseLabel } from './scanProgress'
 
 describe('normalizeScanProgress', () => {
   it('maps external-library counters to read-only scan labels', () => {
@@ -41,5 +41,29 @@ describe('normalizeScanProgress', () => {
       unrecognizedCount: 2,
       failedCount: 1
     })
+  })
+})
+
+describe('scanPercent', () => {
+  it('does not report fast-index completion as full scan completion', () => {
+    expect(scanPercent({ running: true, phase: 'FAST_INDEX', discovered: 500, fastIndexed: 500 }))
+      .toBe(50)
+  })
+
+  it('uses the probe queue for the second half of progress', () => {
+    expect(scanPercent({ running: true, phase: 'MEDIA_PROBE', probeQueued: 500, probeCompleted: 250 }))
+      .toBe(75)
+  })
+
+  it('reports completed scans as 100 percent and discovery as zero', () => {
+    expect(scanPercent({ running: false, phase: 'COMPLETED' })).toBe(100)
+    expect(scanPercent({ running: true, phase: 'DISCOVERING' })).toBe(0)
+  })
+})
+
+describe('scanPhaseLabel', () => {
+  it('explains the current bounded scan phase', () => {
+    expect(scanPhaseLabel('FAST_INDEX')).toBe('正在建立快速索引')
+    expect(scanPhaseLabel('MEDIA_PROBE')).toBe('正在读取媒体信息')
   })
 })

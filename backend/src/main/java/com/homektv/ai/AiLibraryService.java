@@ -19,10 +19,14 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import com.homektv.library.AssetWriter;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 
 import java.io.IOException;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * AI 歌库服务 —— 管理 AI 分析任务、AI 歌单生成与分类结果应用。
@@ -32,6 +36,8 @@ import java.util.*;
 @Service
 public class AiLibraryService {
     private static final List<String> ACTIVE_STATUSES = List.of("pending", "processing", "review");
+    private static final int SONG_PAGE_SIZE = 500;
+    private static final int MAX_PLAYLIST_CANDIDATES = 5000;
     public static final int MAX_PLAYLIST_SONGS = 100;
 
     private final AiAnalysisTaskRepository taskRepository;
@@ -124,11 +130,17 @@ public class AiLibraryService {
     public List<AiAnalysisTask> createUnclassifiedTasks(int limit) {
         int safeLimit = Math.max(1, Math.min(limit, 500));
         List<AiAnalysisTask> result = new ArrayList<>();
-        for (Song song : songRepository.findAll()) {
-            if (result.size() >= safeLimit) break;
-            if (song.getAiAnalyzedAt() == null && !taskRepository.existsBySongIdAndStatusIn(song.getId(), ACTIVE_STATUSES)) {
-                result.add(createTask(song.getId()));
+        for (int pageNumber = 0; result.size() < safeLimit; pageNumber++) {
+            Page<Song> page = songPage(pageNumber);
+            if (page == null || page.isEmpty()) break;
+            for (Song song : page.getContent()) {
+                if (result.size() >= safeLimit) break;
+                if (song.getAiAnalyzedAt() == null
+                        && !taskRepository.existsBySongIdAndStatusIn(song.getId(), ACTIVE_STATUSES)) {
+                    result.add(createTask(song.getId()));
+                }
             }
+            if (!page.hasNext()) break;
         }
         return result;
     }
@@ -138,17 +150,22 @@ public class AiLibraryService {
         String batchId = UUID.randomUUID().toString();
         AiConfigService.ResolvedConfig config = configService.resolve();
         int created = 0;
-        for (Song song : songRepository.findAll()) {
-            AiAnalysisTask task = new AiAnalysisTask();
-            task.setSongId(song.getId());
-            task.setTargetId(song.getId());
-            task.setTargetType("SONG");
-            task.setBatchId(batchId);
-            task.setModel(configService.isConfigured() ? config.bulkModel() : "LOCAL");
-            task.setModelRole(configService.isConfigured() ? "BULK" : "LOCAL");
-            taskRepository.saveAndFlush(task);
-            worker.analyze(task.getId());
-            created++;
+        for (int pageNumber = 0; ; pageNumber++) {
+            Page<Song> page = songPage(pageNumber);
+            if (page == null || page.isEmpty()) break;
+            for (Song song : page.getContent()) {
+                AiAnalysisTask task = new AiAnalysisTask();
+                task.setSongId(song.getId());
+                task.setTargetId(song.getId());
+                task.setTargetType("SONG");
+                task.setBatchId(batchId);
+                task.setModel(configService.isConfigured() ? config.bulkModel() : "LOCAL");
+                task.setModelRole(configService.isConfigured() ? "BULK" : "LOCAL");
+                taskRepository.saveAndFlush(task);
+                worker.analyze(task.getId());
+                created++;
+            }
+            if (!page.hasNext()) break;
         }
         return Map.of("batchId", batchId, "created", created);
     }
@@ -220,10 +237,7 @@ public class AiLibraryService {
         }
         if (instruction == null || instruction.isBlank()) throw new ApiException("INVALID_ARGUMENT", "请描述想要的歌单");
         int maximum = playlistLimit(limit);
-        List<Song> all = songRepository.findAll();
-        List<Song> candidates = all.size() > 5000 ? all.stream()
-                .sorted(Comparator.comparingInt(Song::getPlayCount).reversed()
-                        .thenComparing(s -> s.getAiAnalyzedAt() == null)).limit(5000).toList() : all;
+        List<Song> candidates = playlistCandidates();
         if (candidates.isEmpty()) throw new ApiException("PLAYLIST_CANDIDATES_EMPTY", "KTV 曲库中没有可用于生成歌单的歌曲");
         int selectionMaximum = Math.min(maximum, candidates.size());
         List<Map<String, Object>> candidateValues = candidates.stream().map(this::playlistCandidate).toList();
@@ -696,18 +710,46 @@ public class AiLibraryService {
             order = Math.max(order, item.getSortOrder() + 1);
         }
         int maximum = playlistLimit(limit);
-        for (Song song : songRepository.findAll()) {
-            if (existing.size() >= maximum) break;
-            if (!matches(song, tag) || existing.contains(song.getId())) continue;
-            PlaylistSong item = new PlaylistSong();
-            item.setPlaylistId(playlist.getId());
-            item.setSongId(song.getId());
-            item.setSortOrder(order++);
-            item.setManual(false);
-            playlistSongRepository.save(item);
-            existing.add(song.getId());
+        for (int pageNumber = 0; existing.size() < maximum; pageNumber++) {
+            Page<Song> page = songPage(pageNumber);
+            if (page == null || page.isEmpty()) break;
+            for (Song song : page.getContent()) {
+                if (existing.size() >= maximum) break;
+                if (!matches(song, tag) || existing.contains(song.getId())) continue;
+                PlaylistSong item = new PlaylistSong();
+                item.setPlaylistId(playlist.getId());
+                item.setSongId(song.getId());
+                item.setSortOrder(order++);
+                item.setManual(false);
+                playlistSongRepository.save(item);
+                existing.add(song.getId());
+            }
+            if (!page.hasNext()) break;
         }
         return playlist;
+    }
+
+    private Page<Song> songPage(int pageNumber) {
+        return songRepository.findAll(PageRequest.of(pageNumber, SONG_PAGE_SIZE,
+                Sort.by(Sort.Direction.ASC, "id")));
+    }
+
+    private void forEachSong(Consumer<Song> consumer) {
+        for (int pageNumber = 0; ; pageNumber++) {
+            Page<Song> page = songPage(pageNumber);
+            if (page == null || page.isEmpty()) return;
+            page.getContent().stream().filter(Objects::nonNull).forEach(consumer);
+            if (!page.hasNext()) return;
+        }
+    }
+
+    /** Keep playlist preview memory bounded while retaining the old top-5000 rule. */
+    private List<Song> playlistCandidates() {
+        Comparator<Song> preferred = Comparator.comparingInt(Song::getPlayCount).reversed()
+                .thenComparing(song -> song.getAiAnalyzedAt() == null);
+        PlaylistCandidateCollector collector = new PlaylistCandidateCollector(preferred);
+        forEachSong(collector::accept);
+        return collector.finish();
     }
 
     // 判断歌曲是否匹配指定 AI 标签 / Checks whether a song matches the given AI tag
@@ -739,5 +781,34 @@ public class AiLibraryService {
     private String write(Object value) {
         try { return objectMapper.writeValueAsString(value); }
         catch (JsonProcessingException e) { throw new IllegalStateException("JSON 序列化失败", e); }
+    }
+
+    private static final class PlaylistCandidateCollector {
+        private final Comparator<Song> preferred;
+        private final List<Song> first = new ArrayList<>(MAX_PLAYLIST_CANDIDATES);
+        private PriorityQueue<Song> top;
+
+        private PlaylistCandidateCollector(Comparator<Song> preferred) {
+            this.preferred = preferred;
+        }
+
+        private void accept(Song song) {
+            if (top == null && first.size() < MAX_PLAYLIST_CANDIDATES) {
+                first.add(song);
+                return;
+            }
+            if (top == null) {
+                top = new PriorityQueue<>(MAX_PLAYLIST_CANDIDATES + 1, preferred.reversed());
+                top.addAll(first);
+                first.clear();
+            }
+            top.offer(song);
+            if (top.size() > MAX_PLAYLIST_CANDIDATES) top.poll();
+        }
+
+        private List<Song> finish() {
+            if (top == null) return List.copyOf(first);
+            return top.stream().sorted(preferred).toList();
+        }
     }
 }

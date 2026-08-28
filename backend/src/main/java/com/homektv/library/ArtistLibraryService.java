@@ -7,13 +7,16 @@ import com.homektv.ai.OpenAiCompatibleClient;
 import com.homektv.domain.Song;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
-import java.util.stream.Collectors;
+import java.util.function.Consumer;
 
 /**
  * 歌手库服务：按歌手名称聚合歌曲，提供性别 AI 建议和人工复核应用。
@@ -21,12 +24,16 @@ import java.util.stream.Collectors;
  */
 @Service
 public class ArtistLibraryService {
+    private static final int SONG_PAGE_SIZE = 500;
     private static final Set<String> GENDERS = Set.of("男歌手", "女歌手", "组合", "未知");
 
     private final SongRepository songs;
     private final AiConfigService aiConfig;
     private final OpenAiCompatibleClient aiClient;
     private final ObjectMapper mapper;
+    private static final Comparator<Song> REPRESENTATIVE_ORDER = Comparator
+            .comparingInt(Song::getPlayCount).reversed()
+            .thenComparing(Song::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER));
 
     public ArtistLibraryService(SongRepository songs, AiConfigService aiConfig,
                                 OpenAiCompatibleClient aiClient, ObjectMapper mapper) {
@@ -38,12 +45,9 @@ public class ArtistLibraryService {
 
     public List<Map<String, Object>> list(String keyword, String gender, Boolean reviewed, int limit) {
         String query = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
-        Map<String, List<Song>> grouped = validSongs().stream()
-                .collect(Collectors.groupingBy(song -> song.getArtist() == null ? "未知歌手" : song.getArtist().trim(),
-                        LinkedHashMap::new, Collectors.toList()));
-        return grouped.entrySet().stream()
-                .filter(entry -> query.isBlank() || entry.getKey().toLowerCase(Locale.ROOT).contains(query))
-                .map(entry -> artistValue(entry.getKey(), entry.getValue()))
+        return artistSummaries().values().stream()
+                .filter(entry -> query.isBlank() || entry.name().toLowerCase(Locale.ROOT).contains(query))
+                .map(ArtistSummary::toValue)
                 .filter(value -> gender == null || gender.isBlank() || gender.equals(value.get("gender")))
                 .filter(value -> reviewed == null || reviewed == ((Boolean) value.get("reviewed")))
                 .sorted(Comparator.comparingInt((Map<String, Object> value) -> (Integer) value.get("songCount"))
@@ -89,8 +93,8 @@ public class ArtistLibraryService {
                 .limit(500)
                 .toList();
         if (names.isEmpty()) return List.of();
-        Map<String, List<Song>> grouped = validSongs().stream().collect(Collectors.groupingBy(
-                song -> normalizeArtist(song.getArtist()), LinkedHashMap::new, Collectors.toList()));
+        Map<String, List<Song>> grouped = new LinkedHashMap<>();
+        forEachValidSong(song -> addRepresentative(grouped, normalizeArtist(song.getArtist()), song));
         AiConfigService.ResolvedConfig config = aiConfig.resolve();
         int configuredConcurrency = config == null ? 1 : config.bulkConcurrency();
         int concurrency = Math.max(1, Math.min(configuredConcurrency, names.size()));
@@ -128,34 +132,48 @@ public class ArtistLibraryService {
         return Map.of("artist", artist, "gender", gender, "updated", matches.size());
     }
 
-    private List<Song> validSongs() { return songs.findAll().stream().filter(song -> "ok".equals(song.getStatus())).toList(); }
+    private Map<String, ArtistSummary> artistSummaries() {
+        Map<String, ArtistSummary> result = new LinkedHashMap<>();
+        forEachValidSong(song -> {
+            String name = song.getArtist() == null ? "未知歌手" : song.getArtist().trim();
+            result.computeIfAbsent(name, ArtistSummary::new).add(song);
+        });
+        return result;
+    }
+
+    private void forEachValidSong(Consumer<Song> consumer) {
+        for (int pageNumber = 0; ; pageNumber++) {
+            Page<Song> page = songs.findByStatus("ok",
+                    PageRequest.of(pageNumber, SONG_PAGE_SIZE, Sort.by(Sort.Direction.ASC, "id")));
+            if (page == null || page.isEmpty()) return;
+            page.getContent().stream().filter(Objects::nonNull).forEach(consumer);
+            if (!page.hasNext()) return;
+        }
+    }
 
     private List<Song> songsFor(String artist) {
         if (artist == null || artist.isBlank()) return List.of();
         String normalized = normalizeArtist(artist);
-        return validSongs().stream().filter(song -> normalized.equals(normalizeArtist(song.getArtist()))).toList();
+        List<Song> result = new ArrayList<>();
+        forEachValidSong(song -> {
+            if (normalized.equals(normalizeArtist(song.getArtist()))) result.add(song);
+        });
+        return result;
     }
 
     private static String normalizeArtist(String artist) {
         return artist == null ? "" : artist.trim().toLowerCase(Locale.ROOT);
     }
 
-    private Map<String, Object> artistValue(String name, List<Song> values) {
-        String gender = dominantGender(values);
-        boolean reviewed = !"未知".equals(gender) && values.stream()
-                .allMatch(song -> gender.equals(song.getArtistGender()) && song.isMetadataLocked("artistGender"));
-        return Map.of("name", name, "gender", gender, "reviewed", reviewed,
-                "songCount", values.size(), "songs", representativeSongs(values).stream().map(this::songValue).toList());
-    }
-
-    private String dominantGender(List<Song> values) {
-        return values.stream().map(Song::getArtistGender).filter(GENDERS::contains).filter(value -> !"未知".equals(value))
-                .collect(Collectors.groupingBy(value -> value, Collectors.counting())).entrySet().stream()
-                .max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse("未知");
-    }
-
     private List<Song> representativeSongs(List<Song> values) {
-        return values.stream().sorted(Comparator.comparingInt(Song::getPlayCount).reversed().thenComparing(Song::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))).limit(5).toList();
+        return values.stream().sorted(REPRESENTATIVE_ORDER).limit(5).toList();
+    }
+
+    private void addRepresentative(Map<String, List<Song>> grouped, String key, Song song) {
+        List<Song> values = grouped.computeIfAbsent(key, ignored -> new ArrayList<>());
+        values.add(song);
+        values.sort(REPRESENTATIVE_ORDER);
+        if (values.size() > 5) values.remove(values.size() - 1);
     }
 
     private Map<String, Object> songValue(Song song) {
@@ -172,5 +190,47 @@ public class ArtistLibraryService {
     private String safeMessage(Throwable failure) {
         String message = failure.getMessage();
         return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message.substring(0, Math.min(300, message.length()));
+    }
+
+    private final class ArtistSummary {
+        private final String name;
+        private int songCount;
+        private final Map<String, Integer> genderCounts = new HashMap<>();
+        private final Map<String, Boolean> genderLocks = new HashMap<>();
+        private final List<Song> representatives = new ArrayList<>(5);
+
+        private ArtistSummary(String name) { this.name = name; }
+
+        private String name() { return name; }
+
+        private void add(Song song) {
+            songCount++;
+            String value = song.getArtistGender();
+            if (GENDERS.contains(value) && !"未知".equals(value)) {
+                genderCounts.merge(value, 1, Integer::sum);
+                genderLocks.merge(value, song.isMetadataLocked("artistGender"), Boolean::logicalAnd);
+            }
+            representatives.add(song);
+            representatives.sort(REPRESENTATIVE_ORDER);
+            if (representatives.size() > 5) representatives.remove(representatives.size() - 1);
+        }
+
+        private String gender() {
+            return genderCounts.entrySet().stream().max(Map.Entry.comparingByValue())
+                    .map(Map.Entry::getKey).orElse("未知");
+        }
+
+        private boolean reviewed() {
+            String value = gender();
+            return !"未知".equals(value)
+                    && genderCounts.getOrDefault(value, 0) == songCount
+                    && Boolean.TRUE.equals(genderLocks.get(value));
+        }
+
+        private Map<String, Object> toValue() {
+            return Map.of("name", name, "gender", gender(), "reviewed", reviewed(),
+                    "songCount", songCount,
+                    "songs", representatives.stream().map(ArtistLibraryService.this::songValue).toList());
+        }
     }
 }

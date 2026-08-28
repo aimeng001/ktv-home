@@ -7,6 +7,7 @@ import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
 import com.homektv.media.MediaProbeException;
 import com.homektv.repo.SongFileRepository;
+import com.homektv.repo.SongFileScanSnapshot;
 import com.homektv.repo.SongRepository;
 import com.homektv.domain.AudioChannel;
 import com.homektv.domain.AudioLayout;
@@ -25,9 +26,12 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileTime;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -75,6 +79,80 @@ class ExternalReadOnlyLibraryTest {
                 Optional.ofNullable(filesByPath.get(invocation.getArgument(0))));
         lenient().when(songFileRepository.findByFileRoleOrderByImportedAtDesc(anyString()))
                 .thenAnswer(invocation -> new ArrayList<>(filesByPath.values()));
+        lenient().when(songFileRepository.findByFileRoleAndFilePathIn(anyString(), org.mockito.ArgumentMatchers.anyCollection()))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    Collection<String> paths = invocation.getArgument(1);
+                    return filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()) && paths.contains(file.getFilePath()))
+                            .toList();
+                });
+        lenient().when(songFileRepository.findByFileRoleAndRelativePathIn(anyString(), org.mockito.ArgumentMatchers.anyCollection()))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    Collection<String> relativePaths = invocation.getArgument(1);
+                    return filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()) && relativePaths.contains(file.getRelativePath()))
+                            .toList();
+                });
+        lenient().when(songFileRepository.findScanSnapshotsByFileRoleAndFilePathGreaterThanOrderByFilePath(
+                anyString(), anyString(), org.mockito.ArgumentMatchers.any(Pageable.class)))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    String after = invocation.getArgument(1);
+                    Pageable page = invocation.getArgument(2);
+                    List<SongFileScanSnapshot> snapshots = filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()))
+                            .filter(file -> file.getFilePath() != null && file.getFilePath().compareTo(after) > 0)
+                            .sorted(java.util.Comparator.comparing(SongFile::getFilePath))
+                            .<SongFileScanSnapshot>map(file -> new SongFileScanSnapshot() {
+                                public Long getId() { return file.getId(); }
+                                public String getFilePath() { return file.getFilePath(); }
+                                public Boolean getProbePending() { return file.isProbePending(); }
+                            }).toList();
+                    int from = Math.min((int) page.getOffset(), snapshots.size());
+                    int to = Math.min(from + page.getPageSize(), snapshots.size());
+                    return new PageImpl<>(snapshots.subList(from, to), page, snapshots.size());
+                });
+        lenient().when(songFileRepository.findByFileRoleAndFilePathGreaterThanOrderByFilePath(
+                anyString(), anyString(), org.mockito.ArgumentMatchers.any(Pageable.class)))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    String after = invocation.getArgument(1);
+                    Pageable page = invocation.getArgument(2);
+                    List<SongFile> rows = filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()))
+                            .filter(file -> file.getFilePath() != null && file.getFilePath().compareTo(after) > 0)
+                            .sorted(java.util.Comparator.comparing(SongFile::getFilePath))
+                            .toList();
+                    int from = Math.min((int) page.getOffset(), rows.size());
+                    int to = Math.min(from + page.getPageSize(), rows.size());
+                    return new PageImpl<>(rows.subList(from, to), page, rows.size());
+                });
+        lenient().when(songRepository.findDistinctArtistByStatus(anyString()))
+                .thenReturn(List.of());
+        lenient().when(songFileRepository
+                .findByFileRoleAndProbePendingTrueAndFilePathGreaterThanOrderByFilePath(
+                        anyString(), anyString(), org.mockito.ArgumentMatchers.any(Pageable.class)))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    String after = invocation.getArgument(1);
+                    Pageable page = invocation.getArgument(2);
+                    List<SongFile> pending = filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()))
+                            .filter(SongFile::isProbePending)
+                            .filter(file -> file.getFilePath() != null && file.getFilePath().compareTo(after) > 0)
+                            .sorted(java.util.Comparator.comparing(SongFile::getFilePath))
+                            .toList();
+                    int from = Math.min((int) page.getOffset(), pending.size());
+                    int to = Math.min(from + page.getPageSize(), pending.size());
+                    return new PageImpl<>(pending.subList(from, to), page, pending.size());
+                });
+        lenient().when(songFileRepository.countByFileRoleAndProbePendingTrue(anyString()))
+                .thenAnswer(invocation -> filesByPath.values().stream()
+                        .filter(file -> invocation.getArgument(0).equals(file.getFileRole()))
+                        .filter(SongFile::isProbePending)
+                        .count());
         lenient().when(songRepository.findByFingerprint(anyString())).thenReturn(Optional.empty());
         lenient().when(songRepository.save(any(Song.class))).thenAnswer(invocation -> {
             Song song = invocation.getArgument(0);
@@ -225,7 +303,7 @@ class ExternalReadOnlyLibraryTest {
         Song longArtist = new Song();
         longArtist.setArtist("A-Lin");
         longArtist.setStatus("ok");
-        when(songRepository.findAll()).thenReturn(List.of(shortArtist, longArtist));
+        when(songRepository.findDistinctArtistByStatus("ok")).thenReturn(List.of("A", "A-Lin"));
 
         Path source = sourceDir.resolve("A-Lin-给我一个理由忘记-国语-流行.mkv");
         Files.write(source, new byte[]{0x11, 0x22});

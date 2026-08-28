@@ -1,6 +1,7 @@
 package com.homektv.ai;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homektv.domain.AiAnalysisTask;
 import com.homektv.domain.Song;
 import com.homektv.domain.Playlist;
 import com.homektv.domain.PlaylistSong;
@@ -11,6 +12,8 @@ import com.homektv.repo.PlaylistRepository;
 import com.homektv.repo.PlaylistSongRepository;
 import com.homektv.repo.SongRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Map;
@@ -18,9 +21,13 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.mockito.ArgumentCaptor;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AiLibraryServiceTest {
@@ -67,7 +74,9 @@ class AiLibraryServiceTest {
         Song first = song(1L, "第一首", "歌手甲");
         Song second = song(2L, "第二首", "歌手乙");
         Song third = song(3L, "第三首", "歌手丙");
-        when(songRepository.findAll()).thenReturn(List.of(first, second, third));
+        when(songRepository.findAll(any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(first, second, third)));
+        when(songRepository.findAll()).thenThrow(new AssertionError("unpaged song query is forbidden"));
         when(aiClient.completeJsonPromptOnly(anyString(), anyString(), anyString(), anyInt())).thenReturn(
                 objectMapper.readTree("{\"intent\":\"轻松聚会\",\"maxSongs\":100}"),
                 objectMapper.readTree("{\"playlist\":{\"playlistName\":\"少而精\",\"songs\":[{\"songId\":1},{\"id\":2},{\"id\":999}]}}"));
@@ -79,6 +88,33 @@ class AiLibraryServiceTest {
                 .containsEntry("limit", 100)
                 .containsEntry("selectedCount", 2);
         assertThat(result.get("songIds")).isEqualTo(List.of(1L, 2L));
+        verify(songRepository, never()).findAll();
+    }
+
+    @Test
+    void repairBatchKeepsBulkRoleSeparateFromConfiguredModelName() {
+        SongRepository songRepository = mock(SongRepository.class);
+        AiAnalysisTaskRepository taskRepository = mock(AiAnalysisTaskRepository.class);
+        AiAnalysisWorker worker = mock(AiAnalysisWorker.class);
+        AiConfigService configService = mock(AiConfigService.class);
+        when(songRepository.findAll(any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(song(4L, "批量修复", "歌手"))));
+        when(configService.isConfigured()).thenReturn(true);
+        when(configService.resolve()).thenReturn(new AiConfigService.ResolvedConfig(true, "http://ai.test/v1",
+                "bulk-model", "", 30, 0.97, 0.92, AiConfigService.JsonMode.AUTO, 2, 1, "secret"));
+
+        AiLibraryService service = new AiLibraryService(taskRepository, songRepository,
+                mock(PlaylistRepository.class), mock(PlaylistSongRepository.class), worker,
+                new ObjectMapper(), configService, mock(AssetWriter.class),
+                mock(AiClassificationApplier.class), mock(OpenAiCompatibleClient.class),
+                mock(MediaImportRecordRepository.class));
+
+        service.createRepairBatch();
+
+        ArgumentCaptor<AiAnalysisTask> captor = ArgumentCaptor.forClass(AiAnalysisTask.class);
+        verify(taskRepository).saveAndFlush(captor.capture());
+        assertThat(captor.getValue().getModel()).isEqualTo("bulk-model");
+        assertThat(captor.getValue().getModelRole()).isEqualTo("BULK");
     }
 
     @Test

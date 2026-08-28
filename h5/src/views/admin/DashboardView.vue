@@ -5,9 +5,9 @@
     <section class="stats"><article><span>{{ externalMode ? '外部曲库文件' : '原始素材' }}</span><strong>{{ sourceTotal }}</strong><small>{{ externalMode ? 'NAS 只读索引' : '/source-music' }}</small></article><article><span>KTV曲库</span><strong>{{ d.totalSongs ?? 0 }}</strong><small>/music，可点歌</small></article><article><span>{{ externalMode ? '源文件转码' : '待转码' }}</span><strong>{{ pendingCount }}</strong><small>{{ externalMode ? '只读模式已禁用' : '等待批量转码入库' }}</small></article><article><span>未识别</span><strong>{{ d.unrecognizedCount ?? 0 }}</strong><small>需补录元数据</small></article></section>
     <!-- 扫描进度 / Scan progress -->
     <section v-if="scanning || scanResult" class="scan-progress" :class="{complete:!scanning}">
-      <div class="progress-head"><div><strong>{{ scanning ? '正在扫描源路径' : '扫描完成' }}</strong><span v-if="scanning">{{ scanProgress.currentFile || '正在读取文件列表…' }}</span><span v-else>{{ scanResult.finishedAt ? `完成于 ${formatTime(scanResult.finishedAt)}` : '' }}</span></div><b>{{ scanPercent }}%</b></div>
+      <div class="progress-head"><div><strong>{{ scanning ? scanPhaseLabel(scanProgress.phase) : '扫描完成' }}</strong><span v-if="scanning">{{ scanProgress.currentFile || scanPhaseHint }}</span><span v-else>{{ scanResult.finishedAt ? `完成于 ${formatTime(scanResult.finishedAt)}` : '' }}</span></div><b>{{ scanPercent }}%</b></div>
       <div class="track"><i :style="{width:`${scanPercent}%`}"></i></div>
-      <div class="progress-meta"><span>已处理 {{ scanProgress.completed || 0 }} / {{ scanProgress.total || 0 }}</span><span>{{ scanSummary.primaryLabel }} {{ scanSummary.primaryCount }}</span><span>{{ scanSummary.secondaryLabel }} {{ scanSummary.secondaryCount }}</span><span v-if="scanSummary.mode === 'MANAGED'">重复 {{ scanSummary.duplicateCount }}</span><span>未识别 {{ scanSummary.unrecognizedCount }}</span><span v-if="scanSummary.mode === 'MANAGED'" :class="{'failed':scanSummary.failedCount}">失败 {{ scanSummary.failedCount }}</span></div>
+      <div class="progress-meta"><span v-if="scanProgress.phase">已发现 {{ scanProgress.discovered || 0 }}</span><span v-if="scanProgress.phase">快速索引 {{ scanProgress.fastIndexed || 0 }}</span><span v-if="scanProgress.phase === 'MEDIA_PROBE'">媒体探测 {{ scanProgress.probeCompleted || 0 }} / {{ scanProgress.probeQueued || 0 }}</span><span v-else>已处理 {{ scanProgress.completed || 0 }} / {{ scanProgress.total || 0 }}</span><span>{{ scanSummary.primaryLabel }} {{ scanSummary.primaryCount }}</span><span>{{ scanSummary.secondaryLabel }} {{ scanSummary.secondaryCount }}</span><span v-if="scanSummary.mode === 'MANAGED'">重复 {{ scanSummary.duplicateCount }}</span><span>未识别 {{ scanSummary.unrecognizedCount }}</span><span v-if="scanSummary.mode === 'MANAGED'" :class="{'failed':scanSummary.failedCount}">失败 {{ scanSummary.failedCount }}</span></div>
     </section>
     <!-- 运行状态面板 / Status panel -->
     <section class="panel"><div class="panel-head"><strong>运行状态</strong><button class="text-btn" @click="load">刷新</button></div><table><thead><tr><th>模块</th><th>当前状态</th><th>详情</th><th>操作</th></tr></thead><tbody>
@@ -29,7 +29,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog } from '../../composables/useDialog'
-import { normalizeScanProgress } from './scanProgress'
+import { normalizeScanProgress, scanPercent as calculateScanPercent, scanPhaseLabel } from './scanProgress'
 const d=ref({}),queue=ref({}),progress=ref({}),scanning=ref(false),scanResult=ref(null),scanProgress=ref({}),sourceTotal=ref(0),pendingCount=ref(0)
 const libraryMode=ref('MANAGED')
 let scanTimer=null
@@ -50,7 +50,8 @@ const lastProgressText=computed(()=>progress.value.finishedAt?`上次完成：�
  *
  * Scan progress percentage (0–100), computed from completed/total count.
  */
-const scanPercent=computed(()=>scanProgress.value.total?Math.round((scanProgress.value.completed||0)*100/scanProgress.value.total):(scanning.value?0:100))
+const scanPercent=computed(()=>calculateScanPercent(scanProgress.value))
+const scanPhaseHint=computed(()=>({DISCOVERING:'正在读取文件列表…',FAST_INDEX:'正在保存基础曲库…',MEDIA_PROBE:'正在读取媒体信息…'}[scanProgress.value.phase]||'正在扫描源路径…'))
 /**
  * 重复文件总数（源路径重复 + 输出路径重复）。
  *
