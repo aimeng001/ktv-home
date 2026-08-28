@@ -57,7 +57,8 @@ public class SongMergeService {
                     updated_at = now()
                 FROM songs source
                 WHERE keep.id = ? AND source.id = ?
-                """, keepSongId, sourceSongId);
+                    """, keepSongId, sourceSongId);
+        counts.put("artistCredits", mergeArtistCredits(keepSongId, sourceSongId));
         jdbc.update("DELETE FROM songs WHERE id = ?", sourceSongId);
 
         Long primaryFileId = jdbc.query("""
@@ -89,5 +90,42 @@ public class SongMergeService {
                 """, keepSongId, sourceSongId);
         jdbc.update("DELETE FROM favorites WHERE song_id = ?", sourceSongId);
         return inserted;
+    }
+
+    private int mergeArtistCredits(Long keepSongId, Long sourceSongId) {
+        int keptLegacyCredits = ensureLegacyArtistCredits(keepSongId);
+        int sourceLegacyCredits = ensureLegacyArtistCredits(sourceSongId);
+        int transferred = jdbc.update("""
+                INSERT INTO song_artists
+                    (song_id, artist_name, artist_key, artist_py, artist_init, artist_order)
+                SELECT ?, sa.artist_name, sa.artist_key, sa.artist_py, sa.artist_init,
+                       COALESCE((SELECT MAX(artist_order) + 1 FROM song_artists WHERE song_id = ?), 0)
+                           + sa.artist_order
+                FROM song_artists sa
+                WHERE sa.song_id = ?
+                ON CONFLICT (song_id, artist_key) DO NOTHING
+                """, keepSongId, keepSongId, sourceSongId);
+        jdbc.update("DELETE FROM song_artists WHERE song_id = ?", sourceSongId);
+        return keptLegacyCredits + sourceLegacyCredits + transferred;
+    }
+
+    private int ensureLegacyArtistCredits(Long songId) {
+        return jdbc.update("""
+                INSERT INTO song_artists
+                    (song_id, artist_name, artist_key, artist_py, artist_init, artist_order)
+                SELECT ?, trim(parts.artist_name),
+                       lower(regexp_replace(trim(parts.artist_name), '[[:space:]]+', '', 'g')),
+                       CASE WHEN parts.artist_order = 1 AND s.artist !~ '[_、&＆+]'
+                            THEN COALESCE(s.artist_py, '') ELSE '' END,
+                       CASE WHEN parts.artist_order = 1 AND s.artist !~ '[_、&＆+]'
+                            THEN COALESCE(s.artist_init, '') ELSE '' END,
+                       COALESCE((SELECT MAX(artist_order) + 1 FROM song_artists WHERE song_id = ?), 0)
+                           + (parts.artist_order - 1)::INT
+                FROM songs s
+                CROSS JOIN LATERAL regexp_split_to_table(COALESCE(s.artist, ''), '[_、&＆+]+')
+                    WITH ORDINALITY AS parts(artist_name, artist_order)
+                WHERE s.id = ? AND trim(parts.artist_name) <> ''
+                ON CONFLICT (song_id, artist_key) DO NOTHING
+                """, songId, songId, songId);
     }
 }

@@ -3,10 +3,12 @@ package com.homektv.musicsource;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.domain.Song;
+import com.homektv.library.ArtistCreditService;
 import com.homektv.library.MediaClassifier;
 import com.homektv.library.PinyinUtil;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,12 +29,22 @@ public class MusicMetadataApplyService {
     private final ExternalCoverService coverService;
     private final MusicSourceConfigService configService;
     private final ObjectMapper mapper;
+    private final ArtistCreditService artistCreditService;
 
     public MusicMetadataApplyService(SongRepository songRepository, MusicSourceSearchService searchService,
                                      ExternalTrackStorage storage, ExternalCoverService coverService,
                                      MusicSourceConfigService configService, ObjectMapper mapper) {
+        this(songRepository, searchService, storage, coverService, configService, mapper, null);
+    }
+
+    @Autowired
+    public MusicMetadataApplyService(SongRepository songRepository, MusicSourceSearchService searchService,
+                                     ExternalTrackStorage storage, ExternalCoverService coverService,
+                                     MusicSourceConfigService configService, ObjectMapper mapper,
+                                     ArtistCreditService artistCreditService) {
         this.songRepository = songRepository; this.searchService = searchService; this.storage = storage;
         this.coverService = coverService; this.configService = configService; this.mapper = mapper;
+        this.artistCreditService = artistCreditService;
     }
 
     @Transactional
@@ -47,6 +59,8 @@ public class MusicMetadataApplyService {
         List<String> applied = new ArrayList<>(); List<String> skippedLocked = new ArrayList<>();
         String suggestedTitle = overrides.getOrDefault("title", track.title());
         String suggestedArtist = overrides.getOrDefault("artist", String.join(" / ", track.artists()));
+        boolean structuredArtistCredit = requested.contains("artist") && !overrides.containsKey("artist")
+                && !track.artists().isEmpty();
         String nextTitle = requested.contains("title") && (!song.isMetadataLocked("title") || overrides.containsKey("title"))
                 && !suggestedTitle.isBlank() ? suggestedTitle : song.getTitle();
         String nextArtist = requested.contains("artist") && (!song.isMetadataLocked("artist") || overrides.containsKey("artist"))
@@ -81,7 +95,11 @@ public class MusicMetadataApplyService {
         }
         overrides.keySet().stream().filter(applied::contains).forEach(song::lockMetadata);
         updateProvenance(song, provider, externalId, applied, overrides.keySet());
-        songRepository.save(song);
+        Song saved = songRepository.save(song);
+        if (artistCreditService != null && applied.contains("artist")) {
+            if (structuredArtistCredit) artistCreditService.replace(saved.getId(), track.artists());
+            else artistCreditService.replace(saved.getId(), saved.getArtist());
+        }
         storage.saveMatch(songId, track, 1);
         storage.markApplied(songId, provider, externalId);
         return new ApplyResult(song.getId(), song.getTitle(), song.getArtist(), song.getAlbum(), song.getReleaseDate(),
@@ -121,7 +139,10 @@ public class MusicMetadataApplyService {
         song.setFingerprint(fingerprint);
         applied.forEach(song::lockMetadata);
         updateManualProvenance(song, applied);
-        songRepository.save(song);
+        Song saved = songRepository.save(song);
+        if (artistCreditService != null && applied.contains("artist")) {
+            artistCreditService.replace(saved.getId(), saved.getArtist());
+        }
         return new ApplyResult(song.getId(), song.getTitle(), song.getArtist(), song.getAlbum(), song.getReleaseDate(),
                 song.getAliases(), song.getCoverPath(), applied, List.of(), null);
     }

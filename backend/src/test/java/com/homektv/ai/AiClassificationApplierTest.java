@@ -1,6 +1,7 @@
 package com.homektv.ai;
 
 import com.homektv.domain.Song;
+import com.homektv.library.ArtistCreditService;
 import com.homektv.repo.SongRepository;
 import org.junit.jupiter.api.Test;
 
@@ -10,6 +11,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AiClassificationApplierTest {
@@ -40,6 +42,25 @@ class AiClassificationApplierTest {
         new AiClassificationApplier(repository, config).apply(1L, resultWithTags("AI分类"));
 
         assertThat(song.getTags()).contains("已有分类", "AI分类", "00年代", "独唱");
+    }
+
+    @Test
+    void aiIdentityEditRefreshesIndependentArtistCredits() {
+        Song song = songWithTags("已有分类");
+        SongRepository repository = mock(SongRepository.class);
+        when(repository.findById(1L)).thenReturn(Optional.of(song));
+        when(repository.findByFingerprint(org.mockito.ArgumentMatchers.anyString())).thenReturn(Optional.empty());
+        when(repository.save(any(Song.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        AiConfigService config = mock(AiConfigService.class);
+        when(config.resolve()).thenReturn(defaultConfig());
+        ArtistCreditService credits = mock(ArtistCreditService.class);
+
+        new AiClassificationApplier(repository, config, credits).apply(1L,
+                new AiSongClassification("新歌名", "单依纯_王子异", "国语", "00年代", List.of(), List.of(),
+                        "全年龄", "合唱", List.of(), "test", 0.99, 0.99, 0.99, 0.99, 0.99,
+                        "未知", java.util.Map.of()));
+
+        verify(credits).replace(1L, "单依纯_王子异");
     }
 
     private static Song songWithTags(String... tags) {

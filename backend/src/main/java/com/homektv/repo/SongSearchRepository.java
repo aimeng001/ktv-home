@@ -44,7 +44,19 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
                OR title_py LIKE :kw || '%'
                OR artist_init = :kw
                OR artist_py LIKE :kw || '%'
+               OR artist_init LIKE '%' || :kw || '%'
+               OR artist_py LIKE '%' || :kw || '%'
                OR language ILIKE '%' || :kw || '%'
+               OR EXISTS (
+                    SELECT 1
+                    FROM song_artists sa
+                    WHERE sa.song_id = songs.id
+                      AND (
+                           sa.artist_name ILIKE '%' || :kw || '%'
+                        OR sa.artist_init LIKE '%' || :kw || '%'
+                        OR sa.artist_py LIKE '%' || :kw || '%'
+                      )
+               )
                OR EXISTS (
                     SELECT 1
                     FROM unnest(tags) AS tag

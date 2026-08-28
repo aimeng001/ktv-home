@@ -5,6 +5,7 @@ import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,10 +17,18 @@ import java.util.List;
 public class SongReparseService {
     private final SongRepository songRepository;
     private final SongFileRepository fileRepository;
+    private final ArtistCreditService artistCreditService;
 
     public SongReparseService(SongRepository songRepository, SongFileRepository fileRepository) {
+        this(songRepository, fileRepository, null);
+    }
+
+    @Autowired
+    public SongReparseService(SongRepository songRepository, SongFileRepository fileRepository,
+                              ArtistCreditService artistCreditService) {
         this.songRepository = songRepository;
         this.fileRepository = fileRepository;
+        this.artistCreditService = artistCreditService;
     }
 
     @Transactional(readOnly = true)
@@ -70,6 +79,9 @@ public class SongReparseService {
             song.lockMetadata("artist");
             song.setStatus("ok");
             songRepository.save(song);
+            if (artistCreditService != null) {
+                artistCreditService.replace(song.getId(), song.getArtist());
+            }
             updated++;
         }
         return new ApplyResult(updated, skipped, previews);

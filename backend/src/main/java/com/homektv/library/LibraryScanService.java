@@ -168,6 +168,9 @@ public class LibraryScanService {
         }
     }
 
+    @Autowired(required = false)
+    private ArtistCreditService artistCreditService;
+
     /** 全量/增量扫描曲库根目录。Fast Index 与数据库持久化 Media Probe Queue 分阶段执行。 */
     public ScanResult scanAll() {
         synchronized (scanLock) {
@@ -654,6 +657,12 @@ public class LibraryScanService {
         return FilenameParser.parse(filename, artistIndexFor(existingArtistNames()));
     }
 
+    private void syncArtistCredits(Song song) {
+        if (artistCreditService != null && song != null && song.getId() != null) {
+            artistCreditService.replace(song.getId(), song.getArtist());
+        }
+    }
+
     /**
      * Fast Index 阶段只读取目录项属性和文件名元数据；不会打开媒体内容。
      * The fast-index phase reads directory attributes and filename metadata only;
@@ -871,6 +880,7 @@ public class LibraryScanService {
                 + "\"artist\":{\"source\":\"filename_fast_index\"}}");
         provisional.setNeedsAiOptimization(!parsed.recognized());
         provisional = songRepo.save(provisional);
+        syncArtistCredits(provisional);
         counters.dbUpdates++;
 
         SongFile indexed = new SongFile();
@@ -1322,6 +1332,7 @@ public class LibraryScanService {
             }
         }
         song = songRepo.save(song);
+        syncArtistCredits(song);
         synchronized (counters) {
             counters.dbUpdates++;
         }

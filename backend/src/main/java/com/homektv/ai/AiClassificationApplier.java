@@ -1,10 +1,12 @@
 package com.homektv.ai;
 
 import com.homektv.domain.Song;
+import com.homektv.library.ArtistCreditService;
 import com.homektv.library.MediaClassifier;
 import com.homektv.library.PinyinUtil;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
@@ -25,6 +27,7 @@ public class AiClassificationApplier {
     private static final java.util.Set<String> ARTIST_GENDERS = java.util.Set.of("男歌手", "女歌手", "组合", "未知");
     private final SongRepository songRepository;
     private final AiConfigService configService;
+    private final ArtistCreditService artistCreditService;
 
     /**
      * 通过构造注入 SongRepository。
@@ -34,8 +37,15 @@ public class AiClassificationApplier {
      * @param songRepository 歌曲数据访问接口 / song data access interface
      */
     public AiClassificationApplier(SongRepository songRepository, AiConfigService configService) {
+        this(songRepository, configService, null);
+    }
+
+    @Autowired
+    public AiClassificationApplier(SongRepository songRepository, AiConfigService configService,
+                                   ArtistCreditService artistCreditService) {
         this.songRepository = songRepository;
         this.configService = configService;
+        this.artistCreditService = artistCreditService;
     }
 
     /**
@@ -55,16 +65,29 @@ public class AiClassificationApplier {
     public boolean applyAuto(Long songId, AiSongClassification result) {
         Song before = songRepository.findById(songId)
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
+        String previousArtist = before.getArtist();
         boolean changed = applyValues(before, result, false);
-        if (changed) songRepository.save(before);
+        if (changed) {
+            Song saved = songRepository.save(before);
+            syncArtistCredits(previousArtist, saved);
+        }
         return changed;
     }
 
     private Song apply(Long songId, AiSongClassification result, boolean reviewed) {
         Song song = songRepository.findById(songId)
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
+        String previousArtist = song.getArtist();
         applyValues(song, result, reviewed);
-        return songRepository.save(song);
+        Song saved = songRepository.save(song);
+        syncArtistCredits(previousArtist, saved);
+        return saved;
+    }
+
+    private void syncArtistCredits(String previousArtist, Song saved) {
+        if (artistCreditService != null && !java.util.Objects.equals(previousArtist, saved.getArtist())) {
+            artistCreditService.replace(saved.getId(), saved.getArtist());
+        }
     }
 
     private boolean applyValues(Song song, AiSongClassification result, boolean reviewed) {

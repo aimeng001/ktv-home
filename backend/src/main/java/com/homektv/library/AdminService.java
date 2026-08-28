@@ -18,6 +18,7 @@ import com.homektv.web.dto.AudioLayoutUpdateRequest;
 import com.homektv.web.dto.SongEditRequest;
 import com.homektv.web.dto.VocalReviewDto;
 import com.homektv.ws.WsBroadcaster;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -47,11 +48,21 @@ public class AdminService {
     private final QueueItemRepository queueRepo;
     private final PlayerStateRepository playerRepo;
     private final AppProperties props;
+    private final ArtistCreditService artistCreditService;
 
     public AdminService(SongRepository songRepo, SongFileRepository fileRepo,
                         PlayHistoryRepository historyRepo, WsBroadcaster broadcaster,
                         AssetWriter assetWriter, QueueItemRepository queueRepo,
                         PlayerStateRepository playerRepo, AppProperties props) {
+        this(songRepo, fileRepo, historyRepo, broadcaster, assetWriter, queueRepo, playerRepo, props, null);
+    }
+
+    @Autowired
+    public AdminService(SongRepository songRepo, SongFileRepository fileRepo,
+                        PlayHistoryRepository historyRepo, WsBroadcaster broadcaster,
+                        AssetWriter assetWriter, QueueItemRepository queueRepo,
+                        PlayerStateRepository playerRepo, AppProperties props,
+                        ArtistCreditService artistCreditService) {
         this.songRepo = songRepo;
         this.fileRepo = fileRepo;
         this.historyRepo = historyRepo;
@@ -60,6 +71,7 @@ public class AdminService {
         this.queueRepo = queueRepo;
         this.playerRepo = playerRepo;
         this.props = props;
+        this.artistCreditService = artistCreditService;
     }
 
     /** 仪表盘统计（P2.1） */
@@ -120,6 +132,7 @@ public class AdminService {
         Song song = songRepo.findById(id)
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         boolean manualIdentityEdited = false;
+        boolean artistEdited = false;
         if (req.title() != null && !req.title().isBlank()) {
             song.setTitle(req.title().trim());
             song.setTitlePy(PinyinUtil.fullPinyin(req.title()));
@@ -133,6 +146,7 @@ public class AdminService {
             song.setArtistInit(PinyinUtil.initials(req.artist()));
             song.lockMetadata("artist");
             manualIdentityEdited = true;
+            artistEdited = true;
         }
         if (req.language() != null) { song.setLanguage(req.language()); song.lockMetadata("language"); }
         if (req.vocalForm() != null && !req.vocalForm().isBlank()) { song.setVocalForm(req.vocalForm()); song.lockMetadata("vocalForm"); }
@@ -168,7 +182,11 @@ public class AdminService {
         if (manualIdentityEdited && "unrecognized".equals(song.getStatus())) {
             song.setStatus("ok");
         }
-        return songRepo.save(song);
+        Song saved = songRepo.save(song);
+        if (artistEdited && artistCreditService != null) {
+            artistCreditService.replace(saved.getId(), saved.getArtist());
+        }
+        return saved;
     }
 
     /**

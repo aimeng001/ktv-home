@@ -4,6 +4,7 @@ import com.homektv.config.AppProperties;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
+import com.homektv.repo.SongArtistRepository;
 import com.homektv.repo.SongRepository;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -89,6 +90,7 @@ class LibraryScanIntegrationTest {
     @Autowired LibraryScanService scanService;
     @Autowired SongRepository songRepo;
     @Autowired SongFileRepository fileRepo;
+    @Autowired SongArtistRepository artistRepo;
     @Autowired JdbcTemplate jdbcTemplate;
 
     @org.junit.jupiter.api.BeforeEach
@@ -155,6 +157,26 @@ class LibraryScanIntegrationTest {
         LibraryScanService.ScanResult second = scanService.scanAll();
         assertThat(songRepo.count()).isEqualTo(countAfterFirst);
         assertThat(second.skipped()).isGreaterThanOrEqualTo(3);
+    }
+
+    @Test
+    void collaborativeFilenameCreatesIndependentArtistCredits() throws Exception {
+        assumeTrue(ffmpegAvailable, "ffmpeg 不可用，跳过");
+        Path collaborative = libraryDir.resolve("单依纯_王子异-合唱歌曲-国语-合唱.mkv");
+        Files.copy(libraryDir.resolve("周杰伦 - 晴天.mkv"), collaborative,
+                StandardCopyOption.REPLACE_EXISTING);
+        try {
+            scanService.scanAll();
+
+            Song song = songRepo.findAll().stream()
+                    .filter(value -> "合唱歌曲".equals(value.getTitle()))
+                    .findFirst().orElseThrow();
+            assertThat(artistRepo.findBySongIdOrderByArtistOrder(song.getId()))
+                    .extracting(com.homektv.domain.SongArtist::getArtistName)
+                    .containsExactly("单依纯", "王子异");
+        } finally {
+            Files.deleteIfExists(collaborative);
+        }
     }
 
     @Test
