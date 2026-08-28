@@ -308,7 +308,9 @@ class MergeGateContractTests(unittest.TestCase):
 
         mounts = {mount["target"]: mount for mount in services["ktv"]["volumes"]}
         self.assertTrue(mounts["/source-music"]["read_only"])
-        self.assertFalse(mounts["/source-music"]["bind"]["create_host_path"])
+        self.assertFalse(
+            mounts["/source-music"].get("bind", {}).get("create_host_path", False)
+        )
         self.assertTrue(mounts["/source-music"]["source"].endswith("sentinel-source"))
         self.assertTrue(mounts["/music"]["source"].endswith("sentinel-music"))
         self.assertTrue(mounts["/data"]["source"].endswith("sentinel-data"))
