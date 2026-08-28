@@ -41,6 +41,8 @@ public class FFprobeService {
         ProcessBuilder pb = new ProcessBuilder(
                 ffprobePath,
                 "-v", "error",
+                "-probesize", "1048576",
+                "-analyzeduration", "1000000",
                 "-print_format", "json",
                 "-show_format",
                 "-show_streams",

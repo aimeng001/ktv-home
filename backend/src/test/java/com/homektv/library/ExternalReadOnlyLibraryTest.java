@@ -185,7 +185,6 @@ class ExternalReadOnlyLibraryTest {
         byte[] originalBytes = new byte[]{0x01, 0x23, 0x45, 0x67};
         Files.write(source, originalBytes);
         FileTime originalMtime = Files.getLastModifiedTime(source);
-        when(tagReader.read(any())).thenReturn(new TagInfo());
         when(ffprobe.probe(source)).thenReturn(new MediaProbe(180_000, 2, 0, true,
                 "1920x1080", List.of(), "h264", "aac"));
 
@@ -217,7 +216,6 @@ class ExternalReadOnlyLibraryTest {
         when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_CHANNEL);
         Path source = sourceDir.resolve("周杰伦-晴天-国语-流行.mkv");
         Files.write(source, new byte[]{0x01, 0x23});
-        when(tagReader.read(any())).thenReturn(new TagInfo());
         when(ffprobe.probe(source)).thenReturn(new MediaProbe(180_000, 1, 0, true,
                 "1920x1080", List.of(), "h264", "aac"));
 
@@ -238,7 +236,6 @@ class ExternalReadOnlyLibraryTest {
         when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_CHANNEL);
         Path source = sourceDir.resolve("周杰伦-晴天-国语-流行.mkv");
         Files.write(source, new byte[]{0x01, 0x23});
-        when(tagReader.read(any())).thenReturn(new TagInfo());
         when(ffprobe.probe(source)).thenReturn(new MediaProbe(180_000, 1, 0, true,
                 "1920x1080", List.of(), "h264", "aac"));
 
@@ -258,7 +255,6 @@ class ExternalReadOnlyLibraryTest {
         when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_TRACK);
         Path source = sourceDir.resolve("周杰伦-晴天-国语-流行.mkv");
         Files.write(source, new byte[]{0x01, 0x23});
-        when(tagReader.read(any())).thenReturn(new TagInfo());
         when(ffprobe.probe(source)).thenReturn(new MediaProbe(180_000, 1, 0, true,
                 "1920x1080", List.of(), "h264", "aac"));
 
@@ -275,7 +271,6 @@ class ExternalReadOnlyLibraryTest {
         when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_TRACK);
         Path source = sourceDir.resolve("周杰伦-晴天-国语-流行.mkv");
         Files.write(source, new byte[]{0x01, 0x23});
-        when(tagReader.read(any())).thenReturn(new TagInfo());
         when(ffprobe.probe(source))
                 .thenThrow(new MediaProbeException("temporary probe failure"))
                 .thenReturn(new MediaProbe(180_000, 1, 0, true,
@@ -307,7 +302,6 @@ class ExternalReadOnlyLibraryTest {
 
         Path source = sourceDir.resolve("A-Lin-给我一个理由忘记-国语-流行.mkv");
         Files.write(source, new byte[]{0x11, 0x22});
-        when(tagReader.read(any())).thenReturn(new TagInfo());
         when(ffprobe.probe(source)).thenReturn(new MediaProbe(180_000, 2, 0, true,
                 "1920x1080", List.of(), "h264", "aac"));
 

@@ -311,7 +311,7 @@ class IncrementalLibraryScanTest {
                 .contains("新歌词");
         assertThat(Files.readAllBytes(file)).containsExactly((byte) 1, (byte) 2, (byte) 3);
         verify(ffprobe, times(1)).probe(any(Path.class));
-        verify(tagReader, times(1)).read(any());
+        verify(tagReader, times(0)).read(any());
     }
 
     @Test
@@ -782,6 +782,20 @@ class IncrementalLibraryScanTest {
 
         assertThat(provisional.getStatus()).isEqualTo("unrecognized");
         assertThat(provisional.isNeedsAiOptimization()).isTrue();
+    }
+
+    @Test
+    void fastIndex_forVideoFiles_skipsTagReader() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        when(ffprobe.probe(any(Path.class))).thenReturn(probe());
+
+        scanService.scanAll();
+
+        SongFile indexed = filesByPath.get(file.toString());
+        assertThat(indexed).isNotNull();
+        assertThat(indexed.isProbePending()).isFalse();
+        // For video containers (.mkv, .mp4, etc.), TagReader (jaudiotagger) should never be called
+        verify(tagReader, times(0)).read(any(java.io.File.class));
     }
 
     private static String fileIdentity(Path file) throws Exception {

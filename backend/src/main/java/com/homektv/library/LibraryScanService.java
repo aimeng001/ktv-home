@@ -21,6 +21,8 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +33,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -56,12 +59,31 @@ public class LibraryScanService {
             "mp3", "mp2", "aac", "flac", "wav", "m4a", "ape", "ogg", "oga", "opus",
             "ac3", "eac3", "dts", "mka", "wma", "aiff", "aif", "alac" // 音频
     );
+    private static final Set<String> AUDIO_EXT = Set.of(
+            "mp3", "mp2", "aac", "flac", "wav", "m4a", "ape", "ogg", "oga", "opus",
+            "ac3", "eac3", "dts", "mka", "wma", "aiff", "aif", "alac"
+    );
     static final int FAST_INDEX_BATCH_SIZE = 500;
     static final int PROBE_PAGE_SIZE = 64;
+    static final int PROBE_CONCURRENCY = 3;
     private static final String PHASE_DISCOVERING = "DISCOVERING";
     private static final String PHASE_FAST_INDEX = "FAST_INDEX";
     private static final String PHASE_MEDIA_PROBE = "MEDIA_PROBE";
     private static final String PHASE_COMPLETED = "COMPLETED";
+
+    public static boolean isMediaFile(Path file) {
+        return file != null && MEDIA_EXT.contains(extOf(file));
+    }
+
+    public static boolean isAudioFile(Path file) {
+        return file != null && AUDIO_EXT.contains(extOf(file));
+    }
+
+    private static String extOf(Path file) {
+        String name = file.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(dot + 1).toLowerCase() : "";
+    }
 
     private final AppProperties props;
     private final FFprobeService ffprobe;
@@ -72,6 +94,11 @@ public class LibraryScanService {
     private final SettingService settingService;
     private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "library-scan");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final ExecutorService probeExecutor = Executors.newFixedThreadPool(PROBE_CONCURRENCY, r -> {
+        Thread thread = new Thread(r, "media-probe-worker");
         thread.setDaemon(true);
         return thread;
     });
@@ -182,12 +209,21 @@ public class LibraryScanService {
             ScanTotals totals = new ScanTotals();
             int[] discovered = {0};
             boolean[] enumerationComplete = {true};
+            Map<String, LyricSnapshot> currentDirLyrics = new HashMap<>();
             try {
                 Files.walkFileTree(root, new SimpleFileVisitor<>() {
                     @Override
                     public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                        return rootContext.allowsVisitedDirectory(dir)
-                                ? FileVisitResult.CONTINUE : FileVisitResult.SKIP_SUBTREE;
+                        if (!rootContext.allowsVisitedDirectory(dir)) {
+                            return FileVisitResult.SKIP_SUBTREE;
+                        }
+                        currentDirLyrics.clear();
+                        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, "*.lrc")) {
+                            for (Path lrc : stream) {
+                                currentDirLyrics.put(lrc.getFileName().toString().toLowerCase(), lyricSnapshotOf(lrc));
+                            }
+                        } catch (IOException ignored) {}
+                        return FileVisitResult.CONTINUE;
                     }
 
                     @Override
@@ -198,7 +234,7 @@ public class LibraryScanService {
                         }
                         try {
                             FastIndexEntry entry = fastIndex(file, attrs, artistIndex,
-                                    Map.of(), Map.of(), rootContext.configuredRoot());
+                                    Map.of(), Map.of(), rootContext.configuredRoot(), currentDirLyrics);
                             batch.add(entry);
                             currentPaths.add(entry.path());
                             counters.fastIndexed++;
@@ -437,6 +473,7 @@ public class LibraryScanService {
             }
             if (page == null || page.getContent().isEmpty()) return;
 
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
             for (SongFile tracked : page.getContent()) {
                 if (tracked == null || isBlank(tracked.getFilePath())) continue;
                 afterPath = tracked.getFilePath();
@@ -451,37 +488,57 @@ public class LibraryScanService {
                         || Files.isSymbolicLink(file) || !isMediaFile(file)) {
                     continue;
                 }
-                try {
-                    BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class,
-                            LinkOption.NOFOLLOW_LINKS);
-                    Map<String, SongFile> byPath = Map.of(tracked.getFilePath(), tracked);
-                    Map<String, SongFile> byRelativePath = isBlank(tracked.getRelativePath())
-                            ? Map.of() : Map.of(tracked.getRelativePath(), tracked);
-                    FastIndexEntry entry = fastIndex(file, attrs, artistIndex, byPath,
-                            byRelativePath, rootContext.configuredRoot());
-                    SongFile resolved = entry.existing().orElse(null);
-                    boolean existedAtScanStart = wasPresentAtScanStart(resolved,
-                            trackedIdsAtScanStart, trackedPathsAtScanStart);
-                    boolean pendingAtScanStart = resolved != null
-                            && (resolved.getId() != null && pendingIdsAtScanStart.contains(resolved.getId())
-                            || resolved.getId() == null && pendingPathsAtScanStart.contains(resolved.getFilePath()));
-                    entry = entry.withScanHistory(existedAtScanStart,
-                            pendingAtScanStart);
-                    IngestOutcome outcome = ingestInternal(entry, null, null, null, false,
-                            knownArtists, counters, externalDefault).outcome();
-                    recordOutcome(totals, outcome);
-                } catch (Exception failure) {
-                    // Failed media reads stay pending. Advancing the local cursor makes
-                    // one bad file unable to starve the rest of this run; the next run
-                    // starts at the beginning and retries it.
-                    totals.skipped++;
-                    log.warn("媒体探测失败，保留 pending：{} - {}", file, failure.getMessage());
-                }
-                totals.probeCompleted++;
-                publishProgress(true, discovered, counters.fastIndexed, file.getFileName().toString(), totals,
-                        PHASE_MEDIA_PROBE, counters.fastIndexed, counters.probeQueued,
-                        totals.probeCompleted, startedAt, null);
+                futures.add(CompletableFuture.runAsync(() -> {
+                    try {
+                        BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class,
+                                LinkOption.NOFOLLOW_LINKS);
+                        Map<String, SongFile> byPath = Map.of(tracked.getFilePath(), tracked);
+                        Map<String, SongFile> byRelativePath = isBlank(tracked.getRelativePath())
+                                ? Map.of() : Map.of(tracked.getRelativePath(), tracked);
+                        FastIndexEntry entry = fastIndex(file, attrs, artistIndex, byPath,
+                                byRelativePath, rootContext.configuredRoot());
+                        SongFile resolved = entry.existing().orElse(null);
+                        boolean existedAtScanStart = wasPresentAtScanStart(resolved,
+                                trackedIdsAtScanStart, trackedPathsAtScanStart);
+                        boolean pendingAtScanStart = resolved != null
+                                && (resolved.getId() != null && pendingIdsAtScanStart.contains(resolved.getId())
+                                || resolved.getId() == null && pendingPathsAtScanStart.contains(resolved.getFilePath()));
+                        entry = entry.withScanHistory(existedAtScanStart, pendingAtScanStart);
+
+                        MediaProbe probed = null;
+                        try {
+                            synchronized (counters) {
+                                counters.probeCalls++;
+                            }
+                            probed = ffprobe.probe(file);
+                        } catch (MediaProbeException e) {
+                            log.debug("ffprobe 失败：{} - {}", file.getFileName(), e.getMessage());
+                        }
+
+                        IngestOutcome outcome;
+                        if (probed == null) {
+                            outcome = IngestOutcome.SKIPPED;
+                        } else {
+                            outcome = ingestInternal(entry, null, null, null, false,
+                                    knownArtists, counters, externalDefault, probed).outcome();
+                        }
+                        synchronized (totals) {
+                            recordOutcome(totals, outcome);
+                            totals.probeCompleted++;
+                            publishProgress(true, discovered, counters.fastIndexed, file.getFileName().toString(), totals,
+                                    PHASE_MEDIA_PROBE, counters.fastIndexed, counters.probeQueued,
+                                    totals.probeCompleted, startedAt, null);
+                        }
+                    } catch (Exception failure) {
+                        synchronized (totals) {
+                            totals.skipped++;
+                            totals.probeCompleted++;
+                        }
+                        log.warn("媒体探测失败，保留 pending：{} - {}", file, failure.getMessage());
+                    }
+                }, probeExecutor));
             }
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             if (page.getContent().size() < PROBE_PAGE_SIZE) return;
         }
     }
@@ -567,11 +624,23 @@ public class LibraryScanService {
                                      Map<String, SongFile> trackedByPath,
                                      Map<String, SongFile> trackedByRelativePath,
                                      Path scanRoot) {
+        return fastIndex(file, attrs, artistIndex, trackedByPath, trackedByRelativePath, scanRoot, null);
+    }
+
+    private FastIndexEntry fastIndex(Path file, BasicFileAttributes attrs,
+                                     FilenameParser.ArtistIndex artistIndex,
+                                     Map<String, SongFile> trackedByPath,
+                                     Map<String, SongFile> trackedByRelativePath,
+                                     Path scanRoot,
+                                     Map<String, LyricSnapshot> dirLyrics) {
         String path = file.toString();
         Path sidecarLyric = sidecarLyricOf(file);
         OffsetDateTime mediaMtime = attrs.lastModifiedTime().toInstant().atOffset(ZoneOffset.UTC);
         String mediaIdentity = mediaFileIdentity(attrs);
-        LyricSnapshot lyricSnapshot = lyricSnapshotOf(sidecarLyric);
+        String sidecarName = sidecarLyric.getFileName().toString().toLowerCase();
+        LyricSnapshot lyricSnapshot = dirLyrics != null
+                ? dirLyrics.getOrDefault(sidecarName, LyricSnapshot.missing())
+                : lyricSnapshotOf(sidecarLyric);
         String relativePath = relativePathOf(file, scanRoot);
         SongFile tracked = trackedByPath == null
                 ? fileRepo.findByFilePath(path).orElse(null)
@@ -1004,6 +1073,13 @@ public class LibraryScanService {
     private IngestState ingestInternal(FastIndexEntry entry, Path sourceFile, String sourceMd5, String outputMd5,
                                         boolean transcodeRequired, Collection<String> knownArtists,
                                         ScanCounters counters, AudioLayout externalDefault) {
+        return ingestInternal(entry, sourceFile, sourceMd5, outputMd5, transcodeRequired, knownArtists,
+                counters, externalDefault, null);
+    }
+
+    private IngestState ingestInternal(FastIndexEntry entry, Path sourceFile, String sourceMd5, String outputMd5,
+                                        boolean transcodeRequired, Collection<String> knownArtists,
+                                        ScanCounters counters, AudioLayout externalDefault, MediaProbe preProbed) {
         Path file = entry.file();
         String pathStr = entry.path();
         Path sidecarLyric = sidecarLyricOf(file);
@@ -1011,18 +1087,20 @@ public class LibraryScanService {
         Optional<SongFile> existing = entry.existing();
 
         // 1) ffprobe 探测
-        MediaProbe probe;
-        try {
-            counters.probeCalls++;
-            probe = ffprobe.probe(file);
-        } catch (MediaProbeException e) {
-            log.debug("ffprobe 失败：{} - {}", file.getFileName(), e.getMessage());
-            return new IngestState(IngestOutcome.SKIPPED, null, null);
+        MediaProbe probe = preProbed;
+        if (probe == null) {
+            try {
+                counters.probeCalls++;
+                probe = ffprobe.probe(file);
+            } catch (MediaProbeException e) {
+                log.debug("ffprobe 失败：{} - {}", file.getFileName(), e.getMessage());
+                return new IngestState(IngestOutcome.SKIPPED, null, null);
+            }
         }
 
         // 2) 标签解析 + 容器标签 + LRC + 3) 文件名兜底
-        TagInfo tag = tagReader.read(file.toFile());
-        SidecarLyricContent sidecarLyricContent = readSidecarLyric(sidecarLyric);
+        TagInfo tag = isAudioFile(file) ? tagReader.read(file.toFile()) : new TagInfo();
+        SidecarLyricContent sidecarLyricContent = readSidecarLyric(sidecarLyric, entry.lyricSnapshot());
         String sidecarLyricText = sidecarLyricContent.text();
         String lrcTitle = lrcTag(sidecarLyricText, "ti");
         String lrcArtist = lrcTag(sidecarLyricText, "ar");
@@ -1342,16 +1420,6 @@ public class LibraryScanService {
         }
     }
 
-    public static boolean isMediaFile(Path file) {
-        return MEDIA_EXT.contains(extOf(file));
-    }
-
-    private static String extOf(Path file) {
-        String name = file.getFileName().toString();
-        int dot = name.lastIndexOf('.');
-        return dot > 0 ? name.substring(dot + 1).toLowerCase() : "";
-    }
-
     private static Path sidecarLyricOf(Path mediaFile) {
         String name = mediaFile.getFileName().toString();
         int dot = name.lastIndexOf('.');
@@ -1408,7 +1476,11 @@ public class LibraryScanService {
     }
 
     private static SidecarLyricContent readSidecarLyric(Path sidecarLyric) {
-        LyricSnapshot snapshot = lyricSnapshotOf(sidecarLyric);
+        return readSidecarLyric(sidecarLyric, null);
+    }
+
+    private static SidecarLyricContent readSidecarLyric(Path sidecarLyric, LyricSnapshot precomputedSnapshot) {
+        LyricSnapshot snapshot = precomputedSnapshot != null ? precomputedSnapshot : lyricSnapshotOf(sidecarLyric);
         if (!snapshot.present()) return SidecarLyricContent.absent();
         if (!snapshot.readable()) return SidecarLyricContent.unreadable();
         try {
@@ -1568,6 +1640,7 @@ public class LibraryScanService {
     @PreDestroy
     void shutdown() {
         scanExecutor.shutdownNow();
+        probeExecutor.shutdownNow();
     }
 
     private Set<String> existingArtistNames() {
