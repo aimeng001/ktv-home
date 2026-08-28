@@ -118,15 +118,25 @@ public final class FilenameParser {
         base = base.replaceAll("\\s*\\((?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|Official Video)\\)\\s*$", "");
         base = base.replaceAll("(?i)\\s*[-|]\\s*(KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK)\\s*$", "");
 
-        String normalized = base
-                .replace('－', '-')
-                .replace('—', '-')
-                .replace('_', '-')
-                .replace('–', '-')
-                .replace('｜', '|')
-                .replace('|', '-')
-                .replace('/', '-')
-                .replace('\\', '-');
+        // Keep underscores intact for the first standard-format pass. In the
+        // library, an underscore is also used inside a collaborative artist
+        // block (for example, "ArtistA_ArtistB-Title-国语-合唱"). Converting
+        // it to a dash before locating the metadata suffix loses that boundary.
+        String dashSeparated = normalizeDashSeparators(base);
+        List<String> dashParts = splitParts(dashSeparated);
+        MetadataSuffix dashSuffix = findMetadataSuffix(dashParts);
+        if (dashSuffix != null) {
+            ParsedMeta standard = parseStandard(dashParts, dashSuffix, artistIndex, base.trim());
+            if (standard.recognized() || hasCollaborativeArtistMarker(dashParts)) {
+                return standard;
+            }
+        }
+
+        // Preserve the existing legacy behavior for filenames that used an
+        // underscore as a field separator rather than as part of an artist
+        // block. This fallback is intentionally reached only after the
+        // underscore-preserving standard pass above.
+        String normalized = dashSeparated.replace('_', '-');
         List<String> parts = splitParts(normalized);
 
         MetadataSuffix suffix = findMetadataSuffix(parts);
@@ -134,6 +144,21 @@ public final class FilenameParser {
             return parseStandard(parts, suffix, artistIndex, base.trim());
         }
         return parseLegacy(parts, rule, artistIndex, base.trim());
+    }
+
+    private static String normalizeDashSeparators(String value) {
+        return value
+                .replace('－', '-')
+                .replace('—', '-')
+                .replace('–', '-')
+                .replace('｜', '|')
+                .replace('|', '-')
+                .replace('/', '-')
+                .replace('\\', '-');
+    }
+
+    private static boolean hasCollaborativeArtistMarker(List<String> parts) {
+        return !parts.isEmpty() && parts.get(0).indexOf('_') >= 0;
     }
 
     private static ParsedMeta parseStandard(List<String> parts, MetadataSuffix suffix,

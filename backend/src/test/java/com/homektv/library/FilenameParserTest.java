@@ -23,6 +23,22 @@ class FilenameParserTest {
     }
 
     @Test
+    void parsesCollaborativeArtistBlockWithoutSplittingUnderscores() {
+        assertStandard("D.N.A 张艺兴_GALI_单依纯_王子异-D.N.A Cypher I-国语-合唱.mkv",
+                "D.N.A 张艺兴_GALI_单依纯_王子异", "D.N.A Cypher I", "国语", "合唱");
+    }
+
+    @Test
+    void parsesOtherObservedCollaborativeArtistBlocks() {
+        assertStandard("黄绮珊_希林娜依高-是真的吗妈妈是女儿(2023央视春晚)-国语-合唱.mkv",
+                "黄绮珊_希林娜依高", "是真的吗妈妈是女儿(2023央视春晚)", "国语", "合唱");
+        assertStandard("雷亿_二哥莫姓-首山湖的眷恋-国语-合唱.mkv",
+                "雷亿_二哥莫姓", "首山湖的眷恋", "国语", "合唱");
+        assertStandard("Kkecho_Ty._Redboi-超-国语-合唱.mkv",
+                "Kkecho_Ty._Redboi", "超", "国语", "合唱");
+    }
+
+    @Test
     void recognizesOtherAndUnknownAsStandardLanguages() {
         assertStandard("草蜢-爱-其他-流行.mkv", "草蜢", "爱", "其他", "流行");
         assertStandard("草蜢-爱-未知-流行.mkv", "草蜢", "爱", "未知", "流行");
