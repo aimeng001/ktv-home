@@ -36,7 +36,7 @@
           </div>
           <div class="setting-group">
             <div class="group-head"><strong>局域网访问</strong><span>控制电视端展示的手机点歌地址</span></div>
-            <SettingRow id="qr_address" label="二维码展示地址" hint="留空时使用当前访问地址"><input v-model="form.qr_address" class="input" placeholder="192.168.1.10:8080" /></SettingRow>
+            <SettingRow id="display_address" label="二维码展示地址" hint="留空时使用当前访问地址"><input v-model="form.display_address" class="input" placeholder="192.168.1.10:8080" /></SettingRow>
           </div>
         </section>
 
@@ -95,6 +95,8 @@
 
         <section v-show="section === 'transcode'" class="section" id="section-transcode">
           <SectionHead title="入库与转码" description="管理直拷规则、转码输出与源文件清理"><Database :size="19" /></SectionHead>
+          <div v-if="libraryMode !== 'MANAGED'" class="readonly-notice">{{ libraryMode === 'EXTERNAL_READ_ONLY' ? '当前使用外部只读曲库；入库、删除和转码设置不适用于该模式。' : '曲库模式尚未确认；为保护源文件，入库、删除和转码设置暂不可用。' }}</div>
+          <template v-else>
           <div class="setting-group warning-group">
             <div class="group-head"><strong>源文件清理</strong><span>仅作用于管理员手动启动的转码任务</span></div>
             <SettingRow id="delete_source_after_transcode" label="转码成功后删除源文件" hint="默认关闭；完成入库与校验后才会逐首删除"><Toggle v-model="form.delete_source_after_transcode" /></SettingRow>
@@ -113,6 +115,7 @@
             <SettingRow label="输出音频编码"><select v-model="form.transcode_audio_codec" class="input"><option value="aac">AAC</option><option value="mp3">MP3</option><option value="opus">Opus</option></select></SettingRow>
             <SettingRow label="硬件加速" :hint="hardwareStatusText"><Toggle v-model="form.transcode_hardware_acceleration" /></SettingRow>
           </div>
+          </template>
         </section>
 
         <section v-show="section === 'tv'" class="section" id="section-tv">
@@ -147,7 +150,7 @@
           </div>
           <div class="setting-group">
             <div class="group-head"><strong>系统信息</strong><span>当前部署版本</span></div>
-            <SettingRow label="应用版本"><span class="readonly">home-ktv v0.1.0</span></SettingRow>
+            <SettingRow label="应用版本"><span class="readonly">{{ releaseLabel(releaseInfo) }}</span></SettingRow>
             <SettingRow label="使用范围"><span class="readonly">家庭局域网自用</span></SettingRow>
           </div>
         </section>
@@ -168,6 +171,7 @@ import {
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
+import { canonicalizeSettings, releaseLabel, saveDirtySections } from './settingsState'
 
 const route = useRoute(); const router = useRouter()
 const categories = [
@@ -179,13 +183,15 @@ const categories = [
   { key: 'maintenance', label: '数据维护', description: '修复与清理', icon: Wrench }
 ]
 const search = ref(''); const section = ref(route.query.section && categories.some(x => x.key === route.query.section) ? route.query.section : 'basic')
-const form = reactive({ library_watch_enabled:false, qr_address:'', external_default_audio_layout:'NORMAL_STEREO', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_path:'', anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false })
+const form = reactive({ library_watch_enabled:false, display_address:'', external_default_audio_layout:'NORMAL_STEREO', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_path:'', anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false })
 const ai = reactive({ enabled:false, apiKeyConfigured:false, apiKeySuffix:null, sources:{}, capabilities:{}, lastTestAt:null })
 const aiForm = reactive({ enabled:false, baseUrl:'', apiKey:'', bulkModel:'', reasoningModel:'', timeoutSeconds:60, identityThreshold:.97, classificationThreshold:.92, jsonMode:'AUTO', bulkConcurrency:2, reasoningConcurrency:1 })
 const musicForm = reactive({enabled:false,providers:[],resultLimit:20,timeoutSeconds:5,searchCacheHours:6,concurrencyLimit:1,requestIntervalMs:1500,autoApplyThreshold:.95})
 const musicStatus = ref([]); const musicProviderOptions=[{value:'NETEASE',label:'网易云音乐'},{value:'QQ',label:'QQ 音乐'},{value:'KUGOU',label:'酷狗音乐'}]
 const original = ref(''); const aiOriginal = ref(''); const musicOriginal = ref(''); const dirty = ref(false); const loading = ref(true); const testing = ref(false); const testingMusic=ref(false); const testMessage = ref(''); const musicTestMessage=ref(''); const models = ref([]); const modelTarget = ref('bulk'); const wishes = ref([]); const clearKey = ref(false)
 const hardware = reactive({ available:false, reason:'尚未检测' })
+const releaseInfo = reactive({ version:'' })
+const libraryMode = ref(null)
 const presets = [{name:'DeepSeek',baseUrl:'https://api.deepseek.com/v1'},{name:'OpenAI',baseUrl:'https://api.openai.com/v1'},{name:'Ollama',baseUrl:'http://localhost:11434/v1'},{name:'自定义',baseUrl:''}]
 const containerOptions=['mp4','m4v','mkv','mov','ts','m2ts','mts','mpg','mpeg','vob','avi','webm','wmv','asf','flv','f4v','3gp','3g2','rm','rmvb'].map(value=>({value,label:value.toUpperCase()}))
 const videoOptions=['h264','hevc','mpeg2video','mpeg4','vp8','vp9','av1','vc1','wmv3','wmv2','theora','prores','dnxhd','mjpeg','dvvideo','h263','rawvideo'].map(value=>({value,label:value.toUpperCase()}))
@@ -197,7 +203,7 @@ const Checks = { props:['modelValue','options'], emits:['update:modelValue'], se
 const searchCatalog = {
   basic: [
     { key:'library_watch_enabled', label:'源目录自动扫描', keywords:'监听 扫描 文件' },
-    { key:'qr_address', label:'二维码展示地址', keywords:'局域网 手机 点歌 IP' },
+    { key:'display_address', label:'二维码展示地址', keywords:'局域网 手机 点歌 IP' },
     { key:'external_default_audio_layout', label:'外部曲库默认 AudioLayout', keywords:'NAS 外部 只读 原唱 伴唱 声道 音轨' }
   ],
   ai: [
@@ -236,14 +242,17 @@ const searchItems = computed(() => categories.flatMap(c => (searchCatalog[c.key]
 const searchResults = computed(() => { const q=search.value.trim().toLowerCase(); return q?searchItems.value.filter(x=>(x.label+' '+x.description+' '+x.key+' '+x.keywords).toLowerCase().includes(q)):[] })
 const hardwareStatusText = computed(() => hardware.available ? '硬件编码可用' : (hardware.reason || '未检测到硬件编码器'))
 function snapshot(v){ return JSON.stringify(v) }
+const generalDirty = computed(() => snapshot(form) !== original.value)
+const aiDirty = computed(() => snapshot(aiForm) !== aiOriginal.value)
+const musicDirty = computed(() => snapshot(musicForm) !== musicOriginal.value)
 function selectSection(value){ section.value=value; router.replace({query:{...route.query,section:value}}) }
 function jump(item){ selectSection(item.section); nextTick(()=>document.getElementById(item.key)?.scrollIntoView({behavior:'smooth',block:'center'})) }
 function sourceLabel(value){ return value==='DATABASE'?'管理后台':value==='ENVIRONMENT'?'环境变量':value==='NONE'?'未配置':'默认值' }
 function formatTime(value){ return value ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '' }
 function applyPreset(p){ if(p.baseUrl) aiForm.baseUrl=p.baseUrl }
-async function load(){ loading.value=true; const [settings,config,music,hw,w] = await Promise.all([api.adminGetSettings().catch(()=>({})),api.adminAiConfig().catch(()=>({})),api.adminMusicSourceConfig().catch(()=>({})),api.adminTranscodeHardware().catch(e=>({reason:e.message})),api.adminWishes().catch(()=>[])]); Object.assign(form,settings); Object.assign(ai,config); Object.assign(aiForm,{enabled:config.enabled,baseUrl:config.baseUrl,bulkModel:config.bulkModel,reasoningModel:config.reasoningModel,timeoutSeconds:config.timeoutSeconds,identityThreshold:config.identityThreshold,classificationThreshold:config.classificationThreshold,jsonMode:config.jsonMode||'AUTO',bulkConcurrency:config.bulkConcurrency||2,reasoningConcurrency:config.reasoningConcurrency||1}); Object.assign(musicForm,{enabled:music.enabled||false,providers:music.providers||[],resultLimit:music.resultLimit||20,timeoutSeconds:music.timeoutSeconds||5,searchCacheHours:music.searchCacheHours||6,concurrencyLimit:music.concurrencyLimit||1,requestIntervalMs:music.requestIntervalMs||1500,autoApplyThreshold:music.autoApplyThreshold??.95});musicStatus.value=music.providerStatus||[]; Object.assign(hardware,hw); wishes.value=w; original.value=snapshot(form); aiOriginal.value=snapshot(aiForm); musicOriginal.value=snapshot(musicForm); dirty.value=false; loading.value=false }
+async function load(){ loading.value=true; const [settings,config,music,hw,w,mode,release] = await Promise.all([api.adminGetSettings().catch(()=>({})),api.adminAiConfig().catch(()=>({})),api.adminMusicSourceConfig().catch(()=>({})),api.adminTranscodeHardware().catch(e=>({reason:e.message})),api.adminWishes().catch(()=>[]),api.adminSourceLibrary({page:0,size:1}).catch(()=>({})),api.releaseInfo().catch(()=>({}))]); Object.assign(form,canonicalizeSettings(settings)); Object.assign(ai,config); Object.assign(aiForm,{enabled:config.enabled,baseUrl:config.baseUrl,bulkModel:config.bulkModel,reasoningModel:config.reasoningModel,timeoutSeconds:config.timeoutSeconds,identityThreshold:config.identityThreshold,classificationThreshold:config.classificationThreshold,jsonMode:config.jsonMode||'AUTO',bulkConcurrency:config.bulkConcurrency||2,reasoningConcurrency:config.reasoningConcurrency||1}); Object.assign(musicForm,{enabled:music.enabled||false,providers:music.providers||[],resultLimit:music.resultLimit||20,timeoutSeconds:music.timeoutSeconds||5,searchCacheHours:music.searchCacheHours||6,concurrencyLimit:music.concurrencyLimit||1,requestIntervalMs:music.requestIntervalMs||1500,autoApplyThreshold:music.autoApplyThreshold??.95});musicStatus.value=music.providerStatus||[]; Object.assign(hardware,hw); wishes.value=w; libraryMode.value=mode.libraryMode||null; Object.assign(releaseInfo,release); original.value=snapshot(form); aiOriginal.value=snapshot(aiForm); musicOriginal.value=snapshot(musicForm); dirty.value=false; loading.value=false }
 watch([form,aiForm,musicForm],()=>{ if(!loading.value) dirty.value=snapshot(form)!==original.value||snapshot(aiForm)!==aiOriginal.value||snapshot(musicForm)!==musicOriginal.value },{deep:true})
-async function saveAll(){ try { const updated=await api.adminPutSettings({...form}); Object.assign(form,updated); const config=await api.adminAiPutConfig({...aiForm,apiKey:aiForm.apiKey||null,clearApiKey:clearKey.value}); Object.assign(ai,config); const music=await api.adminPutMusicSourceConfig({...musicForm});Object.assign(musicForm,{enabled:music.enabled,providers:music.providers,resultLimit:music.resultLimit,timeoutSeconds:music.timeoutSeconds,searchCacheHours:music.searchCacheHours,concurrencyLimit:music.concurrencyLimit,requestIntervalMs:music.requestIntervalMs,autoApplyThreshold:music.autoApplyThreshold});musicStatus.value=music.providerStatus||[]; aiForm.apiKey=''; clearKey.value=false; original.value=snapshot(form); aiOriginal.value=snapshot(aiForm); musicOriginal.value=snapshot(musicForm); dirty.value=false } catch(e){ await alertDialog(e.message||'保存失败') } }
+async function saveAll(){ const {successes,failures}=await saveDirtySections([{name:'基础设置',dirty:generalDirty.value,save:async()=>{const updated=await api.adminPutSettings({...form});Object.assign(form,canonicalizeSettings(updated));return updated}},{name:'AI 设置',dirty:aiDirty.value,save:async()=>{const config=await api.adminAiPutConfig({...aiForm,apiKey:aiForm.apiKey||null,clearApiKey:clearKey.value});Object.assign(ai,config);aiForm.apiKey='';clearKey.value=false;return config}},{name:'音乐元数据设置',dirty:musicDirty.value,save:async()=>{const music=await api.adminPutMusicSourceConfig({...musicForm});Object.assign(musicForm,{enabled:music.enabled,providers:music.providers,resultLimit:music.resultLimit,timeoutSeconds:music.timeoutSeconds,searchCacheHours:music.searchCacheHours,concurrencyLimit:music.concurrencyLimit,requestIntervalMs:music.requestIntervalMs,autoApplyThreshold:music.autoApplyThreshold});musicStatus.value=music.providerStatus||[];return music}}]); for(const item of successes){if(item.name==='基础设置')original.value=snapshot(form);if(item.name==='AI 设置')aiOriginal.value=snapshot(aiForm);if(item.name==='音乐元数据设置')musicOriginal.value=snapshot(musicForm)} dirty.value=generalDirty.value||aiDirty.value||musicDirty.value; if(failures.length){const saved=successes.map(item=>item.name).join('、')||'无';const failed=failures.map(item=>item.name).join('、');await alertDialog(`已保存：${saved}。保存失败：${failed}。失败部分仍保留为未保存状态。`,{title:'设置保存不完整',tone:'warning'})} }
 function resetChanges(){ Object.assign(form,JSON.parse(original.value)); Object.assign(aiForm,JSON.parse(aiOriginal.value)); Object.assign(musicForm,JSON.parse(musicOriginal.value)); dirty.value=false }
 function chooseModel(model){ if(modelTarget.value==='reasoning') aiForm.reasoningModel=model; else aiForm.bulkModel=model }
 async function loadModels(target='bulk'){ modelTarget.value=target; try { models.value=(await api.adminAiModels()).models||[] } catch(e){ await alertDialog(e.message||'模型列表获取失败') } }
@@ -251,7 +260,7 @@ async function testAi(){ testing.value=true; try { const result=await api.adminA
 async function testMusic(providers){testingMusic.value=true;try{const result=await api.adminTestMusicSources(providers);musicStatus.value=result.providerStatus||musicStatus.value;const success=(result.results||[]).filter(item=>item.healthy).length;musicTestMessage.value=`${success}/${(result.results||[]).length} 个平台连接成功`}catch(e){musicTestMessage.value=e.message||'平台连接测试失败'}finally{testingMusic.value=false}}
 async function restoreTranscodeDefaults(){ if(!await confirmDialog('恢复转码默认规则？',{title:'恢复默认'}))return; const result=await api.adminResetTranscodeDefaults(); Object.assign(form,result) }
 function setStandbySongIds(value){ form.standby_song_ids=[...new Set(value.split(/[,，\s]+/).map(Number).filter(id=>Number.isInteger(id)&&id>0))] }
-async function uploadStandbyLogo(event){ const file=event.target.files?.[0]; if(!file)return; try{await api.adminUploadStandbyLogo(file); Object.assign(form,await api.adminGetSettings()); original.value=snapshot(form)}catch(e){await alertDialog(e.message||'Logo 上传失败')}finally{event.target.value=''} }
+async function uploadStandbyLogo(event){ const file=event.target.files?.[0]; if(!file)return; try{await api.adminUploadStandbyLogo(file); Object.assign(form,canonicalizeSettings(await api.adminGetSettings())); original.value=snapshot(form)}catch(e){await alertDialog(e.message||'Logo 上传失败')}finally{event.target.value=''} }
 onMounted(load)
 function beforeUnload(e){ if(dirty.value){e.preventDefault();e.returnValue=''} }
 onMounted(()=>window.addEventListener('beforeunload',beforeUnload)); onBeforeUnmount(()=>window.removeEventListener('beforeunload',beforeUnload))

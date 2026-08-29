@@ -902,6 +902,20 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         standbyCarouselEnabled = content.carouselEnabled
         antiBurnEnabled = content.antiBurn
         standbyIntervalMs = content.intervalSeconds.coerceIn(3, 60) * 1_000L
+        val miniQrVisibility = if (StandbyQrPolicy.visibility(content.miniQr).imageVisible) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
+        val miniQrLabelVisibility = if (StandbyQrPolicy.visibility(content.miniQr).labelVisible) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
+        binding.imgMiniQr.visibility = miniQrVisibility
+        binding.txtMiniQrHint.visibility = miniQrLabelVisibility
+        binding.imgAudioMiniQr.visibility = miniQrVisibility
+        binding.txtAudioMiniQrHint.visibility = miniQrLabelVisibility
         binding.txtStandbyWelcome.text = content.welcomeText
         binding.txtStandbySubtitle.text = content.subtitle
         recommendations = content.songs.sortedByDescending { it.coverUrl != null }

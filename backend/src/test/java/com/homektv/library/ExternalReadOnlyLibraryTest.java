@@ -11,6 +11,7 @@ import com.homektv.repo.SongFileScanSnapshot;
 import com.homektv.repo.SongRepository;
 import com.homektv.domain.AudioChannel;
 import com.homektv.domain.AudioLayout;
+import com.homektv.domain.AudioLayoutSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
@@ -249,6 +250,24 @@ class ExternalReadOnlyLibraryTest {
     }
 
     @Test
+    void oneTrackExternalDualChannelProjectsSongAsKtvVideo() throws Exception {
+        when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_CHANNEL);
+        Path source = sourceDir.resolve("周杰伦-晴天-国语-流行.mkv");
+        Files.write(source, new byte[]{0x01, 0x23});
+        when(ffprobe.probe(source)).thenReturn(new MediaProbe(180_000, 1, 0, true,
+                "1920x1080", List.of(), "h264", "aac"));
+
+        scanService.scanAll();
+
+        SongFile file = filesByPath.get(source.toString());
+        assertThat(file.getAudioLayout()).isEqualTo(AudioLayout.DUAL_CHANNEL);
+        assertThat(file.getMediaType()).isEqualTo(MediaClassifier.KTV_VIDEO);
+        Song song = songsById.get(file.getSongId());
+        assertThat(song.getMediaType()).isEqualTo(MediaClassifier.KTV_VIDEO);
+        assertThat(song.isHasVocalTrack()).isTrue();
+    }
+
+    @Test
     void aPerFileOverrideSurvivesALaterExternalReprobe() throws Exception {
         when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_CHANNEL);
         Path source = sourceDir.resolve("周杰伦-晴天-国语-流行.mkv");
@@ -259,6 +278,7 @@ class ExternalReadOnlyLibraryTest {
         scanService.scanAll();
         SongFile indexed = filesByPath.get(source.toString());
         indexed.setAudioLayout(AudioLayout.NORMAL_STEREO);
+        indexed.setAudioLayoutSource(AudioLayoutSource.MANUAL);
         when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.DUAL_TRACK);
         Files.write(source, new byte[]{0x45}, StandardOpenOption.APPEND);
 
@@ -297,6 +317,7 @@ class ExternalReadOnlyLibraryTest {
         SongFile pending = filesByPath.get(source.toString());
         assertThat(pending.isProbePending()).isTrue();
         pending.setAudioLayout(AudioLayout.DUAL_CHANNEL);
+        pending.setAudioLayoutSource(AudioLayoutSource.MANUAL);
 
         scanService.scanAll();
 

@@ -45,7 +45,10 @@ public class StandbyContentService {
         result.put("intervalSeconds", integer(settings, "standby_interval_sec", 8, 3, 60));
         result.put("source", source);
         result.put("videoScaleMode", option(settings, "tv_video_scale_mode", Set.of("fit", "zoom", "fill"), "zoom"));
-        result.put("logoUrl", settings.get("standby_logo_path") == null ? null : "/api/standby/logo");
+        result.put("miniQr", bool(settings, "mini_qr", true));
+        Object logoPath = settings.get("standby_logo_path");
+        result.put("logoUrl", logoPath == null || logoPath.toString().isBlank()
+                ? null : "/api/standby/logo");
         result.put("songs", songs.stream().map(SongDto::from).toList());
         return result;
     }

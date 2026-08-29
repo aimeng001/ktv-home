@@ -2,6 +2,7 @@ package com.homektv.library;
 
 import com.homektv.config.AppProperties;
 import com.homektv.domain.AudioLayout;
+import com.homektv.domain.AudioLayoutSource;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.media.FFprobeService;
@@ -92,6 +93,8 @@ public class LibraryScanService {
     private final SongFileRepository fileRepo;
     private final AssetWriter assetWriter;
     private final SettingService settingService;
+    private final SongProjectionService songProjectionService;
+    private final AudioLayoutResolver audioLayoutResolver = new AudioLayoutResolver();
     private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "library-scan");
         thread.setDaemon(true);
@@ -116,20 +119,31 @@ public class LibraryScanService {
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
                               LibraryScanSeenPathStore seenPathStore) {
-        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, null, null, seenPathStore);
+        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, null, null, seenPathStore,
+                new SongProjectionService(songRepo, fileRepo));
     }
 
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
                               SettingService settingService, LibraryScanSeenPathStore seenPathStore) {
-        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, settingService, null, seenPathStore);
+        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, settingService, null, seenPathStore,
+                new SongProjectionService(songRepo, fileRepo));
+    }
+
+    public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
+                              SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
+                              SettingService settingService, PlatformTransactionManager transactionManager,
+                              LibraryScanSeenPathStore seenPathStore) {
+        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, settingService, transactionManager,
+                seenPathStore, new SongProjectionService(songRepo, fileRepo));
     }
 
     @Autowired
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
                               SettingService settingService, PlatformTransactionManager transactionManager,
-                              LibraryScanSeenPathStore seenPathStore) {
+                              LibraryScanSeenPathStore seenPathStore,
+                              SongProjectionService songProjectionService) {
         this.props = props;
         this.ffprobe = ffprobe;
         this.tagReader = tagReader;
@@ -137,6 +151,7 @@ public class LibraryScanService {
         this.fileRepo = fileRepo;
         this.assetWriter = assetWriter;
         this.settingService = settingService;
+        this.songProjectionService = songProjectionService;
         this.batchTransaction = transactionManager == null ? null : new TransactionTemplate(transactionManager);
         this.seenPathStore = seenPathStore;
     }
@@ -882,6 +897,8 @@ public class LibraryScanService {
         indexed.setFileIdentity(entry.fileIdentity());
         applySnapshots(indexed, entry);
         indexed.setFileRole(activeFileRole());
+        indexed.setAudioLayoutSource(AudioLayoutSource.AUTO_DEFAULT);
+        indexed.setMediaType(MediaClassifier.PENDING_PROBE);
         if (LibraryModePolicy.isExternalReadOnly(props)) {
             // Store the configured default on the pending row so a later retry
             // can distinguish it from any per-file override made in the admin UI.
@@ -1196,9 +1213,19 @@ public class LibraryScanService {
         }
         if (artist == null || artist.isBlank()) artist = "未知歌手";
 
-        // 4) 类型判定 + 伴奏轨判定 + 指纹
-        String mediaType = MediaClassifier.classify(probe);
-        boolean hasVocal = MediaClassifier.hasVocalTrack(probe);
+        // 4) Resolve the file-level semantic layout before classification. A
+        // one-stream DUAL_CHANNEL video is a karaoke source even though the
+        // legacy probe-only classifier would call it an MV.
+        AudioLayout storedLayout = existing.map(SongFile::getAudioLayout).orElse(null);
+        AudioLayoutSource storedLayoutSource = existing.map(SongFile::getAudioLayoutSource)
+                .orElse(AudioLayoutSource.AUTO_DEFAULT);
+        AudioLayoutResolver.Result resolvedLayout = audioLayoutResolver.resolve(
+                LibraryModePolicy.isExternalReadOnly(props)
+                        ? LibraryMode.EXTERNAL_READ_ONLY : LibraryMode.MANAGED,
+                storedLayoutSource, storedLayout, probe.audioTracks(), externalDefault);
+        AudioLayout audioLayout = resolvedLayout.layout();
+        String mediaType = MediaClassifier.classify(probe, audioLayout);
+        boolean hasVocal = MediaClassifier.hasVocalTrack(probe, audioLayout);
         VocalTrackDetector.Result vocalDetect = VocalTrackDetector.detect(probe);
         Song existingSong = existing.map(SongFile::getSongId)
                 .filter(Objects::nonNull)
@@ -1322,22 +1349,9 @@ public class LibraryScanService {
         if (relativePath != null) sf.setRelativePath(relativePath);
         sf.setFormat(extOf(file));
         sf.setAudioTracks(probe.audioTracks());
-        // External files keep the layout stored on the file row. The Fast Index
-        // placeholder also stores the configured default, so a failed probe
-        // retry cannot overwrite a per-file override made while it is pending.
-        AudioLayout storedLayout = existing.map(SongFile::getAudioLayout).orElse(null);
-        AudioLayout audioLayout;
-        if (LibraryModePolicy.isExternalReadOnly(props) && storedLayout != null) {
-            audioLayout = externalDefaultAudioLayout(probe.audioTracks(), storedLayout);
-        } else if (LibraryModePolicy.isExternalReadOnly(props)) {
-            audioLayout = externalDefaultAudioLayout(probe.audioTracks(), externalDefault);
-        } else {
-            // Managed-mode behavior remains the existing two-track detector.
-            audioLayout = storedLayout == AudioLayout.DUAL_CHANNEL
-                    ? AudioLayout.DUAL_CHANNEL
-                    : hasVocal ? AudioLayout.DUAL_TRACK : AudioLayout.NORMAL_STEREO;
-        }
         sf.setAudioLayout(audioLayout);
+        sf.setAudioLayoutSource(resolvedLayout.source());
+        sf.setMediaType(mediaType);
         // 伴奏轨 index（0-based 音频相对序号）。已有值优先（尊重人工/历史校正），
         // 否则用元数据判定，判不出再回落默认 1（多数双轨片源 track0=原唱、track1=伴奏）。
         Integer existingVocalTrackIndex = existing.map(SongFile::getVocalTrackIndex).orElse(null);
@@ -1403,6 +1417,8 @@ public class LibraryScanService {
         synchronized (counters) {
             counters.dbUpdates++;
         }
+        restoreSongAfterSuccessfulProbe(song, counters);
+        songProjectionService.recompute(song.getId());
         if (provisionalToDelete != null) songRepo.delete(provisionalToDelete);
 
         IngestOutcome outcome;
@@ -1419,12 +1435,11 @@ public class LibraryScanService {
         return configured;
     }
 
-    private static AudioLayout externalDefaultAudioLayout(int audioTracks, AudioLayout configured) {
-        if (configured == null) configured = AudioLayout.NORMAL_STEREO;
-        // A global DUAL_TRACK default cannot describe a one-track media file;
-        // keep that file safe and playable rather than persisting invalid indices.
-        return configured == AudioLayout.DUAL_TRACK && audioTracks < 2
-                ? AudioLayout.NORMAL_STEREO : configured;
+    private void restoreSongAfterSuccessfulProbe(Song song, ScanCounters counters) {
+        if (song == null || !"file_missing".equals(song.getStatus())) return;
+        song.setStatus("ok");
+        songRepo.save(song);
+        counters.dbUpdates++;
     }
 
     private static boolean sameSong(Song left, Song right) {

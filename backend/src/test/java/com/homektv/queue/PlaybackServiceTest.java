@@ -3,6 +3,9 @@ package com.homektv.queue;
 import com.homektv.domain.PlayerState;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.SongFile;
+import com.homektv.domain.AudioChannel;
+import com.homektv.domain.AudioLayout;
+import com.homektv.domain.AudioLayoutSource;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
@@ -112,6 +115,24 @@ class PlaybackServiceTest {
         assertThat(result.accepted()).isTrue();
         assertThat(result.state().getPositionMs()).isEqualTo(12_345L);
         verify(playerRepository).save(playerState);
+    }
+
+    @Test
+    void vocalSwapMarksTheFileLayoutAsManual() {
+        SongFile file = file(203L, 2L);
+        file.setAudioTracks(1);
+        file.setAudioLayout(AudioLayout.DUAL_CHANNEL);
+        file.setAudioLayoutSource(AudioLayoutSource.AUTO_DEFAULT);
+        file.setOriginalChannel(AudioChannel.LEFT);
+        file.setAccompanimentChannel(AudioChannel.RIGHT);
+        when(fileRepository.findBySongIdAndValidTrueOrderByPriorityDesc(2L)).thenReturn(List.of(file));
+
+        playbackService.swapVocalTracks();
+
+        assertThat(file.getAudioLayoutSource()).isEqualTo(AudioLayoutSource.MANUAL);
+        assertThat(file.getOriginalChannel()).isEqualTo(AudioChannel.RIGHT);
+        assertThat(file.getAccompanimentChannel()).isEqualTo(AudioChannel.LEFT);
+        verify(fileRepository).save(file);
     }
 
     private static SongFile file(long id, long songId) {

@@ -66,6 +66,7 @@ data class StandbyContent(
     val intervalSeconds: Int = 8,
     val source: String = "mixed",
     val videoScaleMode: String = "zoom", // fit / zoom / fill，默认等比裁切铺满
+    val miniQr: Boolean = true,
     val logoUrl: String? = null,
     val songs: List<SongDto> = emptyList(),
 )

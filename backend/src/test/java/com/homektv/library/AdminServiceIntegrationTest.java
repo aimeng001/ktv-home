@@ -98,6 +98,21 @@ class AdminServiceIntegrationTest {
     }
 
     @Test
+    void adminSongListDistinguishesExternalReadonlyFilesFromLegacyUnknownFiles() {
+        Song external = save("外部歌曲", "测试歌手", "KTV_VIDEO", "ok");
+        var externalFile = adminFile(external.getId(), "/source-music/外部歌曲.mkv", false, null);
+        externalFile.setFileRole("EXTERNAL_READ_ONLY");
+        fileRepo.save(externalFile);
+
+        assertThat(adminService.listAdminSongs("", "", "EXTERNAL_READ_ONLY", 0, 20).getContent())
+                .extracting(com.homektv.web.dto.AdminSongDto::importSource)
+                .containsExactly("EXTERNAL_READ_ONLY");
+        assertThat(adminService.listAdminSongs("", "", "UNKNOWN", 0, 20).getContent())
+                .extracting(com.homektv.web.dto.AdminSongDto::importSource)
+                .doesNotContain("EXTERNAL_READ_ONLY");
+    }
+
+    @Test
     void editRecomputesPinyinAndPromotesUnrecognized() {
         Song track = songRepo.findByFingerprint("fp-TRACK_001").orElseThrow();
         adminService.editSong(track.getId(),

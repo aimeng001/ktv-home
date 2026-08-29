@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -78,6 +79,17 @@ class AdminAudioLayoutServiceTest {
                         AudioChannel.LEFT, AudioChannel.RIGHT)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("音轨");
+    }
+
+    @Test
+    void confirmVocalTrackRejectsSingleTrackMedia() {
+        SongFile file = file(11L, 1);
+        when(fileRepo.findById(11L)).thenReturn(Optional.of(file));
+
+        assertThatThrownBy(() -> service.confirmVocalTrack(11L, 0))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("至少需要 2");
+        verify(fileRepo, never()).save(any(SongFile.class));
     }
 
     @Test

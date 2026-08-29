@@ -70,11 +70,13 @@ public class AiConfigService {
     @Transactional
     public ConfigResponse update(ConfigUpdate update) {
         if (update == null) throw new ApiException("INVALID_AI_CONFIG", "AI 配置不能为空");
-        validate(update);
+        String bulkModel = blank(update.bulkModel());
+        String reasoningModel = blank(update.reasoningModel());
+        validate(update, bulkModel, reasoningModel);
         put("enabled", update.enabled());
         put("base_url", normalizeBaseUrl(update.baseUrl()));
-        put("bulk_model", update.bulkModel().trim());
-        put("reasoning_model", blank(update.reasoningModel()));
+        put("bulk_model", bulkModel);
+        put("reasoning_model", reasoningModel);
         put("timeout_seconds", update.timeoutSeconds());
         put("identity_threshold", update.identityThreshold());
         put("classification_threshold", update.classificationThreshold());
@@ -120,14 +122,16 @@ public class AiConfigService {
                 && !config.bulkModel().isBlank();
     }
 
-    private void validate(ConfigUpdate value) {
+    private void validate(ConfigUpdate value, String bulkModel, String reasoningModel) {
         String baseUrl = value.baseUrl() == null ? "" : value.baseUrl().trim();
         if (Boolean.TRUE.equals(value.enabled()) && baseUrl.isBlank())
             throw new ApiException("INVALID_AI_CONFIG", "启用 AI 时必须填写 API Base URL");
         if (!baseUrl.isBlank()) AiBaseUrlPolicy.normalizeAndValidate(baseUrl, properties.getAi().isAllowPrivateNetwork());
-        if (value.bulkModel() == null || value.bulkModel().isBlank() || value.bulkModel().length() > 200)
+        if (Boolean.TRUE.equals(value.enabled()) && bulkModel.isBlank())
             throw new ApiException("INVALID_AI_CONFIG", "批量模型 ID 不能为空且不能超过 200 个字符");
-        if (value.reasoningModel() != null && value.reasoningModel().length() > 200)
+        if (bulkModel.length() > 200)
+            throw new ApiException("INVALID_AI_CONFIG", "批量模型 ID 不能为空且不能超过 200 个字符");
+        if (reasoningModel.length() > 200)
             throw new ApiException("INVALID_AI_CONFIG", "增强模型 ID 不能超过 200 个字符");
         if (value.timeoutSeconds() < 5 || value.timeoutSeconds() > 600)
             throw new ApiException("INVALID_AI_CONFIG", "请求超时必须在 5 到 600 秒之间");

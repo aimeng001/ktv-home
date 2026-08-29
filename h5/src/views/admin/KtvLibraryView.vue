@@ -7,7 +7,7 @@
     <section class="filter-panel">
       <label><span>关键词</span><input v-model.trim="filters.keyword" placeholder="歌名或歌手" @keyup.enter="search" /></label>
       <label><span>版本类型</span><span class="select-control"><select v-model="filters.type" @change="search"><option value="">全部类型</option><option value="KTV_VIDEO">KTV版</option><option value="MV">MV版</option><option value="AUDIO">音频版</option><option value="unrecognized">未识别</option></select><ChevronDown :size="15" aria-hidden="true" /></span></label>
-      <label><span>入库来源</span><span class="select-control"><select v-model="filters.source" @change="search"><option value="">全部来源</option><option value="COPIED">自动直拷</option><option value="TRANSCODED">转码入库</option><option value="UNKNOWN">历史曲库</option></select><ChevronDown :size="15" aria-hidden="true" /></span></label>
+      <label><span>入库来源</span><span class="select-control"><select v-model="filters.source" @change="search"><option value="">全部来源</option><option value="COPIED">自动直拷</option><option value="TRANSCODED">转码入库</option><option value="EXTERNAL_READ_ONLY">外部只读</option><option value="UNKNOWN">历史曲库</option></select><ChevronDown :size="15" aria-hidden="true" /></span></label>
       <div class="filter-actions"><button class="secondary" @click="reset">重置</button><button class="primary" @click="search">查询</button><button class="secondary scrape-entry" @click="goScrape()"><Tags :size="15" />元数据刮削</button></div>
     </section>
     <!-- 歌曲列表表格 / Song List Table -->
@@ -88,6 +88,7 @@ import AdminLayout from './AdminLayout.vue'
 import AudioLayoutEditor from './AudioLayoutEditor.vue'
 import { audioLayoutLabel } from './audioLayout'
 import { canDeleteSongs } from './libraryMode'
+import { sourceLabel } from './librarySource'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
 /** 歌曲列表、总数、当前页、总页数、已选集合 / Song list, total, page, total pages, selected set */
 const songs=ref([]),total=ref(0),page=ref(0),totalPages=ref(1),selected=ref(new Set())
@@ -202,7 +203,7 @@ function typeText(v){return{KTV_VIDEO:'KTV版',MV:'MV版',AUDIO:'音频版'}[v]|
 /** 媒体类型样式类名 / Media type CSS class */
 function typeClass(v){return v==='KTV_VIDEO'?'green':v==='MV'?'blue':'neutral'}
 /** 导入来源文本映射 / Import source text mapping */
-function sourceText(v){return{COPIED:'扫描直入',TRANSCODED:'转码入库',UNKNOWN:'历史曲库'}[v]||'历史曲库'}
+function sourceText(v){return sourceLabel(v)}
 function audioLayoutText(value){return audioLayoutLabel(value)}
 function audioLayoutDetail(value){
   if(value?.layout==='DUAL_TRACK') return `Original Track ${value.originalTrackIndex ?? '—'} / Accompaniment Track ${value.accompanimentTrackIndex ?? '—'}`

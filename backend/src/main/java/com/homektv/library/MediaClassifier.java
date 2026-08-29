@@ -37,9 +37,26 @@ public final class MediaClassifier {
         return AUDIO;
     }
 
+    /**
+     * Classifies a probe after the file's semantic audio layout has been
+     * resolved.  A one-stream DUAL_CHANNEL file is still a karaoke video even
+     * though the legacy probe-only rule would call it an MV.
+     */
+    public static String classify(MediaProbe probe, AudioLayout layout) {
+        if (probe == null || !probe.hasVideo()) {
+            return AUDIO;
+        }
+        return hasVocalTrack(probe, layout) ? KTV_VIDEO : MV;
+    }
+
     /** 是否可切伴唱：含独立伴奏音轨（≥2 音轨） */
     public static boolean hasVocalTrack(MediaProbe probe) {
         return probe.audioTracks() >= 2;
+    }
+
+    /** Whether a resolved media file exposes vocal/accompaniment semantics. */
+    public static boolean hasVocalTrack(MediaProbe probe, AudioLayout layout) {
+        return probe != null && (probe.audioTracks() >= 2 || layout == AudioLayout.DUAL_CHANNEL);
     }
 
     /**

@@ -101,7 +101,13 @@ public class ServerAddressService {
     }
 
     private String manualAddress() {
-        Object manual = settingService.getAll().get("display_address");
+        var settings = settingService.getAll();
+        Object manual = settings.get("display_address");
+        if (!(manual instanceof String s) || s.isBlank()) {
+            // Keep the original qr_address setting compatible with the newer
+            // display_address name used by the admin UI.
+            manual = settings.get("qr_address");
+        }
         if (manual instanceof String s && !s.isBlank()) return normalize(s.trim());
         return null;
     }

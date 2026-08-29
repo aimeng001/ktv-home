@@ -5,6 +5,7 @@ import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.domain.AudioLayout;
 import com.homektv.domain.AudioChannel;
+import com.homektv.domain.AudioLayoutSource;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
@@ -49,12 +50,23 @@ public class AdminService {
     private final PlayerStateRepository playerRepo;
     private final AppProperties props;
     private final ArtistCreditService artistCreditService;
+    private final SongProjectionService songProjectionService;
 
     public AdminService(SongRepository songRepo, SongFileRepository fileRepo,
                         PlayHistoryRepository historyRepo, WsBroadcaster broadcaster,
                         AssetWriter assetWriter, QueueItemRepository queueRepo,
                         PlayerStateRepository playerRepo, AppProperties props) {
-        this(songRepo, fileRepo, historyRepo, broadcaster, assetWriter, queueRepo, playerRepo, props, null);
+        this(songRepo, fileRepo, historyRepo, broadcaster, assetWriter, queueRepo,
+                playerRepo, props, null, new SongProjectionService(songRepo, fileRepo));
+    }
+
+    public AdminService(SongRepository songRepo, SongFileRepository fileRepo,
+                        PlayHistoryRepository historyRepo, WsBroadcaster broadcaster,
+                        AssetWriter assetWriter, QueueItemRepository queueRepo,
+                        PlayerStateRepository playerRepo, AppProperties props,
+                        ArtistCreditService artistCreditService) {
+        this(songRepo, fileRepo, historyRepo, broadcaster, assetWriter, queueRepo,
+                playerRepo, props, artistCreditService, new SongProjectionService(songRepo, fileRepo));
     }
 
     @Autowired
@@ -62,7 +74,8 @@ public class AdminService {
                         PlayHistoryRepository historyRepo, WsBroadcaster broadcaster,
                         AssetWriter assetWriter, QueueItemRepository queueRepo,
                         PlayerStateRepository playerRepo, AppProperties props,
-                        ArtistCreditService artistCreditService) {
+                        ArtistCreditService artistCreditService,
+                        SongProjectionService songProjectionService) {
         this.songRepo = songRepo;
         this.fileRepo = fileRepo;
         this.historyRepo = historyRepo;
@@ -72,6 +85,7 @@ public class AdminService {
         this.playerRepo = playerRepo;
         this.props = props;
         this.artistCreditService = artistCreditService;
+        this.songProjectionService = songProjectionService;
     }
 
     /** 仪表盘统计（P2.1） */
@@ -218,12 +232,17 @@ public class AdminService {
             throw new ApiException("INVALID_ACTION",
                     "伴奏轨 index 越界：" + accompanimentIndex + "（共 " + file.getAudioTracks() + " 轨）");
         }
+        if (file.getAudioTracks() < 2) {
+            throw new ApiException("INVALID_ACTION", "单轨媒体不能设置为 DUAL_TRACK，至少需要 2 条音轨");
+        }
         file.setAudioLayout(AudioLayout.DUAL_TRACK);
+        file.setAudioLayoutSource(AudioLayoutSource.MANUAL);
         file.setVocalTrackIndex(accompanimentIndex);
         file.setAccompanimentTrackIndex(accompanimentIndex);
         file.setOriginalTrackIndex(accompanimentIndex == 0 ? 1 : 0);
         file.setVocalConfidence("HIGH");
-        fileRepo.save(file);
+        SongFile saved = fileRepo.save(file);
+        songProjectionService.recompute(saved.getSongId());
     }
 
     /**
@@ -238,6 +257,7 @@ public class AdminService {
         switch (request.layout()) {
             case NORMAL_STEREO -> {
                 file.setAudioLayout(AudioLayout.NORMAL_STEREO);
+                file.setAudioLayoutSource(AudioLayoutSource.MANUAL);
                 clearTrackSemantics(file);
                 setDefaultChannels(file);
             }
@@ -248,6 +268,7 @@ public class AdminService {
                     throw new ApiException("INVALID_AUDIO_LAYOUT", "原唱和伴唱必须使用不同声道");
                 }
                 file.setAudioLayout(AudioLayout.DUAL_CHANNEL);
+                file.setAudioLayoutSource(AudioLayoutSource.MANUAL);
                 file.setOriginalChannel(original);
                 file.setAccompanimentChannel(accompaniment);
                 clearTrackSemantics(file);
@@ -268,13 +289,16 @@ public class AdminService {
                     throw new ApiException("INVALID_AUDIO_LAYOUT", "原唱和伴唱不能是同一条音轨");
                 }
                 file.setAudioLayout(AudioLayout.DUAL_TRACK);
+                file.setAudioLayoutSource(AudioLayoutSource.MANUAL);
                 file.setOriginalTrackIndex(original);
                 file.setAccompanimentTrackIndex(accompaniment);
                 setDefaultChannels(file);
                 file.setVocalConfidence("HIGH");
             }
         }
-        return AudioLayoutDto.from(fileRepo.save(file));
+        SongFile saved = fileRepo.save(file);
+        songProjectionService.recompute(saved.getSongId());
+        return AudioLayoutDto.from(saved);
     }
 
     /** Swap the semantic original/accompaniment assignment in the database only. */
@@ -285,8 +309,11 @@ public class AdminService {
                 && (file.getOriginalTrackIndex() == null || file.getAccompanimentTrackIndex() == null)) {
             throw new ApiException("INVALID_AUDIO_LAYOUT", "双音轨布局缺少原唱或伴唱音轨");
         }
+        file.setAudioLayoutSource(AudioLayoutSource.MANUAL);
         file.swapOriginalAndAccompaniment();
-        return AudioLayoutDto.from(fileRepo.save(file));
+        SongFile saved = fileRepo.save(file);
+        songProjectionService.recompute(saved.getSongId());
+        return AudioLayoutDto.from(saved);
     }
 
     private SongFile findFile(Long fileId) {

@@ -37,6 +37,26 @@ class LibraryUnitTest {
     }
 
     @Test
+    void layoutAwareClassificationTreatsSingleTrackDualChannelVideoAsKtv() {
+        MediaProbe probe = new MediaProbe(200000, 1, 0, true, "1920x1080");
+
+        assertThat(MediaClassifier.classify(probe, AudioLayout.DUAL_CHANNEL))
+                .isEqualTo(MediaClassifier.KTV_VIDEO);
+        assertThat(MediaClassifier.hasVocalTrack(probe, AudioLayout.DUAL_CHANNEL))
+                .isTrue();
+    }
+
+    @Test
+    void layoutAwareClassificationKeepsNormalSingleTrackVideoAsMv() {
+        MediaProbe probe = new MediaProbe(200000, 1, 0, true, "1920x1080");
+
+        assertThat(MediaClassifier.classify(probe, AudioLayout.NORMAL_STEREO))
+                .isEqualTo(MediaClassifier.MV);
+        assertThat(MediaClassifier.hasVocalTrack(probe, AudioLayout.NORMAL_STEREO))
+                .isFalse();
+    }
+
+    @Test
     void hasVocalTrackNeedsTwoAudio() {
         assertThat(MediaClassifier.hasVocalTrack(new MediaProbe(1, 2, 0, true, null))).isTrue();
         assertThat(MediaClassifier.hasVocalTrack(new MediaProbe(1, 1, 0, true, null))).isFalse();

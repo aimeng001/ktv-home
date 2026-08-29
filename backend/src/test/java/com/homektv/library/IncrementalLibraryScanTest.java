@@ -680,6 +680,28 @@ class IncrementalLibraryScanTest {
     }
 
     @Test
+    void successfullyReprobedFileRestoresSongAfterItWasMarkedMissing() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        scanService.scanAll();
+        SongFile indexed = filesByPath.get(file.toString());
+        Song song = songsById.get(indexed.getSongId());
+
+        Files.delete(file);
+        LibraryScanService.ScanResult missing = scanService.scanAll();
+        assertThat(missing.missing()).isEqualTo(1);
+        assertThat(song.getStatus()).isEqualTo("file_missing");
+
+        Files.write(file, new byte[]{4, 5, 6});
+        LibraryScanService.ScanResult recovered = scanService.scanAll();
+
+        assertThat(recovered.probeCalls()).isEqualTo(1);
+        assertThat(indexed.isValid()).isTrue();
+        assertThat(indexed.isProbePending()).isFalse();
+        assertThat(song.getStatus()).isEqualTo("ok");
+        verify(ffprobe, times(2)).probe(file);
+    }
+
+    @Test
     void scanSynchronizesEveryIngestedSongWithItsIndependentArtistCredits() throws Exception {
         Files.write(sourceDir.resolve("单依纯_王子异-合唱歌曲-国语-合唱.mkv"), new byte[]{1, 2, 3});
 

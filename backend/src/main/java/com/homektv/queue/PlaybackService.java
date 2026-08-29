@@ -6,6 +6,7 @@ import com.homektv.domain.QueueItem;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.domain.AudioLayout;
+import com.homektv.domain.AudioLayoutSource;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
@@ -259,6 +260,7 @@ public class PlaybackService {
             // V17, while making the persisted layout explicit.
             file.setAudioLayout(AudioLayout.DUAL_TRACK);
         }
+        file.setAudioLayoutSource(AudioLayoutSource.MANUAL);
         file.swapOriginalAndAccompaniment();
         // 用户手动交换即人工确认，标 HIGH，后续复核列表不再显示
         file.setVocalConfidence("HIGH");

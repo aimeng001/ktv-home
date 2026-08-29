@@ -38,9 +38,17 @@ public class SongFile {
     @Column(name = "audio_tracks", nullable = false)
     private int audioTracks = 1;
 
+    /** Media type captured from the successful probe for this file. */
+    @Column(name = "media_type")
+    private String mediaType;
+
     /** Platform-neutral audio layout; old rows default to normal stereo. */
     @Column(name = "audio_layout", nullable = false)
     private String audioLayout = AudioLayout.NORMAL_STEREO.name();
+
+    /** Whether the persisted layout came from legacy data, defaults, or a user. */
+    @Column(name = "audio_layout_source", nullable = false)
+    private String audioLayoutSource = AudioLayoutSource.LEGACY.name();
 
     /** Semantic track indices used by DUAL_TRACK; nullable for channel layouts. */
     @Column(name = "original_track_index")
@@ -147,6 +155,8 @@ public class SongFile {
     public void setFormat(String format) { this.format = format; }
     public int getAudioTracks() { return audioTracks; }
     public void setAudioTracks(int audioTracks) { this.audioTracks = audioTracks; }
+    public String getMediaType() { return mediaType; }
+    public void setMediaType(String mediaType) { this.mediaType = mediaType; }
     public AudioLayout getAudioLayout() { return AudioLayout.from(audioLayout); }
     public String getAudioLayoutValue() { return audioLayout; }
     public void setAudioLayout(AudioLayout audioLayout) {
@@ -154,6 +164,19 @@ public class SongFile {
     }
     public void setAudioLayoutValue(String audioLayout) {
         this.audioLayout = audioLayout == null ? AudioLayout.NORMAL_STEREO.name() : audioLayout;
+    }
+    public AudioLayoutSource getAudioLayoutSource() {
+        if (audioLayoutSource == null || audioLayoutSource.isBlank()) {
+            return AudioLayoutSource.LEGACY;
+        }
+        try {
+            return AudioLayoutSource.valueOf(audioLayoutSource.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException ignored) {
+            return AudioLayoutSource.LEGACY;
+        }
+    }
+    public void setAudioLayoutSource(AudioLayoutSource source) {
+        this.audioLayoutSource = (source == null ? AudioLayoutSource.LEGACY : source).name();
     }
     public Integer getOriginalTrackIndex() {
         if (originalTrackIndex != null) return originalTrackIndex;

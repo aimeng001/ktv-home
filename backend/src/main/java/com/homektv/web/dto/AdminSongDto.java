@@ -42,8 +42,9 @@ public record AdminSongDto(
      * @return 构建好的管理后台歌曲 DTO / the constructed admin song DTO
      */
     public static AdminSongDto from(Song song, SongFile file) {
-        String source = file == null || file.getSourcePath() == null
-                ? "UNKNOWN"
+        String source = file == null ? "UNKNOWN"
+                : "EXTERNAL_READ_ONLY".equals(file.getFileRole()) ? "EXTERNAL_READ_ONLY"
+                : file.getSourcePath() == null ? "UNKNOWN"
                 : file.isTranscodeRequired() ? "TRANSCODED" : "COPIED";
         return new AdminSongDto(song.getId(), song.getTitle(), song.getArtist(), song.getAlbum(), song.getReleaseDate(),
                 song.getAliases(), song.getCoverPath(), song.getMetadataLocks(), song.getLanguage(), song.getArtistGender(), song.getTags(),

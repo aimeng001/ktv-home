@@ -30,4 +30,14 @@ class ServerAddressServiceTest {
         assertEquals("http://ktv.home:9090/m?room=room-a",
                 service.h5Url("room-a", "192.168.1.10", 8080));
     }
+
+    @Test
+    void legacyQrAddressRemainsTheManualAddressWhenDisplayAddressIsBlank() {
+        SettingService settings = mock(SettingService.class);
+        when(settings.getAll()).thenReturn(Map.of("display_address", "", "qr_address", "192.168.1.20:9091"));
+        ServerAddressService service = new ServerAddressService(settings, 8080);
+
+        assertEquals("http://192.168.1.20:9091/m?room=room-a",
+                service.h5Url("room-a", "192.168.1.10", 8080));
+    }
 }

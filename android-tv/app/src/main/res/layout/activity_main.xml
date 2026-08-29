@@ -245,7 +245,7 @@
             </LinearLayout>
         </LinearLayout>
         <ImageView android:id="@+id/imgMiniQr" android:layout_width="104dp" android:layout_height="104dp" android:layout_gravity="bottom|end" android:layout_marginBottom="78dp" android:background="@android:color/white" android:padding="4dp" android:scaleType="fitCenter" android:contentDescription="扫码点歌" />
-        <TextView android:layout_width="104dp" android:layout_height="24dp" android:layout_gravity="bottom|end" android:layout_marginBottom="50dp" android:gravity="center" android:text="@string/qr_wechat_order" android:textColor="@android:color/white" android:textSize="14sp" android:textStyle="bold" android:shadowColor="#F0000000" android:shadowDx="1" android:shadowDy="1" android:shadowRadius="3" />
+        <TextView android:id="@+id/txtMiniQrHint" android:layout_width="104dp" android:layout_height="24dp" android:layout_gravity="bottom|end" android:layout_marginBottom="50dp" android:gravity="center" android:text="@string/qr_wechat_order" android:textColor="@android:color/white" android:textSize="14sp" android:textStyle="bold" android:shadowColor="#F0000000" android:shadowDx="1" android:shadowDy="1" android:shadowRadius="3" />
     </FrameLayout>
 
     <!-- TV-03 音频海报播放页 -->
@@ -267,7 +267,7 @@
             </LinearLayout>
         </LinearLayout>
         <ImageView android:id="@+id/imgAudioMiniQr" android:layout_width="104dp" android:layout_height="104dp" android:layout_gravity="top|start" android:layout_marginTop="140dp" android:background="@android:color/white" android:padding="4dp" android:scaleType="fitCenter" android:contentDescription="扫码点歌" />
-        <TextView android:layout_width="104dp" android:layout_height="24dp" android:layout_gravity="top|start" android:layout_marginTop="248dp" android:gravity="center" android:text="@string/qr_wechat_order" android:textColor="@android:color/white" android:textSize="14sp" android:textStyle="bold" android:shadowColor="#F0000000" android:shadowDx="1" android:shadowDy="1" android:shadowRadius="3" />
+        <TextView android:id="@+id/txtAudioMiniQrHint" android:layout_width="104dp" android:layout_height="24dp" android:layout_gravity="top|start" android:layout_marginTop="248dp" android:gravity="center" android:text="@string/qr_wechat_order" android:textColor="@android:color/white" android:textSize="14sp" android:textStyle="bold" android:shadowColor="#F0000000" android:shadowDx="1" android:shadowDy="1" android:shadowRadius="3" />
         <TextView android:id="@+id/txtAudioNext" android:layout_width="360dp" android:layout_height="wrap_content" android:layout_gravity="top|end" android:layout_marginTop="24dp" android:ellipsize="end" android:gravity="end" android:maxLines="1" android:textColor="@color/dim" android:textSize="16sp" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="116dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="198dp" android:orientation="vertical">
             <com.homektv.tv.ui.KaraokeLyricView android:id="@+id/txtAudioLyricCurrent" android:layout_width="match_parent" android:layout_height="58dp" />

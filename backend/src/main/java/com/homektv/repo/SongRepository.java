@@ -165,9 +165,14 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                 OR (:type = 'unrecognized' AND song.status = 'unrecognized')
                 OR (:type <> 'unrecognized' AND song.mediaType = :type))
               AND (:source = ''
+                OR (:source = 'EXTERNAL_READ_ONLY' AND EXISTS (
+                    SELECT file.id FROM SongFile file
+                    WHERE file.songId = song.id AND file.valid = true
+                      AND file.fileRole = 'EXTERNAL_READ_ONLY'))
                 OR (:source = 'UNKNOWN' AND EXISTS (
                     SELECT file.id FROM SongFile file
-                    WHERE file.songId = song.id AND file.valid = true AND file.sourcePath IS NULL))
+                    WHERE file.songId = song.id AND file.valid = true
+                      AND file.sourcePath IS NULL AND file.fileRole <> 'EXTERNAL_READ_ONLY'))
                 OR (:source = 'COPIED' AND EXISTS (
                     SELECT file.id FROM SongFile file
                     WHERE file.songId = song.id AND file.valid = true
