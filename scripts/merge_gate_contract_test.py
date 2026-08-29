@@ -218,6 +218,7 @@ class MergeGateContractTests(unittest.TestCase):
             "docker-compose.dev.yml",
             "docker-compose.nas.yml",
             "docker-compose.prebuilt.yml",
+            "docker-compose.ci.yml",
             "docker-compose.hardware.yml",
             "docker-compose.rockchip.yml",
         ):
@@ -243,6 +244,15 @@ class MergeGateContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("KTV_DB_PASSWORD: ci-validation-only", workflow)
+
+    def test_ci_runs_a_constrained_real_large_scan(self) -> None:
+        workflow = (REPOSITORY / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("large-library-scan:", workflow)
+        self.assertIn("runLargeLibraryScanTest=true", workflow)
+        self.assertIn("scanRows=20000", workflow)
+        self.assertIn("-Xmx512m", workflow)
 
     def test_standalone_nas_source_path_is_configurable_and_read_only(self) -> None:
         compose = (REPOSITORY / "docker-compose.nas.yml").read_text(encoding="utf-8")
@@ -325,6 +335,27 @@ class MergeGateContractTests(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("KTV_DB_PASSWORD", result.stderr)
+
+    def test_production_compose_has_explicit_jvm_and_container_memory_limits(self) -> None:
+        expected_options = (
+            "-Xms256m -Xmx2048m "
+            "-XX:+HeapDumpOnOutOfMemoryError "
+            "-XX:HeapDumpPath=/data "
+            "-XX:+ExitOnOutOfMemoryError"
+        )
+        for filename in (
+            "docker-compose.yml",
+            "docker-compose.nas.yml",
+            "docker-compose.prebuilt.yml",
+        ):
+            compose = (REPOSITORY / filename).read_text(encoding="utf-8")
+            self.assertIn(expected_options, compose, filename)
+            self.assertIn("mem_limit: ${KTV_APP_MEMORY_LIMIT:-4g}", compose, filename)
+            self.assertNotIn("MaxRAMPercentage=70", compose, filename)
+
+        env_example = (REPOSITORY / ".env.example").read_text(encoding="utf-8")
+        self.assertIn(expected_options, env_example)
+        self.assertNotIn("MaxRAMPercentage=70", env_example)
 
 
 if __name__ == "__main__":

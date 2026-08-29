@@ -254,6 +254,7 @@ class PersistenceIntegrationTest {
 
         var missing = scanSeenPathStore.markMissing(scanId, "LIBRARY", "/music");
         assertThat(missing.filesMarked()).isEqualTo(1);
+        assertThat(missing.songsMarked()).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT valid FROM song_files WHERE id = ?", Boolean.class, unseen.getId()))
                 .isFalse();
         assertThat(jdbc.queryForObject("SELECT valid FROM song_files WHERE id = ?", Boolean.class, outside.getId()))

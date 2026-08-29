@@ -1,0 +1,67 @@
+# Disposable candidate-image runtime smoke test. All media and database data
+# are isolated from real deployments and removed by the workflow afterward.
+name: home-ktv-ci
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: home-ktv-ci-db
+    environment:
+      POSTGRES_DB: ktv
+      POSTGRES_USER: ktv
+      POSTGRES_PASSWORD: ci-db-password
+    volumes:
+      - ktv-ci-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ktv -d ktv"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  ktv:
+    image: ${KTV_CANDIDATE_IMAGE:-home-ktv:candidate}
+    container_name: home-ktv-ci-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: "8080"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/ktv
+      SPRING_DATASOURCE_USERNAME: ktv
+      SPRING_DATASOURCE_PASSWORD: ci-db-password
+      KTV_SOURCE_LIBRARY_PATH: /source-music
+      KTV_LIBRARY_PATH: /music
+      KTV_LIBRARY_MODE: EXTERNAL_READ_ONLY
+      KTV_DATA_PATH: /data
+      KTV_ADMIN_PASSWORD: ci-admin-password
+      KTV_DISCOVERY_ENABLED: "false"
+      KTV_AI_ENABLED: "false"
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx512m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -XX:+ExitOnOutOfMemoryError"
+    mem_limit: 768m
+    ports:
+      - "18080:8080/tcp"
+    volumes:
+      - type: bind
+        source: ./ci-runtime/source
+        target: /source-music
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./ci-runtime/music
+        target: /music
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./ci-runtime/data
+        target: /data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health | grep -q '\"status\":\"UP\"'"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  ktv-ci-db-data:

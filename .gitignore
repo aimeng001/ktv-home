@@ -47,6 +47,7 @@ music/
 /postgres-dev/
 backend/data/
 /data/
+/ci-runtime/
 backend/src/main/resources/application-local.yml
 
 # ===== Local deployment secrets =====

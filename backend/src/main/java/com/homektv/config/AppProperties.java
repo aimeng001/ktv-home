@@ -41,6 +41,9 @@ public class AppProperties {
     /** Application release metadata and bundled Android TV packages. */
     private Release release = new Release();
 
+    /** Scan safety settings. */
+    private Scan scan = new Scan();
+
     public String getSourceLibraryPath() { return sourceLibraryPath; }
     public void setSourceLibraryPath(String sourceLibraryPath) { this.sourceLibraryPath = sourceLibraryPath; }
     public String getKtvLibraryPath() { return ktvLibraryPath; }
@@ -62,6 +65,28 @@ public class AppProperties {
     public void setDiscovery(Discovery discovery) { this.discovery = discovery; }
     public Release getRelease() { return release; }
     public void setRelease(Release release) { this.release = release; }
+    public Scan getScan() { return scan; }
+    public void setScan(Scan scan) { this.scan = scan; }
+
+    public static class Scan {
+        private MissingGuard missingGuard = new MissingGuard();
+
+        public MissingGuard getMissingGuard() { return missingGuard; }
+        public void setMissingGuard(MissingGuard missingGuard) { this.missingGuard = missingGuard; }
+    }
+
+    public static class MissingGuard {
+        private long minimumPreviousFiles = 1_000;
+        private double minimumSeenRatio = 0.50d;
+        private boolean allowMassMissing = false;
+
+        public long getMinimumPreviousFiles() { return minimumPreviousFiles; }
+        public void setMinimumPreviousFiles(long minimumPreviousFiles) { this.minimumPreviousFiles = minimumPreviousFiles; }
+        public double getMinimumSeenRatio() { return minimumSeenRatio; }
+        public void setMinimumSeenRatio(double minimumSeenRatio) { this.minimumSeenRatio = minimumSeenRatio; }
+        public boolean isAllowMassMissing() { return allowMassMissing; }
+        public void setAllowMassMissing(boolean allowMassMissing) { this.allowMassMissing = allowMassMissing; }
+    }
 
     public static class Release {
         private String version = "0.1.0-dev";

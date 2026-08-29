@@ -186,7 +186,7 @@ class ExternalReadOnlyLibraryTest {
         });
 
         lenient().when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.NORMAL_STEREO);
-        seenPathStore = new InMemoryLibraryScanSeenPathStore(songFileRepository);
+        seenPathStore = new InMemoryLibraryScanSeenPathStore(songFileRepository, songRepository);
         scanService = new LibraryScanService(props, ffprobe, tagReader, songRepository,
                 songFileRepository, new AssetWriter(props), settingService,
                 seenPathStore);

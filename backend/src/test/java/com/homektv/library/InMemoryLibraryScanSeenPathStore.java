@@ -1,7 +1,9 @@
 package com.homektv.library;
 
 import com.homektv.domain.SongFile;
+import com.homektv.domain.Song;
 import com.homektv.repo.SongFileRepository;
+import com.homektv.repo.SongRepository;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Slice;
 
@@ -17,13 +19,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Test-only implementation of the database reconciliation boundary. */
 final class InMemoryLibraryScanSeenPathStore implements LibraryScanSeenPathStore {
     private final SongFileRepository files;
+    private final SongRepository songs;
     private final Map<UUID, Set<String>> seenPaths = new HashMap<>();
     private final Map<UUID, Set<String>> pendingAtStart = new HashMap<>();
     private final AtomicInteger recordBatchCalls = new AtomicInteger();
     private boolean failRecordBatches;
 
-    InMemoryLibraryScanSeenPathStore(SongFileRepository files) {
+    InMemoryLibraryScanSeenPathStore(SongFileRepository files, SongRepository songs) {
         this.files = files;
+        this.songs = songs;
     }
 
     @Override
@@ -94,7 +98,18 @@ final class InMemoryLibraryScanSeenPathStore implements LibraryScanSeenPathStore
             }
             if (!page.hasNext()) break;
         }
-        return new MissingFiles(marked, List.copyOf(songIds));
+        int songsMarked = 0;
+        for (Long songId : songIds) {
+            List<SongFile> validFiles = files.findBySongIdAndValidTrueOrderByPriorityDesc(songId);
+            if (validFiles != null && !validFiles.isEmpty()) continue;
+            Song song = songs.findById(songId).orElse(null);
+            if (song != null && "ok".equals(song.getStatus())) {
+                song.setStatus("file_missing");
+                songs.save(song);
+                songsMarked++;
+            }
+        }
+        return new MissingFiles(marked, songsMarked);
     }
 
     @Override

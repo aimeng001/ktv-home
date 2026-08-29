@@ -11,6 +11,7 @@ import unittest
 
 
 WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "release.yml"
+DOCKERFILE = Path(__file__).parents[1] / "backend" / "Dockerfile"
 SAFE_VERSION = re.compile(
     r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$"
 )
@@ -67,6 +68,43 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("mpv.exe", windows_player)
         self.assertIn("Copy-Item windows-player/README.md", windows_player)
         self.assertIn("README-WINDOWS-PLAYER.md", windows_player)
+
+    def test_docker_image_wires_source_revision_and_build_time(self) -> None:
+        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+        image = job_block(self.workflow, "image")
+
+        self.assertIn("org.opencontainers.image.revision", dockerfile)
+        self.assertIn("org.opencontainers.image.created", dockerfile)
+        self.assertIn("KTV_GIT_SHA", dockerfile)
+        self.assertIn("KTV_BUILD_TIME", dockerfile)
+        self.assertIn("KTV_GIT_SHA=${{ github.sha }}", image)
+        self.assertIn("KTV_BUILD_TIME=", image)
+
+    def test_release_image_waits_for_all_quality_gates(self) -> None:
+        image = job_block(self.workflow, "image")
+        runtime = job_block(self.workflow, "docker-runtime-test")
+        large_scan = job_block(self.workflow, "large-scan-gate")
+        backend = job_block(self.workflow, "backend-release-gate")
+
+        for gate in ("backend-release-gate", "large-scan-gate", "docker-runtime-test"):
+            self.assertIn(gate, image)
+        self.assertIn("./mvnw --batch-mode test", backend)
+        self.assertIn("runLargeLibraryScanTest=true", large_scan)
+        self.assertIn("scanRows=100000", large_scan)
+        self.assertIn("-Xmx512m", large_scan)
+        self.assertIn("docker build", runtime)
+        self.assertIn("/api/build-info", runtime)
+        self.assertIn("/api/admin/scan/start", runtime)
+        self.assertIn("/api/admin/diagnostics/memory", runtime)
+
+    def test_ci_runtime_compose_is_bounded_and_external_source_is_read_only(self) -> None:
+        compose = (WORKFLOW.parents[2] / "docker-compose.ci.yml").read_text(encoding="utf-8")
+
+        self.assertIn("mem_limit: 768m", compose)
+        self.assertIn("-Xms128m -Xmx512m", compose)
+        self.assertIn("KTV_LIBRARY_MODE: EXTERNAL_READ_ONLY", compose)
+        self.assertIn("target: /source-music", compose)
+        self.assertIn("read_only: true", compose)
 
 
 if __name__ == "__main__":

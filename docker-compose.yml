@@ -54,8 +54,9 @@ services:
       KTV_AI_MODEL: ${KTV_AI_MODEL:-deepseek-v4-flash}
       KTV_AI_AUTO_APPLY_CONFIDENCE: ${KTV_AI_AUTO_APPLY_CONFIDENCE:-0.90}
       KTV_AI_ALLOW_PRIVATE_NETWORK: ${KTV_AI_ALLOW_PRIVATE_NETWORK:-false}
-      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=70 -Xmx512m}
+      JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--Xms256m -Xmx2048m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -XX:+ExitOnOutOfMemoryError}"
       TZ: ${TZ:-Asia/Shanghai}
+    mem_limit: ${KTV_APP_MEMORY_LIMIT:-4g}
     ports:
       # TCP HTTP API/UI port for browsers, phones, and TV clients.
       # 面向浏览器、手机和电视端的 TCP HTTP API/UI 端口。

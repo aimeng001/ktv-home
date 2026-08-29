@@ -19,12 +19,21 @@ spring:
 server:
   port: ${SERVER_PORT:8080}
 
+build:
+  git-sha: ${KTV_BUILD_GIT_SHA:${BUILD_GIT_SHA:unknown}}
+  time: ${KTV_BUILD_TIME:${BUILD_TIME:unknown}}
+
 # 应用自定义配置
 app:
   source-library-path: ${KTV_SOURCE_LIBRARY_PATH:/source-music}
   ktv-library-path: ${KTV_LIBRARY_PATH:/music}
   library-mode: ${KTV_LIBRARY_MODE:MANAGED}
   data-path: ${KTV_DATA_PATH:./data}
+  scan:
+    missing-guard:
+      minimum-previous-files: ${KTV_SCAN_MISSING_GUARD_MIN_FILES:1000}
+      minimum-seen-ratio: ${KTV_SCAN_MISSING_GUARD_MIN_SEEN_RATIO:0.50}
+      allow-mass-missing: ${KTV_SCAN_ALLOW_MASS_MISSING:false}
   config-master-key-path: ${KTV_CONFIG_MASTER_KEY_PATH:/data/secrets/config.key}
   admin-password: ${KTV_ADMIN_PASSWORD:}
   ffprobe-path: ${KTV_FFPROBE_PATH:ffprobe}

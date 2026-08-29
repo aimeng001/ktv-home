@@ -119,6 +119,14 @@ It uses `ghcr.io/aimeng001/ktv-home:latest` by default. For production, set
 `KTV_RELEASE_IMAGE` in `.env` to a specific release tag so upgrades are
 explicit.
 
+The production Compose defaults give the application a 4 GB container limit
+and a 2 GB JVM heap. On an out-of-memory error the JVM writes a diagnostic
+heap dump under `/data` and exits so Docker can restart it. If an existing
+`.env` still contains the old `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=70 -Xmx512m`,
+remove it or replace it with the value from `.env.example`; an explicit old
+value overrides the safer Compose default. After administrator login,
+`/api/admin/diagnostics/memory` reports heap usage and scan progress.
+
 To build from source instead, run:
 
 ```bash

@@ -107,15 +107,10 @@ public class LibraryScanService {
     });
     private final AtomicReference<ScanProgress> scanProgress = new AtomicReference<>(ScanProgress.idle());
     private final Object scanLock = new Object();
-    private final Object artistIndexLock = new Object();
     private final TransactionTemplate batchTransaction;
     private final LibraryScanSeenPathStore seenPathStore;
     @PersistenceContext
     private EntityManager entityManager;
-    private volatile Set<String> cachedArtistNames = Set.of();
-    private volatile FilenameParser.ArtistIndex cachedArtistIndex =
-            FilenameParser.prepareKnownArtists(Set.of());
-
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
                               LibraryScanSeenPathStore seenPathStore) {
@@ -221,6 +216,7 @@ public class LibraryScanService {
             String activeRole = activeFileRole();
             UUID scanId = UUID.randomUUID();
             long maxIdAtScanStart = fileRepo.findMaxIdByFileRole(activeRole);
+            long validFilesAtScanStart = countValidFilesAtScanStart(activeRole, root);
 
             List<FastIndexEntry> batch = new ArrayList<>(FAST_INDEX_BATCH_SIZE);
             ScanCounters counters = new ScanCounters();
@@ -313,7 +309,8 @@ public class LibraryScanService {
             }
 
             if (enumerationComplete[0]) {
-                reconcileMissingFiles(scanId, activeRole, counters);
+                reconcileMissingFiles(scanId, activeRole, counters,
+                        validFilesAtScanStart, discovered[0]);
             } else {
                 log.warn("曲库枚举未完整结束，本轮不标记消失文件，等待下次扫描重试：{}", root);
             }
@@ -1037,14 +1034,23 @@ public class LibraryScanService {
                 batch.stream().map(FastIndexEntry::path).filter(Objects::nonNull).toList());
     }
 
-    private void reconcileMissingFiles(UUID scanId, String activeRole, ScanCounters counters) {
+    private void reconcileMissingFiles(UUID scanId, String activeRole, ScanCounters counters,
+                                       long validFilesAtScanStart, int currentSeenFiles) {
+        AppProperties.MissingGuard config = props.getScan().getMissingGuard();
+        MissingFileGuard guard = new MissingFileGuard(
+                config.getMinimumPreviousFiles(), config.getMinimumSeenRatio());
+        if (guard.shouldBlock(validFilesAtScanStart, currentSeenFiles, true,
+                config.isAllowMassMissing())) {
+            log.warn("本轮疑似大规模曲库消失，跳过缺失对账：扫描前有效文件={}，本轮发现={}，根目录={}",
+                    validFilesAtScanStart, currentSeenFiles,
+                    LibraryModePolicy.activeLibraryRoot(props));
+            return;
+        }
         try {
             LibraryScanSeenPathStore.MissingFiles missing = seenPathStore.markMissing(scanId, activeRole,
                     LibraryModePolicy.activeLibraryRoot(props).toAbsolutePath().normalize().toString());
-            counters.dbUpdates += missing.filesMarked();
+            counters.dbUpdates += missing.filesMarked() + missing.songsMarked();
             counters.missing += missing.filesMarked();
-            missing.songIds().stream().filter(Objects::nonNull).distinct()
-                    .forEach(songId -> markSongMissingIfNeeded(songId, counters));
         } catch (RuntimeException failure) {
             log.warn("本轮缺失文件对账失败，保留现有数据库状态：{}", failure.getMessage());
         }
@@ -1058,17 +1064,19 @@ public class LibraryScanService {
         }
     }
 
-    private void markSongMissingIfNeeded(Long songId, ScanCounters counters) {
-        if (songId == null) return;
-        List<SongFile> validFiles = fileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(songId);
-        if (validFiles != null && !validFiles.isEmpty()) return;
-        songRepo.findById(songId).ifPresent(song -> {
-            if ("ok".equals(song.getStatus())) {
-                song.setStatus("file_missing");
-                songRepo.save(song);
-                counters.dbUpdates++;
-            }
-        });
+    private long countValidFilesAtScanStart(String activeRole, Path root) {
+        String normalizedRoot = root.toAbsolutePath().normalize().toString();
+        String backslashPrefix = normalizedRoot.endsWith("\\") || normalizedRoot.endsWith("/")
+                ? normalizedRoot : normalizedRoot + "\\";
+        String slashPrefix = normalizedRoot.endsWith("/") || normalizedRoot.endsWith("\\")
+                ? normalizedRoot : normalizedRoot + "/";
+        try {
+            return fileRepo.countValidByFileRoleAndRoot(activeRole, normalizedRoot,
+                    backslashPrefix, slashPrefix);
+        } catch (RuntimeException failure) {
+            log.warn("读取扫描前有效文件数量失败，本轮不执行缺失对账：{}", failure.getMessage());
+            return Long.MAX_VALUE;
+        }
     }
 
     enum IngestOutcome { ADDED, UPDATED, SKIPPED, UNRECOGNIZED }
@@ -1765,14 +1773,9 @@ public class LibraryScanService {
     private FilenameParser.ArtistIndex artistIndexFor(Collection<String> artistNames) {
         Set<String> snapshot = artistNames == null || artistNames.isEmpty()
                 ? Set.of() : Set.copyOf(artistNames);
-        FilenameParser.ArtistIndex current = cachedArtistIndex;
-        if (snapshot.equals(cachedArtistNames)) return current;
-        synchronized (artistIndexLock) {
-            if (!snapshot.equals(cachedArtistNames)) {
-                cachedArtistIndex = FilenameParser.prepareKnownArtists(snapshot);
-                cachedArtistNames = snapshot;
-            }
-            return cachedArtistIndex;
-        }
+        // The index is scoped to the current scan/request. Keeping it in this
+        // Spring singleton retained every historical artist name after a large
+        // scan, even though the next scan builds its own snapshot.
+        return FilenameParser.prepareKnownArtists(snapshot);
     }
 }

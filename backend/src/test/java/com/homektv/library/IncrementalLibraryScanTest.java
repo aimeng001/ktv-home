@@ -105,7 +105,7 @@ class IncrementalLibraryScanTest {
                 Optional.ofNullable(songsByFingerprint.get(invocation.getArgument(0))));
         lenient().when(songRepository.findById(anyLong())).thenAnswer(invocation ->
                 Optional.ofNullable(songsById.get(invocation.getArgument(0))));
-        when(songRepository.save(any(Song.class))).thenAnswer(invocation -> {
+        lenient().when(songRepository.save(any(Song.class))).thenAnswer(invocation -> {
             repositorySaveThreads.add(Thread.currentThread().getName());
             Song song = invocation.getArgument(0);
             if (song.getId() == null) song.setId(ids.getAndIncrement());
@@ -203,11 +203,29 @@ class IncrementalLibraryScanTest {
                         .filter(file -> invocation.getArgument(0).equals(file.getFileRole()))
                         .filter(SongFile::isProbePending)
                         .count());
+        lenient().when(songFileRepository.countValidByFileRoleAndRoot(
+                anyString(), anyString(), anyString(), anyString()))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    String root = invocation.getArgument(1);
+                    Path normalizedRoot = Path.of(root).toAbsolutePath().normalize();
+                    return filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()) && file.isValid())
+                            .filter(file -> {
+                                try {
+                                    return Path.of(file.getFilePath()).toAbsolutePath().normalize()
+                                            .startsWith(normalizedRoot);
+                                } catch (RuntimeException invalidPath) {
+                                    return false;
+                                }
+                            })
+                            .count();
+                });
         lenient().when(songFileRepository.findBySongIdAndValidTrueOrderByPriorityDesc(anyLong())).thenAnswer(invocation ->
                 filesByPath.values().stream()
                         .filter(file -> invocation.getArgument(0).equals(file.getSongId()) && file.isValid())
                         .toList());
-        when(songFileRepository.save(any(SongFile.class))).thenAnswer(invocation -> {
+        lenient().when(songFileRepository.save(any(SongFile.class))).thenAnswer(invocation -> {
             repositorySaveThreads.add(Thread.currentThread().getName());
             SongFile file = invocation.getArgument(0);
             if (file.getId() == null) file.setId(ids.getAndIncrement());
@@ -219,7 +237,7 @@ class IncrementalLibraryScanTest {
         lenient().when(tagReader.read(any())).thenReturn(new TagInfo());
         lenient().when(ffprobe.probe(any(Path.class))).thenReturn(probe());
 
-        seenPathStore = new InMemoryLibraryScanSeenPathStore(songFileRepository);
+        seenPathStore = new InMemoryLibraryScanSeenPathStore(songFileRepository, songRepository);
         scanService = new LibraryScanService(props, ffprobe, tagReader, songRepository,
                 songFileRepository, new AssetWriter(props),
                 seenPathStore);
@@ -726,6 +744,27 @@ class IncrementalLibraryScanTest {
         scanService.scanAll();
 
         assertThat(outsideRow.isValid()).isTrue();
+    }
+
+    @Test
+    void suspiciousLargeDisappearanceKeepsExistingRowsValid() throws Exception {
+        for (int index = 0; index < 1_000; index++) {
+            SongFile existing = new SongFile();
+            existing.setId((long) index + 1);
+            existing.setSongId(10_000L + index);
+            existing.setFilePath(sourceDir.resolve("existing-" + index + ".mkv").toString());
+            existing.setFileRole(LibraryModePolicy.EXTERNAL_FILE_ROLE);
+            existing.setFormat("mkv");
+            existing.setFileMtime(java.time.OffsetDateTime.now());
+            existing.setValid(true);
+            filesByPath.put(existing.getFilePath(), existing);
+        }
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.scanned()).isZero();
+        assertThat(result.missing()).isZero();
+        assertThat(filesByPath.values()).allMatch(SongFile::isValid);
     }
 
     @Test

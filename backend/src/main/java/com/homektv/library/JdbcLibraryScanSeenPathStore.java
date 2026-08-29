@@ -95,17 +95,39 @@ public class JdbcLibraryScanSeenPathStore implements LibraryScanSeenPathStore {
         String root = activeRoot == null ? "" : activeRoot;
         String backslashPrefix = root.endsWith("\\") || root.endsWith("/") ? root : root + "\\";
         String slashPrefix = root.endsWith("/") || root.endsWith("\\") ? root : root + "/";
-        List<Long> songIds = jdbc.query(
-                "UPDATE song_files file SET valid = FALSE "
-                        + "WHERE file.file_role = ? AND file.valid = TRUE "
-                        + "AND (file.file_path = ? "
-                        + "  OR LEFT(file.file_path, LENGTH(?)) = ? "
-                        + "  OR LEFT(file.file_path, LENGTH(?)) = ?) "
-                        + "AND NOT EXISTS ("
-                        + "  SELECT 1 FROM library_scan_seen_paths seen "
-                        + "  WHERE seen.scan_id = ? AND seen.file_role = file.file_role "
-                        + "    AND seen.file_path = file.file_path"
-                        + ") RETURNING file.song_id",
+        String sql = "WITH marked_files AS ("
+                + "    UPDATE song_files file SET valid = FALSE "
+                + "     WHERE file.file_role = ? AND file.valid = TRUE "
+                + "       AND (file.file_path = ? "
+                + "            OR LEFT(file.file_path, LENGTH(?)) = ? "
+                + "            OR LEFT(file.file_path, LENGTH(?)) = ?) "
+                + "       AND NOT EXISTS ("
+                + "           SELECT 1 FROM library_scan_seen_paths seen "
+                + "            WHERE seen.scan_id = ? AND seen.file_role = file.file_role "
+                + "              AND seen.file_path = file.file_path"
+                + "       ) "
+                + "       RETURNING file.id, file.song_id"
+                + "), updated_songs AS ("
+                + "    UPDATE songs song SET status = 'file_missing' "
+                + "     WHERE song.status = 'ok' "
+                + "       AND EXISTS ("
+                + "           SELECT 1 FROM marked_files marked "
+                + "            WHERE marked.song_id = song.id"
+                + "       ) "
+                + "       AND NOT EXISTS ("
+                + "           SELECT 1 FROM song_files remaining "
+                + "            WHERE remaining.song_id = song.id "
+                + "              AND remaining.valid = TRUE "
+                + "              AND NOT EXISTS ("
+                + "                  SELECT 1 FROM marked_files marked_again "
+                + "                   WHERE marked_again.id = remaining.id"
+                + "              )"
+                + "       ) "
+                + "       RETURNING song.id"
+                + ") "
+                + "SELECT (SELECT COUNT(*) FROM marked_files) AS files_marked, "
+                + "       (SELECT COUNT(*) FROM updated_songs) AS songs_marked";
+        return jdbc.query(sql,
                 statement -> {
                     statement.setString(1, fileRole);
                     statement.setString(2, root);
@@ -115,8 +137,12 @@ public class JdbcLibraryScanSeenPathStore implements LibraryScanSeenPathStore {
                     statement.setString(6, slashPrefix);
                     statement.setObject(7, scanId);
                 },
-                (resultSet, rowNum) -> resultSet.getLong(1));
-        return new MissingFiles(songIds.size(), songIds);
+                (resultSet, rowNum) -> new MissingFiles(
+                        resultSet.getInt("files_marked"),
+                        resultSet.getInt("songs_marked")))
+                .stream()
+                .findFirst()
+                .orElse(new MissingFiles(0, 0));
     }
 
     @Override

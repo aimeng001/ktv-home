@@ -35,12 +35,20 @@ RUN --mount=type=cache,target=/root/.m2 \
 FROM ${BASE_REGISTRY}/library/eclipse-temurin:21-jre-alpine
 ARG KTV_RELEASE_VERSION=0.1.0-dev
 ARG KTV_RELEASE_VERSION_CODE=1
+ARG KTV_GIT_SHA=unknown
+ARG KTV_BUILD_TIME=unknown
 WORKDIR /app
 
 ENV KTV_RELEASE_VERSION=${KTV_RELEASE_VERSION} \
     KTV_RELEASE_VERSION_CODE=${KTV_RELEASE_VERSION_CODE} \
+    KTV_BUILD_GIT_SHA=${KTV_GIT_SHA} \
+    KTV_BUILD_TIME=${KTV_BUILD_TIME} \
     KTV_RELEASE_ARMEABI_V7A_APK=classpath:/static/tv-apk/home-ktv-tv-${KTV_RELEASE_VERSION}-armeabi-v7a.apk \
     KTV_RELEASE_ARM64_V8A_APK=classpath:/static/tv-apk/home-ktv-tv-${KTV_RELEASE_VERSION}-arm64-v8a.apk
+
+LABEL org.opencontainers.image.version="${KTV_RELEASE_VERSION}" \
+      org.opencontainers.image.revision="${KTV_GIT_SHA}" \
+      org.opencontainers.image.created="${KTV_BUILD_TIME}"
 
 # 打包 FFmpeg（含 ffprobe），供曲库扫描解析媒体。
 # Intel VAAPI requires the userspace iHD driver in addition to FFmpeg's VAAPI encoders.

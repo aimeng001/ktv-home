@@ -165,6 +165,12 @@ docker compose -f docker-compose.prebuilt.yml up -d --pull always --wait
 默认使用 `ghcr.io/aimeng001/ktv-home:latest`。生产环境可在 `.env` 中将
 `KTV_RELEASE_IMAGE` 设置为具体的发布标签，以避免 `latest` 自动变化。
 
+生产 Compose 默认给应用容器 4GB 内存，并给 JVM 2GB 堆；OOM 时会把诊断堆转储到
+`KTV_DATA_DIR` 对应的 `/data` 目录后退出，由 Docker 自动重启。若 `.env` 中已有旧的
+`JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=70 -Xmx512m`，请删除或改为
+`.env.example` 中的新值，否则旧值会覆盖安全默认值。管理员登录后可访问
+`/api/admin/diagnostics/memory` 查看堆内存和扫描进度。
+
 选择 `EXTERNAL_READ_ONLY` 模式时，请继续使用上面的 `docker-compose.nas.yml` 命令。需要从源码构建 Managed 模式时使用：
 
 ```bash
@@ -340,7 +346,8 @@ source-music/
 | `KTV_IMAGE_REGISTRY` | `docker.m.daocloud.io` | Docker 基础镜像仓库前缀 |
 | `KTV_APP_IMAGE` | `home-ktv:latest` | 应用镜像名称 |
 | `KTV_RELEASE_IMAGE` | `ghcr.io/aimeng001/ktv-home:latest` | 预编译 Compose 使用的 GitHub 容器镜像 |
-| `JAVA_TOOL_OPTIONS` | `-XX:MaxRAMPercentage=70 -Xmx512m` | 容器 JVM 内存参数 |
+| `JAVA_TOOL_OPTIONS` | `-Xms256m -Xmx2048m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -XX:+ExitOnOutOfMemoryError` | 容器 JVM 内存与 OOM 行为 |
+| `KTV_APP_MEMORY_LIMIT` | `4g` | 应用容器内存上限 |
 
 二维码默认使用 TV 访问服务端时的局域网 Host 地址。若网络中存在反向代理或多个网卡，可在管理后台设置“展示地址”，例如 `192.168.1.10:8080`。
 

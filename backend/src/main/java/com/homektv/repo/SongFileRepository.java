@@ -65,6 +65,21 @@ public interface SongFileRepository extends JpaRepository<SongFile, Long> {
     long countByFileRoleAndProbePendingTrue(String fileRole);
     @Query("SELECT COALESCE(MAX(file.id), 0) FROM SongFile file WHERE file.fileRole = :fileRole")
     Long findMaxIdByFileRole(@Param("fileRole") String fileRole);
+    @Query(value = """
+            SELECT COUNT(*)
+            FROM song_files file
+            WHERE file.file_role = :fileRole
+              AND file.valid = TRUE
+              AND (
+                    file.file_path = :root
+                    OR LEFT(file.file_path, LENGTH(:backslashPrefix)) = :backslashPrefix
+                    OR LEFT(file.file_path, LENGTH(:slashPrefix)) = :slashPrefix
+              )
+            """, nativeQuery = true)
+    long countValidByFileRoleAndRoot(@Param("fileRole") String fileRole,
+                                     @Param("root") String root,
+                                     @Param("backslashPrefix") String backslashPrefix,
+                                     @Param("slashPrefix") String slashPrefix);
     List<SongFile> findBySourcePath(String sourcePath);
 
     /** 伴奏轨判定为低置信度的文件源，供后台人工复核（详设§11：入库记伴奏轨，判不准的挑出来核对）。
