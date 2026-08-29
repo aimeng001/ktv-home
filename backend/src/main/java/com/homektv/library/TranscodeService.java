@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /** Creates a TV-compatible H.264/AAC derivative without touching the source file. */
@@ -39,22 +40,30 @@ public class TranscodeService {
         }
         Path input = Path.of(source.getFilePath());
         if (!Files.isReadable(input)) throw new ApiException("FILE_NOT_FOUND", "源文件不可读：" + input);
-        Path output = uniqueOutput(input, "mkv");
-        SongFile existing = files.findByFilePath(output.toString()).orElse(null);
+        Path desired = input.resolveSibling(stripExtension(input.getFileName().toString()) + ".mkv");
+        SongFile existing = files.findByFilePath(desired.toString()).orElse(null);
         try {
-            if (existing != null && Files.isReadable(output) && Files.size(output) > 0) {
-                return new Result(existing.getId(), output.toString(), Files.size(output));
+            if (existing != null && Files.isReadable(desired) && Files.size(desired) > 0) {
+                return new Result(existing.getId(), desired.toString(), Files.size(desired));
             }
         } catch (java.io.IOException e) {
             throw new ApiException("TRANSCODE_FAILED", e.getMessage());
         }
+        Path output;
+        try {
+            output = OutputPathReservation.reserve(desired);
+        } catch (java.io.IOException e) {
+            throw new ApiException("TRANSCODE_FAILED", e.getMessage());
+        }
+        boolean completed = false;
         try {
             Process process = new ProcessBuilder("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                     "-i", input.toString(), "-map", "0:v:0?", "-map", "0:a?",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-profile:v", "high",
                     "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-c:s", "copy", output.toString())
                     .redirectErrorStream(true).start();
-            String log = new String(process.getInputStream().readAllBytes());
+            String log = ProcessOutputTail.read(process.getInputStream(),
+                    StandardCharsets.UTF_8, MediaTranscoder.MAX_PROCESS_LOG_BYTES);
             int code = process.waitFor();
             if (code != 0 || !Files.isReadable(output)) throw new ApiException("TRANSCODE_FAILED", log);
             SongFile derivative = existing != null ? existing : new SongFile();
@@ -75,29 +84,23 @@ public class TranscodeService {
             derivative.setPriority(source.getPriority() + 100);
             derivative.setValid(true);
             derivative = files.save(derivative);
+            completed = true;
             return new Result(derivative.getId(), output.toString(), Files.size(output));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new ApiException("TRANSCODE_INTERRUPTED", "转码被中断");
         } catch (java.io.IOException e) {
             throw new ApiException("TRANSCODE_FAILED", e.getMessage());
+        } finally {
+            if (!completed) {
+                try { Files.deleteIfExists(output); } catch (java.io.IOException ignored) { }
+            }
         }
     }
 
     private static String stripExtension(String name) {
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(0, dot) : name;
-    }
-
-    private static Path uniqueOutput(Path input, String extension) {
-        Path desired = input.resolveSibling(stripExtension(input.getFileName().toString()) + "." + extension);
-        if (!desired.equals(input) && !Files.exists(desired)) return desired;
-        String baseName = stripExtension(input.getFileName().toString());
-        for (int index = 2; index < 10000; index++) {
-            Path candidate = input.resolveSibling(baseName + "-" + index + "." + extension);
-            if (!Files.exists(candidate)) return candidate;
-        }
-        throw new ApiException("TARGET_NAME_EXHAUSTED", "无法为输出文件分配唯一文件名：" + desired);
     }
 
     public record Result(Long sourceFileId, String outputPath, long outputBytes) {}

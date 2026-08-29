@@ -55,15 +55,21 @@ LABEL org.opencontainers.image.version="${KTV_RELEASE_VERSION}" \
 # intel-media-driver is x86_64-only, so keep the multi-architecture ARM64 image unchanged.
 RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/apk/repositories \
     && for attempt in 1 2 3; do \
-      apk add --no-cache ffmpeg && break; \
+      apk add --no-cache ffmpeg su-exec && break; \
       if [ "$attempt" -eq 3 ]; then exit 1; fi; \
       sleep 5; \
     done \
     && if [ "$(apk --print-arch)" = "x86_64" ]; then \
       apk add --no-cache intel-media-driver libva-utils; \
-    fi
+    fi \
+    && addgroup -S ktv \
+    && adduser -S -D -H -G ktv ktv \
+    && mkdir -p /data /music \
+    && chown ktv:ktv /app /data /music
 
 COPY --from=build /build/target/home-ktv-server.jar app.jar
+COPY backend/docker-entrypoint.sh /usr/local/bin/home-ktv-entrypoint
+RUN chmod 0555 /usr/local/bin/home-ktv-entrypoint
 
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["/usr/local/bin/home-ktv-entrypoint"]

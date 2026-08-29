@@ -15,6 +15,17 @@ import java.util.Optional;
 public interface QueueItemRepository extends JpaRepository<QueueItem, Long> {
 
     /**
+     * 获取整个房间队列变更共用的事务级咨询锁。
+     *
+     * Queue ordering and playback transitions read and then rewrite shared
+     * queue state.  A single PostgreSQL transaction-level lock makes those
+     * read-modify-write sections mutually exclusive across application
+     * instances without holding a JVM-local lock.
+     */
+    @Query(value = "SELECT pg_advisory_xact_lock(2147483647)", nativeQuery = true)
+    void lockQueueMutation();
+
+    /**
      * 按指定状态查询队列条目，按排队序号升序排列。
      *
      * Query queue items by status, ordered by order index ascending.

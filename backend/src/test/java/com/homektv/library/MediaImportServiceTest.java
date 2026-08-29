@@ -11,6 +11,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.SliceImpl;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import java.nio.file.Files;
@@ -106,6 +110,53 @@ class MediaImportServiceTest {
         verify(scanService).ingestLibraryFile(any(), eq(source), anyString(), anyString(), eq(false));
         verify(importRepo).delete(previousRecord);
         verify(importRepo, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void directImportMovesSidecarsWithTheMediaWithoutLeavingSourceCopies() throws Exception {
+        Path source = sourceDir.resolve("周杰伦 - 带歌词封面.mp4");
+        Path sourceLyric = sourceDir.resolve("周杰伦 - 带歌词封面.lrc");
+        Path sourceCover = sourceDir.resolve("周杰伦 - 带歌词封面.jpg");
+        Files.writeString(source, "compatible-media");
+        Files.writeString(sourceLyric, "[00:01.00]歌词");
+        Files.writeString(sourceCover, "cover");
+        when(scanService.parseFilename(source.getFileName().toString())).thenReturn(
+                new ParsedMeta("带歌词封面", "周杰伦", "国语", "流行", ParsedMeta.RECOGNIZED));
+        when(probe.probe(source)).thenReturn(new MediaProbe(1000, 2, 0, true, "1920x1080",
+                List.of(), "h264", "aac"));
+
+        MediaImportService.SourceScanResult result = service.scanSourceLibrary();
+
+        Path output = targetDir.resolve(source.getFileName());
+        assertThat(result.copied()).isEqualTo(1);
+        assertThat(output).exists();
+        assertThat(output.resolveSibling("周杰伦 - 带歌词封面.lrc")).exists();
+        assertThat(output.resolveSibling("周杰伦 - 带歌词封面.jpg")).exists();
+        assertThat(source).doesNotExist();
+        assertThat(sourceLyric).doesNotExist();
+        assertThat(sourceCover).doesNotExist();
+    }
+
+    @Test
+    void directImportRestoresMediaAndSidecarsWhenACompanionTargetCollides() throws Exception {
+        Path source = sourceDir.resolve("周杰伦 - 目标冲突.mp4");
+        Path sourceLyric = sourceDir.resolve("周杰伦 - 目标冲突.lrc");
+        Path targetLyric = targetDir.resolve("周杰伦 - 目标冲突.lrc");
+        Files.writeString(source, "compatible-media");
+        Files.writeString(sourceLyric, "source-lyric");
+        Files.writeString(targetLyric, "existing-lyric");
+        when(scanService.parseFilename(source.getFileName().toString())).thenReturn(
+                new ParsedMeta("目标冲突", "周杰伦", "国语", "流行", ParsedMeta.RECOGNIZED));
+        when(probe.probe(source)).thenReturn(new MediaProbe(1000, 2, 0, true, "1920x1080",
+                List.of(), "h264", "aac"));
+
+        MediaImportService.SourceScanResult result = service.scanSourceLibrary();
+
+        assertThat(result.failed()).isEqualTo(1);
+        assertThat(source).exists();
+        assertThat(sourceLyric).exists();
+        assertThat(targetDir.resolve(source.getFileName())).doesNotExist();
+        assertThat(targetLyric).hasContent("existing-lyric");
     }
 
     @Test
@@ -342,6 +393,7 @@ class MediaImportServiceTest {
         imported.setSourcePath(importedSource.toString());
         imported.setSourceFilename(importedSource.getFileName().toString());
         imported.setOutputPath(importedOutput.toString());
+        imported.setOutputMd5(new FileHashService().md5(importedOutput));
         imported.setSongFileId(20L);
         imported.setImportedFlag(true);
         MediaImportRecord pending = pendingRecord(11L, pendingSource.getFileName().toString());
@@ -349,7 +401,8 @@ class MediaImportServiceTest {
         libraryFile.setId(20L);
         libraryFile.setFilePath(importedOutput.toString());
         libraryFile.setValid(true);
-        when(importRepo.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(imported, pending));
+        when(importRepo.findByIdGreaterThanOrderByIdAsc(eq(0L), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(imported, pending)));
         when(songFileRepo.findById(20L)).thenReturn(Optional.of(libraryFile));
 
         MediaImportService.AutoCleanupResult result = service.cleanupImportedSources();
@@ -427,6 +480,159 @@ class MediaImportServiceTest {
         assertThat(executionOrder).containsExactly(
                 "歌手 - 第一首.mpg", "歌手 - 第三首.mpg", "歌手 - 第二首.mpg");
         assertThat(service.getProgress().completed()).isEqualTo(3);
+    }
+
+    @Test
+    void transcodeWorkerMarksTheBatchFinishedWhenQueueLookupFails() throws Exception {
+        MediaImportRecord record = pendingRecord(40L, "歌手 - 数据库暂时不可用.mpg");
+        when(importRepo.findByIdIn(List.of(40L))).thenReturn(List.of(record));
+        when(importRepo.findById(40L)).thenThrow(new IllegalStateException("database unavailable"));
+
+        service.startPendingTranscode(List.of(40L), false);
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (service.getProgress().running() && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+        assertThat(service.getProgress().running()).isFalse();
+        assertThat(service.getProgress().currentRecordId()).isNull();
+        assertThat(service.getProgress().currentFile()).isNull();
+        assertThat(service.getProgress().failed()).isEqualTo(1);
+    }
+
+    @Test
+    void allPendingTranscodeUsesKeysetPagesInsteadOfLoadingAllRecords() {
+        MediaImportRecord first = new MediaImportRecord();
+        first.setId(1L);
+        MediaImportRecord second = new MediaImportRecord();
+        second.setId(201L);
+        when(importRepo.findByIdGreaterThanOrderByIdAsc(anyLong(), any(Pageable.class)))
+                .thenAnswer(invocation -> {
+                    long afterId = invocation.getArgument(0);
+                    if (afterId == 0L) {
+                        return new PageImpl<>(List.of(first), PageRequest.of(0, 200), 201);
+                    }
+                    return new PageImpl<>(List.of(second), PageRequest.of(0, 200), 2);
+                });
+
+        MediaImportService.TranscodeProgress result = service.startPendingTranscode(null, true);
+
+        assertThat(result.total()).isZero();
+        verify(importRepo).findByIdGreaterThanOrderByIdAsc(eq(0L), any(Pageable.class));
+        verify(importRepo).findByIdGreaterThanOrderByIdAsc(eq(1L), any(Pageable.class));
+        verify(importRepo, never()).findAllByOrderByCreatedAtDesc();
+    }
+
+    @Test
+    void failedLibraryIngestRemovesTheNewTranscodeOutput() throws Exception {
+        MediaImportRecord record = pendingRecord(41L, "歌手 - 入库异常.mpg");
+        when(importRepo.findByIdIn(List.of(41L))).thenReturn(List.of(record));
+        when(importRepo.findById(41L)).thenReturn(Optional.of(record));
+        when(probe.probe(any(Path.class))).thenReturn(new MediaProbe(1000, 1, 0, true,
+                "1920x1080", List.of(), "mpeg2video", "ac3"));
+        when(mediaTranscoder.transcode(any(), any(), any(), eq(true))).thenAnswer(invocation -> {
+            Path output = invocation.getArgument(1);
+            Files.writeString(output, "new-output");
+            return output;
+        });
+        when(scanService.ingestLibraryFile(any(), any(), anyString(), anyString(), eq(true)))
+                .thenThrow(new IllegalStateException("database unavailable"));
+
+        service.startPendingTranscode(List.of(41L), false);
+        awaitFinished();
+
+        try (Stream<Path> files = Files.list(targetDir)) {
+            assertThat(files).isEmpty();
+        }
+        assertThat(service.getProgress().failed()).isEqualTo(1);
+    }
+
+    @Test
+    void verifiedOutputSnapshotAvoidsRehashingDuringCleanup() throws Exception {
+        Path importedSource = sourceDir.resolve("歌手 - 快速清理.mp4");
+        Path importedOutput = targetDir.resolve("歌手 - 快速清理.mp4");
+        Files.writeString(importedSource, "source");
+        Files.writeString(importedOutput, "output");
+
+        MediaImportRecord record = new MediaImportRecord();
+        record.setId(42L);
+        record.setSourcePath(importedSource.toString());
+        record.setSourceFilename(importedSource.getFileName().toString());
+        record.setOutputPath(importedOutput.toString());
+        record.setOutputMd5(new FileHashService().md5(importedOutput));
+        record.setOutputSize(Files.size(importedOutput));
+        var outputMtime = Files.getLastModifiedTime(importedOutput).toInstant()
+                .atOffset(ZoneOffset.UTC);
+        record.setOutputMtime(outputMtime.withNano((outputMtime.getNano() / 1_000) * 1_000));
+        record.setSongFileId(42L);
+        record.setImportedFlag(true);
+        SongFile libraryFile = new SongFile();
+        libraryFile.setId(42L);
+        libraryFile.setFilePath(importedOutput.toString());
+        libraryFile.setValid(true);
+        when(importRepo.findByIdGreaterThanOrderByIdAsc(eq(0L), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(record)));
+        when(songFileRepo.findById(42L)).thenReturn(Optional.of(libraryFile));
+
+        MediaImportService.AutoCleanupResult result = service.cleanupImportedSources();
+
+        assertThat(result.deleted()).isEqualTo(1);
+        verify(hashService, never()).md5(importedOutput);
+    }
+
+    @Test
+    void cleanupUsesKeysetPagesInsteadOfLoadingAllRecords() {
+        when(importRepo.findByIdGreaterThanOrderByIdAsc(eq(0L), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        MediaImportService.AutoCleanupResult result = service.cleanupImportedSources();
+
+        assertThat(result.scanned()).isZero();
+        verify(importRepo).findByIdGreaterThanOrderByIdAsc(eq(0L), any(Pageable.class));
+        verify(importRepo, never()).findAllByOrderByCreatedAtDesc();
+    }
+
+    @Test
+    void filteredSourceDeletionUsesSlicesInsteadOfAnUnpagedQuery() {
+        when(importRepo.searchSourceLibraryAfterId(eq(0L), eq(""), isNull(), isNull(), isNull(),
+                eq(false), any(Pageable.class))).thenReturn(new SliceImpl<>(List.of()));
+
+        MediaImportService.DeleteSourcesResult result =
+                service.deleteSourcesByFilter(null, null, null, null);
+
+        assertThat(result.requested()).isZero();
+        verify(importRepo).searchSourceLibraryAfterId(eq(0L), eq(""), isNull(), isNull(), isNull(),
+                eq(false), any(Pageable.class));
+        verify(importRepo, never()).findAllByOrderByCreatedAtDesc();
+    }
+
+    @Test
+    void legacyCleanupPersistsTheOutputHashBeforeUsingItForFutureSafetyChecks() throws Exception {
+        Path importedSource = sourceDir.resolve("歌手 - 旧记录.mp4");
+        Path importedOutput = targetDir.resolve("歌手 - 旧记录.mp4");
+        Files.writeString(importedSource, "source");
+        Files.writeString(importedOutput, "output");
+
+        MediaImportRecord record = new MediaImportRecord();
+        record.setId(43L);
+        record.setSourcePath(importedSource.toString());
+        record.setSourceFilename(importedSource.getFileName().toString());
+        record.setOutputPath(importedOutput.toString());
+        record.setSongFileId(43L);
+        record.setImportedFlag(true);
+        SongFile libraryFile = new SongFile();
+        libraryFile.setId(43L);
+        libraryFile.setFilePath(importedOutput.toString());
+        libraryFile.setValid(true);
+        when(importRepo.findByIdGreaterThanOrderByIdAsc(eq(0L), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(record)));
+        when(songFileRepo.findById(43L)).thenReturn(Optional.of(libraryFile));
+
+        MediaImportService.AutoCleanupResult result = service.cleanupImportedSources();
+
+        assertThat(result.deleted()).isEqualTo(1);
+        assertThat(record.getOutputMd5()).isNotBlank();
+        verify(importRepo).save(record);
     }
 
     private MediaImportRecord pendingRecord(Long id, String filename) throws Exception {

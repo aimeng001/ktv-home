@@ -32,6 +32,9 @@ public class AppProperties {
     /** 管理后台密码；为空时管理接口安全关闭。Admin password; blank disables admin APIs. */
     private String adminPassword = "";
 
+    /** Optional shared credential for TV WebSocket clients. */
+    private String playerCredential = "";
+
     /** AI 曲库分析配置。AI music library analysis configuration. */
     private Ai ai = new Ai();
 
@@ -59,6 +62,8 @@ public class AppProperties {
     public void setConfigMasterKeyPath(String configMasterKeyPath) { this.configMasterKeyPath = configMasterKeyPath; }
     public String getAdminPassword() { return adminPassword; }
     public void setAdminPassword(String adminPassword) { this.adminPassword = adminPassword; }
+    public String getPlayerCredential() { return playerCredential; }
+    public void setPlayerCredential(String playerCredential) { this.playerCredential = playerCredential; }
     public Ai getAi() { return ai; }
     public void setAi(Ai ai) { this.ai = ai; }
     public Discovery getDiscovery() { return discovery; }

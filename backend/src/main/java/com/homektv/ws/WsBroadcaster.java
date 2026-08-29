@@ -3,6 +3,7 @@ package com.homektv.ws;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.socket.TextMessage;
@@ -28,11 +29,19 @@ public class WsBroadcaster {
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final ObjectMapper mapper;
     private final ActivePlayerRegistry playerRegistry;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Autowired
-    public WsBroadcaster(ObjectMapper mapper, ActivePlayerRegistry playerRegistry) {
+    public WsBroadcaster(ObjectMapper mapper, ActivePlayerRegistry playerRegistry,
+                         ApplicationEventPublisher eventPublisher) {
         this.mapper = mapper;
         this.playerRegistry = playerRegistry;
+        this.eventPublisher = eventPublisher;
+    }
+
+    /** Test/backward-compatible constructor without an application event bus. */
+    public WsBroadcaster(ObjectMapper mapper, ActivePlayerRegistry playerRegistry) {
+        this(mapper, playerRegistry, event -> { });
     }
 
     /** Test/backward-compatible constructor; production uses the shared registry. */
@@ -162,7 +171,9 @@ public class WsBroadcaster {
             }
         } catch (IOException e) {
             log.debug("发送失败，移除会话 {}: {}", session.getId(), e.getMessage());
-            unregister(session);
+            String clientType = unregister(session);
+            ActivePlayerRegistry.Unregistration removal = playerRegistry.unregisterPlayer(session.getId());
+            eventPublisher.publishEvent(new WsSessionDisconnectedEvent(session.getId(), clientType, removal));
         }
     }
 

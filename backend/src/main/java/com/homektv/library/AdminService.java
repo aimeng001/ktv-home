@@ -51,6 +51,7 @@ public class AdminService {
     private final AppProperties props;
     private final ArtistCreditService artistCreditService;
     private final SongProjectionService songProjectionService;
+    private ManagedLibraryDeleteService managedLibraryDeleteService;
 
     public AdminService(SongRepository songRepo, SongFileRepository fileRepo,
                         PlayHistoryRepository historyRepo, WsBroadcaster broadcaster,
@@ -86,6 +87,15 @@ public class AdminService {
         this.props = props;
         this.artistCreditService = artistCreditService;
         this.songProjectionService = songProjectionService;
+    }
+
+    /**
+     * Setter injection keeps the small constructor-based unit tests compatible;
+     * the Spring service is present in the real application context.
+     */
+    @Autowired
+    void setManagedLibraryDeleteService(ManagedLibraryDeleteService service) {
+        this.managedLibraryDeleteService = service;
     }
 
     /** 仪表盘统计（P2.1） */
@@ -356,13 +366,35 @@ public class AdminService {
         LibraryModePolicy.requireManaged(props, "删除曲库歌曲");
         Song song = songRepo.findById(id)
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
-        deleteLibraryFiles(id);
+        List<SongFile> libraryFiles = fileRepo.findBySongIdOrderByPriorityDesc(id);
+        String deleteOperationId = null;
+        if (managedLibraryDeleteService == null) {
+            // Compatibility path for direct unit construction; Spring always
+            // injects the journaled service above.
+            deleteLibraryFiles(libraryFiles);
+        } else {
+            queueRepo.lockQueueMutation();
+            if (!libraryFiles.isEmpty()) {
+                deleteOperationId = managedLibraryDeleteService.prepare(id, libraryFiles);
+                managedLibraryDeleteService.stage(deleteOperationId);
+                // Register before any later DB mutation so every failure after
+                // staging restores files through the transaction callback.
+                managedLibraryDeleteService.registerCompletion(deleteOperationId);
+            }
+        }
         var queueItems = queueRepo.findBySongId(id);
-        var player = playerRepo.getSingleton();
+        var player = managedLibraryDeleteService == null
+                ? playerRepo.getSingleton()
+                : playerRepo.getSingletonForUpdate();
         if (queueItems.stream().anyMatch(q -> q.getId().equals(player.getCurrentQueueId()))) {
             player.setCurrentQueueId(null);
             player.setState("idle");
-            playerRepo.save(player);
+            if (managedLibraryDeleteService == null) {
+                playerRepo.save(player);
+            } else {
+                // The pessimistic query returns a managed entity; save is not
+                // required and would only add an unnecessary UPDATE.
+            }
         }
         queueRepo.deleteAll(queueItems);
         historyRepo.deleteBySongId(id);
@@ -382,8 +414,13 @@ public class AdminService {
 
     private void deleteLibraryFiles(Long songId) {
         LibraryModePolicy.requireManaged(props, "删除曲库文件");
+        deleteLibraryFiles(fileRepo.findBySongIdOrderByPriorityDesc(songId));
+    }
+
+    private void deleteLibraryFiles(List<SongFile> files) {
+        LibraryModePolicy.requireManaged(props, "删除曲库文件");
         Path root = Path.of(props.getKtvLibraryPath()).toAbsolutePath().normalize();
-        for (SongFile file : fileRepo.findBySongIdOrderByPriorityDesc(songId)) {
+        for (SongFile file : files) {
             Path path = Path.of(file.getFilePath()).toAbsolutePath().normalize();
             if (!path.startsWith(root)) {
                 throw new ApiException("INVALID_LIBRARY_PATH", "拒绝删除 KTV 曲库目录以外的文件：" + path);

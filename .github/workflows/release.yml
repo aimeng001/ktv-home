@@ -315,6 +315,7 @@ jobs:
           memory="$(curl --fail -sS -H "X-Admin-Token: $token" \
             http://127.0.0.1:18080/api/admin/diagnostics/memory)"
           echo "$memory" | jq -e '.heapMaxBytes > 0 and .discoveredFiles >= 1'
+          test "$(docker exec home-ktv-ci-app sh -c 'sed -n "s/^Uid:[[:space:]]*//p" /proc/1/status | cut -f1')" -ne 0
           docker stats --no-stream home-ktv-ci-app
       - name: Show candidate logs on failure
         if: failure()

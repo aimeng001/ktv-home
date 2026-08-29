@@ -12,9 +12,9 @@ services:
         bind:
           create_host_path: true
     environment:
-      - POSTGRES_USER=ktv
-      - POSTGRES_PASSWORD=ktv
-      - POSTGRES_DB=ktv
+      POSTGRES_USER: ${KTV_DB_USER:-ktv}
+      POSTGRES_PASSWORD: "${KTV_DB_PASSWORD:?KTV_DB_PASSWORD must be set}"
+      POSTGRES_DB: ${KTV_DB_NAME:-ktv}
     ports:
       # Development-only PostgreSQL TCP port. This is not the TV discovery port.
       # 仅用于开发的 PostgreSQL TCP 端口；不是电视端发现端口。

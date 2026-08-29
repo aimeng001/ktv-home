@@ -9,7 +9,7 @@ services:
     environment:
       POSTGRES_DB: ${KTV_DB_NAME:-ktv}
       POSTGRES_USER: ${KTV_DB_USER:-ktv}
-      POSTGRES_PASSWORD: ${KTV_DB_PASSWORD:-ktv}
+      POSTGRES_PASSWORD: "${KTV_DB_PASSWORD:?KTV_DB_PASSWORD must be set}"
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - type: bind
@@ -40,7 +40,7 @@ services:
       SERVER_PORT: ${KTV_HTTP_PORT:-8080}
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${KTV_DB_NAME:-ktv}
       SPRING_DATASOURCE_USERNAME: ${KTV_DB_USER:-ktv}
-      SPRING_DATASOURCE_PASSWORD: ${KTV_DB_PASSWORD:-ktv}
+      SPRING_DATASOURCE_PASSWORD: "${KTV_DB_PASSWORD:?KTV_DB_PASSWORD must be set}"
       KTV_SOURCE_LIBRARY_PATH: /source-music
       KTV_LIBRARY_PATH: /music
       KTV_LIBRARY_MODE: ${KTV_LIBRARY_MODE:-MANAGED}

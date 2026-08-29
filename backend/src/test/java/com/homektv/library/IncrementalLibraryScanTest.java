@@ -353,6 +353,34 @@ class IncrementalLibraryScanTest {
     }
 
     @Test
+    void startScanReturnsBusyProgressWithoutWaitingForAnInFlightScan() throws Exception {
+        Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        CountDownLatch probeStarted = new CountDownLatch(1);
+        CountDownLatch releaseProbe = new CountDownLatch(1);
+        when(ffprobe.probe(any(Path.class))).thenAnswer(invocation -> {
+            probeStarted.countDown();
+            assertThat(releaseProbe.await(5, TimeUnit.SECONDS)).isTrue();
+            return probe();
+        });
+
+        ExecutorService runner = Executors.newFixedThreadPool(2);
+        Future<LibraryScanService.ScanResult> running = runner.submit(scanService::scanAll);
+        Future<LibraryScanService.ScanProgress> started = null;
+        try {
+            assertThat(probeStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            started = runner.submit(scanService::startScan);
+            assertThat(started.get(500, TimeUnit.MILLISECONDS).running()).isTrue();
+        } finally {
+            releaseProbe.countDown();
+            assertThat(running.get(20, TimeUnit.SECONDS).scanned()).isEqualTo(1);
+            if (started != null && !started.isDone()) {
+                started.get(5, TimeUnit.SECONDS);
+            }
+            runner.shutdownNow();
+        }
+    }
+
+    @Test
     void directIngestWithoutAnExistingSongRemainsSupported() throws Exception {
         Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
 

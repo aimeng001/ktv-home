@@ -130,6 +130,27 @@ class KtvWebSocketHandlerTest {
     }
 
     @Test
+    void protocolV2PlayerMustIncludeQueueIdentityInPlaybackReports() throws Exception {
+        WebSocketSession active = playerSession("active", "active-token", 2);
+        handler.afterConnectionEstablished(active);
+
+        handler.handleTextMessage(active, new TextMessage(
+                "{\"type\":\"progress\",\"payload\":{\"position_ms\":500,\"generation\":1}}"));
+
+        verify(playbackService, never()).updatePosition(any(), any(Long.class));
+    }
+
+    @Test
+    void legacyPlayerMustIncludeQueueIdentityInPlaybackReports() throws Exception {
+        WebSocketSession active = activeLegacySession();
+
+        handler.handleTextMessage(active, new TextMessage(
+                "{\"type\":\"progress\",\"payload\":{\"position_ms\":500}}"));
+
+        verify(playbackService, never()).updatePosition(any(), any(Long.class));
+    }
+
+    @Test
     void activeDisconnectPromotesStandbyAndDoesNotStartOfflineCleanup() throws Exception {
         WebSocketSession active = playerSession("active", "active-token", 2);
         WebSocketSession standby = playerSession("standby", "standby-token", 2);
@@ -156,6 +177,24 @@ class KtvWebSocketHandlerTest {
         // A failed send may remove the broadcaster entry before Spring invokes
         // the normal close callback. The player lease must still be removed.
         handler.afterConnectionClosed(active, org.springframework.web.socket.CloseStatus.SERVER_ERROR);
+
+        var events = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster, org.mockito.Mockito.times(2)).sendTo(eq("standby"), events.capture());
+        assertThat(events.getAllValues()).extracting(WsEvent::type)
+                .containsExactly(WsEvent.PLAYER_ROLE, WsEvent.SYNC_FULL);
+        verify(offlineWatcher, never()).onTvDisconnected();
+    }
+
+    @Test
+    void broadcasterDisconnectEventPromotesStandbyAndSendsFreshSnapshot() throws Exception {
+        WebSocketSession active = playerSession("active", "active-token", 2);
+        WebSocketSession standby = playerSession("standby", "standby-token", 2);
+        handler.afterConnectionEstablished(active);
+        handler.afterConnectionEstablished(standby);
+        clearInvocations(broadcaster);
+
+        ActivePlayerRegistry.Unregistration removal = playerRegistry.unregisterPlayer("active");
+        handler.onSessionDisconnected(new WsSessionDisconnectedEvent("active", "tv", removal));
 
         var events = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
         verify(broadcaster, org.mockito.Mockito.times(2)).sendTo(eq("standby"), events.capture());

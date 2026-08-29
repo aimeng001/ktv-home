@@ -253,36 +253,30 @@ public sealed class PlaybackTerminal : IAsyncDisposable
 
     private async Task SendProgressLoopAsync(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
-        while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+        await PlaybackProgressLoop.RunAsync(
+            SendProgressOnceAsync,
+            TimeSpan.FromSeconds(1),
+            cancellationToken,
+            exception => Error?.Invoke(exception)).ConfigureAwait(false);
+    }
+
+    private async Task SendProgressOnceAsync(CancellationToken cancellationToken)
+    {
+        if (!leaseGate.TryGetGeneration(out var generation)) return;
+        var identity = coordinator.ActiveOutput;
+        if (identity is null) return;
+
+        var position = await output.GetPositionMsAsync(cancellationToken).ConfigureAwait(false);
+        if (position is not { } currentPosition
+            || !coordinator.TryGetActiveQueueId(identity, out var queueId))
         {
-            try
-            {
-                if (!leaseGate.TryGetGeneration(out var generation)) continue;
-                var identity = coordinator.ActiveOutput;
-                if (identity is null) continue;
-
-                var position = await output.GetPositionMsAsync(cancellationToken).ConfigureAwait(false);
-                if (position is not { } currentPosition
-                    || !coordinator.TryGetActiveQueueId(identity, out var queueId))
-                {
-                    continue;
-                }
-
-                CurrentPositionMs = currentPosition;
-                PositionChanged?.Invoke(currentPosition);
-                await socket.SendProgressAsync(currentPosition, queueId, generation,
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception) when (exception is IOException or InvalidOperationException)
-            {
-                Error?.Invoke(exception);
-            }
+            return;
         }
+
+        CurrentPositionMs = currentPosition;
+        PositionChanged?.Invoke(currentPosition);
+        await socket.SendProgressAsync(currentPosition, queueId, generation,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ApplyAssignmentAsync(PlayerAssignment assignment)

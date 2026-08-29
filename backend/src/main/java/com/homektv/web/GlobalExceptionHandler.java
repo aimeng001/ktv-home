@@ -35,7 +35,11 @@ public class GlobalExceptionHandler {
         body.put("message", e.getMessage());
         if (e.getData() != null) body.put("data", e.getData());
         // SONG_IN_QUEUE / TV_OFFLINE 属提示性，用 409/200 语义；这里统一 400 + code 区分
-        HttpStatus status = "TV_OFFLINE".equals(e.getCode()) ? HttpStatus.OK : HttpStatus.BAD_REQUEST;
+        HttpStatus status = "TV_OFFLINE".equals(e.getCode())
+                ? HttpStatus.OK
+                : "ADMIN_AUTH_RATE_LIMITED".equals(e.getCode())
+                        ? HttpStatus.TOO_MANY_REQUESTS
+                        : HttpStatus.BAD_REQUEST;
         return ResponseEntity.status(status).body(body);
     }
 

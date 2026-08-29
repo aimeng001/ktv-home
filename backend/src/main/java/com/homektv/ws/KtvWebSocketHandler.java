@@ -9,6 +9,7 @@ import com.homektv.queue.SnapshotService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.context.event.EventListener;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -162,6 +163,12 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         unregister(session);
     }
 
+    /** Completes player promotion when the broadcaster discovered the broken transport. */
+    @EventListener
+    void onSessionDisconnected(WsSessionDisconnectedEvent event) {
+        handlePlayerUnregistration(event.sessionId(), event.clientType(), event.playerRemoval());
+    }
+
     private boolean isTv(WebSocketSession session) {
         Object type = session.getAttributes().get("client_type");
         return "tv".equals(type == null ? null : type.toString());
@@ -175,10 +182,15 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
 
     private void unregister(WebSocketSession session) {
         String clientType = broadcaster.unregister(session);
-        if (!isTv(session) && !"tv".equals(clientType)) {
+        ActivePlayerRegistry.Unregistration removal = playerRegistry.unregisterPlayer(session.getId());
+        handlePlayerUnregistration(session.getId(), isTv(session) ? "tv" : clientType, removal);
+    }
+
+    private void handlePlayerUnregistration(String sessionId, String clientType,
+                                            ActivePlayerRegistry.Unregistration removal) {
+        if (!"tv".equals(clientType)) {
             return;
         }
-        ActivePlayerRegistry.Unregistration removal = playerRegistry.unregisterPlayer(session.getId());
         if (!removal.removed()) {
             return;
         }
@@ -212,7 +224,10 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         if (!isTv(session)) return false;
         JsonNode generation = node.path("payload").path("generation");
         Long value = generation.isIntegralNumber() ? generation.asLong() : null;
-        return playerRegistry.authorizesUpstream(session.getId(), value);
+        if (!playerRegistry.authorizesUpstream(session.getId(), value)) return false;
+        if (!playerRegistry.requiresQueueIdentity(session.getId())) return true;
+        JsonNode queueId = node.path("payload").path("queue_id");
+        return queueId.isIntegralNumber() && queueId.asLong() > 0;
     }
 
     private void sendRole(WebSocketSession session, ActivePlayerRegistry.Assignment assignment) {

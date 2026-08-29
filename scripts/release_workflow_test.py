@@ -80,6 +80,34 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("KTV_GIT_SHA=${{ github.sha }}", image)
         self.assertIn("KTV_BUILD_TIME=", image)
 
+    def test_runtime_image_drops_privileges_before_starting_java(self) -> None:
+        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+        self.assertIn("addgroup", dockerfile)
+        self.assertIn("adduser", dockerfile)
+        self.assertIn("su-exec", dockerfile)
+        self.assertIn("ktv:ktv", dockerfile)
+        self.assertIn("home-ktv-entrypoint", dockerfile)
+
+    def test_runtime_gate_checks_pid1_uid_instead_of_docker_exec_user(self) -> None:
+        runtime = job_block(self.workflow, "docker-runtime-test")
+
+        self.assertIn("/proc/1/status", runtime)
+        self.assertIn("Uid:", runtime)
+        self.assertNotIn("docker exec home-ktv-ci-app id -u", runtime)
+
+    def test_production_compose_files_do_not_have_a_default_database_password(self) -> None:
+        for filename in ("docker-compose.yml", "docker-compose.prebuilt.yml"):
+            compose = (WORKFLOW.parents[2] / filename).read_text(encoding="utf-8")
+            self.assertIn("KTV_DB_PASSWORD:?", compose, filename)
+            self.assertNotIn("KTV_DB_PASSWORD:-ktv", compose, filename)
+
+        application = (WORKFLOW.parents[2] / "backend" / "src" / "main" / "resources" / "application.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("SPRING_DATASOURCE_PASSWORD:}", application)
+        self.assertNotIn("SPRING_DATASOURCE_PASSWORD:ktv", application)
+
     def test_release_image_waits_for_all_quality_gates(self) -> None:
         image = job_block(self.workflow, "image")
         runtime = job_block(self.workflow, "docker-runtime-test")

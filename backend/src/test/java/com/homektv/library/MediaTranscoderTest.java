@@ -66,4 +66,26 @@ class MediaTranscoderTest {
                     output.toString());
         });
     }
+
+    @Test
+    void existingOutputIsNeverOverwrittenDuringTranscode() throws Exception {
+        Path source = temp.resolve("source.mpg");
+        Path desired = temp.resolve("cache").resolve("output.mkv");
+        Files.createDirectories(desired.getParent());
+        Files.writeString(source, "new-source");
+        Files.writeString(desired, "existing-output");
+        TranscodeHardwareService hardware = new TranscodeHardwareService(
+                temp.resolve("dri").toString(), temp.resolve("sys").toString(), temp.resolve("mpp").toString(), "fake-ffmpeg");
+        MediaTranscoder transcoder = new MediaTranscoder(hardware, "fake-ffmpeg", new AppProperties(),
+                command -> FakeFfmpegProcess.coverFallback(command, source));
+        SettingService.TranscodePolicy policy = new SettingService.TranscodePolicy(
+                List.of("mkv"), List.of("h264"), List.of("aac"), false,
+                "mkv", "h264", "aac", false);
+
+        Path result = transcoder.transcode(source, desired, policy, true);
+
+        assertThat(result).isNotEqualTo(desired);
+        assertThat(Files.readString(desired)).isEqualTo("existing-output");
+        assertThat(Files.readString(result)).isEqualTo("new-source");
+    }
 }

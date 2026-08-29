@@ -57,6 +57,13 @@ public class MediaImportRecord {
     @Column(name = "output_md5")
     private String outputMd5;
 
+    /** Fast output snapshot used to avoid rehashing a verified import during cleanup. */
+    @Column(name = "output_size")
+    private Long outputSize;
+
+    @Column(name = "output_mtime")
+    private OffsetDateTime outputMtime;
+
     @Column(name = "output_format")
     private String outputFormat;
 
@@ -141,6 +148,10 @@ public class MediaImportRecord {
     public void setOutputPath(String outputPath) { this.outputPath = outputPath; }
     public String getOutputMd5() { return outputMd5; }
     public void setOutputMd5(String outputMd5) { this.outputMd5 = outputMd5; }
+    public Long getOutputSize() { return outputSize; }
+    public void setOutputSize(Long outputSize) { this.outputSize = outputSize; }
+    public OffsetDateTime getOutputMtime() { return outputMtime; }
+    public void setOutputMtime(OffsetDateTime outputMtime) { this.outputMtime = outputMtime; }
     public String getOutputFormat() { return outputFormat; }
     public void setOutputFormat(String outputFormat) { this.outputFormat = outputFormat; }
     public String getVideoCodec() { return videoCodec; }

@@ -175,6 +175,50 @@ class AiLibraryServiceTest {
                 .hasMessageContaining("最多包含 100 首");
     }
 
+    @Test
+    void removingPlaylistSongLocksThePlaylistBeforeDeleting() {
+        PlaylistRepository playlists = mock(PlaylistRepository.class);
+        PlaylistSongRepository playlistSongs = mock(PlaylistSongRepository.class);
+        Playlist playlist = new Playlist();
+        when(playlists.findById(9L)).thenReturn(Optional.of(playlist));
+        AiLibraryService service = service(mock(SongRepository.class), playlists, playlistSongs,
+                mock(OpenAiCompatibleClient.class), new ObjectMapper());
+
+        service.removePlaylistSong(9L, 101L);
+
+        verify(playlistSongs).lockPlaylist(9L);
+        verify(playlistSongs).deleteByPlaylistIdAndSongId(9L, 101L);
+    }
+
+    @Test
+    void reorderingPlaylistSongsLocksBeforeReadingTheCurrentOrder() {
+        PlaylistRepository playlists = mock(PlaylistRepository.class);
+        PlaylistSongRepository playlistSongs = mock(PlaylistSongRepository.class);
+        SongRepository songs = mock(SongRepository.class);
+        Playlist playlist = new Playlist();
+        when(playlists.findById(9L)).thenReturn(Optional.of(playlist));
+        PlaylistSong first = playlistSong(9L, 1L, 0);
+        PlaylistSong second = playlistSong(9L, 2L, 1);
+        when(playlistSongs.findByPlaylistIdOrderBySortOrder(9L)).thenReturn(List.of(first, second));
+        when(songs.findById(1L)).thenReturn(Optional.of(song(1L, "一", "甲")));
+        when(songs.findById(2L)).thenReturn(Optional.of(song(2L, "二", "乙")));
+        AiLibraryService service = service(songs, playlists, playlistSongs,
+                mock(OpenAiCompatibleClient.class), new ObjectMapper());
+
+        service.reorderPlaylistSongs(9L, List.of(2L, 1L));
+
+        verify(playlistSongs).lockPlaylist(9L);
+        verify(playlistSongs).saveAll(any());
+    }
+
+    private PlaylistSong playlistSong(long playlistId, long songId, int sortOrder) {
+        PlaylistSong item = new PlaylistSong();
+        item.setPlaylistId(playlistId);
+        item.setSongId(songId);
+        item.setSortOrder(sortOrder);
+        return item;
+    }
+
     private Song song(long id, String title, String artist) {
         Song song = new Song();
         song.setId(id);

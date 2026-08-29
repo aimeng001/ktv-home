@@ -38,6 +38,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 曲库扫描入库管线（P1.1-P1.5，详设§9.3）。
@@ -106,7 +107,7 @@ public class LibraryScanService {
         return thread;
     });
     private final AtomicReference<ScanProgress> scanProgress = new AtomicReference<>(ScanProgress.idle());
-    private final Object scanLock = new Object();
+    private final AtomicBoolean scanRunning = new AtomicBoolean();
     private final TransactionTemplate batchTransaction;
     private final LibraryScanSeenPathStore seenPathStore;
     @PersistenceContext
@@ -186,7 +187,17 @@ public class LibraryScanService {
 
     /** 全量/增量扫描曲库根目录。Fast Index 与数据库持久化 Media Probe Queue 分阶段执行。 */
     public ScanResult scanAll() {
-        synchronized (scanLock) {
+        if (!scanRunning.compareAndSet(false, true)) {
+            throw new ApiException("SCAN_ALREADY_RUNNING", "曲库扫描正在进行中");
+        }
+        try {
+            return scanAllInternal();
+        } finally {
+            scanRunning.set(false);
+        }
+    }
+
+    private ScanResult scanAllInternal() {
             OffsetDateTime startedAt = OffsetDateTime.now();
             publishProgress(true, 0, 0, null, new ScanTotals(), PHASE_DISCOVERING,
                     0, 0, 0, startedAt, null);
@@ -337,7 +348,6 @@ public class LibraryScanService {
             } finally {
                 cleanupSeenPaths(scanId);
             }
-        }
     }
 
     private void processFastIndexBatch(List<FastIndexEntry> batch, AudioLayout externalDefault,
@@ -630,22 +640,26 @@ public class LibraryScanService {
 
     /** Starts the active library scan asynchronously for the admin progress endpoint. */
     public ScanProgress startScan() {
-        synchronized (scanLock) {
-            ScanProgress current = scanProgress.get();
-            if (current.running()) return current;
-            scanProgress.set(new ScanProgress(true, 0, 0, null, 0, 0, 0, 0,
-                    OffsetDateTime.now(), null));
+        if (!scanRunning.compareAndSet(false, true)) return scanProgress.get();
+        scanProgress.set(new ScanProgress(true, 0, 0, null, 0, 0, 0, 0,
+                OffsetDateTime.now(), null));
+        try {
             scanExecutor.submit(() -> {
                 try {
-                    scanAll();
+                    scanAllInternal();
                 } catch (RuntimeException exception) {
                     ScanProgress failed = scanProgress.get();
                     scanProgress.set(new ScanProgress(false, failed.total(), failed.completed(), null,
                             failed.added(), failed.updated(), failed.skipped() + 1,
                             failed.unrecognized(), failed.startedAt(), OffsetDateTime.now()));
+                } finally {
+                    scanRunning.set(false);
                 }
             });
             return scanProgress.get();
+        } catch (RuntimeException exception) {
+            scanRunning.set(false);
+            throw exception;
         }
     }
 

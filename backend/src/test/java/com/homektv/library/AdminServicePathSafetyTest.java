@@ -24,6 +24,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
 
 class AdminServicePathSafetyTest {
 
@@ -65,5 +66,38 @@ class AdminServicePathSafetyTest {
         verify(songs).findById(7L);
         verify(files).findBySongIdOrderByPriorityDesc(7L);
         verifyNoMoreInteractions(songs, files, queue, history, player);
+    }
+
+    @Test
+    void springManagedDeleteUsesJournalBeforeRemovingTheDatabaseRecord() {
+        SongRepository songs = mock(SongRepository.class);
+        SongFileRepository files = mock(SongFileRepository.class);
+        QueueItemRepository queue = mock(QueueItemRepository.class);
+        PlayerStateRepository playerRepository = mock(PlayerStateRepository.class);
+        ManagedLibraryDeleteService deleteService = mock(ManagedLibraryDeleteService.class);
+        Song song = new Song();
+        song.setId(7L);
+        SongFile file = new SongFile();
+        file.setSongId(7L);
+        file.setFilePath("C:\\managed\\song.mkv");
+        when(songs.findById(7L)).thenReturn(Optional.of(song));
+        when(files.findBySongIdOrderByPriorityDesc(7L)).thenReturn(List.of(file));
+        when(deleteService.prepare(7L, List.of(file))).thenReturn("op-7");
+        when(playerRepository.getSingletonForUpdate()).thenReturn(new com.homektv.domain.PlayerState());
+
+        AppProperties props = new AppProperties();
+        props.setLibraryMode(LibraryMode.MANAGED);
+        AdminService service = new AdminService(songs, files, mock(PlayHistoryRepository.class),
+                mock(WsBroadcaster.class), mock(AssetWriter.class), queue, playerRepository, props);
+        service.setManagedLibraryDeleteService(deleteService);
+
+        service.deleteSong(7L);
+
+        verify(queue).lockQueueMutation();
+        verify(deleteService).prepare(7L, List.of(file));
+        verify(deleteService).stage("op-7");
+        verify(deleteService).registerCompletion("op-7");
+        verify(songs).delete(song);
+        verify(deleteService, never()).complete("op-7");
     }
 }

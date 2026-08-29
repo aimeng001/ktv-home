@@ -59,7 +59,8 @@ class PlaybackServiceTest {
         currentQueue.setSongId(2L);
         currentQueue.setStatus(QueueService.PLAYING);
 
-        when(playerRepository.getSingleton()).thenReturn(playerState);
+        lenient().when(playerRepository.getSingleton()).thenReturn(playerState);
+        lenient().when(playerRepository.getSingletonForUpdate()).thenReturn(playerState);
         lenient().when(playerRepository.save(any(PlayerState.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         lenient().when(queueRepository.findById(100L)).thenReturn(Optional.of(currentQueue));
@@ -115,6 +116,14 @@ class PlaybackServiceTest {
         assertThat(result.accepted()).isTrue();
         assertThat(result.state().getPositionMs()).isEqualTo(12_345L);
         verify(playerRepository).save(playerState);
+    }
+
+    @Test
+    void finishedTransitionLocksQueueAndPlayerState() {
+        playbackService.onFinished(100L);
+
+        verify(queueRepository).lockQueueMutation();
+        verify(playerRepository).getSingletonForUpdate();
     }
 
     @Test

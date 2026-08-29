@@ -342,7 +342,7 @@ source-music/
 | `KTV_DISCOVERY_NAME` | `家庭KTV` | TV 发现列表中的名称 |
 | `KTV_DB_NAME` | `ktv` | PostgreSQL 数据库名 |
 | `KTV_DB_USER` | `ktv` | PostgreSQL 用户名 |
-| `KTV_DB_PASSWORD` | `ktv` | PostgreSQL 密码，正式部署必须修改 |
+| `KTV_DB_PASSWORD` | 必填 | PostgreSQL 密码；Compose 不再提供默认密码 |
 | `KTV_IMAGE_REGISTRY` | `docker.m.daocloud.io` | Docker 基础镜像仓库前缀 |
 | `KTV_APP_IMAGE` | `home-ktv:latest` | 应用镜像名称 |
 | `KTV_RELEASE_IMAGE` | `ghcr.io/aimeng001/ktv-home:latest` | 预编译 Compose 使用的 GitHub 容器镜像 |

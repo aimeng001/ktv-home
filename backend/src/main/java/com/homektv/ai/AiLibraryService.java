@@ -565,6 +565,7 @@ public class AiLibraryService {
     @Transactional
     public void removePlaylistSong(Long playlistId, Long songId) {
         requirePlaylist(playlistId);
+        playlistSongRepository.lockPlaylist(playlistId);
         playlistSongRepository.deleteByPlaylistIdAndSongId(playlistId, songId);
     }
 
@@ -609,6 +610,7 @@ public class AiLibraryService {
     @Transactional
     public Map<String, Object> reorderPlaylistSongs(Long playlistId, List<Long> songIds) {
         requirePlaylist(playlistId);
+        playlistSongRepository.lockPlaylist(playlistId);
         List<PlaylistSong> current = playlistSongRepository.findByPlaylistIdOrderBySortOrder(playlistId);
         if (songIds == null || songIds.size() != current.size() || new HashSet<>(songIds).size() != current.size()) {
             throw new ApiException("INVALID_PLAYLIST_ORDER", "排序歌曲列表不完整或包含重复项");

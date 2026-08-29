@@ -45,10 +45,8 @@ public class UserService {
      * 若已有其他用户用了同昵称，展示为「昵称#N」。
      */
     private String dedupeNickname(String nickname, String clientToken) {
-        long sameName = userRepo.findAll().stream()
-                .filter(x -> !x.getClientToken().equals(clientToken))
-                .filter(x -> nickname.equals(x.getNickname()) || x.getNickname().startsWith(nickname + "#"))
-                .count();
+        long sameName = userRepo.countByClientTokenNotAndNickname(clientToken, nickname)
+                + userRepo.countByClientTokenNotAndNicknameStartingWith(clientToken, nickname + "#");
         return sameName == 0 ? nickname : nickname + "#" + (sameName + 1);
     }
 

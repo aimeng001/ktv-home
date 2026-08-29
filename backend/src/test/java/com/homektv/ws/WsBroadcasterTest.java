@@ -4,9 +4,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -47,6 +49,30 @@ class WsBroadcasterTest {
         assertThat(broadcaster.sessionCount()).isZero();
         assertThat(broadcaster.isTvOnline()).isFalse();
         verify(session).sendMessage(any(TextMessage.class));
+    }
+
+    @Test
+    void failedBroadcastRemovesThePlayerLeaseAndPublishesDisconnectEvent() throws Exception {
+        ActivePlayerRegistry registry = new ActivePlayerRegistry();
+        AtomicReference<Object> published = new AtomicReference<>();
+        ApplicationEventPublisher publisher = published::set;
+        WsBroadcaster broadcaster = new WsBroadcaster(new ObjectMapper(), registry, publisher);
+        WebSocketSession active = session("active", "tv");
+        WebSocketSession standby = session("standby", "tv");
+        doThrow(new IOException("connection closed")).when(active)
+                .sendMessage(any(TextMessage.class));
+        broadcaster.register(active);
+        broadcaster.register(standby);
+        registry.register("active", new ActivePlayerRegistry.PlayerHello("a", "WINDOWS", 2));
+        registry.register("standby", new ActivePlayerRegistry.PlayerHello("b", "ANDROID_TV", 2));
+
+        broadcaster.broadcast(WsEvent.of(WsEvent.PLAYER_STATE, Map.of("state", "playing")));
+
+        assertThat(registry.activeSessionId()).hasValue("standby");
+        assertThat(published.get()).isInstanceOf(WsSessionDisconnectedEvent.class);
+        WsSessionDisconnectedEvent event = (WsSessionDisconnectedEvent) published.get();
+        assertThat(event.sessionId()).isEqualTo("active");
+        assertThat(event.playerRemoval().promotion()).isPresent();
     }
 
     @Test

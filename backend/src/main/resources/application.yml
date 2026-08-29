@@ -4,7 +4,7 @@ spring:
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/ktv}
     username: ${SPRING_DATASOURCE_USERNAME:ktv}
-    password: ${SPRING_DATASOURCE_PASSWORD:ktv}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
   jpa:
     hibernate:
       ddl-auto: validate          # 由 Flyway 建表，JPA 只校验映射
@@ -36,6 +36,7 @@ app:
       allow-mass-missing: ${KTV_SCAN_ALLOW_MASS_MISSING:false}
   config-master-key-path: ${KTV_CONFIG_MASTER_KEY_PATH:/data/secrets/config.key}
   admin-password: ${KTV_ADMIN_PASSWORD:}
+  player-credential: ${KTV_PLAYER_CREDENTIAL:}
   ffprobe-path: ${KTV_FFPROBE_PATH:ffprobe}
   transcode:
     ffmpeg-path: ${KTV_FFMPEG_PATH:ffmpeg}

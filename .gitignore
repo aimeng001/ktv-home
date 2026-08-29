@@ -54,6 +54,11 @@ backend/src/main/resources/application-local.yml
 /.env
 **/.env
 
+# ===== Local build caches =====
+/.maven-local/
+/.gradle-local/
+/.android-local/
+
 # Local release archives
 /*.zip
 

@@ -17,8 +17,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 组装队列+播放状态快照（详设§11.1 / §4.2 sync_full）。
@@ -57,44 +59,46 @@ public class SnapshotService {
         PlayerState ps = playerRepo.getSingleton();
         List<QueueItem> waiting = queueRepo.findByStatusOrderByOrderIndexAsc(QueueService.WAITING);
 
-        // 批量取歌曲与昵称，避免 N+1
-        Map<Long, Song> songs = new HashMap<>();
-        Map<Long, String> nicks = new HashMap<>();
+        QueueItem current = ps.getCurrentQueueId() == null
+                ? null : queueRepo.findById(ps.getCurrentQueueId()).orElse(null);
+        Set<Long> songIds = new HashSet<>();
+        Set<Long> userIds = new HashSet<>();
+        addIds(current, songIds, userIds);
+        for (QueueItem item : waiting) {
+            addIds(item, songIds, userIds);
+        }
 
+        // 批量取歌曲与昵称，避免 N+1
+        Map<Long, Song> songs = loadSongs(songIds);
+        Map<Long, String> nicks = loadNicknames(userIds);
         QueueSnapshot.NowPlaying nowPlaying = null;
-        if (ps.getCurrentQueueId() != null) {
-            QueueItem cur = queueRepo.findById(ps.getCurrentQueueId()).orElse(null);
-            if (cur != null) {
-                Song song = songOf(songs, cur.getSongId());
-                nowPlaying = new QueueSnapshot.NowPlaying(
-                        cur.getId(),
-                        song != null ? SongDto.from(song) : null,
-                        nickOf(nicks, cur.getOrderedBy()));
-            }
+        if (current != null) {
+            Song song = songs.get(current.getSongId());
+            nowPlaying = new QueueSnapshot.NowPlaying(
+                    current.getId(),
+                    song != null ? SongDto.from(song) : null,
+                    nicks.get(current.getOrderedBy()));
         }
 
         List<QueueSnapshot.QueueEntry> list = waiting.stream()
                 .map(q -> {
-                    Song song = songOf(songs, q.getSongId());
+                    Song song = songs.get(q.getSongId());
                     return new QueueSnapshot.QueueEntry(
                             q.getId(),
                             song != null ? SongDto.from(song) : null,
                             q.getOrderedBy(),
-                            nickOf(nicks, q.getOrderedBy()),
+                            nicks.get(q.getOrderedBy()),
                             q.getStatus());
                 })
                 .toList();
 
         AudioLayoutDto audioLayout = AudioLayoutDto.normalStereo();
-        if (songFileRepo != null && ps.getCurrentQueueId() != null) {
-            QueueItem current = queueRepo.findById(ps.getCurrentQueueId()).orElse(null);
-            if (current != null) {
-                audioLayout = songFileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(current.getSongId())
-                        .stream()
-                        .findFirst()
-                        .map(AudioLayoutDto::from)
-                        .orElseGet(AudioLayoutDto::normalStereo);
-            }
+        if (songFileRepo != null && current != null) {
+            audioLayout = songFileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(current.getSongId())
+                    .stream()
+                    .findFirst()
+                    .map(AudioLayoutDto::from)
+                    .orElseGet(AudioLayoutDto::normalStereo);
         }
 
         return new QueueSnapshot(nowPlaying, list, ps.getState(), ps.getVolume(),
@@ -103,14 +107,29 @@ public class SnapshotService {
                 ps.getPositionMs(), ps.getSeekSequence());
     }
 
-    private Song songOf(Map<Long, Song> cache, Long id) {
-        if (id == null) return null;
-        return cache.computeIfAbsent(id, k -> songRepo.findById(k).orElse(null));
+    private void addIds(QueueItem item, Set<Long> songIds, Set<Long> userIds) {
+        if (item == null) return;
+        if (item.getSongId() != null) songIds.add(item.getSongId());
+        if (item.getOrderedBy() != null) userIds.add(item.getOrderedBy());
     }
 
-    private String nickOf(Map<Long, String> cache, Long userId) {
-        if (userId == null) return null;
-        return cache.computeIfAbsent(userId,
-                k -> userRepo.findById(k).map(AppUser::getNickname).orElse(null));
+    private Map<Long, Song> loadSongs(Set<Long> ids) {
+        Map<Long, Song> songs = new HashMap<>();
+        if (!ids.isEmpty()) {
+            Iterable<Song> found = songRepo.findAllById(ids);
+            if (found != null) found.forEach(song -> songs.put(song.getId(), song));
+        }
+        return songs;
+    }
+
+    private Map<Long, String> loadNicknames(Set<Long> ids) {
+        Map<Long, String> nicks = new HashMap<>();
+        if (!ids.isEmpty()) {
+            Iterable<AppUser> found = userRepo.findAllById(ids);
+            if (found != null) {
+                found.forEach(user -> nicks.put(user.getId(), user.getNickname()));
+            }
+        }
+        return nicks;
     }
 }

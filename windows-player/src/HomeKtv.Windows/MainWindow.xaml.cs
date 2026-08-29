@@ -328,7 +328,16 @@ public partial class MainWindow : Window
     protected override async void OnClosed(EventArgs e)
     {
         SystemEvents.DisplaySettingsChanged -= DisplaySettingsChanged;
-        await DisposeTerminalAsync();
-        base.OnClosed(e);
+        try
+        {
+            await WindowShutdownGuard.RunAsync(
+                DisposeTerminalAsync,
+                exception => System.Diagnostics.Trace.TraceError(
+                    "Failed to dispose playback terminal: {0}", exception));
+        }
+        finally
+        {
+            base.OnClosed(e);
+        }
     }
 }

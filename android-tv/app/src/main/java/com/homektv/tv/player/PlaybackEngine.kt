@@ -84,6 +84,9 @@ class PlaybackEngine(
     private var currentQueueId: Long? = null
     /** 只有同一队列中的同一文件才允许复用已加载的媒体。 */
     private var currentRequest: PlaybackRequestIdentity? = null
+    /** Invalidates delayed transient-error retries when a new request replaces the media. */
+    private val retryGate = PlaybackRetryGate()
+    private var currentRetryTicket: PlaybackRetryTicket? = null
     /** Callback identity is committed only after the requested media reaches READY. */
     private val identityGate = PlaybackIdentityGate()
     private var requestedVocalMode: String = "original"
@@ -205,6 +208,7 @@ class PlaybackEngine(
         lastVideoFrameAt = 0L
         playRequestAt = SystemClock.elapsedRealtime()
         currentRequest = requested
+        currentRetryTicket = retryGate.begin(requested)
         currentQueueId = queueId
         currentFileId = fileId
         identityGate.begin(
@@ -262,6 +266,8 @@ class PlaybackEngine(
      */
     fun stop() {
         currentRequest = null
+        currentRetryTicket = null
+        retryGate.invalidate()
         currentQueueId = null
         currentFileId = null
         identityGate.invalidate()
@@ -386,6 +392,8 @@ class PlaybackEngine(
     fun release() {
         stopProgressTicker()
         identityGate.invalidate()
+        currentRetryTicket = null
+        retryGate.invalidate()
         appContext.contentResolver.unregisterContentObserver(systemVolumeObserver)
         player.release()
     }
@@ -469,12 +477,18 @@ class PlaybackEngine(
 
         override fun onPlayerError(error: PlaybackException) {
             Log.w(TAG, "player error: ${error.errorCodeName} ${error.message}")
-            if (isTransient(error) && transientRetryCount < MAX_TRANSIENT_RETRIES && currentFileId != null) {
+            val retryTicket = currentRetryTicket
+            val retryRequest = currentRequest
+            val retryFileId = currentFileId
+            if (isTransient(error) && transientRetryCount < MAX_TRANSIENT_RETRIES
+                && retryTicket != null && retryRequest != null && retryFileId != null) {
                 transientRetryCount++
                 val position = player.currentPosition
-                Log.w(TAG, "retry media fileId=$currentFileId attempt=$transientRetryCount position=$position")
+                Log.w(TAG, "retry media fileId=$retryFileId attempt=$transientRetryCount position=$position")
                 main.postDelayed({
-                    if (currentFileId != null) {
+                    if (retryGate.isCurrent(retryTicket, currentRequest)
+                        && currentFileId == retryFileId
+                        && player.currentMediaItem?.mediaId == retryFileId.toString()) {
                         player.prepare()
                         player.seekTo(position)
                         player.playWhenReady = true
@@ -486,6 +500,8 @@ class PlaybackEngine(
             transientRetryCount = 0
             stopProgressTicker()
             identityGate.invalidate()
+            currentRetryTicket = null
+            retryGate.invalidate()
             onError(error.errorCodeName, PlaybackErrorContext.forPlayback(currentQueueId, currentFileId))
         }
 

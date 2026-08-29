@@ -9,11 +9,14 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class MediaTranscoder {
+
+    static final int MAX_PROCESS_LOG_BYTES = 64 * 1024;
 
     @FunctionalInterface
     interface ProcessLauncher {
@@ -69,20 +72,28 @@ public class MediaTranscoder {
                         "-pix_fmt", "yuv420p"));
             }
         }
+        Path reservedOutput;
+        try {
+            reservedOutput = OutputPathReservation.reserve(output);
+        } catch (IOException e) {
+            throw new ApiException(hardware ? "HARDWARE_TRANSCODE_FAILED" : "TRANSCODE_FAILED",
+                    e.getMessage());
+        }
         command.addAll(List.of("-c:a", audioEncoder(policy.audioCodec()), "-b:a", "192k", "-ar", "48000",
-                "-c:s", "copy", output.toString()));
+                "-c:s", "copy", reservedOutput.toString()));
 
         boolean completed = false;
         try {
             Process process = processLauncher.start(command);
-            String log = new String(process.getInputStream().readAllBytes());
+            String log = ProcessOutputTail.read(process.getInputStream(),
+                    StandardCharsets.UTF_8, MAX_PROCESS_LOG_BYTES);
             int code = process.waitFor();
-            if (code != 0 || !Files.isReadable(output) || Files.size(output) == 0) {
+            if (code != 0 || !Files.isReadable(reservedOutput) || Files.size(reservedOutput) == 0) {
                 throw new ApiException(hardware ? "HARDWARE_TRANSCODE_FAILED" : "TRANSCODE_FAILED",
                         log.isBlank() ? "ffmpeg 转码失败" : log);
             }
             completed = true;
-            return output;
+            return reservedOutput;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new ApiException("TRANSCODE_INTERRUPTED", "转码被中断");
@@ -90,7 +101,7 @@ public class MediaTranscoder {
             throw new ApiException(hardware ? "HARDWARE_TRANSCODE_FAILED" : "TRANSCODE_FAILED", e.getMessage());
         } finally {
             if (!completed) {
-                try { Files.deleteIfExists(output); } catch (IOException ignored) { }
+                try { Files.deleteIfExists(reservedOutput); } catch (IOException ignored) { }
             }
         }
     }

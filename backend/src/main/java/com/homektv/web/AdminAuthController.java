@@ -22,9 +22,11 @@ public class AdminAuthController {
     }
 
     @PostMapping("/login")
-    public LoginResponse login(@RequestBody(required = false) LoginRequest request) {
+    public LoginResponse login(HttpServletRequest httpRequest,
+                               @RequestBody(required = false) LoginRequest request) {
         if (request == null) throw new ApiException("ADMIN_AUTH_INVALID", "管理员密码不能为空");
-        String token = authService.login(request.password());
+        String clientKey = httpRequest == null ? null : httpRequest.getRemoteAddr();
+        String token = authService.login(request.password(), clientKey);
         return new LoginResponse(token, authService.sessionLifetimeSeconds());
     }
 

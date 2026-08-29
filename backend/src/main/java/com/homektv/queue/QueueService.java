@@ -33,6 +33,7 @@ public class QueueService {
     public static final String SKIPPED = "skipped";
 
     private static final double STEP = 1000.0;
+    static final double MIN_ORDER_GAP = 1e-6;
 
     private final QueueItemRepository queueRepo;
     private final SongRepository songRepo;
@@ -51,6 +52,7 @@ public class QueueService {
      */
     @Transactional
     public QueueItem order(Long songId, Long userId, boolean force) {
+        queueRepo.lockQueueMutation();
         Song song = songRepo.findById(songId)
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         if ("file_missing".equals(song.getStatus())) {
@@ -85,6 +87,7 @@ public class QueueService {
      */
     @Transactional
     public QueueItem top(Long queueId) {
+        queueRepo.lockQueueMutation();
         QueueItem item = queueRepo.findById(queueId)
                 .orElseThrow(() -> new ApiException("QUEUE_ITEM_NOT_FOUND", "队列项不存在"));
         if (!WAITING.equals(item.getStatus())) {
@@ -94,14 +97,21 @@ public class QueueService {
         double currentIndex = currentPlayingIndex();
         // 找当前播放之后的第一个等待项
         List<QueueItem> waiting = queueRepo.findByStatusOrderByOrderIndexAsc(WAITING);
-        double nextIndex = waiting.stream()
-                .filter(q -> !q.getId().equals(queueId) && q.getOrderIndex() > currentIndex)
-                .mapToDouble(QueueItem::getOrderIndex)
-                .min()
-                .orElse(currentIndex + 2 * STEP);
+        double nextIndex = nextWaitingIndex(waiting, queueId, currentIndex);
+        if (!Double.isFinite(nextIndex - currentIndex)
+                || nextIndex - currentIndex < 2 * MIN_ORDER_GAP) {
+            rebalanceWaiting(waiting, currentIndex);
+            nextIndex = nextWaitingIndex(waiting, queueId, currentIndex);
+        }
 
         // 插到 current 与 next 的中值 → 排到最前（后顶者更前）
-        item.setOrderIndex((currentIndex + nextIndex) / 2.0);
+        double midpoint = currentIndex + (nextIndex - currentIndex) / 2.0;
+        if (!Double.isFinite(midpoint) || midpoint <= currentIndex || midpoint >= nextIndex) {
+            rebalanceWaiting(waiting, currentIndex);
+            nextIndex = nextWaitingIndex(waiting, queueId, currentIndex);
+            midpoint = currentIndex + (nextIndex - currentIndex) / 2.0;
+        }
+        item.setOrderIndex(midpoint);
         return queueRepo.save(item);
     }
 
@@ -113,6 +123,7 @@ public class QueueService {
      */
     @Transactional
     public void cancel(Long queueId) {
+        queueRepo.lockQueueMutation();
         QueueItem item = queueRepo.findById(queueId)
                 .orElseThrow(() -> new ApiException("QUEUE_ITEM_NOT_FOUND", "队列项不存在"));
         if (!WAITING.equals(item.getStatus())) {
@@ -133,6 +144,7 @@ public class QueueService {
     /** 约束打散：尽量避免同一演唱者连续出现，当前播放项不参与重排。 */
     @Transactional
     public List<QueueItem> shuffleWaiting() {
+        queueRepo.lockQueueMutation();
         List<QueueItem> items = new ArrayList<>(waitingList());
         if (items.size() < 2) return items;
         Collections.shuffle(items);
@@ -179,5 +191,26 @@ public class QueueService {
 
     private double currentOrBaseIndex() {
         return currentPlayingIndex();
+    }
+
+    private double nextWaitingIndex(List<QueueItem> waiting, Long queueId, double currentIndex) {
+        return waiting.stream()
+                .filter(q -> !q.getId().equals(queueId) && q.getOrderIndex() > currentIndex)
+                .mapToDouble(QueueItem::getOrderIndex)
+                .min()
+                .orElse(currentIndex + 2 * STEP);
+    }
+
+    /** Reassigns the waiting rows with a fixed gap before midpoint insertion loses precision. */
+    private void rebalanceWaiting(List<QueueItem> waiting, double currentIndex) {
+        List<QueueItem> ordered = waiting.stream()
+                .sorted(Comparator.comparingDouble(QueueItem::getOrderIndex))
+                .toList();
+        double index = currentIndex + STEP;
+        for (QueueItem queued : ordered) {
+            queued.setOrderIndex(index);
+            index += STEP;
+        }
+        queueRepo.saveAll(ordered);
     }
 }

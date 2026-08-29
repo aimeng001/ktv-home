@@ -108,7 +108,7 @@ class KtvSocket(
     private fun openSocket() {
         if (closed) return
         val url = config.wsUrl(config.clientToken)
-        Log.d(TAG, "connecting $url")
+        Log.d(TAG, "connecting ${safeWebSocketLogTarget(config.serverHost)}")
         val req = Request.Builder().url(url).build()
         ws = http.newWebSocket(req, socketListener)
     }
@@ -204,3 +204,8 @@ class KtvSocket(
         private val BACKOFF_MS = longArrayOf(1_000, 2_000, 5_000, 10_000) // 指数退避封顶 10s
     }
 }
+
+/** Keeps client identity query parameters out of connection logs. */
+internal fun safeWebSocketLogTarget(serverHost: String?): String =
+    serverHost?.trim()?.takeIf { it.isNotEmpty() }?.let { "ws://$it/ws" }
+        ?: "ws://<unconfigured>/ws"

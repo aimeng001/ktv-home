@@ -45,7 +45,8 @@ public class PlaybackService {
     /** 开始/恢复播放。若当前无曲目，尝试从队列取第一首。 */
     @Transactional
     public PlayerState play() {
-        PlayerState ps = playerRepo.getSingleton();
+        queueRepo.lockQueueMutation();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         if (ps.getCurrentQueueId() == null) {
             advanceToNext(ps);
         } else {
@@ -57,6 +58,7 @@ public class PlaybackService {
     /** 点歌后仅在播放器空闲时自动开始，不打断正在暂停的歌曲。 */
     @Transactional
     public boolean startIfIdle() {
+        queueRepo.lockQueueMutation();
         PlayerState ps = playerRepo.getSingletonForUpdate();
         if (ps.getCurrentQueueId() != null || !"idle".equals(ps.getState())) {
             return false;
@@ -68,7 +70,7 @@ public class PlaybackService {
 
     @Transactional
     public PlayerState pause() {
-        PlayerState ps = playerRepo.getSingleton();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         if ("playing".equals(ps.getState())) {
             ps.setState("paused");
         }
@@ -78,7 +80,7 @@ public class PlaybackService {
     /** Stop playback without consuming or removing the current queue item. */
     @Transactional
     public PlayerState stop() {
-        PlayerState ps = playerRepo.getSingleton();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         ps.setState("idle");
         return playerRepo.save(ps);
     }
@@ -89,7 +91,7 @@ public class PlaybackService {
         if (positionMs < 0) {
             throw new ApiException("INVALID_ACTION", "播放位置不能为负数");
         }
-        PlayerState ps = playerRepo.getSingleton();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         if (ps.getCurrentQueueId() == null) {
             throw new ApiException("INVALID_ACTION", "当前没有正在播放的歌曲");
         }
@@ -99,13 +101,13 @@ public class PlaybackService {
     }
 
     /**
-     * Persist a player-reported position. A queue id, when supplied by newer
-     * clients, prevents a late packet from an old song changing the state of
-     * the current song. Older Android clients may omit it.
+     * Persist a player-reported position. The WebSocket layer requires a queue
+     * id for registered players; the nullable argument keeps direct/API callers
+     * backward-compatible while still rejecting mismatched ids when provided.
      */
     @Transactional
     public PositionUpdateResult updatePosition(Long expectedQueueId, long positionMs) {
-        PlayerState ps = playerRepo.getSingleton();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
             return PositionUpdateResult.rejected(ps);
         }
@@ -123,7 +125,8 @@ public class PlaybackService {
     /** 切歌：当前行标记 skipped，推进到下一首（详设§9.2）。 */
     @Transactional
     public PlayerState next() {
-        PlayerState ps = playerRepo.getSingleton();
+        queueRepo.lockQueueMutation();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         markCurrent(ps, QueueService.SKIPPED, true);
         advanceToNext(ps);
         return playerRepo.save(ps);
@@ -137,7 +140,8 @@ public class PlaybackService {
 
     @Transactional
     public PlayerState onFinished(Long expectedQueueId) {
-        PlayerState ps = playerRepo.getSingleton();
+        queueRepo.lockQueueMutation();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
             return ps;
         }
@@ -153,7 +157,8 @@ public class PlaybackService {
 
     @Transactional
     public PlaybackTransitionResult onPlayError(Long fileId, Long expectedQueueId) {
-        PlayerState ps = playerRepo.getSingleton();
+        queueRepo.lockQueueMutation();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
             return PlaybackTransitionResult.rejected(ps);
         }
@@ -167,7 +172,8 @@ public class PlaybackService {
 
     @Transactional
     public PlayerState recoverAfterRestart() {
-        PlayerState ps = playerRepo.getSingleton();
+        queueRepo.lockQueueMutation();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         QueueItem current = ps.getCurrentQueueId() == null
                 ? null
                 : queueRepo.findById(ps.getCurrentQueueId()).orElse(null);
@@ -205,7 +211,7 @@ public class PlaybackService {
     /** 重唱：当前曲目回到 0，队列不变（详设§4.4.5）。 */
     @Transactional
     public PlayerState restart() {
-        PlayerState ps = playerRepo.getSingleton();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         if (ps.getCurrentQueueId() == null) {
             throw new ApiException("INVALID_ACTION", "当前没有正在播放的歌曲");
         }
@@ -217,14 +223,14 @@ public class PlaybackService {
 
     @Transactional
     public PlayerState setVolume(int volume) {
-        PlayerState ps = playerRepo.getSingleton();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         ps.setVolume(Math.max(0, Math.min(100, volume)));
         return playerRepo.save(ps);
     }
 
     @Transactional
     public PlayerState setMuted(boolean muted) {
-        PlayerState ps = playerRepo.getSingleton();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         ps.setMuted(muted);
         return playerRepo.save(ps);
     }
@@ -235,7 +241,7 @@ public class PlaybackService {
         if (!"original".equals(mode) && !"accompaniment".equals(mode)) {
             throw new ApiException("INVALID_ACTION", "无效的原伴唱模式：" + mode);
         }
-        PlayerState ps = playerRepo.getSingleton();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         ps.setVocalMode(mode);
         return playerRepo.save(ps);
     }
@@ -243,7 +249,7 @@ public class PlaybackService {
     /** 当前歌曲原/伴唱标记反转时，交换前两条音轨的语义并持久保存。 */
     @Transactional
     public PlayerState swapVocalTracks() {
-        PlayerState ps = playerRepo.getSingleton();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         if (ps.getCurrentQueueId() == null) {
             throw new ApiException("INVALID_ACTION", "当前没有正在播放的歌曲");
         }
@@ -274,7 +280,8 @@ public class PlaybackService {
      */
     @Transactional
     public boolean clearOnTvOffline() {
-        PlayerState ps = playerRepo.getSingleton();
+        queueRepo.lockQueueMutation();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
         List<QueueItem> waiting = queueRepo.findByStatusOrderByOrderIndexAsc(QueueService.WAITING);
         if (waiting.isEmpty() && ps.getCurrentQueueId() == null) {
             return false;

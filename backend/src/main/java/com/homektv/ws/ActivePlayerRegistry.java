@@ -85,6 +85,15 @@ public class ActivePlayerRegistry {
         return Optional.of(active.sessionId());
     }
 
+    /**
+     * Every registered TV must identify the queue item its playback report
+     * came from.  This closes the legacy protocol path that could apply a
+     * delayed report from an older media item to the newly active item.
+     */
+    public synchronized boolean requiresQueueIdentity(String sessionId) {
+        return players.containsKey(sessionId);
+    }
+
     public synchronized Optional<Promotion> unregister(String sessionId) {
         return unregisterPlayer(sessionId).promotion();
     }

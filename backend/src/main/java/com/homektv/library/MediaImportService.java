@@ -13,11 +13,17 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -31,12 +37,18 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Iterator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 @Service
 public class MediaImportService {
+
+    private static final int RECORD_BATCH_SIZE = 200;
+
+    private static final Logger log = LoggerFactory.getLogger(MediaImportService.class);
 
     public static final String PENDING_TRANSCODE = "PENDING_TRANSCODE";
     public static final String COPIED = "COPIED";
@@ -137,38 +149,49 @@ public class MediaImportService {
         Path targetRoot = targetRoot();
         ensureDirectories(sourceRoot, targetRoot);
 
-        List<Path> files = mediaFiles(sourceRoot);
         OffsetDateTime startedAt = OffsetDateTime.now();
-        scanProgress.set(new SourceScanProgress(true, files.size(), 0, null, 0, 0, 0, 0, 0, 0,
+        scanProgress.set(new SourceScanProgress(true, 0, 0, null, 0, 0, 0, 0, 0, 0,
                 startedAt, null));
         int copied = 0, pending = 0, sourceDup = 0, outputDup = 0, unrecognized = 0, failed = 0;
-        for (int index = 0; index < files.size(); index++) {
-            Path source = files.get(index);
-            scanProgress.set(new SourceScanProgress(true, files.size(), index,
-                    source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
-                    startedAt, null));
-            try {
-                ScanOutcome outcome = analyzeAndMaybeCopy(source, targetRoot);
-                switch (outcome) {
-                    case COPIED -> copied++;
-                    case PENDING -> pending++;
-                    case SOURCE_DUPLICATE -> sourceDup++;
-                    case OUTPUT_DUPLICATE -> outputDup++;
-                    case UNRECOGNIZED -> unrecognized++;
-                    case UNCHANGED -> { }
+        int total = 0;
+        int completed = 0;
+        try (Stream<Path> files = Files.walk(sourceRoot)) {
+            Iterator<Path> iterator = files.filter(Files::isRegularFile)
+                    .filter(LibraryScanService::isMediaFile).iterator();
+            while (iterator.hasNext()) {
+                Path source = iterator.next();
+                total++;
+                scanProgress.set(new SourceScanProgress(true, total, completed,
+                        source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
+                        startedAt, null));
+                try {
+                    ScanOutcome outcome = analyzeAndMaybeCopy(source, targetRoot);
+                    switch (outcome) {
+                        case COPIED -> copied++;
+                        case PENDING -> pending++;
+                        case SOURCE_DUPLICATE -> sourceDup++;
+                        case OUTPUT_DUPLICATE -> outputDup++;
+                        case UNRECOGNIZED -> unrecognized++;
+                        case UNCHANGED -> { }
+                    }
+                } catch (Exception e) {
+                    failed++;
+                    upsertRecord(source, null, null, null, null, FAILED, messageOf(e), false,
+                            false, false, null, null);
                 }
-            } catch (Exception e) {
-                failed++;
-                upsertRecord(source, null, null, null, null, FAILED, messageOf(e), false,
-                        false, false, null, null);
+                completed++;
+                scanProgress.set(new SourceScanProgress(true, total, completed,
+                        source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
+                        startedAt, null));
             }
-            scanProgress.set(new SourceScanProgress(true, files.size(), index + 1,
-                    source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
-                    startedAt, null));
+        } catch (IOException | UncheckedIOException e) {
+            scanProgress.set(new SourceScanProgress(false, total, completed, null, copied, pending,
+                    sourceDup, outputDup, unrecognized, failed + 1, startedAt, OffsetDateTime.now()));
+            throw new ApiException("SOURCE_SCAN_FAILED", "遍历扫描源目录失败：" + e.getMessage());
         }
-        SourceScanResult result = new SourceScanResult(files.size(), copied, pending, sourceDup, outputDup,
+        SourceScanResult result = new SourceScanResult(total, copied, pending, sourceDup, outputDup,
                 unrecognized, failed);
-        scanProgress.set(new SourceScanProgress(false, files.size(), files.size(), null, copied, pending,
+        scanProgress.set(new SourceScanProgress(false, total, completed, null, copied, pending,
                 sourceDup, outputDup, unrecognized, failed, startedAt, OffsetDateTime.now()));
         return result;
     }
@@ -222,12 +245,6 @@ public class MediaImportService {
         if (!all && (recordIds == null || recordIds.isEmpty())) {
             throw new ApiException("TRANSCODE_SELECTION_REQUIRED", "请先选择需要转码的源文件");
         }
-        List<MediaImportRecord> records = all
-                ? importRepo.findAllByOrderByCreatedAtDesc()
-                : importRepo.findByIdIn(recordIds);
-        List<MediaImportRecord> candidates = records.stream()
-                .filter(this::isTranscodable)
-                .toList();
         synchronized (transcodeLock) {
             if (progress.get().running()) {
                 throw new ApiException("TRANSCODE_ALREADY_RUNNING", "已有批量转码任务正在执行");
@@ -236,19 +253,54 @@ public class MediaImportService {
             priorityRecordIds.clear();
             currentRecordId = null;
             deleteSourcesForRun = Boolean.TRUE.equals(settingService.getAll().get(SettingService.DELETE_SOURCE_AFTER_TRANSCODE));
-            candidates.forEach(record -> {
-                record.setDeleteSourceRequested(deleteSourcesForRun);
-                record.setCleanupStatus(deleteSourcesForRun ? "PENDING" : "NOT_REQUESTED");
-                importRepo.save(record);
-            });
-            candidates.stream().map(MediaImportRecord::getId).forEach(transcodeQueue::addLast);
+            int candidateCount = all
+                    ? enqueueAllTranscodable(deleteSourcesForRun)
+                    : enqueueSelectedTranscodable(recordIds, deleteSourcesForRun);
             boolean running = !transcodeQueue.isEmpty();
-            TranscodeProgress initial = new TranscodeProgress(running, candidates.size(), 0, 0, 0, 0, 0, 0,
+            TranscodeProgress initial = new TranscodeProgress(running, candidateCount, 0, 0, 0, 0, 0, 0,
                     null, null, List.of(), OffsetDateTime.now(), running ? null : OffsetDateTime.now());
             progress.set(initial);
             if (running) transcodeExecutor.submit(this::runTranscodeQueue);
             return initial;
         }
+    }
+
+    private int enqueueAllTranscodable(boolean deleteSources) {
+        int count = 0;
+        long afterId = 0;
+        while (true) {
+            Page<MediaImportRecord> page = importRepo.findByIdGreaterThanOrderByIdAsc(
+                    afterId, PageRequest.of(0, RECORD_BATCH_SIZE));
+            if (page == null || page.isEmpty()) break;
+            for (MediaImportRecord record : page.getContent()) {
+                count += enqueueTranscodable(record, deleteSources);
+            }
+            long nextId = page.getContent().stream()
+                    .map(MediaImportRecord::getId).filter(Objects::nonNull)
+                    .mapToLong(Long::longValue).max().orElse(afterId);
+            if (nextId <= afterId || !page.hasNext()) break;
+            afterId = nextId;
+        }
+        return count;
+    }
+
+    private int enqueueSelectedTranscodable(Collection<Long> recordIds, boolean deleteSources) {
+        List<MediaImportRecord> records = importRepo.findByIdIn(recordIds);
+        if (records == null) return 0;
+        int count = 0;
+        for (MediaImportRecord record : records) {
+            count += enqueueTranscodable(record, deleteSources);
+        }
+        return count;
+    }
+
+    private int enqueueTranscodable(MediaImportRecord record, boolean deleteSources) {
+        if (record == null || record.getId() == null || !isTranscodable(record)) return 0;
+        record.setDeleteSourceRequested(deleteSources);
+        record.setCleanupStatus(deleteSources ? "PENDING" : "NOT_REQUESTED");
+        importRepo.save(record);
+        transcodeQueue.addLast(record.getId());
+        return 1;
     }
 
     public PriorityResult prioritizeTranscode(Long recordId) {
@@ -319,22 +371,34 @@ public class MediaImportService {
                 throw new ApiException("TRANSCODE_ALREADY_RUNNING", "批量转码进行中，暂时不能清理源文件");
             }
         }
-        List<MediaImportRecord> records = importRepo.findAllByOrderByCreatedAtDesc();
         int eligible = 0, deleted = 0, skipped = 0, failed = 0;
-        for (MediaImportRecord record : records) {
-            if (!isSafelyImported(record)) {
-                skipped++;
-                continue;
+        int scanned = 0;
+        long afterId = 0;
+        while (true) {
+            Page<MediaImportRecord> page = importRepo.findByIdGreaterThanOrderByIdAsc(
+                    afterId, PageRequest.of(0, RECORD_BATCH_SIZE));
+            if (page == null || page.isEmpty()) break;
+            for (MediaImportRecord record : page.getContent()) {
+                scanned++;
+                if (!isSafelyImported(record)) {
+                    skipped++;
+                    continue;
+                }
+                eligible++;
+                try {
+                    deleteSourceAndCompanions(record);
+                    deleted++;
+                } catch (Exception e) {
+                    failed++;
+                }
             }
-            eligible++;
-            try {
-                deleteSourceAndCompanions(record);
-                deleted++;
-            } catch (Exception e) {
-                failed++;
-            }
+            long nextId = page.getContent().stream()
+                    .map(MediaImportRecord::getId).filter(Objects::nonNull)
+                    .mapToLong(Long::longValue).max().orElse(afterId);
+            if (nextId <= afterId || !page.hasNext()) break;
+            afterId = nextId;
         }
-        return new AutoCleanupResult(records.size(), eligible, deleted, skipped, failed);
+        return new AutoCleanupResult(scanned, eligible, deleted, skipped, failed);
     }
 
     /** Clean source records associated with a manually transcoded single song. */
@@ -365,8 +429,17 @@ public class MediaImportService {
                 .map(file -> {
                     try {
                         if (Files.size(output) <= 0) return false;
+                        if (record.getOutputSize() != null && record.getOutputMtime() != null) {
+                            SourceSnapshot snapshot = sourceSnapshot(output);
+                            return snapshot != null
+                                    && snapshot.size() == record.getOutputSize()
+                                    && sameMtime(record.getOutputMtime(), snapshot.mtime());
+                        }
                         String actual = hashService.md5(output);
-                        if (record.getOutputMd5() == null) record.setOutputMd5(actual);
+                        if (record.getOutputMd5() == null || record.getOutputMd5().isBlank()) {
+                            record.setOutputMd5(actual);
+                            importRepo.save(record);
+                        }
                         return actual.equals(record.getOutputMd5());
                     }
                     catch (Exception e) { return false; }
@@ -377,12 +450,26 @@ public class MediaImportService {
                                                      Boolean sourceDeleted) {
         LibraryModePolicy.requireManaged(props, "按条件删除源文件");
         SourceLibraryFilters filters = sourceLibraryFilters(status, formatAnalysis, sourceDeleted);
-        List<Long> ids = importRepo.searchSourceLibrary(normalizeKeyword(keyword), filters.action(),
-                        filters.duplicateFlag(), filters.transcodeRequired(), filters.sourceDeleted(), Pageable.unpaged())
-                .getContent().stream()
-                .map(MediaImportRecord::getId)
-                .toList();
-        return deleteSources(ids);
+        int requested = 0, deleted = 0, alreadyDeleted = 0, failed = 0;
+        long afterId = 0;
+        while (true) {
+            Slice<MediaImportRecord> page = importRepo.searchSourceLibraryAfterId(afterId,
+                    normalizeKeyword(keyword), filters.action(), filters.duplicateFlag(),
+                    filters.transcodeRequired(), filters.sourceDeleted(),
+                    PageRequest.of(0, RECORD_BATCH_SIZE));
+            if (page == null || page.isEmpty()) break;
+            List<Long> ids = page.getContent().stream().map(MediaImportRecord::getId)
+                    .filter(Objects::nonNull).toList();
+            DeleteSourcesResult result = deleteSources(ids);
+            requested += result.requested();
+            deleted += result.deleted();
+            alreadyDeleted += result.alreadyDeleted();
+            failed += result.failed();
+            long nextId = ids.stream().mapToLong(Long::longValue).max().orElse(afterId);
+            if (nextId <= afterId || !page.hasNext()) break;
+            afterId = nextId;
+        }
+        return new DeleteSourcesResult(requested, deleted, alreadyDeleted, failed);
     }
 
     public void deleteSource(Long recordId) {
@@ -454,16 +541,19 @@ public class MediaImportService {
         }
         Path output = moveToTarget(source, targetRoot);
         LibraryScanService.IngestResult ingest;
+        List<MovedCompanion> movedCompanions = List.of();
         try {
             String outputMd5 = hashService.md5(output);
             if (!Objects.equals(sourceMd5, outputMd5)) {
                 throw new IOException("移动后文件 MD5 校验失败");
             }
+            movedCompanions = moveCompanions(source, output);
             ingest = scanService.ingestLibraryFile(output, source, sourceMd5, outputMd5, false);
             if (!ingest.imported() || ingest.songId() == null || ingest.songFileId() == null) {
                 throw new IOException("移动后的文件未能写入 KTV 曲库");
             }
         } catch (Exception e) {
+            restoreMovedCompanions(movedCompanions);
             restoreMovedFile(output, source);
             throw e;
         }
@@ -473,51 +563,70 @@ public class MediaImportService {
     }
 
     private void runTranscodeQueue() {
-        while (true) {
-            MediaImportRecord record;
-            synchronized (transcodeLock) {
-                Long nextId = transcodeQueue.pollFirst();
-                if (nextId == null) {
-                    currentRecordId = null;
-                    priorityRecordIds.clear();
+        try {
+            while (true) {
+                MediaImportRecord record;
+                synchronized (transcodeLock) {
+                    Long nextId = transcodeQueue.pollFirst();
+                    if (nextId == null) {
+                        currentRecordId = null;
+                        priorityRecordIds.clear();
+                        TranscodeProgress current = progress.get();
+                        progress.set(copyProgress(current, current.total(), current.completed(), current.transcoded(),
+                                current.copiedSkipped(), current.skippedSourceDuplicate(), current.skippedOutputDuplicate(),
+                                current.failed(), null, null, List.of(), false, OffsetDateTime.now()));
+                        return;
+                    }
+                    currentRecordId = nextId;
+                    priorityRecordIds.remove(nextId);
+                    record = importRepo.findById(nextId).orElse(null);
                     TranscodeProgress current = progress.get();
                     progress.set(copyProgress(current, current.total(), current.completed(), current.transcoded(),
                             current.copiedSkipped(), current.skippedSourceDuplicate(), current.skippedOutputDuplicate(),
-                            current.failed(), null, null, List.of(), false, OffsetDateTime.now()));
-                    return;
+                            current.failed(), record == null ? String.valueOf(nextId) : record.getSourceFilename(),
+                            nextId, List.copyOf(priorityRecordIds), true, null));
                 }
-                currentRecordId = nextId;
-                priorityRecordIds.remove(nextId);
-                record = importRepo.findById(nextId).orElse(null);
-                TranscodeProgress current = progress.get();
-                progress.set(copyProgress(current, current.total(), current.completed(), current.transcoded(),
-                        current.copiedSkipped(), current.skippedSourceDuplicate(), current.skippedOutputDuplicate(),
-                        current.failed(), record == null ? String.valueOf(nextId) : record.getSourceFilename(),
-                        nextId, List.copyOf(priorityRecordIds), true, null));
-            }
 
-            TranscodeOutcome outcome = record == null ? TranscodeOutcome.FAILED : transcodeRecord(record);
+                TranscodeOutcome outcome = record == null ? TranscodeOutcome.FAILED : transcodeRecord(record);
+                synchronized (transcodeLock) {
+                    TranscodeProgress current = progress.get();
+                    currentRecordId = null;
+                    progress.set(copyProgress(current, current.total(), current.completed() + 1,
+                            current.transcoded() + (outcome == TranscodeOutcome.TRANSCODED ? 1 : 0),
+                            current.copiedSkipped(),
+                            current.skippedSourceDuplicate() + (outcome == TranscodeOutcome.SOURCE_DUPLICATE ? 1 : 0),
+                            current.skippedOutputDuplicate() + (outcome == TranscodeOutcome.OUTPUT_DUPLICATE ? 1 : 0),
+                            current.failed() + (outcome == TranscodeOutcome.FAILED ? 1 : 0),
+                            null, null, List.copyOf(priorityRecordIds), true, null));
+                }
+            }
+        } catch (RuntimeException failure) {
+            // A queue bookkeeping failure must not strand the public progress
+            // state in running=true forever or prevent a later retry.
             synchronized (transcodeLock) {
                 TranscodeProgress current = progress.get();
                 currentRecordId = null;
-                progress.set(copyProgress(current, current.total(), current.completed() + 1,
-                        current.transcoded() + (outcome == TranscodeOutcome.TRANSCODED ? 1 : 0),
-                        current.copiedSkipped(),
-                        current.skippedSourceDuplicate() + (outcome == TranscodeOutcome.SOURCE_DUPLICATE ? 1 : 0),
-                        current.skippedOutputDuplicate() + (outcome == TranscodeOutcome.OUTPUT_DUPLICATE ? 1 : 0),
-                        current.failed() + (outcome == TranscodeOutcome.FAILED ? 1 : 0),
-                        null, null, List.copyOf(priorityRecordIds), true, null));
+                transcodeQueue.clear();
+                priorityRecordIds.clear();
+                progress.set(copyProgress(current, current.total(), current.completed(), current.transcoded(),
+                        current.copiedSkipped(), current.skippedSourceDuplicate(), current.skippedOutputDuplicate(),
+                        current.failed() + 1, null, null, List.of(), false, OffsetDateTime.now()));
             }
+            log.error("源文件转码队列异常终止", failure);
         }
     }
 
     private TranscodeOutcome transcodeRecord(MediaImportRecord record) {
+        Path source = null;
+        Path output = null;
+        List<Path> migratedCompanions = List.of();
+        boolean ingested = false;
         try {
             LibraryModePolicy.requireManaged(props, "转码源文件");
             if (record.isSourceDeleted() || !Files.isRegularFile(Path.of(record.getSourcePath()))) {
                 throw new ApiException("SOURCE_FILE_MISSING", "源文件不存在或已删除");
             }
-            Path source = Path.of(record.getSourcePath());
+            source = Path.of(record.getSourcePath());
             String sourceMd5 = hashService.md5(source);
             if (!Objects.equals(sourceMd5, record.getSourceMd5()) || isSourceDuplicate(source, sourceMd5)) {
                 record.setAction(SOURCE_DUPLICATE);
@@ -527,7 +636,7 @@ public class MediaImportService {
                 return TranscodeOutcome.SOURCE_DUPLICATE;
             }
             MediaProbe probe = ffprobeService.probe(source);
-            Path output = transcodeToTarget(source, targetRoot(), probe);
+            output = transcodeToTarget(source, targetRoot(), probe);
             String outputMd5 = hashService.md5(output);
             if (isOutputDuplicate(source, outputMd5)) {
                 Files.deleteIfExists(output);
@@ -538,14 +647,22 @@ public class MediaImportService {
                 importRepo.save(record);
                 return TranscodeOutcome.OUTPUT_DUPLICATE;
             }
+            // Complete sidecar migration before creating the DB-owned library
+            // row. A sidecar failure can therefore be rolled back as one file
+            // operation without leaving a partially indexed output behind.
+            migratedCompanions = migrateCompanions(source, output, record);
             LibraryScanService.IngestResult ingest = scanService.ingestLibraryFile(
                     output, source, sourceMd5, outputMd5, true);
-            migrateCompanions(source, output, record);
+            if (!ingest.imported() || ingest.songId() == null || ingest.songFileId() == null) {
+                throw new IOException("转码后的文件未能写入 KTV 曲库");
+            }
+            ingested = true;
             upsertRecord(source, sourceMd5, output, probe, outputMd5, TRANSCODED,
                     "已转码入 KTV 曲库", true, false, true, ingest.songId(), ingest.songFileId());
             if (record.isDeleteSourceRequested()) cleanupImportedRecord(record.getId());
             return TranscodeOutcome.TRANSCODED;
         } catch (Exception e) {
+            if (!ingested) deleteGeneratedFiles(output, migratedCompanions);
             record.setAction(FAILED);
             record.setReason(messageOf(e));
             importRepo.save(record);
@@ -592,6 +709,11 @@ public class MediaImportService {
         record.setOutputPath(output != null ? output.toString() : record.getOutputPath());
         record.setOutputMd5(outputMd5);
         record.setOutputFormat(output != null ? extOf(output) : record.getOutputFormat());
+        if (output != null) {
+            SourceSnapshot outputSnapshot = sourceSnapshot(output);
+            record.setOutputSize(outputSnapshot == null ? null : outputSnapshot.size());
+            record.setOutputMtime(outputSnapshot == null ? null : outputSnapshot.mtime());
+        }
         record.setVideoCodec(probe != null ? probe.videoCodec() : record.getVideoCodec());
         record.setAudioCodec(probe != null ? probe.audioCodec() : record.getAudioCodec());
         record.setAction(action);
@@ -771,9 +893,23 @@ public class MediaImportService {
 
     private Path moveToTarget(Path source, Path targetRoot) throws IOException {
         LibraryModePolicy.requireManaged(props, "移动源文件");
-        Path output = uniqueTarget(targetRoot.resolve(source.getFileName()));
-        Files.move(source, output);
-        return output;
+        Path desired = targetRoot.resolve(source.getFileName());
+        String filename = desired.getFileName().toString();
+        int dot = filename.lastIndexOf('.');
+        String base = dot > 0 ? filename.substring(0, dot) : filename;
+        String extension = dot > 0 ? filename.substring(dot) : "";
+        for (int index = 1; index < 10_000; index++) {
+            Path candidate = index == 1 ? desired
+                    : targetRoot.resolve(base + "-" + index + extension);
+            try {
+                // Files.move without REPLACE_EXISTING is the atomic no-overwrite
+                // decision; if a concurrent mover wins, try the next name.
+                return Files.move(source, candidate);
+            } catch (FileAlreadyExistsException alreadyExists) {
+                // Re-evaluate the next candidate after the collision.
+            }
+        }
+        throw new ApiException("TARGET_NAME_EXHAUSTED", "无法为目标文件分配唯一文件名：" + desired);
     }
 
     private void restoreMovedFile(Path output, Path source) {
@@ -784,23 +920,60 @@ public class MediaImportService {
         }
     }
 
+    private List<MovedCompanion> moveCompanions(Path source, Path output) throws IOException {
+        List<MovedCompanion> moved = new ArrayList<>();
+        try {
+            for (String ext : new String[]{"lrc", "jpg", "jpeg", "png", "webp"}) {
+                Path companion = source.resolveSibling(stripExtension(source.getFileName().toString()) + "." + ext);
+                if (Files.isSymbolicLink(companion)) {
+                    throw new IOException("拒绝移动符号链接伴随文件：" + companion);
+                }
+                if (!Files.isRegularFile(companion, LinkOption.NOFOLLOW_LINKS)) continue;
+                Path target = output.resolveSibling(stripExtension(output.getFileName().toString()) + "." + ext);
+                long size = Files.size(companion);
+                try {
+                    // No REPLACE_EXISTING: a concurrent import must not overwrite a
+                    // user's existing lyric or cover.
+                    Files.move(companion, target);
+                } catch (FileAlreadyExistsException collision) {
+                    throw new IOException("伴随文件目标已存在，拒绝覆盖：" + target, collision);
+                }
+                moved.add(new MovedCompanion(companion, target));
+                if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) || Files.size(target) != size) {
+                    throw new IOException("伴随文件迁移校验失败：" + companion);
+                }
+            }
+            return moved;
+        } catch (IOException failure) {
+            restoreMovedCompanions(moved);
+            throw failure;
+        }
+    }
+
+    private void restoreMovedCompanions(List<MovedCompanion> moved) {
+        if (moved == null) return;
+        for (int index = moved.size() - 1; index >= 0; index--) {
+            MovedCompanion companion = moved.get(index);
+            try {
+                if (!Files.exists(companion.target(), LinkOption.NOFOLLOW_LINKS)) continue;
+                if (Files.exists(companion.source(), LinkOption.NOFOLLOW_LINKS)) {
+                    log.warn("恢复伴随文件时源路径已有文件，保留目标文件：{}", companion.source());
+                    continue;
+                }
+                Files.move(companion.target(), companion.source());
+            } catch (IOException restoreFailure) {
+                log.warn("恢复伴随文件失败 source={} target={}", companion.source(), companion.target(),
+                        restoreFailure);
+            }
+        }
+    }
+
     private Path transcodeToTarget(Path source, Path targetRoot, MediaProbe probe) {
         LibraryModePolicy.requireManaged(props, "转码源文件");
         SettingService.TranscodePolicy policy = settingService.transcodePolicy();
         String baseName = stripExtension(source.getFileName().toString());
-        Path output = uniqueTarget(targetRoot.resolve(baseName + "." + policy.outputContainer()));
+        Path output = targetRoot.resolve(baseName + "." + policy.outputContainer());
         return mediaTranscoder.transcode(source, output, policy, probe.hasVideo());
-    }
-
-    private Path uniqueTarget(Path desired) {
-        if (!Files.exists(desired)) return desired;
-        String base = stripExtension(desired.getFileName().toString());
-        String ext = extOf(desired);
-        for (int index = 2; index < 10000; index++) {
-            Path candidate = desired.getParent().resolve(base + "-" + index + (ext.isBlank() ? "" : "." + ext));
-            if (!Files.exists(candidate)) return candidate;
-        }
-        throw new ApiException("TARGET_NAME_EXHAUSTED", "无法为输出文件分配唯一文件名：" + desired);
     }
 
     private Path sourceRoot() {
@@ -820,16 +993,6 @@ public class MediaImportService {
         } catch (IOException e) {
             throw new ApiException("KTV_LIBRARY_CREATE_FAILED", "无法创建 KTV 曲库目录：" + targetRoot);
         }
-    }
-
-    private static List<Path> mediaFiles(Path root) {
-        List<Path> files = new ArrayList<>();
-        try (var stream = Files.walk(root)) {
-            stream.filter(Files::isRegularFile).filter(LibraryScanService::isMediaFile).forEach(files::add);
-        } catch (IOException e) {
-            throw new ApiException("SOURCE_SCAN_FAILED", "遍历扫描源目录失败：" + e.getMessage());
-        }
-        return files;
     }
 
     private static String extOf(Path file) {
@@ -884,18 +1047,48 @@ public class MediaImportService {
         removeSourceRecord(record);
     }
 
-    private void migrateCompanions(Path source, Path output, MediaImportRecord record) throws IOException {
+    private List<Path> migrateCompanions(Path source, Path output, MediaImportRecord record) throws IOException {
         LibraryModePolicy.requireManaged(props, "迁移源文件伴随资源");
+        List<Path> copied = new ArrayList<>();
         List<String> migrated = new ArrayList<>();
-        for (String ext : new String[]{"lrc", "jpg", "jpeg", "png", "webp"}) {
-            Path companion = source.resolveSibling(stripExtension(source.getFileName().toString()) + "." + ext);
-            if (!Files.isRegularFile(companion)) continue;
-            Path target = output.resolveSibling(stripExtension(output.getFileName().toString()) + "." + ext);
-            Files.copy(companion, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
-            if (!Files.isRegularFile(target) || Files.size(target) != Files.size(companion)) throw new IOException("伴随文件迁移校验失败：" + companion);
-            migrated.add(companion.getFileName().toString());
+        try {
+            for (String ext : new String[]{"lrc", "jpg", "jpeg", "png", "webp"}) {
+                Path companion = source.resolveSibling(stripExtension(source.getFileName().toString()) + "." + ext);
+                if (!Files.isRegularFile(companion)) continue;
+                Path target = output.resolveSibling(stripExtension(output.getFileName().toString()) + "." + ext);
+                if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new IOException("伴随文件目标已存在，拒绝覆盖：" + target);
+                }
+                Files.copy(companion, target, StandardCopyOption.COPY_ATTRIBUTES);
+                copied.add(target);
+                if (!Files.isRegularFile(target) || Files.size(target) != Files.size(companion)) {
+                    throw new IOException("伴随文件迁移校验失败：" + companion);
+                }
+                migrated.add(companion.getFileName().toString());
+            }
+        } catch (IOException failure) {
+            deleteGeneratedFiles(null, copied);
+            throw failure;
         }
-        record.setCompanionFiles("[\"" + String.join("\",\"", migrated).replace("\"", "") + "\"]");
+        record.setCompanionFiles(migrated.isEmpty() ? "[]"
+                : "[\"" + String.join("\",\"", migrated) + "\"]");
+        return copied;
+    }
+
+    private void deleteGeneratedFiles(Path output, List<Path> companionFiles) {
+        Path root = targetRoot().toAbsolutePath().normalize();
+        List<Path> generated = new ArrayList<>();
+        if (output != null) generated.add(output);
+        if (companionFiles != null) generated.addAll(companionFiles);
+        for (Path file : generated) {
+            Path normalized = file.toAbsolutePath().normalize();
+            if (!normalized.startsWith(root) || Files.isSymbolicLink(normalized)) continue;
+            try {
+                Files.deleteIfExists(normalized);
+            } catch (IOException cleanupFailure) {
+                log.warn("清理失败转码输出：{}", normalized, cleanupFailure);
+            }
+        }
     }
 
     @PreDestroy
@@ -906,4 +1099,5 @@ public class MediaImportService {
 
     private enum ScanOutcome { COPIED, PENDING, SOURCE_DUPLICATE, OUTPUT_DUPLICATE, UNRECOGNIZED, UNCHANGED }
     private enum TranscodeOutcome { TRANSCODED, SOURCE_DUPLICATE, OUTPUT_DUPLICATE, FAILED }
+    private record MovedCompanion(Path source, Path target) {}
 }

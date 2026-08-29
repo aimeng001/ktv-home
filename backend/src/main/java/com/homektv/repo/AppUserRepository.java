@@ -17,6 +17,10 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
 
     Optional<AppUser> findByClientToken(String clientToken);
 
+    long countByClientTokenNotAndNickname(String clientToken, String nickname);
+
+    long countByClientTokenNotAndNicknameStartingWith(String clientToken, String prefix);
+
     /**
      * 若用户不存在则插入，利用 PostgreSQL 的 ON CONFLICT DO NOTHING 避免重复。
      *
