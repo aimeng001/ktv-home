@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -64,6 +65,40 @@ class AiLibraryServiceTest {
         assertThat(candidate.get("genres")).isEqualTo(java.util.List.of("流行"));
         assertThat(candidate.get("themes")).isEqualTo(java.util.List.of("怀旧"));
         assertThat(candidate.get("metadataSources")).isEqualTo(Map.of("title", "QQ", "album", "NETEASE"));
+    }
+
+    @Test
+    void playlistPreviewConsidersPreferredSongsBeyondTheFirstFiveThousandRows() throws Exception {
+        SongRepository songRepository = mock(SongRepository.class);
+        OpenAiCompatibleClient aiClient = mock(OpenAiCompatibleClient.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+
+        when(songRepository.findAll(any(Pageable.class))).thenAnswer(invocation -> {
+            Pageable pageable = invocation.getArgument(0, Pageable.class);
+            int firstId = pageable.getPageNumber() * pageable.getPageSize() + 1;
+            int lastId = Math.min(firstId + pageable.getPageSize() - 1, 5001);
+            List<Song> content = java.util.stream.IntStream.rangeClosed(firstId, lastId)
+                    .mapToObj(id -> {
+                        Song song = song(id, "歌曲" + id, "歌手");
+                        if (id == 5001) {
+                            song.setAiAnalyzedAt(OffsetDateTime.parse("2026-01-01T00:00:00Z"));
+                        }
+                        return song;
+                    })
+                    .toList();
+            return new PageImpl<>(content, pageable, 5001);
+        });
+        when(aiClient.completeJsonPromptOnly(anyString(), anyString(), anyString(), anyInt())).thenReturn(
+                objectMapper.readTree("{\"intent\":\"优先可信元数据\"}"),
+                objectMapper.readTree("{\"name\":\"边界歌单\",\"songIds\":[5001]}"));
+
+        Map<String, Object> result = service(songRepository, mock(PlaylistRepository.class),
+                mock(PlaylistSongRepository.class), aiClient, objectMapper)
+                .previewPlaylist("优先可信元数据", 1);
+
+        assertThat(result).containsEntry("songIds", List.of(5001L))
+                .containsEntry("selectedCount", 1)
+                .containsEntry("candidateCount", 5000);
     }
 
     @Test

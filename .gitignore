@@ -1,4 +1,4 @@
-，# ===== Java / Spring Boot =====
+# ===== Java / Spring Boot =====
 backend/target/
 *.class
 *.jar
@@ -53,6 +53,9 @@ backend/src/main/resources/application-local.yml
 /.env
 **/.env
 
+# Local release archives
+/*.zip
+
 # Local development instructions and agent prompts; never publish these files.
 /AGENTS.md
 /ARCHITECTURE.md
@@ -60,3 +63,4 @@ backend/src/main/resources/application-local.yml
 /REQUIREMENTS.md
 /TASK_STATE.md
 /KTV_AGENT_PROMPTS.txt
+/软件崩溃.md

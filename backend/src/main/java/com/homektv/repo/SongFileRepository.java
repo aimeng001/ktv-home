@@ -11,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 import java.util.Collection;
 import java.util.Optional;
+import java.util.UUID;
 
 /** 歌曲文件数据访问层，操作 song_file 表。
  *
@@ -38,9 +39,32 @@ public interface SongFileRepository extends JpaRepository<SongFile, Long> {
             """)
     Slice<SongFileScanSnapshot> findScanSnapshotsByFileRoleAndFilePathGreaterThanOrderByFilePath(
             @Param("fileRole") String fileRole, @Param("filePath") String filePath, Pageable pageable);
-    Slice<SongFile> findByFileRoleAndProbePendingTrueAndFilePathGreaterThanOrderByFilePath(
-            String fileRole, String filePath, Pageable pageable);
+    @Query(value = """
+            SELECT file.*
+            FROM song_files file
+            WHERE file.file_role = :fileRole
+              AND file.probe_pending = TRUE
+              AND file.file_path > :filePath
+              AND (
+                    file.id <= :maxId
+                    OR EXISTS (
+                        SELECT 1
+                        FROM library_scan_seen_paths seen
+                        WHERE seen.scan_id = :scanId
+                          AND seen.file_role = file.file_role
+                          AND seen.file_path = file.file_path
+                    )
+              )
+            ORDER BY file.file_path
+            """, nativeQuery = true)
+    Slice<SongFile> findPendingForScan(@Param("fileRole") String fileRole,
+                                      @Param("maxId") Long maxId,
+                                      @Param("scanId") UUID scanId,
+                                      @Param("filePath") String filePath,
+                                      Pageable pageable);
     long countByFileRoleAndProbePendingTrue(String fileRole);
+    @Query("SELECT COALESCE(MAX(file.id), 0) FROM SongFile file WHERE file.fileRole = :fileRole")
+    Long findMaxIdByFileRole(@Param("fileRole") String fileRole);
     List<SongFile> findBySourcePath(String sourcePath);
 
     /** 伴奏轨判定为低置信度的文件源，供后台人工复核（详设§11：入库记伴奏轨，判不准的挑出来核对）。

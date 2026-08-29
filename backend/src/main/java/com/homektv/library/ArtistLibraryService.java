@@ -153,6 +153,8 @@ public class ArtistLibraryService {
 
     private List<Song> songsFor(String artist) {
         if (artist == null || artist.isBlank()) return List.of();
+        List<Song> direct = songs.findByArtistIgnoreCaseAndStatus(artist.trim(), "ok");
+        if (direct != null && !direct.isEmpty()) return direct;
         String normalized = normalizeArtist(artist);
         List<Song> result = new ArrayList<>();
         forEachValidSong(song -> {

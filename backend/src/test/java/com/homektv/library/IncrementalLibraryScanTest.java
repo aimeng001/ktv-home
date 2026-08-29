@@ -15,6 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.nio.file.Files;
@@ -33,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -41,13 +44,18 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.eq;
 
 @ExtendWith(MockitoExtension.class)
 class IncrementalLibraryScanTest {
@@ -63,6 +71,8 @@ class IncrementalLibraryScanTest {
     private SongRepository songRepository;
     @Mock
     private SongFileRepository songFileRepository;
+    @Mock
+    private ArtistCreditService artistCreditService;
 
     private final Map<String, Song> songsByFingerprint = new ConcurrentHashMap<>();
     private final Map<Long, Song> songsById = new ConcurrentHashMap<>();
@@ -71,6 +81,7 @@ class IncrementalLibraryScanTest {
     private final AtomicLong ids = new AtomicLong(100);
 
     private LibraryScanService scanService;
+    private InMemoryLibraryScanSeenPathStore seenPathStore;
     private Path sourceDir;
     private AppProperties props;
 
@@ -106,6 +117,15 @@ class IncrementalLibraryScanTest {
 
         lenient().when(songFileRepository.findByFilePath(anyString())).thenAnswer(invocation ->
                 Optional.ofNullable(filesByPath.get(invocation.getArgument(0))));
+        lenient().when(songFileRepository.findMaxIdByFileRole(anyString()))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    return filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()) && file.getId() != null)
+                            .mapToLong(SongFile::getId)
+                            .max()
+                            .orElse(0L);
+                });
         lenient().when(songFileRepository.findByFileRoleOrderByImportedAtDesc(anyString())).thenAnswer(invocation ->
                 filesByPath.values().stream().filter(file -> invocation.getArgument(0).equals(file.getFileRole())).toList());
         lenient().when(songFileRepository.findByFileRoleAndFilePathIn(anyString(), org.mockito.ArgumentMatchers.anyCollection()))
@@ -159,14 +179,17 @@ class IncrementalLibraryScanTest {
                     return new PageImpl<>(rows.subList(from, to), page, rows.size());
                 });
         lenient().when(songFileRepository
-                .findByFileRoleAndProbePendingTrueAndFilePathGreaterThanOrderByFilePath(
-                        anyString(), anyString(), any(Pageable.class)))
+                .findPendingForScan(anyString(), anyLong(), any(UUID.class), anyString(), any(Pageable.class)))
                 .thenAnswer(invocation -> {
                     String role = invocation.getArgument(0);
-                    String after = invocation.getArgument(1);
-                    Pageable page = invocation.getArgument(2);
+                    Long maxId = invocation.getArgument(1);
+                    UUID scanId = invocation.getArgument(2);
+                    String after = invocation.getArgument(3);
+                    Pageable page = invocation.getArgument(4);
                     List<SongFile> pending = filesByPath.values().stream()
                             .filter(file -> role.equals(file.getFileRole()))
+                            .filter(file -> file.getId() != null && file.getId() <= maxId
+                                    || seenPathStore.isSeen(scanId, file.getFilePath()))
                             .filter(SongFile::isProbePending)
                             .filter(file -> file.getFilePath() != null && file.getFilePath().compareTo(after) > 0)
                             .sorted(java.util.Comparator.comparing(SongFile::getFilePath))
@@ -196,8 +219,11 @@ class IncrementalLibraryScanTest {
         lenient().when(tagReader.read(any())).thenReturn(new TagInfo());
         lenient().when(ffprobe.probe(any(Path.class))).thenReturn(probe());
 
+        seenPathStore = new InMemoryLibraryScanSeenPathStore(songFileRepository);
         scanService = new LibraryScanService(props, ffprobe, tagReader, songRepository,
-                songFileRepository, new AssetWriter(props));
+                songFileRepository, new AssetWriter(props),
+                seenPathStore);
+        ReflectionTestUtils.setField(scanService, "artistCreditService", artistCreditService);
     }
 
     @AfterEach
@@ -651,6 +677,75 @@ class IncrementalLibraryScanTest {
         assertThat(indexed.isValid()).isFalse();
         assertThat(filesByPath).containsKey(file.toString());
         verify(ffprobe, times(1)).probe(any(Path.class));
+    }
+
+    @Test
+    void scanSynchronizesEveryIngestedSongWithItsIndependentArtistCredits() throws Exception {
+        Files.write(sourceDir.resolve("单依纯_王子异-合唱歌曲-国语-合唱.mkv"), new byte[]{1, 2, 3});
+
+        scanService.scanAll();
+
+        verify(artistCreditService, atLeastOnce()).replace(anyLong(), eq("单依纯_王子异"));
+    }
+
+    @Test
+    void missingReconciliationDoesNotInvalidateRowsOutsideTheActiveRoot() throws Exception {
+        Path outside = tempDir.resolve("other-library").resolve("other.mkv").toAbsolutePath();
+        SongFile outsideRow = new SongFile();
+        outsideRow.setId(9_999L);
+        outsideRow.setSongId(9_998L);
+        outsideRow.setFilePath(outside.toString());
+        outsideRow.setRelativePath("other.mkv");
+        outsideRow.setFileRole("EXTERNAL_READ_ONLY");
+        outsideRow.setValid(true);
+        filesByPath.put(outside.toString(), outsideRow);
+
+        Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        scanService.scanAll();
+
+        assertThat(outsideRow.isValid()).isTrue();
+    }
+
+    @Test
+    void seenPathStoreFailureStillFlushesEachFastIndexBatch() throws Exception {
+        seenPathStore.failRecordBatches();
+        for (int index = 0; index < 501; index++) {
+            Files.write(sourceDir.resolve("歌手-歌曲" + index + "-国语-流行.mkv"), new byte[]{1});
+        }
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.fastIndexed()).isEqualTo(501);
+        assertThat(seenPathStore.recordBatchCalls()).isEqualTo(2);
+        assertThat(filesByPath).hasSize(501);
+    }
+
+    @Test
+    void scanAlwaysCleansTransientSeenPathsWhenQueuePreparationFails() throws Exception {
+        Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        when(songFileRepository.countByFileRoleAndProbePendingTrue(anyString()))
+                .thenThrow(new IllegalStateException("test queue count failure"));
+
+        assertThatThrownBy(() -> scanService.scanAll())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("test queue count failure");
+        assertThat(seenPathStore.activeScanCount()).isZero();
+    }
+
+    @Test
+    void indeterminateFileExistenceDoesNotMarkAnOtherwisePresentFileMissing() throws Exception {
+        Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        scanService.scanAll();
+        SongFile indexed = filesByPath.get(file.toString());
+
+        LibraryScanService.ScanResult second;
+        try (MockedStatic<Files> files = mockStatic(Files.class, CALLS_REAL_METHODS)) {
+            files.when(() -> Files.exists(file)).thenReturn(false);
+            second = scanService.scanAll();
+        }
+
+        assertThat(second.missing()).isZero();
+        assertThat(indexed.isValid()).isTrue();
     }
 
     @Test

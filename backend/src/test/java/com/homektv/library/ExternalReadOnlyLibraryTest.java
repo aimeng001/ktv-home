@@ -30,6 +30,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
@@ -47,6 +48,7 @@ class ExternalReadOnlyLibraryTest {
 
     private final Map<Long, Song> songsById = new HashMap<>();
     private final Map<String, SongFile> filesByPath = new HashMap<>();
+    private InMemoryLibraryScanSeenPathStore seenPathStore;
 
     @TempDir
     Path tempDir;
@@ -77,6 +79,15 @@ class ExternalReadOnlyLibraryTest {
 
         lenient().when(songFileRepository.findByFilePath(anyString())).thenAnswer(invocation ->
                 Optional.ofNullable(filesByPath.get(invocation.getArgument(0))));
+                lenient().when(songFileRepository.findMaxIdByFileRole(anyString()))
+                .thenAnswer(invocation -> {
+                    String role = invocation.getArgument(0);
+                    return filesByPath.values().stream()
+                            .filter(file -> role.equals(file.getFileRole()) && file.getId() != null)
+                            .mapToLong(SongFile::getId)
+                            .max()
+                            .orElse(0L);
+                });
         lenient().when(songFileRepository.findByFileRoleOrderByImportedAtDesc(anyString()))
                 .thenAnswer(invocation -> new ArrayList<>(filesByPath.values()));
         lenient().when(songFileRepository.findByFileRoleAndFilePathIn(anyString(), org.mockito.ArgumentMatchers.anyCollection()))
@@ -132,14 +143,18 @@ class ExternalReadOnlyLibraryTest {
         lenient().when(songRepository.findDistinctArtistByStatus(anyString()))
                 .thenReturn(List.of());
         lenient().when(songFileRepository
-                .findByFileRoleAndProbePendingTrueAndFilePathGreaterThanOrderByFilePath(
-                        anyString(), anyString(), org.mockito.ArgumentMatchers.any(Pageable.class)))
+                .findPendingForScan(anyString(), anyLong(), any(UUID.class), anyString(),
+                        org.mockito.ArgumentMatchers.any(Pageable.class)))
                 .thenAnswer(invocation -> {
                     String role = invocation.getArgument(0);
-                    String after = invocation.getArgument(1);
-                    Pageable page = invocation.getArgument(2);
+                    Long maxId = invocation.getArgument(1);
+                    UUID scanId = invocation.getArgument(2);
+                    String after = invocation.getArgument(3);
+                    Pageable page = invocation.getArgument(4);
                     List<SongFile> pending = filesByPath.values().stream()
                             .filter(file -> role.equals(file.getFileRole()))
+                            .filter(file -> file.getId() != null && file.getId() <= maxId
+                                    || seenPathStore.isSeen(scanId, file.getFilePath()))
                             .filter(SongFile::isProbePending)
                             .filter(file -> file.getFilePath() != null && file.getFilePath().compareTo(after) > 0)
                             .sorted(java.util.Comparator.comparing(SongFile::getFilePath))
@@ -170,8 +185,10 @@ class ExternalReadOnlyLibraryTest {
         });
 
         lenient().when(settingService.externalDefaultAudioLayout()).thenReturn(AudioLayout.NORMAL_STEREO);
+        seenPathStore = new InMemoryLibraryScanSeenPathStore(songFileRepository);
         scanService = new LibraryScanService(props, ffprobe, tagReader, songRepository,
-                songFileRepository, new AssetWriter(props), settingService);
+                songFileRepository, new AssetWriter(props), settingService,
+                seenPathStore);
     }
 
     @AfterEach

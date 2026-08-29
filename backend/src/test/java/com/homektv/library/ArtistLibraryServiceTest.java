@@ -49,6 +49,30 @@ class ArtistLibraryServiceTest {
     }
 
     @Test
+    void artistAfterTheFirstFiveThousandSongsRemainsVisible() {
+        when(songs.findByStatus(eq("ok"), any(Pageable.class))).thenAnswer(invocation -> {
+            Pageable pageable = invocation.getArgument(1, Pageable.class);
+            int firstId = pageable.getPageNumber() * pageable.getPageSize() + 1;
+            int lastId = Math.min(firstId + pageable.getPageSize() - 1, 5001);
+            List<Song> content = java.util.stream.IntStream.rangeClosed(firstId, lastId)
+                    .mapToObj(index -> song((long) index,
+                            index == 5001 ? "边界歌手" : "普通歌手",
+                            index == 5001 ? "边界歌曲" : "歌曲" + index,
+                            "未知", false, index == 5001 ? 1 : 0))
+                    .toList();
+            return new PageImpl<>(content, pageable, 5001);
+        });
+
+        List<Map<String, Object>> result = service.list("边界歌手", null, null, 100);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0))
+                .containsEntry("name", "边界歌手")
+                .containsEntry("songCount", 1);
+        verify(songs, times(11)).findByStatus(eq("ok"), any(Pageable.class));
+    }
+
+    @Test
     void onlyReportsReviewedWhenEveryGroupedSongHasTheManualLock() {
         Song locked = song(1L, "歌手", "歌曲一", "女歌手", true, 2);
         Song unlocked = song(2L, "歌手", "歌曲二", "女歌手", false, 1);

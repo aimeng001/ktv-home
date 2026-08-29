@@ -2,6 +2,9 @@ package com.homektv.repo;
 
 import com.homektv.domain.PlayerState;
 import com.homektv.domain.Song;
+import com.homektv.domain.SongFile;
+import com.homektv.library.JdbcLibraryScanSeenPathStore;
+import com.homektv.library.CategoryBrowseService;
 import com.homektv.library.SongMergeService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +15,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -44,6 +51,9 @@ class PersistenceIntegrationTest {
     private SongRepository songRepository;
 
     @Autowired
+    private SongFileRepository songFileRepository;
+
+    @Autowired
     private PlayerStateRepository playerStateRepository;
 
     @Autowired
@@ -51,6 +61,12 @@ class PersistenceIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private JdbcLibraryScanSeenPathStore scanSeenPathStore;
+
+    @Autowired
+    private CategoryBrowseService categoryBrowseService;
 
     @Test
     void playerStateSingletonInitialized() {
@@ -120,6 +136,143 @@ class PersistenceIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT manual FROM playlist_songs WHERE playlist_id = ? AND song_id = ?", Boolean.class, playlistId, keep.getId())).isTrue();
         assertThat(jdbc.queryForObject("SELECT song_id FROM queue WHERE order_index = 1", Long.class)).isEqualTo(keep.getId());
         assertThat(jdbc.queryForObject("SELECT song_id FROM play_history ORDER BY id DESC LIMIT 1", Long.class)).isEqualTo(keep.getId());
+    }
+
+
+    @Test
+    void testAggregationsAndBrowseQueriesAgainstRealPostgres() {
+        String suffix = String.valueOf(System.nanoTime());
+        Song s1 = new Song();
+        s1.setTitle("测试歌曲一");
+        s1.setArtist("张学友");
+        s1.setArtistGender("男歌手");
+        s1.setArtistInit("Z");
+        s1.setLanguage("国语");
+        s1.setAiVocalForm("独唱");
+        s1.setTags(new String[]{"流行", "经典"});
+        s1.setAiGenres(new String[]{"流行"});
+        s1.setAiThemes(new String[]{"伤感"});
+        s1.setMediaType("KTV_VIDEO");
+        s1.setStatus("ok");
+        s1.setFingerprint("test-agg-1-" + suffix);
+        songRepository.save(s1);
+
+        Song s2 = new Song();
+        s2.setTitle("测试歌曲二");
+        s2.setArtist("张学友");
+        s2.setArtistGender("男歌手");
+        s2.setArtistInit("Z");
+        s2.setLanguage("粤语");
+        s2.setAiVocalForm("独唱");
+        s2.setTags(new String[]{"经典", "摇滚"});
+        s2.setMediaType("KTV_VIDEO");
+        s2.setStatus("ok");
+        s2.setFingerprint("test-agg-2-" + suffix);
+        songRepository.save(s2);
+
+        // 1. Language aggregation
+        var languages = songRepository.aggregateLanguagesByStatus("ok");
+        assertThat(languages).isNotEmpty();
+
+        // 2. Artist aggregation
+        var artists = songRepository.aggregateArtistsByStatus("ok");
+        assertThat(artists).isNotEmpty();
+        assertThat(artists.stream().anyMatch(a -> "张学友".equals(a.getArtist()))).isTrue();
+
+        // 3. Tags aggregation
+        var tags = songRepository.aggregateTagsByStatusOk();
+        assertThat(tags).isNotEmpty();
+        assertThat(tags.stream().anyMatch(t -> "经典".equals(t.getName()))).isTrue();
+        assertThat(tags.stream()
+                .filter(t -> "流行".equals(t.getName()))
+                .findFirst()
+                .orElseThrow()
+                .getSongCount()).isEqualTo(1L);
+
+        // 4. Browse category songs
+        var page = songRepository.browseCategorySongs("张学友", "男歌手", "国语", "流行", "独唱",
+                org.springframework.data.domain.PageRequest.of(0, 10));
+        assertThat(page.getContent()).isNotEmpty();
+        assertThat(page.getContent().get(0).getTitle()).isEqualTo("测试歌曲一");
+
+        Song caseVariant = new Song();
+        caseVariant.setTitle("大小写测试");
+        caseVariant.setArtist("Case Artist");
+        caseVariant.setArtistGender("Male");
+        caseVariant.setLanguage("English");
+        caseVariant.setAiVocalForm("Solo");
+        caseVariant.setTags(new String[]{"Rock"});
+        caseVariant.setMediaType("KTV_VIDEO");
+        caseVariant.setStatus("ok");
+        caseVariant.setFingerprint("test-agg-case-" + suffix);
+        songRepository.save(caseVariant);
+
+        var casePage = songRepository.browseCategorySongs("case artist", "male", "english", "rock", "solo",
+                org.springframework.data.domain.PageRequest.of(0, 10));
+        assertThat(casePage.getContent()).extracting(Song::getTitle).contains("大小写测试");
+
+        // Native browse queries must map the public "new" sort to the physical
+        // PostgreSQL column name; passing the Java property name would produce
+        // s.createdAt and fail with SQLState 42703.
+        assertThat(categoryBrowseService.songs("", "", "", "", "", "new", 10))
+                .isNotEmpty();
+        assertThat(categoryBrowseService.songs("", "", "", "", "", "", 10))
+                .isNotEmpty();
+
+        // 5. SongFile maxId query
+        Long maxId = songFileRepository.findMaxIdByFileRole("LIBRARY");
+        assertThat(maxId).isNotNull();
+    }
+
+    @Test
+    void scanSeenPathStoreKeepsReconciliationBoundedAndPendingQueueScanScoped() {
+        String suffix = String.valueOf(System.nanoTime());
+        Song seenSong = songRepository.save(song("扫描已见", "扫描歌手", "scan-seen-" + suffix));
+        Song unseenSong = songRepository.save(song("扫描未见", "扫描歌手", "scan-unseen-" + suffix));
+        Song outsideSong = songRepository.save(song("扫描外部", "扫描歌手", "scan-outside-" + suffix));
+
+        SongFile seen = songFile("/music/seen-" + suffix + ".mkv", seenSong.getId(), true);
+        seen.setProbePending(true);
+        SongFile unseen = songFile("/music/unseen-" + suffix + ".mkv", unseenSong.getId(), true);
+        unseen.setProbePending(true);
+        SongFile outside = songFile("/other-library/outside-" + suffix + ".mkv", outsideSong.getId(), true);
+        outside.setProbePending(true);
+        songFileRepository.saveAll(List.of(seen, unseen, outside));
+        songFileRepository.flush();
+
+        UUID scanId = UUID.randomUUID();
+        scanSeenPathStore.recordBatch(scanId, "LIBRARY", List.of(seen.getFilePath()));
+        scanSeenPathStore.recordPendingBatch(scanId, "LIBRARY", List.of(seen.getFilePath()));
+
+        var pending = songFileRepository.findPendingForScan("LIBRARY", 0L, scanId, "",
+                org.springframework.data.domain.PageRequest.of(0, 10));
+        assertThat(pending.getContent()).extracting(SongFile::getFilePath)
+                .containsExactly(seen.getFilePath());
+        assertThat(scanSeenPathStore.findPendingAtStart(scanId, "LIBRARY",
+                List.of(seen.getFilePath(), unseen.getFilePath())))
+                .containsExactly(seen.getFilePath());
+
+        var missing = scanSeenPathStore.markMissing(scanId, "LIBRARY", "/music");
+        assertThat(missing.filesMarked()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT valid FROM song_files WHERE id = ?", Boolean.class, unseen.getId()))
+                .isFalse();
+        assertThat(jdbc.queryForObject("SELECT valid FROM song_files WHERE id = ?", Boolean.class, outside.getId()))
+                .isTrue();
+
+        scanSeenPathStore.delete(scanId);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM library_scan_seen_paths WHERE scan_id = ?",
+                Long.class, scanId)).isZero();
+    }
+
+    private SongFile songFile(String path, Long songId, boolean valid) {
+        SongFile file = new SongFile();
+        file.setSongId(songId);
+        file.setFilePath(path);
+        file.setFileRole("LIBRARY");
+        file.setFormat("mkv");
+        file.setFileMtime(OffsetDateTime.now());
+        file.setValid(valid);
+        return file;
     }
 
     private Song song(String title, String artist, String fingerprint) {
