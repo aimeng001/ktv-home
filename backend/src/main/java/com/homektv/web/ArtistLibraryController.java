@@ -18,7 +18,16 @@ public class ArtistLibraryController {
                                           @RequestParam(required = false) String gender,
                                           @RequestParam(required = false) Boolean reviewed,
                                           @RequestParam(defaultValue = "500") int limit) {
-        return service.list(keyword, gender, reviewed, limit);
+        return service.listForCompatibility(keyword, gender, reviewed, limit);
+    }
+
+    @GetMapping("/page")
+    public ArtistLibraryService.ArtistPage page(@RequestParam(required = false) String keyword,
+                                                @RequestParam(required = false) String gender,
+                                                @RequestParam(required = false) Boolean reviewed,
+                                                @RequestParam(defaultValue = "0") int page,
+                                                @RequestParam(defaultValue = "50") int size) {
+        return service.page(keyword, gender, reviewed, page, size);
     }
 
     @PostMapping("/analyze")

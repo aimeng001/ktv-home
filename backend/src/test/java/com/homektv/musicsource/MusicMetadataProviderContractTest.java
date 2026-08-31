@@ -71,6 +71,38 @@ class MusicMetadataProviderContractTest {
     }
 
     @Test
+    void parsesNeteaseArtistIdentityAndUsesOnlyArtistAvatarFields() throws Exception {
+        JsonNode artists = mapper.readTree("""
+                [{"id":6452,"name":"周杰伦","alias":["Jay Chou"],
+                  "img1v1Url":"http://p1.music.126.net/avatar.jpg",
+                  "picUrl":"https://music.126.net/track-cover.jpg"}]
+                """);
+        NeteaseArtistMetadataProvider provider = new NeteaseArtistMetadataProvider(mapper, new ProviderCallGuard());
+
+        ExternalArtist artist = provider.parseArtists(artists, 20).getFirst();
+
+        assertThat(artist.provider()).isEqualTo(MusicProvider.NETEASE);
+        assertThat(artist.externalId()).isEqualTo("6452");
+        assertThat(artist.displayName()).isEqualTo("周杰伦");
+        assertThat(artist.aliases()).containsExactly("Jay Chou");
+        assertThat(artist.avatarUrl()).isEqualTo("https://p1.music.126.net/avatar.jpg");
+    }
+
+    @Test
+    void buildsQqArtistAvatarFromSingerIdentity() throws Exception {
+        JsonNode artists = mapper.readTree("""
+                [{"singer_mid":"abc123","singername":"周杰伦"}]
+                """);
+        QqArtistMetadataProvider provider = new QqArtistMetadataProvider(mapper, new ProviderCallGuard());
+
+        ExternalArtist artist = provider.parseArtists(artists, 20).getFirst();
+
+        assertThat(artist.externalId()).isEqualTo("abc123");
+        assertThat(artist.avatarUrl()).isEqualTo(
+                "https://y.gtimg.cn/music/photo_new/T001R300x300M000abc123.jpg");
+    }
+
+    @Test
     void cryptoAndSignatureMatchPinnedReferenceVectors() {
         String eapi = NeteaseCrypto.eapi("/api/cloudsearch/pc", "{\"s\":\"周杰伦\",\"type\":1,\"limit\":20}");
         assertThat(eapi).isEqualTo("2B5D64177AA6460FBAA3DCB1285E28954BBB4F7556E09B0FB25750F12398BB5061D31369B8FFA4BFF59E3B4A9103C9EFC4A9F27F2EB9646649834AF9158B1E0F6214D022CF1E4AA0D9C7B54F972E49EB00569FA6B45AEE84C26CBE3D32628482C58102189617DBCA01E159498438F92FACE8A02AD1667087F299171729EE3EC4");

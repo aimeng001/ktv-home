@@ -1,6 +1,6 @@
 <template>
   <div class="page">
-    <header class="topbar"><h1>遥控器</h1><span class="online"><i></i>电视在线</span></header>
+    <header class="topbar"><h1>遥控器</h1><span class="online" :class="{unknown: player.tvOnline === null, offline: player.tvOnline === false}"><i></i>{{ player.tvOnline === null ? '电视状态未知' : player.tvOnline ? '电视在线' : '电视离线' }}</span></header>
     <!-- 当前曲目卡 / Now Playing Card -->
     <section class="sec">
       <div class="now">
@@ -189,7 +189,7 @@ async function effect(e) {
 
 <style scoped>
 .page { min-height: 100vh; padding-bottom: 74px; display: flex; flex-direction: column; }
-.topbar { height:56px;padding:0 16px;display:flex;align-items:center;justify-content:space-between; }.topbar h1 { font-size:18px; }.online { display:flex;align-items:center;gap:6px;color:var(--mint);font-size:11px; }.online i { width:6px;height:6px;border-radius:50%;background:var(--mint); }
+.topbar { height:56px;padding:0 16px;display:flex;align-items:center;justify-content:space-between; }.topbar h1 { font-size:18px; }.online { display:flex;align-items:center;gap:6px;color:var(--mint);font-size:11px; }.online i { width:6px;height:6px;border-radius:50%;background:var(--mint); }.online.unknown { color:var(--dim); }.online.unknown i { background:var(--dim); }.online.offline { color:var(--coral); }.online.offline i { background:var(--coral); }
 .sec { padding:0 16px;margin-top:18px; }.topbar + .sec { margin-top:4px; }
 .now {
   padding:10px 0 15px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;

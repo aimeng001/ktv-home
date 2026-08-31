@@ -32,7 +32,8 @@ public sealed record SongDto(
     [property: JsonPropertyName("durationMs")] int DurationMs = 0,
     [property: JsonPropertyName("lyricType")] string LyricType = "none",
     [property: JsonPropertyName("coverUrl")] string? CoverUrl = null,
-    [property: JsonPropertyName("playCount")] int PlayCount = 0);
+    [property: JsonPropertyName("playCount")] int PlayCount = 0,
+    [property: JsonPropertyName("artistAvatarUrl")] string? ArtistAvatarUrl = null);
 
 public sealed record NowPlaying(
     [property: JsonPropertyName("queueId")] long? QueueId,
@@ -78,7 +79,8 @@ public sealed record SongDetail(
     [property: JsonPropertyName("lyricType")] string LyricType,
     [property: JsonPropertyName("coverUrl")] string? CoverUrl,
     [property: JsonPropertyName("lyricUrl")] string? LyricUrl,
-    [property: JsonPropertyName("files")] IReadOnlyList<FileSource> Files);
+    [property: JsonPropertyName("files")] IReadOnlyList<FileSource> Files,
+    [property: JsonPropertyName("artistAvatarUrl")] string? ArtistAvatarUrl = null);
 
 public sealed record WsMessage(
     [property: JsonPropertyName("type")] string Type,

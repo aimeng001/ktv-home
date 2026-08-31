@@ -58,4 +58,13 @@ describe('usePlayerStore', () => {
     p.handleEvent('sync_full', { ...snapshot, playing: null })
     expect(p.nowPlaying).toBeNull()
   })
+
+  it('uses the server-reported TV status and keeps it unknown before the first status', () => {
+    const p = usePlayerStore()
+    expect(p.tvOnline).toBeNull()
+    p.handleEvent('sync_full', { ...snapshot, tvOnline: false })
+    expect(p.tvOnline).toBe(false)
+    p.handleEvent('sync_full', { ...snapshot })
+    expect(p.tvOnline).toBe(false)
+  })
 })

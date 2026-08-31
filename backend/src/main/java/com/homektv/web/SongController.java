@@ -57,11 +57,8 @@ public class SongController {
     public List<SongDto> search(@RequestParam(defaultValue = "") String keyword,
                                 @RequestParam(defaultValue = "") String type,
                                 @RequestParam(defaultValue = "0") int page) {
-        List<Song> songs = searchService.search(keyword, page);
-        return songs.stream()
-                .filter(s -> type.isBlank() || s.getMediaType().equalsIgnoreCase(type))
-                .map(SongDto::from)
-                .toList();
+        List<Song> songs = searchService.search(keyword, type, page);
+        return songs.stream().map(SongDto::from).toList();
     }
 
     /**

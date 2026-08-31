@@ -7,9 +7,11 @@ package com.homektv.library;
  * @param artist   歌手（可能为空）
  * @param language 语种（文件名未提供时为空）
  * @param category 分类（文件名未提供时为空）
+ * @param vocalForm 演唱形式（文件名未提供时为空）
  * @param status    {@link #RECOGNIZED} 或 {@link #NEEDS_REVIEW}
  */
-public record ParsedMeta(String title, String artist, String language, String category, String status) {
+public record ParsedMeta(String title, String artist, String language, String category,
+                         String vocalForm, String status) {
 
     public static final String RECOGNIZED = "RECOGNIZED";
     public static final String NEEDS_REVIEW = "NEEDS_REVIEW";
@@ -19,12 +21,18 @@ public record ParsedMeta(String title, String artist, String language, String ca
         artist = artist == null ? "" : artist.trim();
         language = language == null ? "" : language.trim();
         category = category == null ? "" : category.trim();
+        vocalForm = vocalForm == null ? "" : vocalForm.trim();
         status = NEEDS_REVIEW.equals(status) ? NEEDS_REVIEW : RECOGNIZED;
+    }
+
+    /** 保留现有五参数构造调用方的兼容 API。 */
+    public ParsedMeta(String title, String artist, String language, String category, String status) {
+        this(title, artist, language, category, "", status);
     }
 
     /** 保持既有调用方使用 boolean recognized() 的兼容 API。 */
     public ParsedMeta(String title, String artist, boolean recognized) {
-        this(title, artist, "", "", recognized ? RECOGNIZED : NEEDS_REVIEW);
+        this(title, artist, "", "", "", recognized ? RECOGNIZED : NEEDS_REVIEW);
     }
 
     public boolean recognized() {
@@ -41,20 +49,21 @@ public record ParsedMeta(String title, String artist, String language, String ca
 
     public static ParsedMeta of(String title, String artist) {
         boolean ok = title != null && !title.isBlank();
-        return new ParsedMeta(
-                ok ? title : "",
-                artist,
-                "",
-                "",
-                ok ? RECOGNIZED : NEEDS_REVIEW
-        );
+        return new ParsedMeta(ok ? title : "", artist, "", "", "",
+                ok ? RECOGNIZED : NEEDS_REVIEW);
     }
 
     public static ParsedMeta of(String title, String artist, String language, String category) {
+        return of(title, artist, language, category, "");
+    }
+
+    public static ParsedMeta of(String title, String artist, String language,
+                                String category, String vocalForm) {
         boolean ok = title != null && !title.isBlank()
                 && artist != null && !artist.isBlank()
                 && language != null && !language.isBlank()
                 && category != null && !category.isBlank();
-        return new ParsedMeta(title, artist, language, category, ok ? RECOGNIZED : NEEDS_REVIEW);
+        return new ParsedMeta(title, artist, language, category, vocalForm,
+                ok ? RECOGNIZED : NEEDS_REVIEW);
     }
 }

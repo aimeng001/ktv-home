@@ -124,6 +124,18 @@ class SearchIntegrationTest {
     }
 
     @Test
+    void mediaTypeFilterIsAppliedBeforeThePageLimit() {
+        for (int i = 0; i < 50; i++) {
+            save("分页歌曲" + i, "测试歌手" + i, "KTV_VIDEO", 100 - i);
+        }
+        save("分页歌曲目标", "测试歌手", "MV", 1);
+
+        List<Song> result = searchService.search("分页歌曲", "MV", 0);
+
+        assertThat(result).extracting(Song::getTitle).containsExactly("分页歌曲目标");
+    }
+
+    @Test
     void emptyKeywordReturnsEmpty() {
         assertThat(searchService.search("", 0)).isEmpty();
         assertThat(searchService.search("   ", 0)).isEmpty();

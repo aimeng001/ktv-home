@@ -2,6 +2,7 @@ package com.homektv.web.dto;
 
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
+import com.homektv.library.ArtistAvatarUrl;
 
 import java.util.List;
 
@@ -21,10 +22,18 @@ public record SongDetailDto(
         int durationMs,
         String lyricType,
         String coverUrl,
+        String artistAvatarUrl,
         String lyricUrl,
         int playCount,
         List<FileSourceDto> files
 ) {
+    /** Source-compatible constructor for callers using the original detail fields. */
+    public SongDetailDto(Long id, String title, String artist, String language, String[] tags,
+                         String mediaType, boolean hasVocalTrack, int durationMs, String lyricType,
+                         String coverUrl, String lyricUrl, int playCount, List<FileSourceDto> files) {
+        this(id, title, artist, language, tags, mediaType, hasVocalTrack, durationMs, lyricType,
+                coverUrl, ArtistAvatarUrl.forCredit(artist), lyricUrl, playCount, files);
+    }
     /**
      * 文件源信息：包含格式、音轨数、人声轨道索引等。
      *
@@ -67,6 +76,7 @@ public record SongDetailDto(
                 s.getId(), s.getTitle(), s.getArtist(), s.getLanguage(), s.getTags(),
                 s.getMediaType(), s.isHasVocalTrack(), s.getDurationMs(), s.getLyricType(),
                 s.getCoverPath() != null ? "/api/cover/" + s.getId() : null,
+                ArtistAvatarUrl.forCredit(s.getArtist()),
                 !"none".equals(s.getLyricType()) ? "/api/lyric/" + s.getId() : null,
                 s.getPlayCount(),
                 files.stream().map(FileSourceDto::from).toList()

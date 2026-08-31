@@ -51,7 +51,7 @@ public class WishController {
      * Wishlist entries (backend view/export).
      * @return 心愿单列表，按创建时间降序排列
      */
-    @GetMapping("/wishes")
+    @GetMapping("/admin/wishes")
     public List<Wish> list() {
         return wishRepo.findAllByOrderByCreatedAtDesc();
     }

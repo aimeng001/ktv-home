@@ -7,12 +7,14 @@ import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.domain.AudioLayout;
 import com.homektv.domain.AudioLayoutSource;
+import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,15 +33,26 @@ public class PlaybackService {
     private final SongRepository songRepo;
     private final PlayHistoryRepository historyRepo;
     private final SongFileRepository fileRepo;
+    private final SongAvailabilityPolicy availabilityPolicy;
 
+    /** Compatibility constructor for direct unit callers; Spring uses the injected policy below. */
     public PlaybackService(PlayerStateRepository playerRepo, QueueItemRepository queueRepo,
                            SongRepository songRepo, PlayHistoryRepository historyRepo,
                            SongFileRepository fileRepo) {
+        this(playerRepo, queueRepo, songRepo, historyRepo, fileRepo,
+                new SongAvailabilityPolicy(fileRepo));
+    }
+
+    @Autowired
+    public PlaybackService(PlayerStateRepository playerRepo, QueueItemRepository queueRepo,
+                           SongRepository songRepo, PlayHistoryRepository historyRepo,
+                           SongFileRepository fileRepo, SongAvailabilityPolicy availabilityPolicy) {
         this.playerRepo = playerRepo;
         this.queueRepo = queueRepo;
         this.songRepo = songRepo;
         this.historyRepo = historyRepo;
         this.fileRepo = fileRepo;
+        this.availabilityPolicy = availabilityPolicy;
     }
 
     /** 开始/恢复播放。若当前无曲目，尝试从队列取第一首。 */
@@ -329,11 +342,23 @@ public class PlaybackService {
             ps.setPositionMs(0);
             return;
         }
-        QueueItem nextItem = waiting.get(0);
-        nextItem.setStatus(QueueService.PLAYING);
-        queueRepo.save(nextItem);
-        ps.setCurrentQueueId(nextItem.getId());
-        ps.setState("playing");
+        for (QueueItem nextItem : waiting) {
+            Song song = songRepo.findById(nextItem.getSongId()).orElse(null);
+            if (!availabilityPolicy.isPlayable(song)) {
+                nextItem.setStatus(QueueService.SKIPPED);
+                nextItem.setPlayedAt(OffsetDateTime.now());
+                queueRepo.save(nextItem);
+                continue;
+            }
+            nextItem.setStatus(QueueService.PLAYING);
+            queueRepo.save(nextItem);
+            ps.setCurrentQueueId(nextItem.getId());
+            ps.setState("playing");
+            ps.setPositionMs(0);
+            return;
+        }
+        ps.setCurrentQueueId(null);
+        ps.setState("idle");
         ps.setPositionMs(0);
     }
 }

@@ -45,6 +45,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("windows-player", image)
         self.assertIn("image", github_release)
 
+    def test_release_publishes_a_manifest_bound_to_the_image_digest(self) -> None:
+        image = job_block(self.workflow, "image")
+        github_release = job_block(self.workflow, "github-release")
+
+        self.assertIn("outputs:", image)
+        self.assertIn("steps.publish_image.outputs.digest", image)
+        self.assertIn("release_manifest.py", github_release)
+        self.assertIn("needs.image.outputs.image_digest", github_release)
+        self.assertIn("release-assets/release-manifest.json", github_release)
+
     def test_release_source_gate_rejects_non_master_dispatches(self) -> None:
         source_gate = job_block(self.workflow, "release-source")
 

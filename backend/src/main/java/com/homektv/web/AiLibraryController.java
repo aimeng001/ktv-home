@@ -169,6 +169,12 @@ public class AiLibraryController {
         return service.savePlaylist(null, request.name(), request.description(), request.theme(), request.publicVisible());
     }
 
+    @PostMapping("/playlists/from-preview")
+    public Playlist savePlaylistFromPreview(@RequestBody SavePlaylistFromPreviewRequest request) {
+        return service.savePlaylistFromPreview(request.name(), request.description(), request.theme(),
+                request.publicVisible() == null || request.publicVisible(), request.songIds());
+    }
+
     /**
      * 更新指定歌单的信息。
      *
@@ -256,6 +262,8 @@ public class AiLibraryController {
     public record GeneratePlaylistRequest(String name, String tag, Integer limit) {}
     public record PlaylistPreviewRequest(String instruction, Integer limit) {}
     public record SavePlaylistRequest(String name, String description, String theme, boolean publicVisible) {}
+    public record SavePlaylistFromPreviewRequest(String name, String description, String theme,
+                                                 Boolean publicVisible, List<Long> songIds) {}
     public record PlaylistSongRequest(Long songId) {}
     public record ReorderSongsRequest(List<Long> songIds) {}
 }

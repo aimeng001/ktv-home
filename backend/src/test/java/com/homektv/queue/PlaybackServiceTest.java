@@ -2,6 +2,7 @@ package com.homektv.queue;
 
 import com.homektv.domain.PlayerState;
 import com.homektv.domain.QueueItem;
+import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.domain.AudioChannel;
 import com.homektv.domain.AudioLayout;
@@ -116,6 +117,29 @@ class PlaybackServiceTest {
         assertThat(result.accepted()).isTrue();
         assertThat(result.state().getPositionMs()).isEqualTo(12_345L);
         verify(playerRepository).save(playerState);
+    }
+
+    @Test
+    void playSkipsAWaitingSongThatHasNotFinishedMediaProbe() {
+        playerState.setCurrentQueueId(null);
+        playerState.setState("idle");
+        QueueItem pending = new QueueItem();
+        pending.setId(101L);
+        pending.setSongId(2L);
+        pending.setStatus(QueueService.WAITING);
+        Song song = new Song();
+        song.setId(2L);
+        song.setStatus("ok");
+        when(queueRepository.findByStatusOrderByOrderIndexAsc(QueueService.WAITING))
+                .thenReturn(List.of(pending));
+        when(songRepository.findById(2L)).thenReturn(Optional.of(song));
+        when(fileRepository.existsReadyFile(2L)).thenReturn(false);
+
+        playbackService.play();
+
+        assertThat(pending.getStatus()).isEqualTo(QueueService.SKIPPED);
+        assertThat(playerState.getCurrentQueueId()).isNull();
+        assertThat(playerState.getState()).isEqualTo("idle");
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.homektv.web.dto;
 
 import com.homektv.domain.Song;
+import com.homektv.library.ArtistAvatarUrl;
 
 /**
  * 歌曲列表/搜索结果项（详设§11.1）。
@@ -17,8 +18,16 @@ public record SongDto(
         int durationMs,
         String lyricType,
         String coverUrl,
-        int playCount
+        int playCount,
+        String artistAvatarUrl
 ) {
+    /** Source-compatible constructor for callers using the original protocol fields. */
+    public SongDto(Long id, String title, String artist, String artistGender, String mediaType,
+                   boolean hasVocalTrack, int durationMs, String lyricType, String coverUrl,
+                   int playCount) {
+        this(id, title, artist, artistGender, mediaType, hasVocalTrack, durationMs, lyricType,
+                coverUrl, playCount, ArtistAvatarUrl.forCredit(artist));
+    }
     /**
      * 将 {@link Song} 领域对象转换为 SongDto，封面路径组装为 API 访问地址，无封面时返回 {@code null}。
      *
@@ -39,7 +48,8 @@ public record SongDto(
                 s.getDurationMs(),
                 s.getLyricType(),
                 s.getCoverPath() != null ? "/api/cover/" + s.getId() : null,
-                s.getPlayCount()
+                s.getPlayCount(),
+                ArtistAvatarUrl.forCredit(s.getArtist())
         );
     }
 }

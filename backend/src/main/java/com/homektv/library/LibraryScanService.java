@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
@@ -164,7 +165,17 @@ public class LibraryScanService {
                                int added, int updated, int skipped, int unrecognized,
                                OffsetDateTime startedAt, OffsetDateTime finishedAt,
                                String phase, int discovered, int fastIndexed, int probeQueued,
-                               int probeCompleted) {
+                               int probeCompleted, double probedPerSecond, Long estimatedRemainingSeconds) {
+        public ScanProgress(boolean running, int total, int completed, String currentFile,
+                            int added, int updated, int skipped, int unrecognized,
+                            OffsetDateTime startedAt, OffsetDateTime finishedAt,
+                            String phase, int discovered, int fastIndexed, int probeQueued,
+                            int probeCompleted) {
+            this(running, total, completed, currentFile, added, updated, skipped, unrecognized,
+                    startedAt, finishedAt, phase, discovered, fastIndexed, probeQueued, probeCompleted,
+                    0.0, null);
+        }
+
         public ScanProgress(boolean running, int total, int completed, String currentFile,
                             int added, int updated, int skipped, int unrecognized,
                             OffsetDateTime startedAt, OffsetDateTime finishedAt) {
@@ -173,17 +184,20 @@ public class LibraryScanService {
                     finishedAt != null ? PHASE_COMPLETED
                             : running && total == 0 ? PHASE_DISCOVERING
                             : running ? PHASE_MEDIA_PROBE : PHASE_COMPLETED,
-                    total, total, 0, Math.max(0, completed));
+                    total, total, 0, Math.max(0, completed), 0.0, null);
         }
 
         static ScanProgress idle() {
             return new ScanProgress(false, 0, 0, null, 0, 0, 0, 0,
-                    null, null, "IDLE", 0, 0, 0, 0);
+                    null, null, "IDLE", 0, 0, 0, 0, 0.0, null);
         }
     }
 
     @Autowired(required = false)
     private ArtistCreditService artistCreditService;
+
+    @Autowired(required = false)
+    private ArtistProfileBootstrap artistProfileBootstrap;
 
     /** 全量/增量扫描曲库根目录。Fast Index 与数据库持久化 Media Probe Queue 分阶段执行。 */
     public ScanResult scanAll() {
@@ -270,7 +284,7 @@ public class LibraryScanService {
                                     enumerationComplete[0] = false;
                                     log.warn("记录本轮扫描路径失败，本轮不标记缺失：{}", failure.getMessage());
                                 }
-                                processFastIndexBatch(batch, externalDefault, counters, totals,
+                                processFastIndexBatch(batch, externalDefault, knownArtists, counters, totals,
                                         startedAt, discovered[0], activeRole,
                                         scanId, maxIdAtScanStart);
                                 batch.clear();
@@ -313,7 +327,7 @@ public class LibraryScanService {
                     enumerationComplete[0] = false;
                     log.warn("记录本轮扫描路径失败，本轮不标记缺失：{}", failure.getMessage());
                 }
-                processFastIndexBatch(batch, externalDefault, counters, totals,
+                processFastIndexBatch(batch, externalDefault, knownArtists, counters, totals,
                         startedAt, discovered[0], activeRole,
                         scanId, maxIdAtScanStart);
                 batch.clear();
@@ -335,6 +349,17 @@ public class LibraryScanService {
                     activeRole, scanId, maxIdAtScanStart,
                     counters, totals, startedAt, discovered[0]);
 
+            if (artistProfileBootstrap != null) {
+                try {
+                    artistProfileBootstrap.refreshAfterScan();
+                } catch (RuntimeException failure) {
+                    // Profile reconciliation is asynchronous follow-up work;
+                    // a rejected refresh must not turn a completed scan into
+                    // a failed scan.
+                    log.warn("歌手档案异步刷新未排队，等待定时补偿：{}", failure.getMessage());
+                }
+            }
+
             log.info("扫描完成：共 {} 文件，新增 {}，更新 {}，跳过 {}，未识别 {}",
                     discovered[0], totals.added, totals.updated, totals.skipped, totals.unrecognized);
             ScanResult result = new ScanResult(discovered[0], totals.added, totals.updated,
@@ -351,6 +376,7 @@ public class LibraryScanService {
     }
 
     private void processFastIndexBatch(List<FastIndexEntry> batch, AudioLayout externalDefault,
+                                       Collection<String> knownArtists,
                                        ScanCounters counters, ScanTotals totals,
                                        OffsetDateTime startedAt, int discovered, String activeRole,
                                        UUID scanId, long maxIdAtScanStart) {
@@ -367,24 +393,31 @@ public class LibraryScanService {
                     startedAt, null);
             return;
         }
+        Map<Long, Song> songsForFilenameRepair = loadSongsForFilenameRepair(resolvedBatch);
         Runnable work = () -> {
             for (FastIndexEntry entry : resolvedBatch) {
                 switch (snapshotChange(entry)) {
                     case UNCHANGED -> {
+                        Song song = entry.existing().map(SongFile::getSongId)
+                                .map(songsForFilenameRepair::get)
+                                .orElse(null);
+                        boolean repaired = reconcileUnchangedFilenameMetadata(
+                                entry, song, knownArtists, counters);
                         reactivateIfNeeded(entry, counters);
-                        totals.skipped++;
+                        if (repaired) totals.updated++;
+                        else totals.skipped++;
                     }
                     case LYRIC_ONLY -> {
                         LyricRefreshOutcome outcome = refreshSidecarLyric(entry, counters);
                         if (outcome == LyricRefreshOutcome.NEEDS_MEDIA_PROBE) {
-                            prepareFastIndex(entry, counters, externalDefault, true);
+                            prepareFastIndex(entry, counters, externalDefault, true, knownArtists);
                         } else if (outcome == LyricRefreshOutcome.UPDATED) {
                             totals.updated++;
                         } else {
                             totals.skipped++;
                         }
                     }
-                    case MEDIA_CHANGED -> prepareFastIndex(entry, counters, externalDefault);
+                    case MEDIA_CHANGED -> prepareFastIndex(entry, counters, externalDefault, false, knownArtists);
                 }
             }
         };
@@ -409,6 +442,134 @@ public class LibraryScanService {
         publishProgress(true, discovered, counters.fastIndexed, null, totals,
                 PHASE_FAST_INDEX, counters.fastIndexed, 0, totals.probeCompleted,
                 startedAt, null);
+    }
+
+    /**
+     * Load only the songs that could benefit from the legacy filename repair.
+     * The lookup is batched so a scan never turns this compatibility path into
+     * one database query per unchanged file.
+     */
+    private Map<Long, Song> loadSongsForFilenameRepair(List<FastIndexEntry> batch) {
+        Set<Long> songIds = new LinkedHashSet<>();
+        for (FastIndexEntry entry : batch) {
+            if (snapshotChange(entry) != SnapshotChange.UNCHANGED
+                    || entry.filenameMeta() == null
+                    || !entry.filenameMeta().recognized()) {
+                continue;
+            }
+            entry.existing().map(SongFile::getSongId).ifPresent(songIds::add);
+        }
+        if (songIds.isEmpty()) return Map.of();
+
+        try {
+            Iterable<Song> songs = songRepo.findAllById(songIds);
+            Map<Long, Song> byId = new HashMap<>();
+            if (songs != null) {
+                for (Song song : songs) {
+                    if (song != null && song.getId() != null) byId.put(song.getId(), song);
+                }
+            }
+            return byId;
+        } catch (RuntimeException failure) {
+            // Filename repair is an optional compatibility enhancement. A
+            // transient read failure must not turn a valid unchanged scan into
+            // a failed batch or cause a re-probe.
+            log.warn("读取待修复歌曲元数据失败，本批次跳过旧文件名修复：{}", failure.getMessage());
+            return Map.of();
+        }
+    }
+
+    /**
+     * Repair only a previously unrecognized row when the current filename is
+     * now unambiguous. This path intentionally reads no media bytes and never
+     * touches the source file.
+     */
+    private boolean reconcileUnchangedFilenameMetadata(FastIndexEntry entry, Song song,
+                                                       Collection<String> knownArtists,
+                                                       ScanCounters counters) {
+        ParsedMeta candidate = entry.filenameMeta();
+        if (song == null || candidate == null || !candidate.recognized()
+                || !"unrecognized".equalsIgnoreCase(song.getStatus())
+                || hasManualIdentityOverride(song)) {
+            return false;
+        }
+
+        String fingerprint = MediaClassifier.fingerprint(
+                candidate.artist(), candidate.title(), song.getDurationMs());
+        if (!Objects.equals(fingerprint, song.getFingerprint())) {
+            try {
+                Optional<Song> conflict = songRepo.findByFingerprint(fingerprint)
+                        .filter(other -> !sameSong(other, song));
+                if (conflict.isPresent()) {
+                    log.warn("文件名修复发现歌曲指纹冲突，保留待审核：{} -> #{}",
+                            entry.file().getFileName(), conflict.get().getId());
+                    return false;
+                }
+            } catch (RuntimeException failure) {
+                log.warn("检查文件名修复指纹冲突失败，保留待审核：{} - {}",
+                        entry.file().getFileName(), failure.getMessage());
+                return false;
+            }
+        }
+
+        boolean changed = false;
+        if (!song.isMetadataLocked("title")
+                && !Objects.equals(song.getTitle(), candidate.title())) {
+            song.setTitle(candidate.title());
+            song.setTitlePy(PinyinUtil.fullPinyin(candidate.title()));
+            song.setTitleInit(PinyinUtil.initials(candidate.title()));
+            changed = true;
+        }
+        if (!song.isMetadataLocked("artist")
+                && !Objects.equals(song.getArtist(), candidate.artist())) {
+            song.setArtist(candidate.artist());
+            song.setArtistPy(PinyinUtil.fullPinyin(candidate.artist()));
+            song.setArtistInit(PinyinUtil.initials(candidate.artist()));
+            changed = true;
+        }
+        if (!song.isMetadataLocked("language")) {
+            String language = normalizeLanguage(candidate.language());
+            if (!Objects.equals(song.getLanguage(), language)) {
+                song.setLanguage(language);
+                changed = true;
+            }
+        }
+        if (!song.isMetadataLocked("tags")) {
+            String[] tags = new String[]{candidate.category()};
+            if (!Arrays.equals(song.getTags(), tags)) {
+                song.setTags(tags);
+                changed = true;
+            }
+        }
+        if (!song.isMetadataLocked("vocalForm")
+                && !candidate.vocalForm().isBlank()
+                && !Objects.equals(song.getVocalForm(), candidate.vocalForm())) {
+            song.setVocalForm(candidate.vocalForm());
+            changed = true;
+        }
+        if (!Objects.equals(song.getFingerprint(), fingerprint)) {
+            song.setFingerprint(fingerprint);
+            changed = true;
+        }
+        if (!"ok".equalsIgnoreCase(song.getStatus())) {
+            song.setStatus("ok");
+            changed = true;
+        }
+        boolean needsAiOptimization = isBlank(song.getTitle())
+                || "未知歌手".equals(song.getArtist())
+                || "未知".equals(song.getLanguage());
+        if (song.isNeedsAiOptimization() != needsAiOptimization) {
+            song.setNeedsAiOptimization(needsAiOptimization);
+            changed = true;
+        }
+        if (!changed) return false;
+
+        song.setMetadataProvenance("{\"title\":{\"source\":\"filename_reparse\"},"
+                + "\"artist\":{\"source\":\"filename_reparse\"}}");
+        songRepo.save(song);
+        syncArtistCredits(song, knownArtists);
+        counters.dbUpdates++;
+        return true;
     }
 
     /**
@@ -488,6 +649,7 @@ public class LibraryScanService {
                                       ScanTotals totals,
                                       OffsetDateTime startedAt,
                                       int discovered) {
+        totals.probeStartedAt = OffsetDateTime.now();
         String afterPath = "";
         while (true) {
             Slice<SongFile> page;
@@ -629,9 +791,27 @@ public class LibraryScanService {
                                  ScanTotals totals, String phase, int fastIndexed, int probeQueued,
                                  int probeCompleted, OffsetDateTime startedAt,
                                  OffsetDateTime finishedAt) {
+        double rate = 0.0;
+        Long eta = null;
+        if (running && probeCompleted > 0) {
+            OffsetDateTime phaseStart = totals != null && totals.probeStartedAt != null
+                    ? totals.probeStartedAt
+                    : startedAt;
+            if (phaseStart != null) {
+                long elapsedSeconds = Math.max(1, Duration.between(phaseStart, OffsetDateTime.now()).toSeconds());
+                rate = Math.round((double) probeCompleted / elapsedSeconds * 10.0) / 10.0;
+                if (rate > 0.05 && probeQueued > probeCompleted) {
+                    eta = (long) Math.ceil((probeQueued - probeCompleted) / rate);
+                }
+            }
+        }
         scanProgress.set(new ScanProgress(running, total, completed, currentFile,
-                totals.added, totals.updated, totals.skipped, totals.unrecognized,
-                startedAt, finishedAt, phase, total, fastIndexed, probeQueued, probeCompleted));
+                totals == null ? 0 : totals.added,
+                totals == null ? 0 : totals.updated,
+                totals == null ? 0 : totals.skipped,
+                totals == null ? 0 : totals.unrecognized,
+                startedAt, finishedAt, phase, total, fastIndexed, probeQueued, probeCompleted,
+                rate, eta));
     }
 
     private static int safeInt(long value) {
@@ -673,8 +853,19 @@ public class LibraryScanService {
     }
 
     private void syncArtistCredits(Song song) {
+        syncArtistCredits(song, List.of());
+    }
+
+    private void syncArtistCredits(Song song, Collection<String> knownArtists) {
         if (artistCreditService != null && song != null && song.getId() != null) {
-            artistCreditService.replace(song.getId(), song.getArtist());
+            if (knownArtists == null || knownArtists.isEmpty()) {
+                // Preserve the original service seam for scans without any
+                // reliable artist evidence; explicit separators retain their
+                // historical behavior in the two-argument parser.
+                artistCreditService.replace(song.getId(), song.getArtist());
+            } else {
+                artistCreditService.replace(song.getId(), song.getArtist(), knownArtists);
+            }
         }
     }
 
@@ -832,11 +1023,17 @@ public class LibraryScanService {
     /** Persist filename metadata before opening the media file for FFprobe. */
     private FastIndexEntry prepareFastIndex(FastIndexEntry entry, ScanCounters counters,
                                             AudioLayout externalDefault) {
-        return prepareFastIndex(entry, counters, externalDefault, false);
+        return prepareFastIndex(entry, counters, externalDefault, false, List.of());
     }
 
     private FastIndexEntry prepareFastIndex(FastIndexEntry entry, ScanCounters counters,
                                             AudioLayout externalDefault, boolean forceMediaProbe) {
+        return prepareFastIndex(entry, counters, externalDefault, forceMediaProbe, List.of());
+    }
+
+    private FastIndexEntry prepareFastIndex(FastIndexEntry entry, ScanCounters counters,
+                                            AudioLayout externalDefault, boolean forceMediaProbe,
+                                            Collection<String> knownArtists) {
         SongFile existing = entry.existing().orElse(null);
         OffsetDateTime normalizedMtime = normalizeMtime(entry.mtime());
         if (existing != null) {
@@ -891,11 +1088,14 @@ public class LibraryScanService {
         provisional.setStatus(parsed.recognized() ? "ok" : "unrecognized");
         provisional.setTags(parsed.category() == null || parsed.category().isBlank()
                 ? new String[0] : new String[]{parsed.category()});
+        if (parsed.vocalForm() != null && !parsed.vocalForm().isBlank()) {
+            provisional.setVocalForm(parsed.vocalForm());
+        }
         provisional.setMetadataProvenance("{\"title\":{\"source\":\"filename_fast_index\"},"
                 + "\"artist\":{\"source\":\"filename_fast_index\"}}");
         provisional.setNeedsAiOptimization(!parsed.recognized());
         provisional = songRepo.save(provisional);
-        syncArtistCredits(provisional);
+        syncArtistCredits(provisional, knownArtists);
         counters.dbUpdates++;
 
         SongFile indexed = new SongFile();
@@ -1209,31 +1409,35 @@ public class LibraryScanService {
         String lrcArtist = lrcTag(sidecarLyricText, "ar");
         boolean recognized;
         String title, artist;
-        String identitySource;
-        ParsedMeta filenameMeta = null;
+        String titleSource;
+        String artistSource;
+        ParsedMeta filenameMeta = entry.filenameMeta();
         if (tag.hasTitle()) {
             title = tag.getTitle();
-            artist = tag.getArtist() != null ? tag.getArtist() : "";
             recognized = true;
-            identitySource = "audio_tag";
+            titleSource = "audio_tag";
         } else if (probe.title() != null && !probe.title().isBlank()) {
             title = probe.title();
-            artist = probe.artist() == null ? "" : probe.artist();
             recognized = true;
-            identitySource = "container_tag";
+            titleSource = "container_tag";
         } else if (lrcTitle != null && !lrcTitle.isBlank()) {
             title = lrcTitle;
-            artist = lrcArtist == null ? "" : lrcArtist;
             recognized = true;
-            identitySource = "lrc_tag";
+            titleSource = "lrc_tag";
         } else {
-            filenameMeta = entry.filenameMeta();
             title = filenameMeta.title();
-            artist = filenameMeta.artist();
             recognized = filenameMeta.recognized();
-            identitySource = "filename";
+            titleSource = "filename";
         }
-        if (artist == null || artist.isBlank()) artist = "未知歌手";
+        artist = firstNonBlank(
+                tag.getArtist(),
+                probe.artist(),
+                lrcArtist,
+                filenameMeta.artist()
+        );
+        artistSource = artist.isBlank() ? "default" : sourceOfArtist(
+                tag.getArtist(), probe.artist(), lrcArtist, filenameMeta.artist());
+        if (artist.isBlank()) artist = "未知歌手";
 
         // 4) Resolve the file-level semantic layout before classification. A
         // one-stream DUAL_CHANNEL video is a karaoke source even though the
@@ -1278,7 +1482,7 @@ public class LibraryScanService {
             }
             song = existingSong;
             applyProbedMetadata(song, title, artist, mediaType, hasVocal, probe,
-                    fingerprint, recognized, tag, filenameMeta, identitySource);
+                    fingerprint, recognized, tag, filenameMeta, titleSource, artistSource);
             isNew = false;
         } else if (dup.isPresent() && !sameSong(dup.get(), provisional)) {
             song = dup.get();
@@ -1287,7 +1491,7 @@ public class LibraryScanService {
         } else if (provisional != null) {
             song = provisional;
             applyProbedMetadata(song, title, artist, mediaType, hasVocal, probe,
-                    fingerprint, recognized, tag, filenameMeta, identitySource);
+                    fingerprint, recognized, tag, filenameMeta, titleSource, artistSource);
             isNew = false;
         } else if (dup.isPresent()) {
             song = dup.get();
@@ -1316,7 +1520,11 @@ public class LibraryScanService {
                 // 现有模型没有独立 category 列；沿用 Home KTV 的 tags 数组承载文件名分类。
                 song.setTags(new String[]{filenameMeta.category()});
             }
-            song.setMetadataProvenance("{\"title\":{\"source\":\"" + identitySource + "\"},\"artist\":{\"source\":\"" + identitySource + "\"}}");
+            if (filenameMeta != null && !filenameMeta.vocalForm().isBlank()) {
+                song.setVocalForm(filenameMeta.vocalForm());
+            }
+            song.setMetadataProvenance("{\"title\":{\"source\":\"" + titleSource
+                    + "\"},\"artist\":{\"source\":\"" + artistSource + "\"}}");
             song.setNeedsAiOptimization(!recognized || "未知".equals(song.getLanguage()) || "未知歌手".equals(song.getArtist()));
             isNew = true;
         }
@@ -1353,7 +1561,7 @@ public class LibraryScanService {
             }
         }
         song = songRepo.save(song);
-        syncArtistCredits(song);
+        syncArtistCredits(song, knownArtists);
         synchronized (counters) {
             counters.dbUpdates++;
         }
@@ -1482,7 +1690,7 @@ public class LibraryScanService {
     private static void applyProbedMetadata(Song song, String title, String artist, String mediaType,
                                             boolean hasVocal, MediaProbe probe, String fingerprint,
                                             boolean recognized, TagInfo tag, ParsedMeta filenameMeta,
-                                            String identitySource) {
+                                            String titleSource, String artistSource) {
         boolean titleLocked = song.isMetadataLocked("title");
         boolean artistLocked = song.isMetadataLocked("artist");
         boolean languageLocked = song.isMetadataLocked("language");
@@ -1516,9 +1724,13 @@ public class LibraryScanService {
         if (!tagsLocked && filenameMeta != null && !filenameMeta.category().isBlank()) {
             song.setTags(new String[]{filenameMeta.category()});
         }
+        if (!song.isMetadataLocked("vocalForm")
+                && filenameMeta != null && !filenameMeta.vocalForm().isBlank()) {
+            song.setVocalForm(filenameMeta.vocalForm());
+        }
         if (!titleLocked && !artistLocked) {
-            song.setMetadataProvenance("{\"title\":{\"source\":\"" + identitySource
-                    + "\"},\"artist\":{\"source\":\"" + identitySource + "\"}}");
+            song.setMetadataProvenance("{\"title\":{\"source\":\"" + titleSource
+                    + "\"},\"artist\":{\"source\":\"" + artistSource + "\"}}");
         }
         if (!hasManualIdentityOverride(song)) {
             song.setNeedsAiOptimization(!recognized || "未知".equals(song.getLanguage())
@@ -1716,6 +1928,7 @@ public class LibraryScanService {
         private int skipped;
         private int unrecognized;
         private int probeCompleted;
+        private OffsetDateTime probeStartedAt;
     }
 
 
@@ -1791,5 +2004,20 @@ public class LibraryScanService {
         // Spring singleton retained every historical artist name after a large
         // scan, even though the next scan builds its own snapshot.
         return FilenameParser.prepareKnownArtists(snapshot);
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) return value.trim();
+        }
+        return "";
+    }
+
+    private static String sourceOfArtist(String... values) {
+        String[] sources = {"audio_tag", "container_tag", "lrc_tag", "filename"};
+        for (int i = 0; i < values.length && i < sources.length; i++) {
+            if (values[i] != null && !values[i].isBlank()) return sources[i];
+        }
+        return "default";
     }
 }

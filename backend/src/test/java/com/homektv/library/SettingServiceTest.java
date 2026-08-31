@@ -12,6 +12,8 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SettingServiceTest {
@@ -33,5 +35,20 @@ class SettingServiceTest {
                         SettingService.EXTERNAL_DEFAULT_AUDIO_LAYOUT, "NOT_A_LAYOUT")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("音频布局");
+    }
+
+    @Test
+    void failsTheWholeWriteWhenASettingCannotBeSerialized() throws Exception {
+        ObjectMapper mapper = mock(ObjectMapper.class);
+        when(mapper.writeValueAsString("bad-value"))
+                .thenThrow(new com.fasterxml.jackson.core.JsonProcessingException("serialization failed") { });
+        SettingRepository repository = mock(SettingRepository.class);
+        when(repository.findById("standby_welcome")).thenReturn(java.util.Optional.empty());
+        SettingService service = new SettingService(repository, mapper);
+
+        assertThatThrownBy(() -> service.putAll(Map.of("standby_welcome", "bad-value")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("设置序列化失败");
+        verify(repository, never()).save(org.mockito.ArgumentMatchers.any());
     }
 }

@@ -66,8 +66,113 @@ class CategoryBrowseServiceTest {
                 .containsEntry("name", "周杰伦")
                 .containsEntry("initial", "Z")
                 .containsEntry("gender", "男歌手")
-                .containsEntry("songCount", 50);
+                .containsEntry("songCount", 50)
+                .containsEntry("avatarUrl", null);
         verify(repository, never()).findByStatus(any(), any());
+    }
+
+    @Test
+    void legacyArtistEndpointMergesDisplayVariantsByCanonicalArtistKey() {
+        SongRepository repository = mock(SongRepository.class);
+        SongRepository.ArtistStatsProjection first = mock(SongRepository.ArtistStatsProjection.class);
+        SongRepository.ArtistStatsProjection variant = mock(SongRepository.ArtistStatsProjection.class);
+        when(first.getArtist()).thenReturn("周杰伦");
+        when(first.getArtistKey()).thenReturn("zhoujielun");
+        when(first.getArtistGender()).thenReturn("男歌手");
+        when(first.getArtistInit()).thenReturn("Z");
+        when(first.getSongCount()).thenReturn(5L);
+        when(variant.getArtist()).thenReturn("周 杰伦");
+        when(variant.getArtistKey()).thenReturn("zhoujielun");
+        when(variant.getArtistGender()).thenReturn("男歌手");
+        when(variant.getArtistInit()).thenReturn("Z");
+        when(variant.getSongCount()).thenReturn(3L);
+        when(repository.aggregateArtistsByStatus("ok")).thenReturn(List.of(first, variant));
+
+        List<Map<String, Object>> result = new CategoryBrowseService(repository).artists();
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst())
+                .containsEntry("artistKey", "zhoujielun")
+                .containsEntry("name", "周杰伦")
+                .containsEntry("songCount", 8);
+    }
+
+    @Test
+    void artistsExposesAvatarOnlyWhenTheProfileHasACachedFile() {
+        SongRepository repository = mock(SongRepository.class);
+        SongRepository.ArtistStatsProjection withAvatar = mock(SongRepository.ArtistStatsProjection.class);
+        when(withAvatar.getArtist()).thenReturn("周杰伦");
+        when(withAvatar.getArtistKey()).thenReturn("zhoujielun");
+        when(withAvatar.getArtistGender()).thenReturn("男歌手");
+        when(withAvatar.getArtistInit()).thenReturn("Z");
+        when(withAvatar.getSongCount()).thenReturn(1L);
+        when(withAvatar.getAvatarPath()).thenReturn("artist-covers/avatar.jpg");
+        when(repository.aggregateArtistsByStatus("ok")).thenReturn(List.of(withAvatar));
+
+        Map<String, Object> result = new CategoryBrowseService(repository).artists().getFirst();
+
+        assertThat(result).containsEntry("avatarUrl", "/api/artists/avatar?key=zhoujielun");
+    }
+
+    @Test
+    void staleProfileCannotTurnAnUnattributedLabelIntoARealArtist() {
+        SongRepository repository = mock(SongRepository.class);
+        SongRepository.ArtistStatsProjection row = mock(SongRepository.ArtistStatsProjection.class);
+        when(row.getArtist()).thenReturn("佚名");
+        when(row.getArtistKey()).thenReturn("佚名");
+        when(row.getArtistGender()).thenReturn("男歌手");
+        when(row.getArtistInit()).thenReturn("");
+        when(row.getSongCount()).thenReturn(7285L);
+        when(row.getArtistKind()).thenReturn("PERSON");
+        when(row.getAvatarPath()).thenReturn("artist-covers/stale.jpg");
+        when(repository.aggregateArtistsByStatus("ok")).thenReturn(List.of(row));
+
+        Map<String, Object> result = new CategoryBrowseService(repository).artists().getFirst();
+
+        assertThat(result).containsEntry("artistKind", "UNATTRIBUTED")
+                .containsEntry("avatarUrl", null)
+                .containsEntry("songCount", 7285);
+    }
+
+    @Test
+    void artistsPageUsesBoundedDatabasePaginationAndMapsInitialAndAvatar() {
+        SongRepository repository = mock(SongRepository.class);
+        SongRepository.PublicArtistDirectoryProjection row = mock(SongRepository.PublicArtistDirectoryProjection.class);
+        when(row.getArtistKey()).thenReturn("zhoujielun");
+        when(row.getName()).thenReturn("周杰伦");
+        when(row.getInitial()).thenReturn("Z");
+        when(row.getGender()).thenReturn("男歌手");
+        when(row.getSongCount()).thenReturn(7285L);
+        when(row.getArtistKind()).thenReturn("PERSON");
+        when(row.getAvatarPath()).thenReturn("artist-covers/zhou.jpg");
+        when(repository.pagePublicArtistDirectory(eq("ok"), eq("男歌手"), eq("Z"), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), PageRequest.of(0, 30), 101));
+
+        CategoryBrowseService.ArtistPage result = new CategoryBrowseService(repository)
+                .artistsPage("男歌手", "Z", 0, 30);
+
+        assertThat(result.items()).hasSize(1);
+        assertThat(result.items().getFirst())
+                .containsEntry("name", "周杰伦")
+                .containsEntry("initial", "Z")
+                .containsEntry("songCount", 7285)
+                .containsEntry("avatarUrl", "/api/artists/avatar?key=zhoujielun");
+        assertThat(result.total()).isEqualTo(101);
+        verify(repository).pagePublicArtistDirectory(eq("ok"), eq("男歌手"), eq("Z"), any(Pageable.class));
+        verify(repository, never()).aggregateArtistsByStatus(any());
+    }
+
+    @Test
+    void artistInitialsAreLoadedAsASeparateSmallQuery() {
+        SongRepository repository = mock(SongRepository.class);
+        SongRepository.ArtistInitialProjection z = mock(SongRepository.ArtistInitialProjection.class);
+        SongRepository.ArtistInitialProjection a = mock(SongRepository.ArtistInitialProjection.class);
+        when(z.getInitial()).thenReturn("Z");
+        when(a.getInitial()).thenReturn("A");
+        when(repository.findPublicArtistInitials("ok", "")).thenReturn(List.of(a, z));
+
+        assertThat(new CategoryBrowseService(repository).artistInitials(" "))
+                .containsExactly("A", "Z");
     }
 
     @Test
@@ -99,6 +204,69 @@ class CategoryBrowseServiceTest {
         assertThat(result).hasSize(1);
         assertThat(result.get(0).title()).isEqualTo("晴天");
         verify(repository, never()).findByStatus(any(), any());
+    }
+
+    @Test
+    void songsPageUsesBoundedDatabasePageAndReturnsTotal() {
+        SongRepository repository = mock(SongRepository.class);
+        Song s = new Song();
+        s.setId(42L);
+        s.setTitle("分页歌曲");
+        s.setArtist("周杰伦");
+        s.setStatus("ok");
+        when(repository.browseCategorySongs(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(s), PageRequest.of(1, 50), 7285));
+
+        CategoryBrowseService.SongPage result = new CategoryBrowseService(repository)
+                .songsPage("周杰伦", "", "", "", "", "title", 1, 50);
+
+        assertThat(result.items()).hasSize(1);
+        assertThat(result.items().getFirst().title()).isEqualTo("分页歌曲");
+        assertThat(result.total()).isEqualTo(7285);
+        assertThat(result.page()).isEqualTo(1);
+        assertThat(result.size()).isEqualTo(50);
+        verify(repository).browseCategorySongs(any(), any(), any(), any(), any(),
+                eq(PageRequest.of(1, 50, org.springframework.data.domain.Sort.by(
+                        org.springframework.data.domain.Sort.Direction.ASC, "title"))));
+    }
+
+    @Test
+    void songsPageClampsAnUntrustedPageSize() {
+        SongRepository repository = mock(SongRepository.class);
+        when(repository.browseCategorySongs(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 100), 0));
+
+        CategoryBrowseService.SongPage result = new CategoryBrowseService(repository)
+                .songsPage("", "", "", "", "", "hot", -1, 10_000);
+
+        assertThat(result.page()).isZero();
+        assertThat(result.size()).isEqualTo(100);
+        verify(repository).browseCategorySongs(any(), any(), any(), any(), any(),
+                eq(PageRequest.of(0, 100, org.springframework.data.domain.Sort.by(
+                        org.springframework.data.domain.Sort.Direction.DESC, "play_count")
+                        .and(org.springframework.data.domain.Sort.by(
+                                org.springframework.data.domain.Sort.Direction.ASC, "title"))
+                        .and(org.springframework.data.domain.Sort.by(
+                                org.springframework.data.domain.Sort.Direction.ASC, "id")))));
+    }
+
+    @Test
+    void songsPageUsesCanonicalArtistKeyWhenDirectoryProvidesOne() {
+        SongRepository repository = mock(SongRepository.class);
+        Song song = new Song();
+        song.setId(43L);
+        song.setTitle("变体歌曲");
+        song.setArtist("周 杰伦");
+        when(repository.browseCategorySongsByArtistKey(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(song), PageRequest.of(0, 50), 1));
+
+        CategoryBrowseService.SongPage result = new CategoryBrowseService(repository)
+                .songsPage("周杰伦", "zhoujielun", "", "", "", "", "hot", 0, 50);
+
+        assertThat(result.items()).extracting(SongDto::title).containsExactly("变体歌曲");
+        verify(repository).browseCategorySongsByArtistKey(
+                eq("zhoujielun"), eq(""), eq(""), eq(""), eq(""), any(Pageable.class));
+        verify(repository, never()).browseCategorySongs(any(), any(), any(), any(), any(), any());
     }
 
     private Song song(String gender) {

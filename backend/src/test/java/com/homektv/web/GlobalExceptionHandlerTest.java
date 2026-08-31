@@ -14,4 +14,12 @@ class GlobalExceptionHandlerTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
     }
+
+    @Test
+    void mapsRetryableSongAvailabilityToConflict() {
+        var response = new GlobalExceptionHandler().handleApi(
+                new ApiException("SONG_NOT_READY", "媒体探测未完成"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    }
 }

@@ -3,6 +3,7 @@ package com.homektv.queue;
 import com.homektv.domain.PlayerState;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.Song;
+import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
@@ -38,12 +39,15 @@ public class QueueService {
     private final QueueItemRepository queueRepo;
     private final SongRepository songRepo;
     private final PlayerStateRepository playerRepo;
+    private final SongAvailabilityPolicy availabilityPolicy;
 
     public QueueService(QueueItemRepository queueRepo, SongRepository songRepo,
-                        PlayerStateRepository playerRepo) {
+                        PlayerStateRepository playerRepo,
+                        SongAvailabilityPolicy availabilityPolicy) {
         this.queueRepo = queueRepo;
         this.songRepo = songRepo;
         this.playerRepo = playerRepo;
+        this.availabilityPolicy = availabilityPolicy;
     }
 
     /**
@@ -58,6 +62,7 @@ public class QueueService {
         if ("file_missing".equals(song.getStatus())) {
             throw new ApiException("FILE_MISSING", "歌曲文件丢失，无法点播");
         }
+        availabilityPolicy.requirePlayable(song);
 
         if (!force) {
             queueRepo.lockSongForOrder(songId);

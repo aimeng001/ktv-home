@@ -58,7 +58,7 @@ services:
         bind:
           create_host_path: false
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health | grep -q '\"status\":\"UP\"'"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/ready | grep -q '\"status\":\"UP\"'"]
       interval: 2s
       timeout: 5s
       retries: 30

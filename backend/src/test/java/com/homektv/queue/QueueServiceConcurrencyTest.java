@@ -3,9 +3,11 @@ package com.homektv.queue;
 import com.homektv.domain.PlayerState;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.Song;
+import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
+import com.homektv.web.ApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,7 +22,9 @@ import java.util.HashMap;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
@@ -33,6 +37,8 @@ class QueueServiceConcurrencyTest {
     private SongRepository songRepository;
     @Mock
     private PlayerStateRepository playerRepository;
+    @Mock
+    private SongAvailabilityPolicy availabilityPolicy;
 
     private QueueService queueService;
     private Song song;
@@ -40,7 +46,7 @@ class QueueServiceConcurrencyTest {
 
     @BeforeEach
     void setUp() {
-        queueService = new QueueService(queueRepository, songRepository, playerRepository);
+        queueService = new QueueService(queueRepository, songRepository, playerRepository, availabilityPolicy);
         song = new Song();
         song.setId(10L);
         song.setTitle("测试歌曲");
@@ -50,11 +56,23 @@ class QueueServiceConcurrencyTest {
         playerState.setState("idle");
 
         lenient().when(songRepository.findById(10L)).thenReturn(Optional.of(song));
+        lenient().when(availabilityPolicy.isPlayable(song)).thenReturn(true);
         lenient().when(queueRepository.findFirstByStatusOrderByOrderIndexDesc(QueueService.WAITING))
                 .thenReturn(Optional.empty());
         lenient().when(queueRepository.save(any(QueueItem.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         lenient().when(playerRepository.getSingleton()).thenReturn(playerState);
+    }
+
+    @Test
+    void orderRejectsSongStillWaitingForMediaProbe() {
+        song.setStatus("ok");
+        doThrow(new ApiException(SongAvailabilityPolicy.SONG_NOT_READY, "媒体探测未完成"))
+                .when(availabilityPolicy).requirePlayable(song);
+
+        assertThatThrownBy(() -> queueService.order(10L, 20L, true))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", SongAvailabilityPolicy.SONG_NOT_READY);
     }
 
     @Test

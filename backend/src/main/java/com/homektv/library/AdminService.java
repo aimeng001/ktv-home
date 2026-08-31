@@ -41,6 +41,8 @@ import java.util.Map;
 @Service
 public class AdminService {
 
+    private static final int MAX_VOCAL_REVIEW_PAGE_SIZE = 200;
+
     private final SongRepository songRepo;
     private final SongFileRepository fileRepo;
     private final PlayHistoryRepository historyRepo;
@@ -218,7 +220,8 @@ public class AdminService {
      */
     @Transactional(readOnly = true)
     public Page<VocalReviewDto> listVocalReview(int page, int size) {
-        Pageable pageable = PageRequest.of(Math.max(0, page), size, Sort.by(Sort.Direction.ASC, "songId"));
+        int safeSize = Math.max(1, Math.min(size, MAX_VOCAL_REVIEW_PAGE_SIZE));
+        Pageable pageable = PageRequest.of(Math.max(0, page), safeSize, Sort.by(Sort.Direction.ASC, "songId"));
         return fileRepo.findByVocalConfidence("LOW", pageable).map(f -> {
             Song s = songRepo.findById(f.getSongId()).orElse(null);
             return new VocalReviewDto(

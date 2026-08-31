@@ -8,6 +8,7 @@
         </div>
         <button class="secondary" @click="router.push({name:'admin-settings',query:{section:'metadata'}})"><Settings2 :size="15" />平台与限速设置</button>
       </header>
+      <div v-if="poll.status === 'stale'" class="stale-alert" role="alert"><span>刮削进度连接中断，当前显示最后一次成功数据{{ poll.lastSuccessAt ? `（${formatTime(poll.lastSuccessAt)}）` : '' }}。</span><button class="text-btn" @click="refreshTask">立即重试</button></div>
 
       <section class="launch-band">
         <div class="threshold-control">
@@ -124,6 +125,7 @@ import { AlertTriangle, ArrowLeft, ArrowRight, Check, ChevronDown, FileVideo2, I
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
+import { pollingDelay } from './loadState'
 
 const route=useRoute(),router=useRouter()
 const task=ref(null),threshold=ref(.95),starting=ref(false),taskAction=ref(false),itemBusy=ref(null),applying=ref(false)
@@ -136,7 +138,8 @@ const reviewEdits=reactive({title:'',artist:'',album:'',releaseDate:'',aliases:'
 const reviewOriginal=reactive({language:'未知',lyricText:''})
 const reviewFields=[{key:'title',label:'歌名'},{key:'artist',label:'歌手'},{key:'album',label:'专辑'},{key:'releaseDate',label:'发行时间'},{key:'aliases',label:'别名'},{key:'cover',label:'封面'}]
 const languages=['国语','粤语','闽南语','英语','日语','韩语','纯音乐','其他','未知']
-let timer=null,refreshing=false
+const poll=reactive({status:'idle',lastSuccessAt:null,failureCount:0})
+let timer=null,refreshing=false,disposed=false
 const activeTask=computed(()=>task.value&&['RUNNING','PAUSED'].includes(task.value.status))
 const progressPercent=computed(()=>task.value?.total?Math.round(task.value.completed/task.value.total*100):0)
 const taskThresholdDiffers=computed(()=>task.value&&Math.abs(task.value.autoApplyThreshold-threshold.value)>.000001)
@@ -154,12 +157,24 @@ async function initialize(){
   const routeIds=String(route.query.songIds||'').split(',').map(Number).filter(id=>Number.isInteger(id)&&id>0)
   if(routeIds.length){selectedIds.value=new Set(routeIds);if(routeIds.length===1&&route.query.review==='1'){try{await openStandaloneReview(await api.adminSong(routeIds[0]))}catch{}}}
   try{const latest=await api.adminLatestMetadataScrape();if(latest.exists)task.value=latest}catch(e){await alertDialog(e.message||'刮削任务加载失败')}
-  timer=window.setInterval(refreshTask,1500)
+  if(activeTask.value)schedulePoll(1500)
 }
 async function startSelected(){if(!selectedIds.value.size)return;await startTask(false,[...selectedIds.value])}
 async function startAll(){if(!await confirmDialog(`将按 ${formatPercent(threshold.value)} 自动写入阈值刮削全部 KTV 歌曲，低置信结果会进入人工审核。`,{title:'刮削全部歌曲'}))return;await startTask(true,[])}
-async function startTask(all,ids){starting.value=true;try{task.value=await api.adminStartMetadataScrape({all,songIds:ids,autoApplyThreshold:threshold.value});taskPage.value=0;statusFilter.value=''}catch(e){if(e.code==='MUSIC_SOURCES_NOT_CONFIGURED'){await alertDialog('请先在系统设置中启用至少一个元数据平台。');await router.push({name:'admin-settings',query:{section:'metadata'}})}else await alertDialog(e.message||'刮削任务创建失败')}finally{starting.value=false}}
-async function refreshTask(){if(refreshing||!task.value?.batchId)return;refreshing=true;try{task.value=await api.adminMetadataScrape(task.value.batchId,{status:statusFilter.value,page:taskPage.value,size:20})}catch{}finally{refreshing=false}}
+async function startTask(all,ids){starting.value=true;try{task.value=await api.adminStartMetadataScrape({all,songIds:ids,autoApplyThreshold:threshold.value});taskPage.value=0;statusFilter.value='';poll.status='idle';poll.failureCount=0;schedulePoll(1500)}catch(e){if(e.code==='MUSIC_SOURCES_NOT_CONFIGURED'){await alertDialog('请先在系统设置中启用至少一个元数据平台。');await router.push({name:'admin-settings',query:{section:'metadata'}})}else await alertDialog(e.message||'刮削任务创建失败')}finally{starting.value=false}}
+async function refreshTask(){
+  if(refreshing||!task.value?.batchId)return
+  refreshing=true
+  try{
+    task.value=await api.adminMetadataScrape(task.value.batchId,{status:statusFilter.value,page:taskPage.value,size:20})
+    poll.status='ready';poll.lastSuccessAt=Date.now();poll.failureCount=0
+  }catch{
+    poll.status='stale';poll.failureCount+=1
+  }finally{
+    refreshing=false
+    if(activeTask.value)schedulePoll(pollingDelay(poll.status,poll.failureCount))
+  }
+}
 async function pauseTask(){taskAction.value=true;try{await api.adminPauseMetadataScrape(task.value.batchId);await refreshTask()}catch(e){await alertDialog(e.message||'暂停失败')}finally{taskAction.value=false}}
 async function resumeTask(){taskAction.value=true;try{await api.adminResumeMetadataScrape(task.value.batchId);await refreshTask()}catch(e){await alertDialog(e.message||'继续任务失败')}finally{taskAction.value=false}}
 async function retryItem(item){itemBusy.value=item.id;try{await api.adminRetryMetadataScrapeItem(task.value.batchId,item.id);await refreshTask()}catch(e){await alertDialog(e.message||'重试失败')}finally{itemBusy.value=null}}
@@ -234,11 +249,14 @@ function scoreClass(value){return value>=task.value.autoApplyThreshold?'high':va
 function formatPercent(value){const percent=Number(value||0)*100;return `${Number.isInteger(percent)?percent.toFixed(0):percent.toFixed(1)}%`}
 function formatTime(value){return value?new Date(value).toLocaleString('zh-CN',{hour12:false}):''}
 function fileName(path){return String(path||'').split(/[\\/]/).filter(Boolean).pop()||''}
+function schedulePoll(delay){if(disposed||!task.value?.batchId)return;if(timer)window.clearTimeout(timer);timer=window.setTimeout(()=>{timer=null;refreshTask()},delay)}
+function clearPoll(){disposed=true;if(timer){window.clearTimeout(timer);timer=null}}
 onMounted(initialize)
-onBeforeUnmount(()=>{if(timer)window.clearInterval(timer)})
+onBeforeUnmount(clearPoll)
 </script>
 
 <style scoped>
+.stale-alert{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding:10px 12px;border:1px solid #fde68a;border-radius:6px;background:#fffbeb;color:#92400e;font-size:11px}.stale-alert .text-btn{color:#92400e;font-weight:700;white-space:nowrap}
 .scrape-page{width:100%;max-width:1220px;margin:0 auto;color:#172033}.page-head,.title-wrap,.launch-band,.launch-actions,.section-title,.task-actions,.progress-copy,.pager,.pager>div,.review-modal header,.review-modal footer{display:flex;align-items:center}.page-head{justify-content:space-between;gap:20px;margin-bottom:18px}.title-wrap{gap:12px}.page-head h1{margin:0;font-size:22px;letter-spacing:0}.page-head p,.section-title p{margin:6px 0 0;color:#64748b;font-size:11px}.icon-btn{display:grid;width:34px;height:34px;place-items:center;border:1px solid #dbe3ee;border-radius:6px;background:#fff;color:#475569}.primary,.secondary{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:0 13px;border-radius:6px;font-size:11px;font-weight:600}.primary{border:1px solid #2563eb;background:#2563eb;color:#fff}.secondary{border:1px solid #cbd5e1;background:#fff;color:#334155}.primary:disabled,.secondary:disabled,.text-btn:disabled{cursor:not-allowed;opacity:.48}
 .launch-band{justify-content:space-between;gap:24px;padding:16px 18px;border:1px solid #dbe3ee;border-left:3px solid #2563eb;background:#fff}.threshold-control{display:grid;grid-template-columns:auto minmax(130px,240px) 44px;align-items:center;gap:9px;min-width:0}.threshold-control>span{font-size:12px;font-weight:700}.threshold-control input{width:100%;accent-color:#2563eb}.threshold-control>strong{color:#2563eb;font-size:13px}.threshold-control>small{grid-column:1/-1;color:#64748b;font-size:10px}.launch-actions{gap:8px;flex:none}.score-rule{grid-column:1/-1;width:min(620px,calc(100vw - 80px));margin-top:2px;color:#475569;font-size:10px}.score-rule summary{display:inline-flex;align-items:center;gap:5px;color:#2563eb;font-weight:600;cursor:pointer;list-style:none}.score-rule summary::-webkit-details-marker{display:none}.score-rule[open]{padding:10px 12px;border:1px solid #dbeafe;border-radius:6px;background:#f8fbff}.score-rule[open] summary{margin-bottom:9px}.score-formula{display:flex;gap:6px;flex-wrap:wrap}.score-formula span{padding:4px 7px;border:1px solid #dbe3ee;border-radius:4px;background:#fff}.score-formula b{color:#1d4ed8}.score-rule p{margin:7px 0 0;line-height:1.55}
 .song-picker,.task-section{margin-top:16px;border:1px solid #dbe3ee;background:#fff}.song-picker{padding:17px 18px}.section-title{justify-content:space-between;gap:16px}.section-title h2{margin:0;font-size:15px;letter-spacing:0}.selected-count{padding:4px 8px;border-radius:4px;background:#eff6ff;color:#1d4ed8;font-size:10px;font-weight:700}.song-search{display:flex;align-items:center;gap:8px;margin-top:14px;padding:5px 5px 5px 10px;border:1px solid #cbd5e1;border-radius:6px}.song-search svg{color:#94a3b8}.song-search input{flex:1;min-width:0;border:0;outline:0;font-size:12px}.selected-summary{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:10px}.selected-summary>span{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border-radius:4px;background:#f1f5f9;color:#475569;font-size:10px}.selected-summary span button{display:grid;padding:0;color:#64748b}.text-btn{display:inline-flex;align-items:center;gap:4px;color:#2563eb;font-size:10px}.song-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;margin-top:12px;background:#e2e8f0;border:1px solid #e2e8f0}.song-option{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;min-height:58px;padding-right:10px;background:#fff}.song-option.selected{background:#f8fbff}.song-option label{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:9px;min-width:0;padding:8px 10px}.song-list input{width:14px;height:14px;accent-color:#2563eb}.song-list strong,.song-list small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.song-list strong{font-size:11px}.song-list small{margin-top:4px;color:#64748b;font-size:9px}.song-list em{color:#64748b;font-size:9px;font-style:normal}.song-option>.text-btn{padding:5px;white-space:nowrap}

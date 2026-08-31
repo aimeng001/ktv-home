@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 
@@ -18,6 +19,7 @@ public class MusicMetadataScrapeWorker {
     private final MusicMetadataApplyService applyService;
     private final MusicSourceConfigService configService;
     private final ObjectMapper mapper;
+    private final String workerId = UUID.randomUUID().toString();
 
     public MusicMetadataScrapeWorker(JdbcTemplate jdbc, MusicSourceSearchService searchService,
                                      MusicMetadataApplyService applyService, MusicSourceConfigService configService,
@@ -32,65 +34,99 @@ public class MusicMetadataScrapeWorker {
     @Async("metadataScrapeExecutor")
     public void process(String batchId) {
         if (!isRunning(batchId)) return;
+        String claimToken = UUID.randomUUID().toString();
         jdbc.update("UPDATE music_metadata_scrape_batches SET started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=?", batchId);
-        List<Long> itemIds = jdbc.query("SELECT id FROM music_metadata_scrape_items WHERE batch_id=? AND status='PENDING' ORDER BY id",
-                (rs, index) -> rs.getLong(1), batchId);
-        int concurrency = Math.max(1, Math.min(configService.getConfig().concurrencyLimit(), itemIds.size()));
-        if (!itemIds.isEmpty()) {
-            try (var executor = Executors.newFixedThreadPool(concurrency)) {
+        try (var executor = Executors.newFixedThreadPool(
+                Math.max(1, Math.min(configService.getConfig().concurrencyLimit(),
+                        MetadataScrapeBatchPolicy.MAX_CLAIM_SIZE)))) {
+            while (isRunning(batchId)) {
+                List<Long> itemIds = claimPendingItemIds(batchId, claimToken);
+                if (itemIds.isEmpty()) break;
                 List<CompletableFuture<Void>> futures = itemIds.stream()
-                        .map(id -> CompletableFuture.runAsync(() -> processItem(batchId, id), executor)).toList();
+                        .map(id -> CompletableFuture.runAsync(() -> processItem(batchId, id, claimToken), executor)).toList();
                 CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
             }
         }
         finishIfDone(batchId);
     }
 
-    private void processItem(String batchId, long itemId) {
+    private List<Long> claimPendingItemIds(String batchId, String claimToken) {
+        int limit = MetadataScrapeBatchPolicy.safeBatchSize(
+                MetadataScrapeBatchPolicy.MAX_CLAIM_SIZE);
+        return jdbc.query("""
+                WITH candidates AS (
+                    SELECT id
+                    FROM music_metadata_scrape_items
+                    WHERE batch_id=? AND status='PENDING'
+                    ORDER BY id
+                    LIMIT ?
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE music_metadata_scrape_items item
+                SET status='PROCESSING',
+                    lease_owner=?,
+                    claim_token=?,
+                    lease_until=now() + interval '5 minutes',
+                    started_at=COALESCE(started_at,now()),
+                    error_message=NULL,
+                    updated_at=now()
+                FROM candidates
+                WHERE item.id=candidates.id
+                RETURNING item.id
+                """, (rs, index) -> rs.getLong(1), batchId, limit, workerId, claimToken);
+    }
+
+    private void processItem(String batchId, long itemId, String claimToken) {
         if (!isRunning(batchId)) return;
-        int claimed = jdbc.update("""
-                UPDATE music_metadata_scrape_items SET status='PROCESSING',started_at=now(),error_message=NULL,updated_at=now()
-                WHERE id=? AND batch_id=? AND status='PENDING'
-                """, itemId, batchId);
-        if (claimed == 0) return;
-        ItemTarget target = jdbc.query("SELECT song_id FROM music_metadata_scrape_items WHERE id=?",
-                rs -> rs.next() ? new ItemTarget((Long) rs.getObject(1)) : null, itemId);
+        ItemTarget target = jdbc.query("""
+                SELECT song_id FROM music_metadata_scrape_items
+                WHERE id=? AND batch_id=? AND status='PROCESSING' AND lease_owner=? AND claim_token=?
+                """, rs -> rs.next() ? new ItemTarget((Long) rs.getObject(1)) : null,
+                itemId, batchId, workerId, claimToken);
         if (target == null || target.songId() == null) {
-            fail(itemId, "歌曲已删除");
+            fail(batchId, itemId, claimToken, "歌曲已删除");
             return;
         }
         try {
             List<MusicSourceSearchService.SongMatch> matches = searchService.matches(target.songId(), false);
             MusicSourceSearchService.SongMatch best = matches.isEmpty() ? null : matches.getFirst();
             if (best == null) {
-                review(itemId, null, "未找到可用的元数据候选");
+                review(batchId, itemId, claimToken, null, "未找到可用的元数据候选");
                 return;
             }
             ExternalTrack track = best.track();
             String json = mapper.writeValueAsString(best);
             jdbc.update("""
                     UPDATE music_metadata_scrape_items SET provider=?,external_id=?,match_score=?,result_json=CAST(? AS jsonb),updated_at=now()
-                    WHERE id=?
-                    """, track.provider().name(), track.externalId(), best.score(), json, itemId);
-            if (!isRunning(batchId)) {
-                jdbc.update("UPDATE music_metadata_scrape_items SET status='PENDING',updated_at=now() WHERE id=?", itemId);
+                    WHERE id=? AND batch_id=? AND status='PROCESSING' AND lease_owner=? AND claim_token=?
+                    """, track.provider().name(), track.externalId(), best.score(), json, itemId, batchId, workerId, claimToken);
+            if (!canApply(batchId, itemId, claimToken)) {
+                release(batchId, itemId, claimToken);
                 return;
             }
             double threshold = jdbc.queryForObject(
                     "SELECT auto_apply_threshold FROM music_metadata_scrape_batches WHERE id=?", Double.class, batchId);
             if (best.score() < threshold) {
-                review(itemId, best, "匹配度低于自动写入阈值，等待人工审核");
+                review(batchId, itemId, claimToken, best, "匹配度低于自动写入阈值，等待人工审核");
+                return;
+            }
+            // Pause is cooperative for an already running provider request,
+            // but no new metadata write may begin after the batch is paused.
+            // Recheck both the batch state and the claim immediately before
+            // entering the transactional apply service.
+            if (!canApply(batchId, itemId, claimToken)) {
+                release(batchId, itemId, claimToken);
                 return;
             }
             try {
                 applyService.apply(target.songId(), track.provider(), track.externalId(),
                         new MusicMetadataApplyService.ApplyRequest(APPLY_FIELDS));
-                terminal(itemId, "AUTO_APPLIED", null);
+                terminal(batchId, itemId, claimToken, "AUTO_APPLIED", null);
             } catch (RuntimeException ex) {
-                review(itemId, best, "自动写入未执行：" + safe(ex));
+                review(batchId, itemId, claimToken, best, "自动写入未执行：" + safe(ex));
             }
         } catch (Exception ex) {
-            fail(itemId, safe(ex));
+            fail(batchId, itemId, claimToken, safe(ex));
         }
     }
 
@@ -100,20 +136,47 @@ public class MusicMetadataScrapeWorker {
         return !values.isEmpty() && "RUNNING".equals(values.getFirst());
     }
 
-    private void review(long itemId, MusicSourceSearchService.SongMatch match, String message) {
-        if (match == null) {
-            terminal(itemId, "REVIEW", message);
-            return;
-        }
-        terminal(itemId, "REVIEW", message);
+    /** Package-visible for a focused race-regression test. */
+    boolean canApply(String batchId, long itemId, String claimToken) {
+        return isRunning(batchId) && hasClaim(batchId, itemId, claimToken);
     }
 
-    private void fail(long itemId, String message) { terminal(itemId, "FAILED", message); }
+    private void review(String batchId, long itemId, String claimToken,
+                        MusicSourceSearchService.SongMatch match, String message) {
+        terminal(batchId, itemId, claimToken, "REVIEW", message);
+    }
 
-    private void terminal(long itemId, String status, String message) {
+    private void fail(String batchId, long itemId, String claimToken, String message) {
+        terminal(batchId, itemId, claimToken, "FAILED", message);
+    }
+
+    private void terminal(String batchId, long itemId, String claimToken, String status, String message) {
         jdbc.update("""
-                UPDATE music_metadata_scrape_items SET status=?,error_message=?,finished_at=now(),updated_at=now() WHERE id=?
-                """, status, ProviderJson.clean(message, 1000), itemId);
+                UPDATE music_metadata_scrape_items
+                SET status=?,error_message=?,finished_at=now(),
+                    lease_owner=NULL,lease_until=NULL,claim_token=NULL,updated_at=now()
+                WHERE id=? AND batch_id=? AND status='PROCESSING'
+                  AND lease_owner=? AND claim_token=?
+                """, status, ProviderJson.clean(message, 1000), itemId, batchId, workerId, claimToken);
+    }
+
+    private boolean hasClaim(String batchId, long itemId, String claimToken) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM music_metadata_scrape_items
+                WHERE id=? AND batch_id=? AND status='PROCESSING'
+                  AND lease_owner=? AND claim_token=?
+                """, Integer.class, itemId, batchId, workerId, claimToken);
+        return count != null && count == 1;
+    }
+
+    private void release(String batchId, long itemId, String claimToken) {
+        jdbc.update("""
+                UPDATE music_metadata_scrape_items
+                SET status='PENDING',lease_owner=NULL,lease_until=NULL,
+                    claim_token=NULL,updated_at=now()
+                WHERE id=? AND batch_id=? AND status='PROCESSING'
+                  AND lease_owner=? AND claim_token=?
+                """, itemId, batchId, workerId, claimToken);
     }
 
     private void finishIfDone(String batchId) {

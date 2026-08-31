@@ -2,6 +2,7 @@ package com.homektv.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.domain.QueueItem;
+import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.queue.PlaybackService;
 import com.homektv.queue.QueueService;
 import com.homektv.queue.SnapshotService;
@@ -19,6 +20,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 class ControlControllerTest {
 
@@ -28,7 +30,7 @@ class ControlControllerTest {
         AtomicReference<WsEvent> broadcast = new AtomicReference<>();
         QueueSnapshot snapshot = new QueueSnapshot(null, List.of(), "idle", 60, false,
                 "accompaniment", true, 1);
-        QueueService queueService = new QueueService(null, null, null) {
+        QueueService queueService = new QueueService(null, null, null, mock(SongAvailabilityPolicy.class)) {
             @Override public List<QueueItem> shuffleWaiting() {
                 shuffled.set(true);
                 return List.of();

@@ -19,6 +19,7 @@ data class SongDto(
     val lyricType: String = "none",    // word / line / sub / none
     val coverUrl: String? = null,      // 形如 /api/cover/{id}
     val playCount: Int = 0,
+    val artistAvatarUrl: String? = null,
 )
 
 @Serializable
@@ -136,6 +137,7 @@ data class SongDetail(
     val coverUrl: String? = null,
     val lyricUrl: String? = null,
     val files: List<FileSource> = emptyList(),
+    val artistAvatarUrl: String? = null,
 )
 
 @Serializable

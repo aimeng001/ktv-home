@@ -2,14 +2,14 @@
   <teleport to="body">
     <transition name="dialog-fade">
       <div v-if="state.open" class="dialog-mask" @click.self="close(false)">
-        <section class="dialog-card" role="dialog" aria-modal="true" :aria-label="state.title">
+        <section ref="card" class="dialog-card" role="dialog" aria-modal="true" :aria-label="state.title" tabindex="-1">
           <!-- 图标：根据色调切换 / Icon: switches by tone -->
           <div class="dialog-icon" :class="state.tone"><TriangleAlert v-if="state.tone === 'warning'" :size="22" /><CircleCheck v-else-if="state.tone === 'success'" :size="22" /><CircleAlert v-else :size="22" /></div>
           <div class="dialog-copy"><h2>{{ state.title }}</h2><p>{{ state.message }}</p></div>
           <button class="dialog-close" aria-label="关闭" @click="close(false)"><X :size="18" /></button>
           <footer class="dialog-actions">
             <button v-if="state.mode === 'confirm'" class="dialog-btn secondary" @click="close(false)">取消</button>
-            <button class="dialog-btn" :class="state.tone === 'warning' ? 'danger' : 'primary'" @click="close(true)">{{ state.mode === 'confirm' ? '确认' : '知道了' }}</button>
+            <button ref="confirmButton" data-dialog-confirm class="dialog-btn" :class="state.tone === 'warning' ? 'danger' : 'primary'" @click="close(true)">{{ state.mode === 'confirm' ? '确认' : '知道了' }}</button>
           </footer>
         </section>
       </div>
@@ -26,18 +26,45 @@
  * Supports confirm (dual-button) / alert (single-button) modes and
  * warning / success / error tones.
  */
-import { onMounted, onUnmounted } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { CircleAlert, CircleCheck, TriangleAlert, X } from 'lucide-vue-next'
 import { useDialog } from '../composables/useDialog'
+import { dialogKeyAction } from './dialogHostState'
 
 const { state, close } = useDialog()
+const card = ref(null)
+const confirmButton = ref(null)
+let opener = null
+
+watch(() => state.open, async open => {
+  if (open) {
+    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    await nextTick()
+    confirmButton.value?.focus({ preventScroll: true })
+    if (!confirmButton.value) card.value?.focus({ preventScroll: true })
+  } else if (opener instanceof HTMLElement && opener.isConnected) {
+    await nextTick()
+    opener.focus({ preventScroll: true })
+    opener = null
+  }
+})
 
 /**
  * 按下 Escape 键时关闭对话框。
  *
  * Closes the dialog when the Escape key is pressed.
  */
-const onKeydown = event => { if (event.key === 'Escape') close(false) }
+const onKeydown = event => {
+  const action = dialogKeyAction({
+    open: state.open,
+    mode: state.mode,
+    key: event.key,
+    targetTag: event.target?.tagName || ''
+  })
+  if (action === 'ignore') return
+  event.preventDefault()
+  close(action === 'confirm')
+}
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>

@@ -62,10 +62,14 @@ class AppConfig(context: Context) {
         get() = prefs.getBoolean(KEY_MICROPHONE_MONITOR, true)
         set(value) = prefs.edit { putBoolean(KEY_MICROPHONE_MONITOR, value) }
 
+    /** 与服务端 KTV_PLAYER_CREDENTIAL 对应的可选电视连接密钥。 */
+    var playerCredential: String
+        get() = prefs.getString(KEY_PLAYER_CREDENTIAL, "").orEmpty()
+        set(value) = prefs.edit { putString(KEY_PLAYER_CREDENTIAL, value.trim()) }
+
     /** WebSocket 地址：ws://host:port/ws?client_type=tv&client_token=xxx */
     fun wsUrl(clientToken: String): String {
-        val encoded = android.net.Uri.encode(clientToken)
-        return "ws://${serverHost}/ws?client_type=tv&client_token=$encoded&protocol_version=2&platform=ANDROID_TV"
+        return buildTvWebSocketUrl(serverHost.orEmpty(), clientToken, playerCredential)
     }
 
     /** REST/资源基址：http://host:port/api */
@@ -107,6 +111,7 @@ class AppConfig(context: Context) {
         private const val KEY_HOST = "server_host"
         private const val KEY_TOKEN = "client_token"
         private const val KEY_MICROPHONE_MONITOR = "microphone_monitor_enabled"
+        private const val KEY_PLAYER_CREDENTIAL = "player_credential"
         private const val KEY_SAVED_SERVERS = "saved_servers"
         private const val MAX_SAVED_SERVERS = 10
 
@@ -123,5 +128,24 @@ class AppConfig(context: Context) {
             if (!s.contains(":")) s = "$s:8080"
             return s
         }
+    }
+}
+
+internal fun buildTvWebSocketUrl(serverHost: String, clientToken: String, playerCredential: String?): String {
+    val token = encodeQueryComponent(clientToken)
+    val credential = playerCredential?.trim()?.takeIf { it.isNotEmpty() }
+        ?.let { "&player_credential=${encodeQueryComponent(it)}" }
+        .orEmpty()
+    return "ws://$serverHost/ws?client_type=tv&client_token=$token&protocol_version=2&platform=ANDROID_TV$credential"
+}
+
+internal fun encodeQueryComponent(value: String): String = buildString {
+    value.toByteArray(Charsets.UTF_8).forEach { byte ->
+        val unsigned = byte.toInt() and 0xff
+        val safe = unsigned in 'A'.code..'Z'.code || unsigned in 'a'.code..'z'.code ||
+            unsigned in '0'.code..'9'.code || unsigned == '-'.code || unsigned == '.'.code ||
+            unsigned == '_'.code || unsigned == '~'.code
+        if (safe) append(unsigned.toChar())
+        else append("%${unsigned.toString(16).uppercase().padStart(2, '0')}")
     }
 }

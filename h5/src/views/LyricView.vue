@@ -13,9 +13,12 @@
 
     <!-- 歌词滚动区 / Lyric scroll area -->
     <div class="lyric grow">
-      <div v-if="!lines.length" class="nolyric">
-        {{ song ? '这首歌暂无歌词' : '还没有歌曲播放' }}
+      <div v-if="lyricState === 'error'" class="nolyric error-state" role="alert">
+        <span>歌词加载失败：{{ lyricError }}</span>
+        <button class="retry" @click="retryLyric">重试</button>
       </div>
+      <div v-else-if="lyricState === 'empty'" class="nolyric">这首歌暂无歌词</div>
+      <div v-else-if="lyricState === 'idle'" class="nolyric">还没有歌曲播放</div>
       <div v-else class="lines" :style="{ transform: `translateY(${offset}px)` }">
         <div v-for="(l, i) in lines" :key="i" class="ln" :class="{ cur: i === curLine }">
           <template v-if="i === curLine && l.words?.length">
@@ -42,21 +45,35 @@
  * Lyric view — displays scrolling lyrics for the currently playing song,
  * with word-by-word highlighting and mini playback controls.
  */
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { usePlayerStore } from '../stores/player'
 import { useUserStore } from '../stores/user'
 import { makeControls } from '../api/client'
 import { parseLrc } from '../composables/lrc'
+import { useToast } from '../composables/useToast'
 import { confirmDialog } from '../composables/useDialog'
+import { currentLyricIndex, lyricViewState } from './lyricState'
+import { createLyricLoader } from './lyricLoader'
 
 const player = usePlayerStore()
 const user = useUserStore()
 const controls = makeControls(user.clientToken)
+const { toast } = useToast()
 
 /** 当前播放歌曲的计算属性 / Computed: currently playing song */
 const song = computed(() => player.nowPlaying?.song)
 /** 解析后的歌词行数组，每项含 time(ms) 和 text / Parsed lyric lines, each with time(ms) and text */
 const lines = ref([])       // [{time, text}]
+const lyricError = ref('')
+const lyricState = computed(() => lyricViewState(song.value, lines.value, lyricError.value))
+const lyricLoader = createLyricLoader({
+  fetchImpl: fetch,
+  parse: parseLrc,
+  getCurrentSong: () => song.value,
+  onReset: () => { lines.value = []; lyricError.value = '' },
+  onSuccess: parsed => { lines.value = parsed },
+  onError: error => { lyricError.value = error?.message || '网络错误，请稍后重试' }
+})
 /** 每行歌词高度(px)，用于滚动偏移计算 / Line height (px) for scroll offset calculation */
 const LINE_H = 44
 
@@ -76,12 +93,7 @@ const progressPct = computed(() => {
  * Current highlighted line index: the last line whose time <= current playback position.
  */
 const curLine = computed(() => {
-  const pos = player.positionMs
-  let idx = 0
-  for (let i = 0; i < lines.value.length; i++) {
-    if (lines.value[i].time <= pos) idx = i; else break
-  }
-  return idx
+  return currentLyricIndex(lines.value, player.positionMs)
 })
 
 /**
@@ -89,7 +101,7 @@ const curLine = computed(() => {
  *
  * Scroll offset (px) to keep the current lyric line centered in the viewport.
  */
-const offset = computed(() => -(curLine.value * LINE_H))
+const offset = computed(() => -(Math.max(0, curLine.value) * LINE_H))
 
 /**
  * 根据歌曲 ID 加载并解析歌词文件。
@@ -99,39 +111,44 @@ const offset = computed(() => -(curLine.value * LINE_H))
  * @param {string|number} id - 歌曲唯一标识 / Song ID
  */
 async function loadLyric(id) {
-  lines.value = []
-  if (!id || !song.value || song.value.lyricType === 'none') return
-  try {
-    const res = await fetch('/api/lyric/' + id)
-    if (!res.ok) return
-    lines.value = parseLrc(await res.text())
-  } catch { /* ignore */ }
+  return lyricLoader.load(id)
 }
+
+function retryLyric() { loadLyric(song.value?.id) }
 
 /** 监听播放队列变化，自动加载对应歌词 / Watch queue changes to auto-load lyrics */
 watch(() => player.nowPlaying?.queueId, () => loadLyric(song.value?.id))
 /** 组件挂载时加载当前歌词 / Load lyrics for current song on mount */
 onMounted(() => loadLyric(song.value?.id))
+onBeforeUnmount(() => lyricLoader.dispose())
 
 /**
  * 切换播放/暂停状态。
  *
  * Toggles between play and pause.
  */
-async function togglePlay() { player.isPlaying ? await controls.pause() : await controls.play() }
+async function togglePlay() {
+  try { player.isPlaying ? await controls.pause() : await controls.play() }
+  catch (error) { toast(error.message || '播放控制失败') }
+}
 /**
  * 重新播放当前歌曲。
  *
  * Restarts the current song from the beginning.
  */
-async function restart() { await controls.restart() }
+async function restart() {
+  try { await controls.restart() }
+  catch (error) { toast(error.message || '重唱失败') }
+}
 /**
  * 切到下一首歌曲，操作前弹出确认对话框。
  *
  * Skips to the next song after a confirmation dialog.
  */
 async function next() {
-  if (await confirmDialog(`将切掉《${song.value?.title || ''}》。`, { title: '确认切歌', tone: 'warning' })) await controls.next()
+  if (!await confirmDialog(`将切掉《${song.value?.title || ''}》。`, { title: '确认切歌', tone: 'warning' })) return
+  try { await controls.next() }
+  catch (error) { toast(error.message || '切歌失败') }
 }
 </script>
 
@@ -154,6 +171,8 @@ async function next() {
 }
 .lyric { overflow: hidden; display: flex; flex-direction: column; justify-content: center; padding: 0 30px; text-align: center; }
 .nolyric { color: var(--dim2); text-align: center; }
+.error-state { display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap; }
+.retry { padding:5px 10px;border:1px solid var(--line);border-radius:6px;color:var(--gold);font-size:11px; }
 .lines { transition: transform .4s cubic-bezier(.4,0,.2,1); }
 .ln { font-size: 15px; color: var(--dim2); padding: 10px 0; transition: var(--transition); height: 44px; }
 .ln.cur { font-size: 20px; color: var(--gold); font-weight: 700; text-shadow: 0 0 20px rgba(240,199,66,.2); }

@@ -76,4 +76,50 @@ describe('api client admin authentication', () => {
     expect(options.body).toBeInstanceOf(FormData)
     expect(options.body.get('file').name).toBe('logo.png')
   })
+
+  it('saves an AI playlist preview with one atomic request', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ id: 9 }))
+
+    await api.adminAiSavePlaylistPreview({
+      name: '聚会歌单', description: '说明', theme: 'AI 策划', publicVisible: true, songIds: [1, 2]
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/ai/playlists/from-preview')
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      name: '聚会歌单', description: '说明', theme: 'AI 策划', publicVisible: true, songIds: [1, 2]
+    })
+  })
+
+  it('requests the paged artist directory with stable query parameters', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ items: [], total: 0, page: 0, size: 50 }))
+
+    await api.adminArtistPage({ keyword: '周杰伦', gender: '男歌手', reviewed: false, page: 1, size: 50 })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/artists/page?keyword=%E5%91%A8%E6%9D%B0%E4%BC%A6&gender=%E7%94%B7%E6%AD%8C%E6%89%8B&reviewed=false&page=1&size=50')
+  })
+
+  it('requests the public artist page and its small initial index', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ items: [], total: 0, page: 0, size: 30 }))
+      .mockResolvedValueOnce(jsonResponse(['A', 'Z']))
+
+    await api.browseArtistPage({ gender: '男歌手', initial: 'Z', page: 1, size: 30 })
+    await api.browseArtistInitials('男歌手')
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/browse/artists/page?gender=%E7%94%B7%E6%AD%8C%E6%89%8B&initial=Z&page=1&size=30')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/browse/artists/initials?gender=%E7%94%B7%E6%AD%8C%E6%89%8B')
+  })
+
+  it('requests a bounded public song page', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ items: [], total: 7285, page: 1, size: 50 })
+    )
+
+    await api.browseSongPage({ artist: '周杰伦', sort: 'title', page: 1, size: 50 })
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/browse/songs/page?artist=%E5%91%A8%E6%9D%B0%E4%BC%A6&sort=title&page=1&size=50'
+    )
+  })
 })

@@ -105,6 +105,16 @@ class IncrementalLibraryScanTest {
                 Optional.ofNullable(songsByFingerprint.get(invocation.getArgument(0))));
         lenient().when(songRepository.findById(anyLong())).thenAnswer(invocation ->
                 Optional.ofNullable(songsById.get(invocation.getArgument(0))));
+        lenient().when(songRepository.findAllById(org.mockito.ArgumentMatchers.any(Iterable.class)))
+                .thenAnswer(invocation -> {
+                    Iterable<Long> requested = invocation.getArgument(0);
+                    List<Song> result = new ArrayList<>();
+                    requested.forEach(id -> {
+                        Song song = songsById.get(id);
+                        if (song != null) result.add(song);
+                    });
+                    return result;
+                });
         lenient().when(songRepository.save(any(Song.class))).thenAnswer(invocation -> {
             repositorySaveThreads.add(Thread.currentThread().getName());
             Song song = invocation.getArgument(0);
@@ -389,6 +399,22 @@ class IncrementalLibraryScanTest {
     }
 
     @Test
+    void directIngestPersistsFilenameVocalForm() throws Exception {
+        Path file = Files.write(sourceDir.resolve(
+                "张庭 钟丽缇 王祖蓝-爱上幼儿园-合唱-国语-流行.mkv"), new byte[]{1, 2, 3});
+
+        assertThat(scanService.ingest(file)).isEqualTo(LibraryScanService.IngestOutcome.ADDED);
+
+        assertThat(songsById.values())
+                .filteredOn(song -> "爱上幼儿园".equals(song.getTitle()))
+                .singleElement()
+                .satisfies(song -> {
+                    assertThat(song.getArtist()).isEqualTo("张庭 钟丽缇 王祖蓝");
+                    assertThat(song.getVocalForm()).isEqualTo("合唱");
+                });
+    }
+
+    @Test
     void persistsFastIndexBeforeProbeReadsMedia() throws Exception {
         Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
         when(ffprobe.probe(any(Path.class))).thenAnswer(invocation -> {
@@ -423,6 +449,159 @@ class IncrementalLibraryScanTest {
         verify(ffprobe, times(1)).probe(any(Path.class));
         verify(songRepository, times(2)).save(any(Song.class));
         verify(songFileRepository, times(2)).save(any(SongFile.class));
+    }
+
+    @Test
+    void unchangedUnrecognizedRowRepairsFilenameMetadataWithoutReprobing() throws Exception {
+        Path file = Files.write(sourceDir.resolve("童唱--爸爸妈妈听我说-国语-儿歌.mkv"),
+                new byte[]{1, 2, 3});
+        BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class);
+        java.time.OffsetDateTime mediaMtime = attributes.lastModifiedTime().toInstant()
+                .atOffset(java.time.ZoneOffset.UTC);
+        String mediaIdentity = attributes.fileKey() == null ? null : String.valueOf(attributes.fileKey());
+
+        Song song = new Song();
+        song.setId(700L);
+        song.setTitle(file.getFileName().toString().replaceFirst("\\.mkv$", ""));
+        song.setArtist("未知歌手");
+        song.setLanguage("未知");
+        song.setMediaType(MediaClassifier.KTV_VIDEO);
+        song.setDurationMs(180_000);
+        song.setFingerprint("legacy-unrecognized-700");
+        song.setStatus("unrecognized");
+        song.setNeedsAiOptimization(true);
+        songsById.put(song.getId(), song);
+        songsByFingerprint.put(song.getFingerprint(), song);
+
+        SongFile indexed = new SongFile();
+        indexed.setId(701L);
+        indexed.setSongId(song.getId());
+        indexed.setFilePath(file.toString());
+        indexed.setRelativePath(file.getFileName().toString());
+        indexed.setFormat("mkv");
+        indexed.setFileSize(attributes.size());
+        indexed.setFileMtime(mediaMtime);
+        indexed.setFileIdentity(mediaIdentity == null ? null : mediaIdentity + "|null");
+        indexed.setMediaMtime(mediaMtime);
+        indexed.setMediaFileIdentity(mediaIdentity);
+        indexed.setLyricSize(null);
+        indexed.setLyricMtime(null);
+        indexed.setLyricFileIdentity(null);
+        indexed.setLyricSnapshotVersion(1);
+        indexed.setFileRole(LibraryModePolicy.EXTERNAL_FILE_ROLE);
+        indexed.setValid(true);
+        indexed.setProbePending(false);
+        filesByPath.put(file.toString(), indexed);
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.probeCalls()).isZero();
+        assertThat(result.hashCalls()).isZero();
+        assertThat(result.updated()).isEqualTo(1);
+        assertThat(result.dbUpdates()).isEqualTo(1);
+        assertThat(song.getTitle()).isEqualTo("爸爸妈妈听我说");
+        assertThat(song.getArtist()).isEqualTo("童唱");
+        assertThat(song.getLanguage()).isEqualTo("国语");
+        assertThat(song.getStatus()).isEqualTo("ok");
+        verify(ffprobe, times(0)).probe(any(Path.class));
+    }
+
+    @Test
+    void unchangedFilenameRepairKeepsTheRowUnrecognizedWhenTheNewFingerprintConflicts() throws Exception {
+        Path file = Files.write(sourceDir.resolve("童唱--爸爸妈妈听我说-国语-儿歌.mkv"),
+                new byte[]{1, 2, 3});
+        Song song = new Song();
+        song.setId(702L);
+        song.setTitle("童唱--爸爸妈妈听我说-国语-儿歌");
+        song.setArtist("未知歌手");
+        song.setLanguage("未知");
+        song.setMediaType(MediaClassifier.KTV_VIDEO);
+        song.setDurationMs(180_000);
+        song.setFingerprint("legacy-unrecognized-702");
+        song.setStatus("unrecognized");
+        song.setNeedsAiOptimization(true);
+        songsById.put(song.getId(), song);
+        songsByFingerprint.put(song.getFingerprint(), song);
+        registerUnchangedFile(file, song);
+
+        Song conflict = new Song();
+        conflict.setId(703L);
+        conflict.setFingerprint(MediaClassifier.fingerprint("童唱", "爸爸妈妈听我说", 180_000));
+        songsById.put(conflict.getId(), conflict);
+        songsByFingerprint.put(conflict.getFingerprint(), conflict);
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.updated()).isZero();
+        assertThat(result.skipped()).isEqualTo(1);
+        assertThat(result.dbUpdates()).isZero();
+        assertThat(song.getTitle()).isEqualTo("童唱--爸爸妈妈听我说-国语-儿歌");
+        assertThat(song.getArtist()).isEqualTo("未知歌手");
+        assertThat(song.getStatus()).isEqualTo("unrecognized");
+        verify(ffprobe, times(0)).probe(any(Path.class));
+    }
+
+    @Test
+    void unchangedFilenameRepairDoesNotOverwriteManuallyLockedIdentity() throws Exception {
+        Path file = Files.write(sourceDir.resolve("童唱--爸爸妈妈听我说-国语-儿歌.mkv"),
+                new byte[]{1, 2, 3});
+        Song song = new Song();
+        song.setId(704L);
+        song.setTitle("人工歌名");
+        song.setArtist("人工歌手");
+        song.setLanguage("粤语");
+        song.setMediaType(MediaClassifier.KTV_VIDEO);
+        song.setDurationMs(180_000);
+        song.setFingerprint("legacy-unrecognized-704");
+        song.setStatus("unrecognized");
+        song.setNeedsAiOptimization(true);
+        song.lockMetadata("title");
+        song.lockMetadata("artist");
+        songsById.put(song.getId(), song);
+        songsByFingerprint.put(song.getFingerprint(), song);
+        registerUnchangedFile(file, song);
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.updated()).isZero();
+        assertThat(result.skipped()).isEqualTo(1);
+        assertThat(result.dbUpdates()).isZero();
+        assertThat(song.getTitle()).isEqualTo("人工歌名");
+        assertThat(song.getArtist()).isEqualTo("人工歌手");
+        assertThat(song.getLanguage()).isEqualTo("粤语");
+        assertThat(song.getStatus()).isEqualTo("unrecognized");
+        verify(ffprobe, times(0)).probe(any(Path.class));
+    }
+
+    @Test
+    void unchangedFilenameRepairKeepsAiReviewWhenLanguageIsLockedAsUnknown() throws Exception {
+        Path file = Files.write(sourceDir.resolve("童唱--爸爸妈妈听我说-国语-儿歌.mkv"),
+                new byte[]{1, 2, 3});
+        Song song = new Song();
+        song.setId(705L);
+        song.setTitle("旧歌名");
+        song.setArtist("旧歌手");
+        song.setLanguage("未知");
+        song.setMediaType(MediaClassifier.KTV_VIDEO);
+        song.setDurationMs(180_000);
+        song.setFingerprint("legacy-unrecognized-705");
+        song.setStatus("unrecognized");
+        song.setNeedsAiOptimization(true);
+        song.lockMetadata("language");
+        songsById.put(song.getId(), song);
+        songsByFingerprint.put(song.getFingerprint(), song);
+        registerUnchangedFile(file, song);
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.updated()).isEqualTo(1);
+        assertThat(result.dbUpdates()).isEqualTo(1);
+        assertThat(song.getTitle()).isEqualTo("爸爸妈妈听我说");
+        assertThat(song.getArtist()).isEqualTo("童唱");
+        assertThat(song.getLanguage()).isEqualTo("未知");
+        assertThat(song.getStatus()).isEqualTo("ok");
+        assertThat(song.isNeedsAiOptimization()).isTrue();
+        verify(ffprobe, times(0)).probe(any(Path.class));
     }
 
     @Test
@@ -723,6 +902,23 @@ class IncrementalLibraryScanTest {
         assertThat(indexed.isValid()).isFalse();
         assertThat(filesByPath).containsKey(file.toString());
         verify(ffprobe, times(1)).probe(any(Path.class));
+    }
+
+    @Test
+    void audioTagWithTitleButBlankArtistFallsBackToFilenameArtist() throws Exception {
+        Path file = Files.write(sourceDir.resolve("草蜢-爱-国语-流行.mp3"), new byte[]{1, 2, 3});
+        TagInfo tag = new TagInfo();
+        tag.setTitle("嵌入歌名");
+        tag.setArtist("  ");
+        when(tagReader.read(file.toFile())).thenReturn(tag);
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.added()).isEqualTo(1);
+        Song song = songsById.values().stream().findFirst().orElseThrow();
+        assertThat(song.getTitle()).isEqualTo("嵌入歌名");
+        assertThat(song.getArtist()).isEqualTo("草蜢");
+        assertThat(song.getStatus()).isEqualTo("ok");
     }
 
     @Test
@@ -1058,5 +1254,29 @@ class IncrementalLibraryScanTest {
 
     private static MediaProbe probe() {
         return new MediaProbe(180_000, 2, 0, true, "1920x1080", List.of(), "h264", "aac");
+    }
+
+    private void registerUnchangedFile(Path file, Song song) throws Exception {
+        BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class);
+        java.time.OffsetDateTime mediaMtime = attributes.lastModifiedTime().toInstant()
+                .atOffset(java.time.ZoneOffset.UTC);
+        String mediaIdentity = attributes.fileKey() == null ? null : String.valueOf(attributes.fileKey());
+
+        SongFile indexed = new SongFile();
+        indexed.setId(song.getId() + 100L);
+        indexed.setSongId(song.getId());
+        indexed.setFilePath(file.toString());
+        indexed.setRelativePath(file.getFileName().toString());
+        indexed.setFormat("mkv");
+        indexed.setFileSize(attributes.size());
+        indexed.setFileMtime(mediaMtime);
+        indexed.setFileIdentity(mediaIdentity == null ? null : mediaIdentity + "|null");
+        indexed.setMediaMtime(mediaMtime);
+        indexed.setMediaFileIdentity(mediaIdentity);
+        indexed.setLyricSnapshotVersion(1);
+        indexed.setFileRole(LibraryModePolicy.EXTERNAL_FILE_ROLE);
+        indexed.setValid(true);
+        indexed.setProbePending(false);
+        filesByPath.put(file.toString(), indexed);
     }
 }

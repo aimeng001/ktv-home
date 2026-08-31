@@ -24,16 +24,18 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
 
     private readonly ServerEndpoint endpoint;
     private readonly string clientToken;
+    private readonly string? playerCredential;
     private readonly SemaphoreSlim sendLock = new(1, 1);
     private readonly ConcurrentQueue<string> reliableMessages = new();
     private readonly CancellationTokenSource lifetime = new();
     private ClientWebSocket? socket;
     private long generation;
 
-    public KtvWebSocketClient(ServerEndpoint endpoint, string clientToken)
+    public KtvWebSocketClient(ServerEndpoint endpoint, string clientToken, string? playerCredential = null)
     {
         this.endpoint = endpoint;
         this.clientToken = clientToken;
+        this.playerCredential = playerCredential;
     }
 
     public event Action<bool>? ConnectionChanged;
@@ -93,7 +95,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         {
             Options = { KeepAliveInterval = Timeout.InfiniteTimeSpan },
         };
-        await connectedSocket.ConnectAsync(endpoint.WebSocketUri(clientToken), cancellationToken).ConfigureAwait(false);
+        await connectedSocket.ConnectAsync(endpoint.WebSocketUri(clientToken, playerCredential), cancellationToken).ConfigureAwait(false);
         socket = connectedSocket;
         await FlushReliableMessagesAsync(connectedSocket, cancellationToken).ConfigureAwait(false);
         ConnectionChanged?.Invoke(true);

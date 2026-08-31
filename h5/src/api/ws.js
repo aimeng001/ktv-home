@@ -47,7 +47,9 @@ export class KtvSocket {
     this.ws = null
     this.retry = 0
     this.pingTimer = null
+    this.reconnectTimer = null
     this.closed = false
+    this.generation = 0
   }
 
   /**
@@ -65,29 +67,35 @@ export class KtvSocket {
    */
   connect() {
     this.closed = false
+    this._clearReconnect()
+    const generation = ++this.generation
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     // 开发环境由 Vite 代理 /ws 请求；生产环境同源直连
     // Dev: Vite proxies /ws requests; production: same-origin direct connection
-    const url = `${proto}://${location.host}/ws`
-    this.ws = new WebSocket(url)
+    const url = `${proto}://${location.host}/ws?client_type=h5&protocol_version=2&platform=H5`
+    const socket = new WebSocket(url)
+    this.ws = socket
 
-    this.ws.onopen = () => {
+    socket.onopen = () => {
+      if (generation !== this.generation) return
       this.retry = 0
       this.onStatus(true)
       this._startPing()
     }
-    this.ws.onmessage = (e) => {
+    socket.onmessage = (e) => {
+      if (generation !== this.generation) return
       let msg
       try { msg = JSON.parse(e.data) } catch { return }
       if (msg.type === 'pong') return
       this.onEvent(msg.type, msg.payload)
     }
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      if (generation !== this.generation) return
       this._stopPing()
       this.onStatus(false)
       if (!this.closed) this._scheduleReconnect()
     }
-    this.ws.onerror = () => { this.ws && this.ws.close() }
+    socket.onerror = () => { if (generation === this.generation) socket.close() }
   }
 
   /**
@@ -119,8 +127,12 @@ export class KtvSocket {
    */
   close() {
     this.closed = true
+    this.generation++
+    this._clearReconnect()
     this._stopPing()
-    this.ws && this.ws.close()
+    const socket = this.ws
+    this.ws = null
+    socket && socket.close()
   }
 
   /**
@@ -136,9 +148,21 @@ export class KtvSocket {
    * @private
    */
   _scheduleReconnect() {
+    if (this.closed || this.reconnectTimer) return
     const delay = BACKOFF[Math.min(this.retry, BACKOFF.length - 1)]
     this.retry++
-    setTimeout(() => { if (!this.closed) this.connect() }, delay)
+    const generation = this.generation
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      if (!this.closed && generation === this.generation) this.connect()
+    }, delay)
+  }
+
+  _clearReconnect() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
   }
 
   /**

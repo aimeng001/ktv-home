@@ -5,9 +5,11 @@ import android.os.Looper
 import android.util.Log
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -56,7 +58,11 @@ class KtvSocket(
     private var ws: WebSocket? = null
     private var closed = false
     private var attempt = 0
+    private val reconnectGate = ReconnectGate()
+    private var reconnectRunnable: Runnable? = null
     private val leaseGate = ActivePlayerLeaseGate()
+    private val syncReadyGate = SyncReadyGate()
+    private val socketEpoch = SocketEpochGate()
 
     // 15s 应用层心跳
     private val heartbeat = object : Runnable {
@@ -70,14 +76,22 @@ class KtvSocket(
 
     fun connect() {
         closed = false
+        cancelReconnect()
+        reconnectGate.markRun()
+        socketEpoch.invalidate()
+        syncReadyGate.onOpen()
         openSocket()
     }
 
     fun close() {
         closed = true
+        cancelReconnect()
+        reconnectGate.markRun()
+        socketEpoch.invalidate()
         main.removeCallbacks(heartbeat)
         ws?.close(1000, "client closing")
         ws = null
+        syncReadyGate.onDisconnect()
         leaseGate.disconnect()
         listener.onPlayerRole(false)
     }
@@ -85,79 +99,109 @@ class KtvSocket(
     /** 上行播放进度（P1.28 播放引擎每 1s 调用）。 */
     fun sendProgress(positionMs: Long, queueId: Long? = null) {
         val generation = leaseGate.activeGeneration() ?: return
-        val id = queueId?.let { ",\"queue_id\":$it" } ?: ""
-        ws?.send("""{"type":"progress","payload":{"position_ms":$positionMs$id,"generation":$generation}}""")
+        val payload = buildJsonObject {
+            put("position_ms", positionMs)
+            queueId?.let { put("queue_id", it) }
+            put("generation", generation)
+        }
+        ws?.send(buildSocketMessage("progress", payload))
     }
 
     /** 上行播放完成（P1.33 自动连播）。 */
     fun sendFinished(queueId: Long? = null) {
         val generation = leaseGate.activeGeneration() ?: return
-        val id = queueId?.let { "\"queue_id\":$it," } ?: ""
-        ws?.send("""{"type":"finished","payload":{$id"generation":$generation}}""")
+        val payload = buildJsonObject {
+            queueId?.let { put("queue_id", it) }
+            put("generation", generation)
+        }
+        ws?.send(buildSocketMessage("finished", payload))
     }
 
     /** 播放文件不可读时上报，服务端会标记当前项异常并推进队列。 */
     fun sendPlayError(message: String, fileId: Long? = null, queueId: Long? = null) {
         val generation = leaseGate.activeGeneration() ?: return
-        val safe = message.replace("\\", "\\\\").replace("\"", "\\\"")
-        val id = fileId?.let { ",\"file_id\":$it" } ?: ""
-        val queue = queueId?.let { ",\"queue_id\":$it" } ?: ""
-        ws?.send("""{"type":"play_error","payload":{"message":"$safe"$id$queue,"generation":$generation}}""")
+        ws?.send(buildPlayErrorMessage(message, fileId, queueId, generation))
     }
 
     private fun openSocket() {
         if (closed) return
+        val epoch = socketEpoch.begin()
+        syncReadyGate.onOpen()
         val url = config.wsUrl(config.clientToken)
         Log.d(TAG, "connecting ${safeWebSocketLogTarget(config.serverHost)}")
         val req = Request.Builder().url(url).build()
-        ws = http.newWebSocket(req, socketListener)
+        ws = http.newWebSocket(req, socketListener(epoch))
     }
 
-    private fun scheduleReconnect() {
-        if (closed) return
+    private fun scheduleReconnect(epoch: Long) {
+        if (closed || !socketEpoch.isCurrent(epoch) || !reconnectGate.trySchedule()) return
         val delay = BACKOFF_MS[attempt.coerceAtMost(BACKOFF_MS.size - 1)]
         attempt++
         Log.d(TAG, "reconnect in ${delay}ms (attempt $attempt)")
-        main.postDelayed({ openSocket() }, delay)
+        val runnable = Runnable {
+            reconnectRunnable = null
+            reconnectGate.markRun()
+            if (!closed && socketEpoch.isCurrent(epoch)) openSocket()
+        }
+        reconnectRunnable = runnable
+        main.postDelayed(runnable, delay)
     }
 
-    private val socketListener = object : WebSocketListener() {
+    private fun cancelReconnect() {
+        reconnectRunnable?.let(main::removeCallbacks)
+        reconnectRunnable = null
+    }
+
+    private fun socketListener(epoch: Long) = object : WebSocketListener() {
+        private fun isCurrent(webSocket: WebSocket): Boolean =
+            !closed && socketEpoch.isCurrent(epoch) && ws === webSocket
+
         override fun onOpen(webSocket: WebSocket, response: Response) {
+            if (!isCurrent(webSocket)) return
             attempt = 0
             main.post {
+                if (!isCurrent(webSocket)) return@post
                 main.removeCallbacks(heartbeat)
                 main.postDelayed(heartbeat, HEARTBEAT_MS)
-                listener.onConnectionChanged(true)
             }
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
+            if (!isCurrent(webSocket)) return
             val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
             val type = root["type"]?.jsonPrimitive?.contentOrNullSafe() ?: return
             val payload = root["payload"]
 
-            main.post { dispatch(type, payload) }
+            main.post { if (isCurrent(webSocket)) dispatch(type, payload) }
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            if (!isCurrent(webSocket)) return
             Log.w(TAG, "ws failure: ${t.message}")
+            ws = null
             main.post {
+                if (closed || !socketEpoch.isCurrent(epoch) || ws != null) return@post
                 main.removeCallbacks(heartbeat)
+                syncReadyGate.onDisconnect()
                 leaseGate.disconnect()
                 listener.onPlayerRole(false)
                 listener.onConnectionChanged(false)
             }
-            scheduleReconnect()
+            scheduleReconnect(epoch)
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            if (!isCurrent(webSocket)) return
+            ws = null
             main.post {
+                if (closed || !socketEpoch.isCurrent(epoch) || ws != null) return@post
                 main.removeCallbacks(heartbeat)
+                syncReadyGate.onDisconnect()
                 leaseGate.disconnect()
                 listener.onPlayerRole(false)
                 listener.onConnectionChanged(false)
             }
-            scheduleReconnect()
+            scheduleReconnect(epoch)
         }
     }
 
@@ -190,6 +234,9 @@ class KtvSocket(
                     runCatching { json.decodeFromJsonElement(QueueSnapshot.serializer(), it) }.getOrNull()
                 } ?: return
                 listener.onSnapshot(type, snap)
+                if (type == "sync_full" && syncReadyGate.markReady()) {
+                    listener.onConnectionChanged(true)
+                }
             }
             else -> Log.d(TAG, "unhandled event: $type")
         }
@@ -204,6 +251,29 @@ class KtvSocket(
         private val BACKOFF_MS = longArrayOf(1_000, 2_000, 5_000, 10_000) // 指数退避封顶 10s
     }
 }
+
+internal fun buildSocketMessage(
+    type: String,
+    payload: kotlinx.serialization.json.JsonObject,
+): String = buildJsonObject {
+    put("type", type)
+    put("payload", payload)
+}.toString()
+
+internal fun buildPlayErrorMessage(
+    message: String,
+    fileId: Long?,
+    queueId: Long?,
+    generation: Long,
+): String = buildSocketMessage(
+    "play_error",
+    buildJsonObject {
+        put("message", message)
+        fileId?.let { put("file_id", it) }
+        queueId?.let { put("queue_id", it) }
+        put("generation", generation)
+    },
+)
 
 /** Keeps client identity query parameters out of connection logs. */
 internal fun safeWebSocketLogTarget(serverHost: String?): String =

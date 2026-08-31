@@ -225,6 +225,86 @@ class PersistenceIntegrationTest {
     }
 
     @Test
+    void publicArtistDirectoryPaginatesAndFiltersByInitial() {
+        String suffix = String.valueOf(System.nanoTime());
+        String artist = "公共分页歌手-" + suffix;
+        Song song = song(artist + "歌曲", artist, "public-artist-page-" + suffix);
+        song.setArtistInit("zjl");
+        song.setArtistGender("男歌手");
+        song.setStatus("ok");
+        songRepository.save(song);
+
+        String key = artist.replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
+        jdbc.update("""
+                INSERT INTO artist_profiles(artist_key, display_name, gender, gender_status, artist_kind)
+                VALUES (?, ?, '男歌手', 'MANUAL', 'PERSON')
+                """, key, artist);
+
+        var page = songRepository.pagePublicArtistDirectory(
+                "ok", "男歌手", "Z", org.springframework.data.domain.PageRequest.of(0, 1));
+        assertThat(page.getTotalElements()).isEqualTo(1);
+        assertThat(page.getContent()).hasSize(1);
+        assertThat(page.getContent().getFirst().getName()).isEqualTo(artist);
+        assertThat(page.getContent().getFirst().getInitial()).isEqualTo("Z");
+        assertThat(page.getContent().getFirst().getAvatarPath()).isNull();
+
+        assertThat(songRepository.findPublicArtistInitials("ok", "男歌手").stream()
+                .map(SongRepository.ArtistInitialProjection::getInitial))
+                .contains("Z");
+    }
+
+    @Test
+    void artistDirectoryUsesProfileGenderInsteadOfContaminatedSongGender() {
+        String suffix = String.valueOf(System.nanoTime());
+        String maleKey = "gender-male-" + suffix;
+        String femaleKey = "gender-female-" + suffix;
+        String maleName = "性别甲-" + suffix;
+        String femaleName = "性别乙-" + suffix;
+        Song collaborative = songRepository.save(song(
+                "性别污染合唱-" + suffix,
+                maleName + "_" + femaleName,
+                "gender-collaboration-" + suffix));
+        collaborative.setArtistGender("女歌手");
+        songRepository.save(collaborative);
+
+        jdbc.update("""
+                INSERT INTO artist_profiles(artist_key, display_name, gender, gender_status)
+                VALUES (?, ?, '男歌手', 'MANUAL'), (?, ?, '未知', 'UNREVIEWED')
+                """, maleKey, maleName, femaleKey, femaleName);
+        jdbc.update("""
+                INSERT INTO song_artists(song_id, artist_name, artist_key, artist_order)
+                VALUES (?, ?, ?, 0), (?, ?, ?, 1)
+                """, collaborative.getId(), maleName, maleKey,
+                collaborative.getId(), femaleName, femaleKey);
+
+        var malePage = songRepository.pageArtistDirectory(
+                "ok", maleName, "男歌手", null,
+                org.springframework.data.domain.PageRequest.of(0, 10));
+        var femalePage = songRepository.pageArtistDirectory(
+                "ok", femaleName, "男歌手", null,
+                org.springframework.data.domain.PageRequest.of(0, 10));
+
+        assertThat(malePage.getContent()).extracting(SongRepository.ArtistDirectoryProjection::getArtistKey)
+                .containsExactly(maleKey);
+        assertThat(femalePage.getContent()).isEmpty();
+
+        var maleSongs = songRepository.browseCategorySongs(
+                maleName, "男歌手", "", "", "",
+                org.springframework.data.domain.PageRequest.of(0, 10));
+        var femaleSongs = songRepository.browseCategorySongs(
+                femaleName, "男歌手", "", "", "",
+                org.springframework.data.domain.PageRequest.of(0, 10));
+        assertThat(maleSongs.getContent()).extracting(Song::getId).containsExactly(collaborative.getId());
+        assertThat(femaleSongs.getContent()).isEmpty();
+
+        var canonicalMaleSongs = songRepository.browseCategorySongsByArtistKey(
+                maleKey, "男歌手", "", "", "",
+                org.springframework.data.domain.PageRequest.of(0, 10));
+        assertThat(canonicalMaleSongs.getContent()).extracting(Song::getId)
+                .containsExactly(collaborative.getId());
+    }
+
+    @Test
     void scanSeenPathStoreKeepsReconciliationBoundedAndPendingQueueScanScoped() {
         String suffix = String.valueOf(System.nanoTime());
         Song seenSong = songRepository.save(song("扫描已见", "扫描歌手", "scan-seen-" + suffix));

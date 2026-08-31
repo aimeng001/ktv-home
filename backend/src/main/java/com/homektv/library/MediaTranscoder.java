@@ -9,7 +9,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -30,23 +30,40 @@ public class MediaTranscoder {
 
     public MediaTranscoder(TranscodeHardwareService hardwareService,
                            @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath) {
-        this(hardwareService, ffmpegPath, new AppProperties(), MediaTranscoder::startProcess);
+        this(hardwareService, ffmpegPath, new AppProperties(), MediaTranscoder::startProcess,
+                MediaProcessRunner.DEFAULT_TIMEOUT);
     }
 
     @Autowired
     public MediaTranscoder(TranscodeHardwareService hardwareService,
                            @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath,
-                           AppProperties props) {
-        this(hardwareService, ffmpegPath, props, MediaTranscoder::startProcess);
+                           AppProperties props,
+                           @Value("${app.transcode.timeout-seconds:1800}") long timeoutSeconds) {
+        this(hardwareService, ffmpegPath, props, MediaTranscoder::startProcess,
+                MediaProcessRunner.fromSeconds(timeoutSeconds));
+    }
+
+    /** Compatibility constructor for direct callers that use the managed-mode service. */
+    public MediaTranscoder(TranscodeHardwareService hardwareService, String ffmpegPath, AppProperties props) {
+        this(hardwareService, ffmpegPath, props, MediaTranscoder::startProcess,
+                MediaProcessRunner.DEFAULT_TIMEOUT);
     }
 
     MediaTranscoder(TranscodeHardwareService hardwareService, String ffmpegPath,
                     AppProperties props, ProcessLauncher processLauncher) {
+        this(hardwareService, ffmpegPath, props, processLauncher, MediaProcessRunner.DEFAULT_TIMEOUT);
+    }
+
+    MediaTranscoder(TranscodeHardwareService hardwareService, String ffmpegPath,
+                    AppProperties props, ProcessLauncher processLauncher, Duration timeout) {
         this.hardwareService = hardwareService;
         this.ffmpegPath = ffmpegPath;
         this.props = props;
         this.processLauncher = processLauncher;
+        this.timeout = timeout;
     }
+
+    private final Duration timeout;
 
     public Path transcode(Path source, Path output, SettingService.TranscodePolicy policy, boolean hasVideo) {
         LibraryModePolicy.requireManaged(props, "转码源文件");
@@ -85,9 +102,12 @@ public class MediaTranscoder {
         boolean completed = false;
         try {
             Process process = processLauncher.start(command);
-            String log = ProcessOutputTail.read(process.getInputStream(),
-                    StandardCharsets.UTF_8, MAX_PROCESS_LOG_BYTES);
-            int code = process.waitFor();
+            MediaProcessRunner.Result result = MediaProcessRunner.run(process, timeout);
+            if (result.timedOut()) {
+                throw new ApiException("TRANSCODE_TIMEOUT", "ffmpeg 转码超时");
+            }
+            String log = result.output();
+            int code = result.exitCode();
             if (code != 0 || !Files.isReadable(reservedOutput) || Files.size(reservedOutput) == 0) {
                 throw new ApiException(hardware ? "HARDWARE_TRANSCODE_FAILED" : "TRANSCODE_FAILED",
                         log.isBlank() ? "ffmpeg 转码失败" : log);

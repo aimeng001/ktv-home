@@ -3,6 +3,7 @@ package com.homektv.musicsource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.domain.Song;
 import com.homektv.repo.SongRepository;
+import com.homektv.web.ApiException;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,10 +15,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.stream.StreamSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -38,7 +46,10 @@ class MusicMetadataScrapeServiceTest {
         dataSource.setURL("jdbc:h2:mem:scrape-" + System.nanoTime() + ";MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1");
         jdbc = new JdbcTemplate(dataSource);
         transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
-        jdbc.execute("CREATE TABLE song_files(song_id BIGINT NOT NULL, valid BOOLEAN NOT NULL)");
+        jdbc.execute("CREATE TABLE music_metadata_scrape_lock(id SMALLINT PRIMARY KEY)");
+        jdbc.update("INSERT INTO music_metadata_scrape_lock(id) VALUES (1)");
+        jdbc.execute("CREATE TABLE song_files(song_id BIGINT NOT NULL, valid BOOLEAN NOT NULL, "
+                + "probe_pending BOOLEAN NOT NULL DEFAULT FALSE, media_type VARCHAR(32) DEFAULT 'KTV_VIDEO')");
         jdbc.execute("""
                 CREATE TABLE music_metadata_scrape_batches(
                   id VARCHAR(36) PRIMARY KEY, mode VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL,
@@ -59,7 +70,9 @@ class MusicMetadataScrapeServiceTest {
                   status VARCHAR(24) NOT NULL, provider VARCHAR(24), external_id VARCHAR(160),
                   match_score DOUBLE PRECISION, result_json JSON, error_message VARCHAR(1000),
                   started_at TIMESTAMP WITH TIME ZONE, finished_at TIMESTAMP WITH TIME ZONE,
-                  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP)
+                  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                  lease_owner VARCHAR(100), lease_until TIMESTAMP WITH TIME ZONE,
+                  claim_token UUID)
                 """);
         songRepository = mock(SongRepository.class);
         configService = mock(MusicSourceConfigService.class);
@@ -68,8 +81,10 @@ class MusicMetadataScrapeServiceTest {
         when(configService.getConfig()).thenReturn(new MusicSourceConfig(
                 true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95));
         when(songRepository.findAllById(any())).thenAnswer(invocation -> {
+            Iterable<Long> ids = invocation.getArgument(0);
+            if (ids == null) return List.of();
             List<Song> songs = new ArrayList<>();
-            for (Long id : (Iterable<Long>) invocation.getArgument(0)) songs.add(song(id));
+            for (Long id : ids) songs.add(song(id));
             return songs;
         });
         service = new MusicMetadataScrapeService(jdbc, songRepository, configService, worker,
@@ -98,7 +113,38 @@ class MusicMetadataScrapeServiceTest {
     }
 
     @Test
+    void allModeExcludesFilesWaitingForProbe() {
+        jdbc.batchUpdate("INSERT INTO song_files(song_id,valid,probe_pending,media_type) VALUES (?,?,?,?)",
+                List.of(new Object[]{10L, true, false, "KTV_VIDEO"},
+                        new Object[]{11L, true, true, "PENDING_PROBE"},
+                        new Object[]{12L, true, false, " pending_probe "}));
+
+        Map<String, Object> created = transactions.execute(status -> service.start(true, List.of(), null));
+
+        assertThat(created).containsEntry("total", 1L);
+        assertThat(jdbc.queryForList("SELECT song_id FROM music_metadata_scrape_items", Long.class))
+                .containsExactly(10L);
+    }
+
+    @Test
+    void allModeLoadsValidSongIdsInBoundedPages() {
+        for (long id = 1; id <= 1_201; id++) {
+            jdbc.update("INSERT INTO song_files(song_id,valid) VALUES (?,true)", id);
+        }
+
+        transactions.execute(status -> service.start(true, List.of(), null));
+
+        org.mockito.ArgumentCaptor<Iterable<Long>> batches =
+                org.mockito.ArgumentCaptor.forClass(Iterable.class);
+        verify(songRepository, atLeast(3)).findAllById(batches.capture());
+        assertThat(batches.getAllValues())
+                .allSatisfy(batch -> assertThat(StreamSupport.stream(batch.spliterator(), false).count())
+                        .isLessThanOrEqualTo(500));
+    }
+
+    @Test
     void createsSingleTaskWithoutWaitingForAFullLibraryRun() {
+        jdbc.update("INSERT INTO song_files(song_id,valid,probe_pending,media_type) VALUES (8,true,false,'KTV_VIDEO')");
         Map<String, Object> created = transactions.execute(status -> service.start(false, List.of(8L), null));
 
         assertThat(created).containsEntry("mode", "SINGLE")
@@ -110,6 +156,7 @@ class MusicMetadataScrapeServiceTest {
 
     @Test
     void manuallyCompletesAnItemWithoutAnExternalCandidate() {
+        jdbc.update("INSERT INTO song_files(song_id,valid,probe_pending,media_type) VALUES (9,true,false,'KTV_VIDEO')");
         Map<String, Object> created = transactions.execute(status -> service.start(false, List.of(9L), null));
         String batchId = (String) created.get("batchId");
         long itemId = jdbc.queryForObject("SELECT id FROM music_metadata_scrape_items WHERE batch_id=?", Long.class, batchId);
@@ -120,6 +167,15 @@ class MusicMetadataScrapeServiceTest {
         verify(applyService).applyManual(eq(9L), any(MusicMetadataApplyService.ApplyRequest.class));
         assertThat(jdbc.queryForObject("SELECT status FROM music_metadata_scrape_items WHERE id=?", String.class, itemId))
                 .isEqualTo("MANUAL_APPLIED");
+    }
+
+    @Test
+    void selectedModeRejectsSongWaitingForProbe() {
+        jdbc.update("INSERT INTO song_files(song_id,valid,probe_pending,media_type) VALUES (12,true,true,'PENDING_PROBE')");
+
+        assertThatThrownBy(() -> service.start(false, List.of(12L), null))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "METADATA_SCRAPE_SONG_NOT_READY");
     }
 
     @Test
@@ -138,11 +194,189 @@ class MusicMetadataScrapeServiceTest {
                 .containsExactly(3L);
     }
 
+    @Test
+    void reclaimsExpiredProcessingItemsWithoutPausingTheRunningBatch() {
+        jdbc.update("""
+                INSERT INTO music_metadata_scrape_batches
+                    (id,mode,status,auto_apply_threshold,started_at,updated_at)
+                VALUES ('reclaim-batch','SELECTED','RUNNING',0.95,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """);
+        jdbc.update("""
+                INSERT INTO music_metadata_scrape_items
+                    (batch_id,song_id,original_title,original_artist,status,lease_owner,lease_until)
+                VALUES ('reclaim-batch',1,'歌曲','歌手','PROCESSING','dead-worker',CURRENT_TIMESTAMP - INTERVAL '1' SECOND)
+                """);
+
+        int reclaimed = service.reclaimExpiredItems();
+
+        assertThat(reclaimed).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM music_metadata_scrape_items WHERE batch_id='reclaim-batch'", String.class))
+                .isEqualTo("PENDING");
+        assertThat(jdbc.queryForObject(
+                "SELECT lease_owner FROM music_metadata_scrape_items WHERE batch_id='reclaim-batch'", String.class))
+                .isNull();
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM music_metadata_scrape_batches WHERE id='reclaim-batch'", String.class))
+                .isEqualTo("RUNNING");
+    }
+
+    @Test
+    void detailsPagingDoesNotDuplicateItemsWhenUpdatedAtChanges() {
+        jdbc.update("""
+                INSERT INTO music_metadata_scrape_batches
+                    (id,mode,status,auto_apply_threshold)
+                VALUES ('stable-page','SELECTED','RUNNING',0.95)
+                """);
+        jdbc.update("""
+                INSERT INTO music_metadata_scrape_items
+                    (batch_id,song_id,original_title,original_artist,status,updated_at)
+                VALUES ('stable-page',1,'歌曲1','歌手1','PENDING',CURRENT_TIMESTAMP),
+                       ('stable-page',2,'歌曲2','歌手2','PENDING',CURRENT_TIMESTAMP - INTERVAL '1' SECOND)
+        """);
+
+        Map<String, Object> firstPage = service.details("stable-page", "", 0, 1);
+        Map<?, ?> firstItem = (Map<?, ?>) ((List<?>) firstPage.get("items")).getFirst();
+        long firstId = ((Number) firstItem.get("id")).longValue();
+        long otherId = jdbc.queryForObject(
+                "SELECT id FROM music_metadata_scrape_items WHERE batch_id='stable-page' AND id<>?",
+                Long.class, firstId);
+        jdbc.update("UPDATE music_metadata_scrape_items SET updated_at=CURRENT_TIMESTAMP + INTERVAL '1' DAY WHERE id=?", otherId);
+
+        Map<String, Object> secondPage = service.details("stable-page", "", 1, 1);
+        long secondId = ((Map<?, ?>) ((List<?>) secondPage.get("items")).getFirst()).get("id") instanceof Number number
+                ? number.longValue() : -1L;
+
+        assertThat(secondId).isNotEqualTo(firstId);
+    }
+
+    @Test
+    void concurrentStartsCannotCreateTwoActiveBatches() throws Exception {
+        jdbc.batchUpdate("INSERT INTO song_files(song_id,valid,probe_pending,media_type) VALUES (?,?,?,?)",
+                List.of(new Object[]{101L, true, false, "KTV_VIDEO"},
+                        new Object[]{102L, true, false, "KTV_VIDEO"}));
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch go = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            List<Future<Object>> results = List.of(
+                    executor.submit(() -> startConcurrently(ready, go, 101L)),
+                    executor.submit(() -> startConcurrently(ready, go, 102L)));
+            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            go.countDown();
+
+            List<Object> completed = results.stream().map(this::getFuture).toList();
+            assertThat(completed).hasSize(2);
+            assertThat(completed.stream().filter(Map.class::isInstance).count()).isEqualTo(1);
+            assertThat(completed.stream().filter(ApiException.class::isInstance)
+                    .map(ApiException.class::cast).map(ApiException::getCode))
+                    .containsExactly("METADATA_SCRAPE_ACTIVE");
+            assertThat(jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM music_metadata_scrape_batches WHERE status IN ('RUNNING','PAUSED')",
+                    Integer.class)).isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private Object startConcurrently(CountDownLatch ready, CountDownLatch go, long songId) throws Exception {
+        ready.countDown();
+        go.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        try {
+            return transactions.execute(status -> service.start(false, List.of(songId), null));
+        } catch (ApiException failure) {
+            return failure;
+        }
+    }
+
+    private Object getFuture(Future<Object> future) {
+        try {
+            return future.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception failure) {
+            throw new AssertionError(failure);
+        }
+    }
+
     private static Song song(long id) {
         Song song = new Song();
         song.setId(id);
         song.setTitle("歌曲 " + id);
         song.setArtist("歌手 " + id);
         return song;
+    }
+
+    @Test
+    void rejectsAllUnrecognizedRequestedSongs_withExplicitError() {
+        Song unrecognizedSong = new Song();
+        unrecognizedSong.setId(99L);
+        unrecognizedSong.setTitle("胡可_安吉-去未来-国语-合唱");
+        unrecognizedSong.setArtist("未知歌手");
+        unrecognizedSong.setStatus("unrecognized");
+        when(songRepository.findAllById(List.of(99L))).thenReturn(List.of(unrecognizedSong));
+
+        org.junit.jupiter.api.Assertions.assertThrows(ApiException.class, () -> {
+            service.start(false, List.of(99L), null);
+        }, "选中的歌曲尚未完成基础识别，请先在【曲库管理】中执行【元数据重解析】纠正歌手歌名后再发起刮削");
+    }
+
+    @Test
+    void filtersUnrecognizedSongsInAllMode_withoutPollution() {
+        jdbc.batchUpdate("INSERT INTO song_files(song_id,valid) VALUES (?,?)",
+                List.of(new Object[]{101L, true}, new Object[]{102L, true}));
+
+        Song recognized = new Song();
+        recognized.setId(101L);
+        recognized.setTitle("好汉歌");
+        recognized.setArtist("刘欢");
+        recognized.setStatus("ok");
+
+        Song unrecognized = new Song();
+        unrecognized.setId(102L);
+        unrecognized.setTitle("苗苗_赵越-雁南飞-国语-合唱");
+        unrecognized.setArtist("未知歌手");
+        unrecognized.setStatus("unrecognized");
+
+        when(songRepository.findAllById(List.of(101L, 102L))).thenReturn(List.of(recognized, unrecognized));
+
+        Map<String, Object> result = transactions.execute(status -> service.start(true, List.of(), null));
+        assertThat(result).isNotNull();
+        // Only recognized song (101L) should be inserted into music_metadata_scrape_items
+        List<Long> insertedIds = jdbc.query("SELECT song_id FROM music_metadata_scrape_items",
+                (rs, rowNum) -> rs.getLong(1));
+        assertThat(insertedIds).containsExactly(101L);
+    }
+
+    @Test
+    void rejectsMixedUnrecognizedAndAlreadyScrapedSelection_withPreciseMessage() {
+        jdbc.update("""
+                INSERT INTO music_metadata_scrape_batches(id,mode,status,auto_apply_threshold)
+                VALUES ('prev-batch','SINGLE','COMPLETED',0.95)
+                """);
+        jdbc.update("""
+                INSERT INTO music_metadata_scrape_items(batch_id,song_id,original_title,original_artist,status)
+                VALUES ('prev-batch',101,'已刮削歌曲','歌手1','AUTO_APPLIED')
+                """);
+
+        Song scraped = new Song();
+        scraped.setId(101L);
+        scraped.setTitle("已刮削歌曲");
+        scraped.setArtist("歌手1");
+        scraped.setStatus("ok");
+
+        Song unrecognized = new Song();
+        unrecognized.setId(102L);
+        unrecognized.setTitle("未识别歌曲");
+        unrecognized.setArtist("未知歌手");
+        unrecognized.setStatus("unrecognized");
+
+        when(songRepository.findAllById(any())).thenReturn(List.of(scraped, unrecognized));
+
+        assertThatThrownBy(() -> service.start(false, List.of(101L, 102L), null))
+                .isInstanceOf(ApiException.class)
+                .satisfies(error -> {
+                    ApiException apiException = (ApiException) error;
+                    assertThat(apiException.getCode()).isEqualTo("METADATA_SCRAPE_SKIPPED_UNRECOGNIZED_AND_COMPLETED");
+                    assertThat(apiException.getMessage()).contains("包含 1 首未识别与 1 首已刮削歌曲");
+                });
     }
 }

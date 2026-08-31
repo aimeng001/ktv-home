@@ -25,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.mockito.ArgumentCaptor;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -173,6 +174,45 @@ class AiLibraryServiceTest {
 
         assertThatThrownBy(() -> service.addPlaylistSong(9L, 101L))
                 .hasMessageContaining("最多包含 100 首");
+    }
+
+    @Test
+    void previewPlaylistSaveValidatesEverySongBeforeCreatingPlaylist() {
+        SongRepository songRepository = mock(SongRepository.class);
+        PlaylistRepository playlistRepository = mock(PlaylistRepository.class);
+        PlaylistSongRepository playlistSongRepository = mock(PlaylistSongRepository.class);
+        when(songRepository.findAllById(List.of(1L, 2L))).thenReturn(List.of(song(1L, "有效", "歌手")));
+
+        AiLibraryService service = service(songRepository, playlistRepository, playlistSongRepository,
+                mock(OpenAiCompatibleClient.class), new ObjectMapper());
+
+        assertThatThrownBy(() -> service.savePlaylistFromPreview(
+                "预览歌单", "说明", "AI 策划", true, List.of(1L, 2L)))
+                .hasMessageContaining("歌曲不存在");
+        verify(playlistRepository, never()).save(any(Playlist.class));
+        verify(playlistSongRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void previewPlaylistSaveDeduplicatesIdsAndWritesAssociationsOnce() {
+        SongRepository songRepository = mock(SongRepository.class);
+        PlaylistRepository playlistRepository = mock(PlaylistRepository.class);
+        PlaylistSongRepository playlistSongRepository = mock(PlaylistSongRepository.class);
+        Playlist playlist = new Playlist();
+        when(songRepository.findAllById(List.of(1L, 2L))).thenReturn(List.of(
+                song(1L, "第一首", "歌手甲"), song(2L, "第二首", "歌手乙")));
+        when(playlistRepository.save(any(Playlist.class))).thenReturn(playlist);
+
+        AiLibraryService service = service(songRepository, playlistRepository, playlistSongRepository,
+                mock(OpenAiCompatibleClient.class), new ObjectMapper());
+
+        service.savePlaylistFromPreview("预览歌单", "说明", "AI 策划", true, List.of(1L, 2L, 1L));
+
+        ArgumentCaptor<List<PlaylistSong>> captor = ArgumentCaptor.forClass(List.class);
+        verify(playlistSongRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).hasSize(2)
+                .extracting(PlaylistSong::getSongId)
+                .containsExactly(1L, 2L);
     }
 
     @Test

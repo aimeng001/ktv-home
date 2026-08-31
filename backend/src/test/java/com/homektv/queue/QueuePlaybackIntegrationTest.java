@@ -70,6 +70,7 @@ class QueuePlaybackIntegrationTest {
 
         historyRepo.deleteAll();
         queueRepo.deleteAll();
+        fileRepo.deleteAll();
         songRepo.deleteAll();
         userRepo.deleteAll();
 
@@ -96,7 +97,16 @@ class QueuePlaybackIntegrationTest {
         s.setArtist("测试");
         s.setMediaType("KTV_VIDEO");
         s.setFingerprint(fp);
-        return songRepo.save(s).getId();
+        Song saved = songRepo.save(s);
+        SongFile file = new SongFile();
+        file.setSongId(saved.getId());
+        file.setFilePath("/integration/" + fp + ".mkv");
+        file.setFormat("mkv");
+        file.setMediaType("KTV_VIDEO");
+        file.setProbePending(false);
+        file.setFileMtime(OffsetDateTime.now());
+        fileRepo.save(file);
+        return saved.getId();
     }
 
     @Test

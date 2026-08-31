@@ -35,6 +35,7 @@ import { useRoute } from 'vue-router'
 import api, { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
+import { useOrderLock } from '../composables/useOrderLock'
 import SongRow from '../components/SongRow.vue'
 import TabBar from '../components/TabBar.vue'
 
@@ -42,6 +43,7 @@ const route = useRoute()
 const user = useUserStore()
 const controls = makeControls(user.clientToken)
 const { toast } = useToast()
+const { executeOrder } = useOrderLock()
 
 /** 当前歌单数据 / Current playlist data */
 const playlist = ref(null)
@@ -55,7 +57,7 @@ const orderedIds = reactive(new Set())
 onMounted(async () => { try { playlist.value = await api.playlistDetail(route.params.id) } catch { playlist.value = null } finally { loading.value = false } })
 
 /**
- * 将单首歌曲加入点歌队列。
+ * 将单首歌曲加入点歌队列（带防抖并发锁）。
  *
  * Order a single song into the playback queue.
  *
@@ -63,8 +65,15 @@ onMounted(async () => { try { playlist.value = await api.playlistDetail(route.pa
  * @param {string} song.id - 歌曲 ID / Song ID
  */
 async function orderSong(song) {
-  try { await controls.order(song.id); orderedIds.add(song.id); toast('已加入队列') }
-  catch (error) { toast(error.message || '点歌失败') }
+  await executeOrder(song.id, async () => {
+    try {
+      await controls.order(song.id)
+      orderedIds.add(song.id)
+      toast('已加入队列')
+    } catch (error) {
+      toast(error.code === 'SONG_IN_QUEUE' ? (error.message || '已在队列中') : (error.message || '点歌失败'))
+    }
+  })
 }
 /**
  * 整单点歌 — 将歌单中所有歌曲一次性加入点歌队列。

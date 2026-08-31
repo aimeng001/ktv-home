@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { canonicalizeSettings, releaseLabel, saveDirtySections } from './settingsState'
+import { canonicalizeSettings, releaseLabel, saveDirtySections, loadSettingsSections, canSaveSection, runSettingsAction } from './settingsState'
 
 describe('admin settings state', () => {
   it('uses display_address as the canonical key while reading legacy qr_address', () => {
@@ -32,5 +32,40 @@ describe('admin settings state', () => {
     expect(saveMusic).not.toHaveBeenCalled()
     expect(result.successes.map(item => item.name)).toEqual(['基础设置'])
     expect(result.failures.map(item => item.name)).toEqual(['AI 设置'])
+  })
+
+  it('keeps successful settings sections when another section fails to load', async () => {
+    const result = await loadSettingsSections({
+      general: () => Promise.resolve({ display_address: '192.168.1.20:54001' }),
+      ai: () => Promise.reject(new Error('AI 服务不可用')),
+      music: () => Promise.resolve({ enabled: false })
+    })
+
+    expect(result.values.general).toEqual({ display_address: '192.168.1.20:54001' })
+    expect(result.values.music).toEqual({ enabled: false })
+    expect(result.states).toEqual({ general: 'ready', ai: 'error', music: 'ready' })
+    expect(result.errors.ai).toBeInstanceOf(Error)
+  })
+
+  it('blocks a dirty section whose initial read failed', async () => {
+    const saveAi = vi.fn()
+    const result = await saveDirtySections([
+      { name: 'AI 设置', dirty: true, state: 'error', save: saveAi },
+      { name: '基础设置', dirty: true, state: 'ready', save: vi.fn().mockResolvedValue({ ok: true }) }
+    ])
+
+    expect(canSaveSection(true, 'error')).toBe(false)
+    expect(canSaveSection(true, 'ready')).toBe(true)
+    expect(saveAi).not.toHaveBeenCalled()
+    expect(result.successes.map(item => item.name)).toEqual(['基础设置'])
+    expect(result.failures).toHaveLength(1)
+    expect(result.failures[0].blocked).toBe(true)
+  })
+
+  it('converts a settings action failure into an explicit result', async () => {
+    const result = await runSettingsAction(() => Promise.reject(new Error('权限不足')))
+
+    expect(result).toEqual({ ok: false, error: expect.any(Error) })
+    expect(result.error.message).toBe('权限不足')
   })
 })

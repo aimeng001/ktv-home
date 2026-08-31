@@ -5,7 +5,7 @@
       <button class="back" aria-label="返回" @click="$router.back()"><ChevronLeft :size="24" /></button>
       <div class="search grow">
         <Search :size="17" />
-        <input ref="inp" v-model="kw" placeholder="歌名 / 歌手 / 拼音首字母" @input="onInput" />
+        <input ref="inp" v-model="kw" placeholder="歌名 / 歌手 / 拼音首字母" maxlength="50" @input="onInput" />
         <button v-if="kw" class="clear" aria-label="清空" @click="clear"><X :size="16" /></button>
       </div>
     </div>
@@ -19,13 +19,17 @@
 
     <!-- 搜索结果 / Search results -->
     <div class="sec grow results">
-      <div v-if="loading" class="tip">搜索中…</div>
-      <template v-else-if="results.length">
+      <div v-if="searchState === 'loading'" class="tip">搜索中…</div>
+      <template v-else-if="searchState === 'results'">
         <div class="cnt"><b>搜索结果</b><span>{{ results.length }} 首歌曲</span></div>
         <SongRow v-for="s in results" :key="s.id" :song="s" :keyword="kw"
                  :extra="fmtDur(s.durationMs)" :ordered="orderedIds.has(s.id)" @order="order" />
       </template>
-      <div v-else-if="kw && !loading" class="empty">
+      <div v-else-if="searchState === 'error'" class="error-state" role="alert">
+        <div class="e-title">搜索失败：{{ searchError }}</div>
+        <button class="btn ghost" @click="retrySearch">重试</button>
+      </div>
+      <div v-else-if="searchState === 'empty'" class="empty">
         <div class="e-title">曲库还没有这首歌</div>
         <button class="btn ghost" @click="addWish">告诉我们想唱《{{ kw }}》</button>
       </div>
@@ -39,27 +43,29 @@
 <script setup>
 /**
  * SearchView - 歌曲搜索页面
- *
  * 支持按歌名、歌手或拼音首字母搜索歌曲。包含 300ms 输入防抖、
  * 搜索结果展示、点歌加入队列以及心愿歌曲提交功能。
  *
  * SearchView - Song search page.
- *
  * Supports searching songs by title, artist or pinyin initials.
  * Features 300ms input debounce, search result display, song queuing,
  * and wish-song submission.
  */
-import { ref, onMounted, reactive } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, reactive } from 'vue'
 import api, { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
+import { useOrderLock } from '../composables/useOrderLock'
 import TabBar from '../components/TabBar.vue'
 import SongRow from '../components/SongRow.vue'
+import { searchViewState } from './searchState'
+import { createSearchController } from './searchController'
 import { ChevronLeft, Search, X } from 'lucide-vue-next'
 
 const user = useUserStore()
 const { toast } = useToast()
 const controls = makeControls(user.clientToken)
+const { executeOrder } = useOrderLock()
 
 /** @type {import('vue').Ref<string>} 当前搜索关键词 / Current search keyword */
 const kw = ref('')
@@ -67,6 +73,7 @@ const kw = ref('')
 const results = ref([])
 /** @type {import('vue').Ref<boolean>} 搜索加载状态 / Search loading flag */
 const loading = ref(false)
+const searchError = ref('')
 const activeFilter = ref('')
 const filters = [
   { label: '全部', value: '' },
@@ -77,11 +84,17 @@ const filters = [
 /** 已点歌 ID 集合，用于高亮标记 / Ordered song ID set, for highlight marking */
 const orderedIds = reactive(new Set())
 const inp = ref(null)
-/** @type {number|null} 防抖定时器引用 / Debounce timer reference */
-let debounce = null
-let searchSequence = 0
+const searchState = computed(() => searchViewState(kw.value, loading.value, searchError.value, results.value))
+const searchController = createSearchController(api, {
+  onState: next => {
+    results.value = next.results
+    loading.value = next.loading
+    searchError.value = next.error
+  }
+})
 
 onMounted(() => inp.value?.focus())
+onBeforeUnmount(() => searchController.dispose())
 
 /**
  * 输入事件处理，300ms 防抖触发搜索（详设 H5-03）
@@ -89,65 +102,42 @@ onMounted(() => inp.value?.focus())
  * Input event handler with 300ms debounce before search (spec H5-03).
  */
 function onInput() {
-  if (debounce) clearTimeout(debounce)
-  const q = kw.value.trim()
-  if (!q) { results.value = []; loading.value = false; return }
-  loading.value = true
-  debounce = setTimeout(doSearch, 300)
-}
-
-/**
- * 执行歌曲搜索请求
- *
- * Execute song search API request.
- */
-async function doSearch() {
-  const q = kw.value.trim()
-  if (!q) return
-  const sequence = ++searchSequence
-  try {
-    const songs = await api.searchSongs(q, activeFilter.value)
-    if (sequence === searchSequence) results.value = songs
-  } catch {
-    if (sequence === searchSequence) results.value = []
-  } finally {
-    if (sequence === searchSequence) loading.value = false
-  }
+  searchController.setQuery(kw.value, activeFilter.value)
 }
 
 /** 清空搜索关键词和结果 / Clear keyword and results */
-function clear() { searchSequence++; kw.value = ''; results.value = []; loading.value = false; inp.value?.focus() }
+function clear() { kw.value = ''; searchController.clear(); inp.value?.focus() }
 
 function selectFilter(value) {
   if (activeFilter.value === value) return
   activeFilter.value = value
   if (!kw.value.trim()) return
-  if (debounce) clearTimeout(debounce)
-  loading.value = true
-  doSearch()
+  searchController.setFilter(value, kw.value)
+}
+
+function retrySearch() {
+  if (!kw.value.trim() || loading.value) return
+  searchController.retry(kw.value, activeFilter.value)
 }
 
 /**
- * 将歌曲加入点歌队列，并标记为已点。
- *
- * Queue a song for playback and mark it as ordered.
- *
- * @param {Object} song - 歌曲对象，需包含 id 属性 / Song object with an id property
+ * 将歌曲加入点歌队列，并标记为已点（带防抖并发锁）。
+ * @param {Object} song - 歌曲对象，需包含 id 属性
  */
 async function order(song) {
-  try {
-    await controls.order(song.id)
-    orderedIds.add(song.id)
-    toast('已加入队列')
-  } catch (e) {
-    toast(e.code === 'SONG_IN_QUEUE' ? (e.message || '已在队列中') : (e.message || '点歌失败'))
-  }
+  await executeOrder(song.id, async () => {
+    try {
+      await controls.order(song.id)
+      orderedIds.add(song.id)
+      toast('已加入队列')
+    } catch (e) {
+      toast(e.code === 'SONG_IN_QUEUE' ? (e.message || '已在队列中') : (e.message || '点歌失败'))
+    }
+  })
 }
 
 /**
  * 提交心愿歌曲，通知管理端补充曲库。
- *
- * Submit a wish song request to notify admin to add the song.
  */
 async function addWish() {
   try {
@@ -188,6 +178,7 @@ function fmtDur(ms) {
 .results { margin-top:6px;overflow-y:auto; }
 .cnt { display:flex;justify-content:space-between;padding:5px 0 8px;color:var(--dim2);font-size:10px; }.cnt b { color:var(--text);font-size:12px; }
 .tip { color: var(--dim2); font-size: 13px; padding: 30px 0; text-align: center; }
-.empty { text-align: center; padding: 40px 0; }
-.e-title { color: var(--dim); margin-bottom: 16px; }
+.empty { text-align: center; padding: 40px 0; color: var(--dim); }
+.error-state { text-align: center; padding: 36px 0; }
+.e-title { color: var(--text); font-size: 14px; margin-bottom: 12px; }
 </style>

@@ -24,6 +24,20 @@ public class CategoryBrowseController {
     @GetMapping("/artists")
     public List<Map<String, Object>> artists() { return service.artists(); }
 
+    @GetMapping("/artists/page")
+    public CategoryBrowseService.ArtistPage artistPage(
+            @RequestParam(required = false) String gender,
+            @RequestParam(required = false) String initial,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size) {
+        return service.artistsPage(gender, initial, page, size);
+    }
+
+    @GetMapping("/artists/initials")
+    public List<String> artistInitials(@RequestParam(required = false) String gender) {
+        return service.artistInitials(gender);
+    }
+
     @GetMapping("/languages")
     public List<Map<String, Object>> languages() { return service.languages(); }
 
@@ -52,5 +66,18 @@ public class CategoryBrowseController {
                                @RequestParam(defaultValue = "hot") String sort,
                                @RequestParam(defaultValue = "100") int limit) {
         return service.songs(artist, artistGender, language, tag, vocalForm, sort, limit);
+    }
+
+    @GetMapping("/songs/page")
+    public CategoryBrowseService.SongPage songPage(@RequestParam(required = false) String artist,
+                                                   @RequestParam(required = false) String artistKey,
+                                                   @RequestParam(required = false) String artistGender,
+                                                   @RequestParam(required = false) String language,
+                                                   @RequestParam(required = false) String tag,
+                                                   @RequestParam(required = false) String vocalForm,
+                                                   @RequestParam(defaultValue = "hot") String sort,
+                                                   @RequestParam(defaultValue = "0") int page,
+                                                   @RequestParam(defaultValue = "50") int size) {
+        return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, sort, page, size);
     }
 }

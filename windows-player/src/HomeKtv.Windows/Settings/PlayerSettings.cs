@@ -7,6 +7,7 @@ public sealed class PlayerSettings
 {
     public string ServerAddress { get; set; } = "";
     public string ClientToken { get; set; } = $"windows-{Guid.NewGuid():N}";
+    public string PlayerCredential { get; set; } = "";
     public string MpvExecutablePath { get; set; } = "mpv.exe";
     public int DisplayIndex { get; set; }
     public string DisplayId { get; set; } = "";
@@ -48,6 +49,7 @@ public sealed class PlayerSettingsStore
                         settings.ClientToken = $"windows-{Guid.NewGuid():N}";
                     }
 
+                    settings.PlayerCredential ??= "";
                     settings.DisplayId ??= "";
                     settings.Window ??= new WindowPlacementSettings();
                     return settings;
@@ -66,5 +68,27 @@ public sealed class PlayerSettingsStore
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
         var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(path, json);
+    }
+}
+
+public sealed record PlayerSettingsSaveResult(bool Succeeded, string? ErrorMessage);
+
+public static class PlayerSettingsSaveFeedback
+{
+    public static PlayerSettingsSaveResult Execute(Action save)
+    {
+        try
+        {
+            save();
+            return new(true, null);
+        }
+        catch (IOException)
+        {
+            return new(false, "设置保存失败，请检查目录权限。");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return new(false, "设置保存失败，请检查目录权限。");
+        }
     }
 }

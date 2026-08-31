@@ -9,14 +9,14 @@ import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
-import java.util.function.Consumer;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 
 /**
  * 歌手库服务：按歌手名称聚合歌曲，提供性别 AI 建议和人工复核应用。
@@ -24,13 +24,16 @@ import java.util.function.Consumer;
  */
 @Service
 public class ArtistLibraryService {
-    private static final int SONG_PAGE_SIZE = 500;
+    private static final int ARTIST_PAGE_SIZE = 50;
+    private static final int MAX_ARTIST_PAGE_SIZE = 100;
     private static final Set<String> GENDERS = Set.of("男歌手", "女歌手", "组合", "未知");
 
     private final SongRepository songs;
     private final AiConfigService aiConfig;
     private final OpenAiCompatibleClient aiClient;
     private final ObjectMapper mapper;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ArtistProfileService artistProfiles;
     private static final Comparator<Song> REPRESENTATIVE_ORDER = Comparator
             .comparingInt(Song::getPlayCount).reversed()
             .thenComparing(Song::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER));
@@ -44,23 +47,62 @@ public class ArtistLibraryService {
     }
 
     public List<Map<String, Object>> list(String keyword, String gender, Boolean reviewed, int limit) {
-        String query = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
-        return artistSummaries().values().stream()
-                .filter(entry -> query.isBlank() || entry.name().toLowerCase(Locale.ROOT).contains(query))
-                .map(ArtistSummary::toValue)
-                .filter(value -> gender == null || gender.isBlank() || gender.equals(value.get("gender")))
-                .filter(value -> reviewed == null || reviewed == ((Boolean) value.get("reviewed")))
-                .sorted(Comparator.comparingInt((Map<String, Object> value) -> (Integer) value.get("songCount"))
-                        .reversed().thenComparing(value -> (String) value.get("name")))
-                .limit(Math.max(1, Math.min(limit, 5000)))
+        return listForCompatibility(keyword, gender, reviewed, limit);
+    }
+
+    /**
+     * Keeps the original unpaged endpoint bounded for older clients. New UI
+     * code should use {@link #page(String, String, Boolean, int, int)} directly.
+     */
+    public List<Map<String, Object>> listForCompatibility(String keyword, String gender,
+                                                           Boolean reviewed, int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 5000));
+        List<Map<String, Object>> result = new ArrayList<>(Math.min(safeLimit, MAX_ARTIST_PAGE_SIZE));
+        for (int pageNumber = 0; result.size() < safeLimit; pageNumber++) {
+            ArtistPage current = page(keyword, gender, reviewed, pageNumber, MAX_ARTIST_PAGE_SIZE);
+            if (current.items() == null || current.items().isEmpty()) break;
+            result.addAll(current.items());
+            if (result.size() >= current.total()) break;
+        }
+        return result.stream().limit(safeLimit).toList();
+    }
+
+    /**
+     * Database-backed artist directory. This is the path used by the admin UI;
+     * it never materializes the entire song table in the application heap.
+     */
+    public ArtistPage page(String keyword, String gender, Boolean reviewed, int page, int size) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size <= 0 ? ARTIST_PAGE_SIZE : size, MAX_ARTIST_PAGE_SIZE));
+        String safeKeyword = keyword == null ? "" : keyword.trim();
+        String safeGender = gender == null ? "" : gender.trim();
+        Page<SongRepository.ArtistDirectoryProjection> rows = songs.pageArtistDirectory(
+                "ok", safeKeyword, safeGender, reviewed, PageRequest.of(safePage, safeSize));
+        List<SongRepository.ArtistDirectoryProjection> content = rows == null || rows.getContent() == null
+                ? List.of() : rows.getContent();
+        List<String> keys = content.stream().map(SongRepository.ArtistDirectoryProjection::getArtistKey)
+                .filter(Objects::nonNull).filter(value -> !value.isBlank()).toList();
+        Map<String, List<Map<String, Object>>> samples = new HashMap<>();
+        if (!keys.isEmpty()) {
+            List<SongRepository.ArtistSongProjection> sampleRows = songs.findArtistSamples("ok", keys);
+            if (sampleRows != null) for (SongRepository.ArtistSongProjection sample : sampleRows) {
+                if (sample == null || sample.getArtistKey() == null) continue;
+                samples.computeIfAbsent(sample.getArtistKey(), ignored -> new ArrayList<>()).add(songValue(sample));
+            }
+        }
+        List<Map<String, Object>> items = content.stream()
+                .map(row -> artistValue(row, samples.getOrDefault(row.getArtistKey(), List.of())))
                 .toList();
+        long total = rows == null ? 0 : rows.getTotalElements();
+        return new ArtistPage(items, total, safePage, safeSize);
     }
 
     /** 对一个歌手的代表歌曲进行 AI 分析；没有 AI 时返回可人工填写的未知建议。 */
     public Map<String, Object> analyze(String artist) {
-        List<Song> matches = songsFor(artist);
-        if (matches.isEmpty()) throw new ApiException("ARTIST_NOT_FOUND", "歌手不存在");
-        return analyze(artist, matches);
+        rejectPlaceholder(artist);
+        List<Song> samples = representativeSongsFor(artist);
+        if (samples.isEmpty()) throw new ApiException("ARTIST_NOT_FOUND", "歌手不存在");
+        return analyze(artist, samples);
     }
 
     private Map<String, Object> analyze(String artist, List<Song> matches) {
@@ -85,23 +127,30 @@ public class ArtistLibraryService {
     /** 批量分析歌手，只返回建议，不自动写回歌曲。 */
     public List<Map<String, Object>> analyzeBatch(Collection<String> artists) {
         if (artists == null) return List.of();
-        List<String> names = artists.stream()
+        Map<String, String> distinctArtists = new LinkedHashMap<>();
+        artists.stream()
                 .filter(Objects::nonNull)
                 .map(String::trim)
                 .filter(value -> !value.isBlank())
-                .distinct()
-                .limit(500)
-                .toList();
+                .forEach(value -> distinctArtists.putIfAbsent(ArtistCreditParser.key(value), value));
+        List<String> names = distinctArtists.values().stream().limit(500).toList();
         if (names.isEmpty()) return List.of();
         Map<String, List<Song>> grouped = new LinkedHashMap<>();
-        forEachValidSong(song -> addRepresentative(grouped, normalizeArtist(song.getArtist()), song));
+        for (String artist : names) {
+            if (ArtistKindClassifier.isPlaceholder(artist)) continue;
+            List<Song> credited = songs.findRepresentativeSongsByArtistKeyAndStatus(
+                    ArtistCreditParser.key(artist), "ok", PageRequest.of(0, 5));
+            if (credited != null && !credited.isEmpty()) {
+                grouped.put(ArtistCreditParser.key(artist), credited);
+            }
+        }
         AiConfigService.ResolvedConfig config = aiConfig.resolve();
         int configuredConcurrency = config == null ? 1 : config.bulkConcurrency();
         int concurrency = Math.max(1, Math.min(configuredConcurrency, names.size()));
         try (var executor = Executors.newFixedThreadPool(concurrency)) {
             List<CompletableFuture<Map<String, Object>>> futures = names.stream()
                     .map(artist -> CompletableFuture.supplyAsync(
-                            () -> analyzeBatchItem(artist, grouped.get(normalizeArtist(artist))), executor))
+                            () -> analyzeBatchItem(artist, grouped.get(ArtistCreditParser.key(artist))), executor))
                     .toList();
             return futures.stream().map(CompletableFuture::join).toList();
         }
@@ -111,6 +160,10 @@ public class ArtistLibraryService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("artist", artist);
         try {
+            if (ArtistKindClassifier.isPlaceholder(artist)) {
+                result.putAll(suggestion("未知", 0, "LOCAL", "占位歌手不参与 AI 分析，请先修正歌曲歌手信息", List.of()));
+                return result;
+            }
             if (matches == null || matches.isEmpty()) throw new ApiException("ARTIST_NOT_FOUND", "歌手不存在");
             result.putAll(analyze(artist, matches));
         } catch (RuntimeException failure) {
@@ -122,66 +175,71 @@ public class ArtistLibraryService {
     @Transactional
     public Map<String, Object> apply(String artist, String gender) {
         if (!GENDERS.contains(gender)) throw new ApiException("INVALID_ARTIST_GENDER", "歌手类型无效");
-        List<Song> matches = songsFor(artist);
-        if (matches.isEmpty()) throw new ApiException("ARTIST_NOT_FOUND", "歌手不存在");
-        matches.forEach(song -> {
-            song.setArtistGender(gender);
-            song.lockMetadata("artistGender");
-        });
-        songs.saveAll(matches);
-        return Map.of("artist", artist, "gender", gender, "updated", matches.size());
+        rejectPlaceholder(artist);
+        long matches = songs.countByArtistKeyAndStatus(ArtistCreditParser.key(artist), "ok");
+        if (matches <= 0L) throw new ApiException("ARTIST_NOT_FOUND", "歌手不存在");
+        if (artistProfiles != null) artistProfiles.setGender(artist, gender);
+        return Map.of("artist", artist, "gender", gender,
+                "updated", Math.toIntExact(Math.min(matches, Integer.MAX_VALUE)));
     }
 
-    private Map<String, ArtistSummary> artistSummaries() {
-        Map<String, ArtistSummary> result = new LinkedHashMap<>();
-        forEachValidSong(song -> {
-            String name = song.getArtist() == null ? "未知歌手" : song.getArtist().trim();
-            result.computeIfAbsent(name, ArtistSummary::new).add(song);
-        });
-        return result;
-    }
-
-    private void forEachValidSong(Consumer<Song> consumer) {
-        for (int pageNumber = 0; ; pageNumber++) {
-            Page<Song> page = songs.findByStatus("ok",
-                    PageRequest.of(pageNumber, SONG_PAGE_SIZE, Sort.by(Sort.Direction.ASC, "id")));
-            if (page == null || page.isEmpty()) return;
-            page.getContent().stream().filter(Objects::nonNull).forEach(consumer);
-            if (!page.hasNext()) return;
+    private static void rejectPlaceholder(String artist) {
+        if (ArtistKindClassifier.isPlaceholder(artist)) {
+            throw new ApiException("ARTIST_PLACEHOLDER", "占位歌手不能进行类型分析，请先修正歌手信息");
         }
     }
 
-    private List<Song> songsFor(String artist) {
+    private List<Song> representativeSongsFor(String artist) {
         if (artist == null || artist.isBlank()) return List.of();
-        List<Song> direct = songs.findByArtistIgnoreCaseAndStatus(artist.trim(), "ok");
-        if (direct != null && !direct.isEmpty()) return direct;
-        String normalized = normalizeArtist(artist);
-        List<Song> result = new ArrayList<>();
-        forEachValidSong(song -> {
-            if (normalized.equals(normalizeArtist(song.getArtist()))) result.add(song);
-        });
-        return result;
-    }
-
-    private static String normalizeArtist(String artist) {
-        return artist == null ? "" : artist.trim().toLowerCase(Locale.ROOT);
+        String artistKey = ArtistCreditParser.key(artist);
+        List<Song> result = songs.findRepresentativeSongsByArtistKeyAndStatus(
+                artistKey, "ok", PageRequest.of(0, 5));
+        return result == null ? List.of() : result;
     }
 
     private List<Song> representativeSongs(List<Song> values) {
         return values.stream().sorted(REPRESENTATIVE_ORDER).limit(5).toList();
     }
 
-    private void addRepresentative(Map<String, List<Song>> grouped, String key, Song song) {
-        List<Song> values = grouped.computeIfAbsent(key, ignored -> new ArrayList<>());
-        values.add(song);
-        values.sort(REPRESENTATIVE_ORDER);
-        if (values.size() > 5) values.remove(values.size() - 1);
-    }
-
     private Map<String, Object> songValue(Song song) {
         return Map.of("id", song.getId(), "title", song.getTitle(), "artist", song.getArtist(),
                 "language", song.getLanguage(), "mediaType", song.getMediaType(), "coverUrl",
                 song.getCoverPath() == null ? "" : "/api/cover/" + song.getId());
+    }
+
+    private Map<String, Object> songValue(SongRepository.ArtistSongProjection song) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("id", song.getSongId());
+        value.put("title", song.getTitle());
+        value.put("artist", song.getArtist());
+        value.put("language", song.getLanguage());
+        value.put("mediaType", song.getMediaType());
+        value.put("coverUrl", song.getCoverPath() == null ? "" : "/api/cover/" + song.getSongId());
+        return value;
+    }
+
+    private Map<String, Object> artistValue(SongRepository.ArtistDirectoryProjection row,
+                                            List<Map<String, Object>> samples) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        String name = row.getName() == null || row.getName().isBlank() ? "未知歌手" : row.getName().trim();
+        String kind = effectiveArtistKind(name, row.getArtistKind());
+        value.put("artistKey", row.getArtistKey());
+        value.put("name", name);
+        value.put("gender", row.getGender() == null || row.getGender().isBlank() ? "未知" : row.getGender());
+        value.put("reviewed", Boolean.TRUE.equals(row.getReviewed()));
+        value.put("songCount", row.getSongCount() == null ? 0L : row.getSongCount());
+        value.put("artistKind", kind);
+        value.put("avatarUrl", ArtistKindClassifier.isPlaceholder(name)
+                || row.getAvatarPath() == null || row.getAvatarPath().isBlank()
+                ? null : "/api/artists/avatar?key=" + URLEncoder.encode(row.getArtistKey(), StandardCharsets.UTF_8));
+        value.put("songs", samples);
+        return value;
+    }
+
+    private static String effectiveArtistKind(String name, String storedKind) {
+        ArtistKind classified = ArtistKindClassifier.classify(name);
+        if (classified != ArtistKind.PERSON) return classified.name();
+        return storedKind == null || storedKind.isBlank() ? classified.name() : storedKind;
     }
 
     private Map<String, Object> suggestion(String gender, double confidence, String source, String reason, List<Song> samples) {
@@ -194,45 +252,5 @@ public class ArtistLibraryService {
         return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message.substring(0, Math.min(300, message.length()));
     }
 
-    private final class ArtistSummary {
-        private final String name;
-        private int songCount;
-        private final Map<String, Integer> genderCounts = new HashMap<>();
-        private final Map<String, Boolean> genderLocks = new HashMap<>();
-        private final List<Song> representatives = new ArrayList<>(5);
-
-        private ArtistSummary(String name) { this.name = name; }
-
-        private String name() { return name; }
-
-        private void add(Song song) {
-            songCount++;
-            String value = song.getArtistGender();
-            if (GENDERS.contains(value) && !"未知".equals(value)) {
-                genderCounts.merge(value, 1, Integer::sum);
-                genderLocks.merge(value, song.isMetadataLocked("artistGender"), Boolean::logicalAnd);
-            }
-            representatives.add(song);
-            representatives.sort(REPRESENTATIVE_ORDER);
-            if (representatives.size() > 5) representatives.remove(representatives.size() - 1);
-        }
-
-        private String gender() {
-            return genderCounts.entrySet().stream().max(Map.Entry.comparingByValue())
-                    .map(Map.Entry::getKey).orElse("未知");
-        }
-
-        private boolean reviewed() {
-            String value = gender();
-            return !"未知".equals(value)
-                    && genderCounts.getOrDefault(value, 0) == songCount
-                    && Boolean.TRUE.equals(genderLocks.get(value));
-        }
-
-        private Map<String, Object> toValue() {
-            return Map.of("name", name, "gender", gender(), "reviewed", reviewed(),
-                    "songCount", songCount,
-                    "songs", representatives.stream().map(ArtistLibraryService.this::songValue).toList());
-        }
-    }
+    public record ArtistPage(List<Map<String, Object>> items, long total, int page, int size) {}
 }

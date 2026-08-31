@@ -92,7 +92,8 @@ Home KTV 服务端 ───── PostgreSQL
 | --- | --- |
 | 手机点歌 | `http://<主机IP>:8080/m` |
 | 管理后台 | `http://<主机IP>:8080/m/admin` |
-| 健康检查 | `http://<主机IP>:8080/api/health` |
+| 服务发现健康检查 | `http://<主机IP>:8080/api/health` |
+| 容器就绪检查（含数据库） | `http://<主机IP>:8080/api/ready` |
 
 ## 快速开始
 
@@ -181,7 +182,7 @@ docker compose up -d --build --wait
 
 ```bash
 docker compose ps
-curl http://127.0.0.1:${KTV_HTTP_PORT:-8080}/api/health
+curl http://127.0.0.1:${KTV_HTTP_PORT:-8080}/api/ready
 ```
 
 默认开放：

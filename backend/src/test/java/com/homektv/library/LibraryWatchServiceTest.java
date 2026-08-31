@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -37,17 +38,18 @@ class LibraryWatchServiceTest {
         when(settingService.isLibraryWatchEnabled()).thenReturn(true);
         when(scanService.scanAll()).thenReturn(new LibraryScanService.ScanResult(1, 0, 0, 0, 0));
 
-        watchService = new LibraryWatchService(props, settingService, scanService, importService, broadcaster);
+        watchService = new LibraryWatchService(props, settingService, scanService, importService, broadcaster,
+                Duration.ofMillis(25));
         watchService.start();
 
         Path artistDirectory = Files.createDirectory(root.resolve("artist"));
-        verify(scanService, timeout(8_000).times(1)).scanAll();
+        verify(scanService, timeout(5_000).times(1)).scanAll();
 
         reset(scanService);
         when(scanService.scanAll()).thenReturn(new LibraryScanService.ScanResult(1, 0, 0, 0, 0));
         Files.writeString(artistDirectory.resolve("song.mkv"), "media");
 
-        verify(scanService, timeout(8_000).times(1)).scanAll();
+        verify(scanService, timeout(5_000).times(1)).scanAll();
     }
 
     @Test

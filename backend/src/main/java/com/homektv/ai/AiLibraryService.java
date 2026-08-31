@@ -519,6 +519,63 @@ public class AiLibraryService {
     }
 
     /**
+     * 将 AI 预览结果作为一个原子操作保存为歌单。
+     * 先验证全部歌曲，再创建歌单和关联，避免前端逐首请求留下半成品。
+     */
+    @Transactional
+    public Playlist savePlaylistFromPreview(String name, String description, String theme,
+                                             boolean publicVisible, List<Long> songIds) {
+        if (name == null || name.isBlank()) {
+            throw new ApiException("INVALID_ARGUMENT", "歌单名称不能为空");
+        }
+        if (songIds == null || songIds.isEmpty()) {
+            throw new ApiException("INVALID_ARGUMENT", "至少选择一首歌曲");
+        }
+
+        LinkedHashSet<Long> uniqueIds = new LinkedHashSet<>();
+        for (Long songId : songIds) {
+            if (songId == null || songId <= 0) {
+                throw new ApiException("INVALID_ARGUMENT", "歌曲 ID 无效");
+            }
+            uniqueIds.add(songId);
+        }
+        if (uniqueIds.size() > MAX_PLAYLIST_SONGS) {
+            throw new ApiException("PLAYLIST_SONG_LIMIT", "每个歌单最多包含 " + MAX_PLAYLIST_SONGS + " 首歌曲");
+        }
+
+        List<Long> orderedIds = List.copyOf(uniqueIds);
+        Map<Long, Song> songs = songRepository.findAllById(orderedIds).stream()
+                .collect(java.util.stream.Collectors.toMap(Song::getId, song -> song));
+        Long missing = orderedIds.stream().filter(id -> !songs.containsKey(id)).findFirst().orElse(null);
+        if (missing != null) {
+            throw new ApiException("SONG_NOT_FOUND", "歌曲不存在：" + missing);
+        }
+
+        String normalizedName = name.trim();
+        playlistRepository.lockGeneratedName(normalizedName);
+        Playlist playlist = new Playlist();
+        playlist.setName(normalizedName);
+        playlist.setDescription(description == null ? "" : description.trim());
+        playlist.setTheme(theme == null || theme.isBlank() ? "AI 策划" : theme.trim());
+        playlist.setPublicVisible(publicVisible);
+        playlist.setAiGenerated(true);
+        playlist.setAiRule(write(Map.of("source", "AI_PREVIEW")));
+        Playlist saved = playlistRepository.save(playlist);
+
+        List<PlaylistSong> items = new ArrayList<>(orderedIds.size());
+        for (int index = 0; index < orderedIds.size(); index++) {
+            PlaylistSong item = new PlaylistSong();
+            item.setPlaylistId(saved.getId());
+            item.setSongId(orderedIds.get(index));
+            item.setSortOrder(index);
+            item.setManual(false);
+            items.add(item);
+        }
+        playlistSongRepository.saveAll(items);
+        return saved;
+    }
+
+    /**
      * 删除指定歌单。
      *
      * Deletes the specified playlist.

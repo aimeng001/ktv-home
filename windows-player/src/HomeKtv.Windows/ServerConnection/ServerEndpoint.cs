@@ -6,13 +6,18 @@ public sealed record ServerEndpoint(Uri BaseUri)
 {
     public Uri ApiBaseUri => new(BaseUri, "api/");
 
-    public Uri WebSocketUri(string clientToken)
+    public Uri WebSocketUri(string clientToken, string? playerCredential = null)
     {
         var scheme = BaseUri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws";
+        var query = $"client_type=tv&client_token={Uri.EscapeDataString(clientToken)}&protocol_version=2&platform=WINDOWS";
+        if (!string.IsNullOrWhiteSpace(playerCredential))
+        {
+            query += $"&player_credential={Uri.EscapeDataString(playerCredential.Trim())}";
+        }
         var builder = new UriBuilder(scheme, BaseUri.Host, BaseUri.Port)
         {
             Path = "/ws",
-            Query = $"client_type=tv&client_token={Uri.EscapeDataString(clientToken)}&protocol_version=2&platform=WINDOWS",
+            Query = query,
         };
         return builder.Uri;
     }

@@ -35,6 +35,19 @@ class ExternalReadOnlyPathSafetyTest {
     }
 
     @Test
+    void artistAvatarCacheIsKeptOutsideExternalSource() throws Exception {
+        Path source = Files.createDirectory(tempDir.resolve("nas-avatar-source"));
+        Path data = Files.createDirectory(tempDir.resolve("avatar-data"));
+        AppProperties props = externalProperties(source, data);
+
+        String path = new AssetWriter(props).writeArtistCover("周杰伦", new byte[]{1, 2, 3}, "jpg");
+
+        assertThat(path).startsWith("artist-covers/");
+        assertThat(data.resolve(path)).exists();
+        assertThat(source.resolve(path)).doesNotExist();
+    }
+
+    @Test
     void secretKeySymlinkIntoExternalSourceIsRejected() throws Exception {
         Path source = Files.createDirectory(tempDir.resolve("nas-copy"));
         Path data = Files.createDirectory(tempDir.resolve("data"));

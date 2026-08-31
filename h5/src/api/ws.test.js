@@ -54,7 +54,7 @@ describe('KtvSocket', () => {
 
     socket.connect()
     const ws = FakeWebSocket.instances[0]
-    expect(ws.url).toBe(`ws://${location.host}/ws`)
+    expect(ws.url).toBe(`ws://${location.host}/ws?client_type=h5&protocol_version=2&platform=H5`)
 
     ws.open()
     expect(onStatus).toHaveBeenCalledWith(true)
@@ -86,6 +86,20 @@ describe('KtvSocket', () => {
 
     socket.close()
     vi.advanceTimersByTime(10_000)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+  })
+
+  it('does not schedule duplicate reconnects for repeated close notifications', () => {
+    const socket = new KtvSocket()
+
+    socket.connect()
+    const first = FakeWebSocket.instances[0]
+    first.serverClose()
+    first.serverClose()
+
+    vi.advanceTimersByTime(1000)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    vi.advanceTimersByTime(1000)
     expect(FakeWebSocket.instances).toHaveLength(2)
   })
 

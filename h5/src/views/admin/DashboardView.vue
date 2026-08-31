@@ -7,7 +7,7 @@
     <section v-if="scanning || scanResult" class="scan-progress" :class="{complete:!scanning}">
       <div class="progress-head"><div><strong>{{ scanning ? scanPhaseLabel(scanProgress.phase) : '扫描完成' }}</strong><span v-if="scanning">{{ scanProgress.currentFile || scanPhaseHint }}</span><span v-else>{{ scanResult.finishedAt ? `完成于 ${formatTime(scanResult.finishedAt)}` : '' }}</span></div><b>{{ scanPercent }}%</b></div>
       <div class="track"><i :style="{width:`${scanPercent}%`}"></i></div>
-      <div class="progress-meta"><span v-if="scanProgress.phase">已发现 {{ scanProgress.discovered || 0 }}</span><span v-if="scanProgress.phase">快速索引 {{ scanProgress.fastIndexed || 0 }}</span><span v-if="scanProgress.phase === 'MEDIA_PROBE'">媒体探测 {{ scanProgress.probeCompleted || 0 }} / {{ scanProgress.probeQueued || 0 }}</span><span v-else>已处理 {{ scanProgress.completed || 0 }} / {{ scanProgress.total || 0 }}</span><span>{{ scanSummary.primaryLabel }} {{ scanSummary.primaryCount }}</span><span>{{ scanSummary.secondaryLabel }} {{ scanSummary.secondaryCount }}</span><span v-if="scanSummary.mode === 'MANAGED'">重复 {{ scanSummary.duplicateCount }}</span><span>未识别 {{ scanSummary.unrecognizedCount }}</span><span v-if="scanSummary.mode === 'MANAGED'" :class="{'failed':scanSummary.failedCount}">失败 {{ scanSummary.failedCount }}</span></div>
+      <div class="progress-meta"><span v-if="scanProgress.phase">已发现 {{ scanProgress.discovered || 0 }}</span><span v-if="scanProgress.phase">快速索引 {{ scanProgress.fastIndexed || 0 }}</span><span v-if="scanProgress.phase === 'MEDIA_PROBE'">媒体探测 {{ scanProgress.probeCompleted || 0 }} / {{ scanProgress.probeQueued || 0 }}</span><span v-else>已处理 {{ scanProgress.completed || 0 }} / {{ scanProgress.total || 0 }}</span><span v-if="scanning && scanProgress.probedPerSecond">速率 {{ scanProgress.probedPerSecond }} 首/秒</span><span v-if="scanning && scanProgress.estimatedRemainingSeconds">预计剩余 {{ formatEta(scanProgress.estimatedRemainingSeconds) }}</span><span>{{ scanSummary.primaryLabel }} {{ scanSummary.primaryCount }}</span><span>{{ scanSummary.secondaryLabel }} {{ scanSummary.secondaryCount }}</span><span v-if="scanSummary.mode === 'MANAGED'">重复 {{ scanSummary.duplicateCount }}</span><span>未识别 {{ scanSummary.unrecognizedCount }}</span><span v-if="scanSummary.mode === 'MANAGED'" :class="{'failed':scanSummary.failedCount}">失败 {{ scanSummary.failedCount }}</span></div>
     </section>
     <!-- 运行状态面板 / Status panel -->
     <section class="panel"><div class="panel-head"><strong>运行状态</strong><button class="text-btn" @click="load">刷新</button></div><table><thead><tr><th>模块</th><th>当前状态</th><th>详情</th><th>操作</th></tr></thead><tbody>
@@ -29,7 +29,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog } from '../../composables/useDialog'
-import { normalizeScanProgress, scanPercent as calculateScanPercent, scanPhaseLabel } from './scanProgress'
+import { normalizeScanProgress, scanPercent as calculateScanPercent, scanPhaseLabel, formatEta } from './scanProgress'
 const d=ref({}),queue=ref({}),progress=ref({}),scanning=ref(false),scanResult=ref(null),scanProgress=ref({}),sourceTotal=ref(0),pendingCount=ref(0)
 const libraryMode=ref('MANAGED')
 let scanTimer=null

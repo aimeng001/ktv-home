@@ -53,14 +53,17 @@ backend/src/main/resources/application-local.yml
 # ===== Local deployment secrets =====
 /.env
 **/.env
+/.release-secrets/
 
 # ===== Local build caches =====
 /.maven-local/
 /.gradle-local/
 /.android-local/
+.pytest_cache/
 
 # Local release archives
 /*.zip
+/*.sha256
 
 # Local development instructions and agent prompts; never publish these files.
 /AGENTS.md
@@ -70,3 +73,6 @@ backend/src/main/resources/application-local.yml
 /TASK_STATE.md
 /KTV_AGENT_PROMPTS.txt
 /软件崩溃.md
+
+# Local remediation plan artifacts
+/tasks/

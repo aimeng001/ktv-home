@@ -176,7 +176,9 @@ public class SettingService {
         try {
             return mapper.writeValueAsString(v);
         } catch (Exception e) {
-            return "null";
+            String detail = e.getMessage() == null || e.getMessage().isBlank()
+                    ? e.getClass().getSimpleName() : e.getMessage();
+            throw new com.homektv.web.ApiException("SETTING_SERIALIZATION_FAILED", "设置序列化失败：" + detail);
         }
     }
 }

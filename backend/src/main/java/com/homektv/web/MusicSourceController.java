@@ -5,6 +5,8 @@ import com.homektv.musicsource.MusicProvider;
 import com.homektv.musicsource.MusicSourceConfig;
 import com.homektv.musicsource.MusicSourceConfigService;
 import com.homektv.musicsource.MusicSourceSearchService;
+import com.homektv.library.ArtistAvatarJobService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,6 +27,8 @@ public class MusicSourceController {
     private final MusicSourceConfigService configService;
     private final MusicSourceSearchService searchService;
     private final MusicMetadataApplyService applyService;
+    @Autowired(required = false)
+    private ArtistAvatarJobService artistAvatarJobs;
 
     public MusicSourceController(MusicSourceConfigService configService, MusicSourceSearchService searchService,
                                  MusicMetadataApplyService applyService) {
@@ -40,6 +44,7 @@ public class MusicSourceController {
         configService.save(new MusicSourceConfig(request.enabled(), providers, request.resultLimit(),
                 request.timeoutSeconds(), request.searchCacheHours(), request.concurrencyLimit(),
                 request.requestIntervalMs(), request.autoApplyThreshold()));
+        if (artistAvatarJobs != null) artistAvatarJobs.enqueueUnresolvedProfilesAsync();
         return configService.configView();
     }
 

@@ -329,6 +329,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [release-meta, backend-release-gate, large-scan-gate, docker-runtime-test, android-tv, windows-player]
     timeout-minutes: 30
+    outputs:
+      image_digest: ${{ steps.publish_image.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - name: Download signed TV APKs
@@ -357,6 +359,7 @@ jobs:
             type=raw,value=unstable,enable=${{ needs.release-meta.outputs.unstable == 'true' }}
             type=raw,value=latest,enable=${{ needs.release-meta.outputs.unstable != 'true' }}
       - uses: docker/build-push-action@v6
+        id: publish_image
         with:
           context: .
           file: backend/Dockerfile
@@ -375,6 +378,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [release-meta, android-tv, windows-player, image]
     steps:
+      - uses: actions/checkout@v4
       - name: Download APK artifacts
         uses: actions/download-artifact@v4
         with:
@@ -385,6 +389,18 @@ jobs:
         with:
           name: home-ktv-windows-player-${{ needs.release-meta.outputs.artifact_version }}-win-x64
           path: release-assets
+      - name: Generate release evidence manifest
+        run: >-
+          python scripts/release_manifest.py build
+          --repository .
+          --output release-assets/release-manifest.json
+          --release-tag "${{ needs.release-meta.outputs.release_tag }}"
+          --version "${{ needs.release-meta.outputs.version_name }}"
+          --channel "${{ needs.release-meta.outputs.channel }}"
+          --source-sha "${{ github.sha }}"
+          --build-time "${{ github.run_started_at }}"
+          --image-ref "ghcr.io/aimeng001/ktv-home@${{ needs.image.outputs.image_digest }}"
+          --artifact-dir release-assets
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
@@ -396,3 +412,4 @@ jobs:
           files: |
             release-assets/*.apk
             release-assets/*.zip
+            release-assets/release-manifest.json

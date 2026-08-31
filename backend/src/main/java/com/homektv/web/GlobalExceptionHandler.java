@@ -19,11 +19,12 @@ public class GlobalExceptionHandler {
 
     /**
      * 处理 ApiException 异常，返回统一的 {code, message} 错误响应。
-     * SONG_IN_QUEUE / TV_OFFLINE 属提示性，用 409/200 语义；其余统一 400 + code 区分。
+     * SONG_IN_QUEUE / SONG_NOT_READY 属可重试的业务冲突，用 409；TV_OFFLINE
+     * 保留 200 语义；其余统一 400 + code 区分。
      *
      * Handles ApiException and returns a unified {code, message} error response.
-     * SONG_IN_QUEUE / TV_OFFLINE are informational, using 409/200 semantics;
-     * others default to 400 + code for differentiation.
+     * SONG_IN_QUEUE / SONG_NOT_READY are retryable business conflicts and use
+     * 409; TV_OFFLINE keeps its 200 semantics; others default to 400.
      *
      * @param e 业务异常 / the business exception
      * @return 包含 code 和 message 的 ResponseEntity / a ResponseEntity containing code and message
@@ -34,11 +35,14 @@ public class GlobalExceptionHandler {
         body.put("code", e.getCode());
         body.put("message", e.getMessage());
         if (e.getData() != null) body.put("data", e.getData());
-        // SONG_IN_QUEUE / TV_OFFLINE 属提示性，用 409/200 语义；这里统一 400 + code 区分
+        // Ordering/probe races are retryable business conflicts; TV_OFFLINE is
+        // kept as a successful control response for existing clients.
         HttpStatus status = "TV_OFFLINE".equals(e.getCode())
                 ? HttpStatus.OK
                 : "ADMIN_AUTH_RATE_LIMITED".equals(e.getCode())
                         ? HttpStatus.TOO_MANY_REQUESTS
+                        : "SONG_IN_QUEUE".equals(e.getCode()) || "SONG_NOT_READY".equals(e.getCode())
+                                ? HttpStatus.CONFLICT
                         : HttpStatus.BAD_REQUEST;
         return ResponseEntity.status(status).body(body);
     }

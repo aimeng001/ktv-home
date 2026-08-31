@@ -6,6 +6,11 @@
       <div class="hero"><div class="spark">✨</div><h1>今晚唱什么</h1><p>根据曲风、年代和聚会主题整理的精选歌单</p></div>
       <!-- 加载状态 / Loading state -->
       <div v-if="loading" class="tip">加载中…</div>
+      <!-- 加载失败 / Load error -->
+      <div v-else-if="loadError" class="tip error-tip" role="alert">
+        <span>歌单加载失败：{{ loadError }}</span>
+        <button class="retry" @click="load">重试</button>
+      </div>
       <!-- 空数据提示 / Empty state -->
       <div v-else-if="!playlists.length" class="tip">暂无公开歌单，请先在管理后台生成</div>
       <!-- 歌单卡片列表 / Playlist card list -->
@@ -30,14 +35,19 @@
 import { onMounted, ref } from 'vue'
 import api from '../api/client'
 import TabBar from '../components/TabBar.vue'
+import { loadPlaylists } from './playlistLoader'
 
 /** 歌单列表 / Playlist list */
 const playlists = ref([])
 /** 是否正在加载 / Is loading */
 const loading = ref(true)
+/** 加载错误 / Load error */
+const loadError = ref('')
+const playlistState = { items: playlists, loading, error: loadError }
 
 // 挂载后拉取歌单列表 / Fetch playlist list on mount
-onMounted(async () => { try { playlists.value = await api.playlists() } finally { loading.value = false } })
+function load() { return loadPlaylists(api, playlistState) }
+onMounted(load)
 
 /**
  * 将歌曲数组拼接为预览文本，用顿号分隔。
@@ -71,5 +81,5 @@ function coverEmoji(theme = '') {
 </script>
 
 <style scoped>
-.page{min-height:100vh;padding-bottom:74px}.top{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(8,10,15,.94);backdrop-filter:blur(14px);z-index:2}.top button{border:0;background:none;color:var(--text);font-size:30px;width:35px}.top span{width:35px}main{padding:16px}.hero{padding:20px 18px;margin-bottom:14px;border-radius:18px;background:radial-gradient(circle at 80% 0,rgba(240,199,66,.2),transparent 42%),linear-gradient(135deg,rgba(255,255,255,.06),rgba(255,255,255,.02));border:1px solid var(--glass-border)}.spark{font-size:26px}.hero h1{font-size:22px;margin:7px 0 4px}.hero p{color:var(--dim);font-size:12px;margin:0}.card{display:flex;align-items:center;gap:13px;padding:13px;margin-bottom:10px;background:var(--panel2);border:1px solid var(--glass-border);border-radius:15px;color:var(--text)}.cover{width:64px;height:64px;display:grid;place-items:center;position:relative;border-radius:13px;background:linear-gradient(145deg,rgba(240,199,66,.22),rgba(139,92,246,.18));background-size:cover;background-position:center;font-size:27px;flex:none}.cover em{position:absolute;right:4px;top:4px;font-size:8px;font-style:normal;color:var(--gold);border:1px solid rgba(240,199,66,.35);border-radius:6px;padding:1px 4px}.info{min-width:0;flex:1}.info h2{font-size:15px;margin:0 0 5px}.info p,.info small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.info p{font-size:12px;color:var(--dim);margin:0 0 7px}.info small{font-size:10px;color:var(--dim2)}.arrow{color:var(--dim2);font-size:24px}.tip{text-align:center;color:var(--dim2);padding:50px 10px;font-size:13px}
+.page{min-height:100vh;padding-bottom:74px}.top{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(8,10,15,.94);backdrop-filter:blur(14px);z-index:2}.top button{border:0;background:none;color:var(--text);font-size:30px;width:35px}.top span{width:35px}main{padding:16px}.hero{padding:20px 18px;margin-bottom:14px;border-radius:18px;background:radial-gradient(circle at 80% 0,rgba(240,199,66,.2),transparent 42%),linear-gradient(135deg,rgba(255,255,255,.06),rgba(255,255,255,.02));border:1px solid var(--glass-border)}.spark{font-size:26px}.hero h1{font-size:22px;margin:7px 0 4px}.hero p{color:var(--dim);font-size:12px;margin:0}.card{display:flex;align-items:center;gap:13px;padding:13px;margin-bottom:10px;background:var(--panel2);border:1px solid var(--glass-border);border-radius:15px;color:var(--text)}.cover{width:64px;height:64px;display:grid;place-items:center;position:relative;border-radius:13px;background:linear-gradient(145deg,rgba(240,199,66,.22),rgba(139,92,246,.18));background-size:cover;background-position:center;font-size:27px;flex:none}.cover em{position:absolute;right:4px;top:4px;font-size:8px;font-style:normal;color:var(--gold);border:1px solid rgba(240,199,66,.35);border-radius:6px;padding:1px 4px}.info{min-width:0;flex:1}.info h2{font-size:15px;margin:0 0 5px}.info p,.info small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.info p{font-size:12px;color:var(--dim);margin:0 0 7px}.info small{font-size:10px;color:var(--dim2)}.arrow{color:var(--dim2);font-size:24px}.tip{text-align:center;color:var(--dim2);padding:50px 10px;font-size:13px}.error-tip{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap}.retry{padding:5px 10px;border:1px solid var(--line);border-radius:6px;color:var(--gold);font-size:11px}
 </style>

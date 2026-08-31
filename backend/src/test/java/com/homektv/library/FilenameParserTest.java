@@ -23,6 +23,50 @@ class FilenameParserTest {
     }
 
     @Test
+    void acceptsRedundantSeparatorsOnlyWhenTheRemainingFieldsAreUnambiguous() {
+        assertStandard("童唱--爸爸妈妈听我说-国语-儿歌.mkv",
+                "童唱", "爸爸妈妈听我说", "国语", "儿歌");
+        assertStandard("赵雷-成都GS-国语--流行.mkv",
+                "赵雷", "成都GS", "国语", "流行");
+        assertStandard("谢霆锋&感应Telepathy-感应-国语--流行.mkv",
+                "谢霆锋&感应Telepathy", "感应", "国语", "流行");
+    }
+
+    @Test
+    void keepsEmDashAsTitlePunctuation() {
+        assertStandard("郑秀文-加而各答的天使——德蕾修女-粤语-流行.mkv",
+                "郑秀文", "加而各答的天使——德蕾修女", "粤语", "流行");
+    }
+
+    @Test
+    void removesALeadingLanguageOnlyWhenTheRemainingShapeIsValid() {
+        assertStandard("国语-苏晨-坚强-国语-流行.mkv",
+                "苏晨", "坚强", "国语", "流行");
+        assertStandard("粤语-苏永康-红颜知己-粤语-流行.mkv",
+                "苏永康", "红颜知己", "粤语", "流行");
+    }
+
+    @Test
+    void keepsMissingTitleForReviewInsteadOfGuessing() {
+        assertNeedsReview("陈奕迅--国语-流行.mkv");
+        assertNeedsReview("李宇春--国语-流行.mkv");
+        assertNeedsReview("李荣浩--国语-流行.mkv");
+    }
+
+    @Test
+    void extractsARecognizedVocalFormWithoutAppendingItToTheTitle() {
+        ParsedMeta parsed = FilenameParser.parse(
+                "张庭 钟丽缇 王祖蓝-爱上幼儿园-合唱-国语-流行.mkv");
+
+        assertThat(parsed.artist()).isEqualTo("张庭 钟丽缇 王祖蓝");
+        assertThat(parsed.title()).isEqualTo("爱上幼儿园");
+        assertThat(parsed.vocalForm()).isEqualTo("合唱");
+        assertThat(parsed.language()).isEqualTo("国语");
+        assertThat(parsed.category()).isEqualTo("流行");
+        assertThat(parsed.recognized()).isTrue();
+    }
+
+    @Test
     void parsesCollaborativeArtistBlockWithoutSplittingUnderscores() {
         assertStandard("D.N.A 张艺兴_GALI_单依纯_王子异-D.N.A Cypher I-国语-合唱.mkv",
                 "D.N.A 张艺兴_GALI_单依纯_王子异", "D.N.A Cypher I", "国语", "合唱");
@@ -91,5 +135,21 @@ class FilenameParserTest {
         assertThat(parsed.category()).isEqualTo(category);
         assertThat(parsed.status()).isEqualTo(ParsedMeta.RECOGNIZED);
         assertThat(parsed.recognized()).isTrue();
+    }
+
+    private void assertNeedsReview(String filename) {
+        ParsedMeta parsed = FilenameParser.parse(filename, EXISTING_ARTISTS);
+
+        assertThat(parsed.status()).isEqualTo(ParsedMeta.NEEDS_REVIEW);
+        assertThat(parsed.needsReview()).isTrue();
+    }
+
+    @Test
+    void preservesBracketedArtistNamesWhileStrippingQualityAndCategoryTags() {
+        assertStandard("[Alexandros]-Wataridori-日语-流行.mkv", "[Alexandros]", "Wataridori", "日语", "流行");
+        assertStandard("[ALEX]-Love Song-英语-流行.mkv", "[ALEX]", "Love Song", "英语", "流行");
+        assertStandard("【经典红歌】草蜢-爱-国语-流行.mkv", "草蜢", "爱", "国语", "流行");
+        assertStandard("[4K超清]Beyond-海阔天空-粤语-摇滚.mkv", "Beyond", "海阔天空", "粤语", "摇滚");
+        assertStandard("Beyond-海阔天空 [4K修复]-粤语-摇滚.mkv", "Beyond", "海阔天空", "粤语", "摇滚");
     }
 }

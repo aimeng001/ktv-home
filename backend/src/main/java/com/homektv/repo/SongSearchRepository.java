@@ -32,12 +32,15 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
      * KTV version preferred &gt; similarity &gt; play count.
      *
      * @param keyword 搜索关键词 / search keyword
+     * @param mediaType 媒体类型；空字符串表示全部类型 / media type; empty means all types
      * @param pageable 分页参数 / pagination parameters
      * @return 匹配的歌曲列表 / list of matching songs
      */
     @Query(value = """
             SELECT * FROM songs
-            WHERE status = 'ok' AND (
+            WHERE status = 'ok'
+              AND (:mediaType = '' OR media_type = :mediaType)
+              AND (
                   title ILIKE '%' || :kw || '%'
                OR artist ILIKE '%' || :kw || '%'
                OR title_init = :kw
@@ -72,5 +75,12 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
               play_count DESC
             """,
             nativeQuery = true)
-    List<Song> search(@Param("kw") String keyword, Pageable pageable);
+    List<Song> search(@Param("kw") String keyword,
+                      @Param("mediaType") String mediaType,
+                      Pageable pageable);
+
+    /** Source-compatible overload for callers that do not need a type filter. */
+    default List<Song> search(String keyword, Pageable pageable) {
+        return search(keyword, "", pageable);
+    }
 }

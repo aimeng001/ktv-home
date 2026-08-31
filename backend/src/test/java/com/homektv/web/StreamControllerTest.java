@@ -38,6 +38,7 @@ class StreamControllerTest {
             SongFile songFile = new SongFile();
             songFile.setFilePath(media.toString());
             songFile.setFormat("mpg");
+            songFile.setMediaType("KTV_VIDEO");
             SongFileRepository repository = mock(SongFileRepository.class);
             when(repository.findById(1L)).thenReturn(Optional.of(songFile));
 
@@ -52,6 +53,28 @@ class StreamControllerTest {
                     .isEqualTo("bytes 0-" + (content.length - 1) + "/" + content.length);
             assertThat(response.getHeaders().getContentLength()).isEqualTo(content.length);
             assertThat(output.toByteArray()).containsExactly(content);
+        } finally {
+            Files.deleteIfExists(media);
+        }
+    }
+
+    @Test
+    void pendingProbeFileCannotBeStreamed() throws Exception {
+        Path media = Files.createTempFile("home-ktv-pending-", ".mkv");
+        try {
+            Files.write(media, new byte[]{0x01, 0x02});
+            SongFile songFile = new SongFile();
+            songFile.setFilePath(media.toString());
+            songFile.setFormat("mkv");
+            songFile.setMediaType("PENDING_PROBE");
+            songFile.setProbePending(true);
+            SongFileRepository repository = mock(SongFileRepository.class);
+            when(repository.findById(4L)).thenReturn(Optional.of(songFile));
+
+            var response = new StreamController(repository).stream(4L, null);
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+            assertThat(response.getBody()).isNull();
         } finally {
             Files.deleteIfExists(media);
         }

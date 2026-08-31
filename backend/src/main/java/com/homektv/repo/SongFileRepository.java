@@ -24,6 +24,24 @@ public interface SongFileRepository extends JpaRepository<SongFile, Long> {
     Optional<SongFile> findByFilePath(String filePath);
     List<SongFile> findBySongIdAndValidTrueOrderByPriorityDesc(Long songId);
     List<SongFile> findBySongIdInAndValidTrueOrderByPriorityDesc(Collection<Long> songIds);
+
+    /**
+     * Returns whether a song has at least one probed, valid media source.
+     * Fast Index rows intentionally do not satisfy this query until FFprobe
+     * has persisted a concrete media type.
+     */
+    @Query("""
+            SELECT CASE WHEN COUNT(file.id) > 0 THEN true ELSE false END
+            FROM SongFile file
+            WHERE file.songId = :songId
+              AND file.valid = true
+              AND file.probePending = false
+              AND file.mediaType IS NOT NULL
+              AND TRIM(file.mediaType) <> ''
+              AND LOWER(TRIM(file.mediaType)) <> 'pending_probe'
+            """)
+    boolean existsReadyFile(@Param("songId") Long songId);
+
     boolean existsBySourceMd5(String sourceMd5);
     boolean existsByOutputMd5(String outputMd5);
     List<SongFile> findByFileRoleOrderByImportedAtDesc(String fileRole);

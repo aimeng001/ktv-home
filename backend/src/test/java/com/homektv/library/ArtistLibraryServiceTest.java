@@ -9,7 +9,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -35,75 +38,105 @@ class ArtistLibraryServiceTest {
     }
 
     @Test
-    void groupsSameNameAndReturnsAtMostFiveRepresentativeSongs() {
-        List<Song> library = java.util.stream.IntStream.rangeClosed(1, 7)
-                .mapToObj(index -> song((long) index, "同名歌手", "歌曲" + index, "未知", false, index))
+    void listReturnsDatabaseAggregationAndAtMostFiveRepresentativeSongs() {
+        SongRepository.ArtistDirectoryProjection row = directoryRow("同名歌手", "未知", false, 7L);
+        List<SongRepository.ArtistSongProjection> samples = java.util.stream.IntStream.rangeClosed(1, 5)
+                .mapToObj(index -> sampleRow("同名歌手", "歌曲" + index, (long) index))
                 .toList();
-        givenSongs(library);
+        when(songs.pageArtistDirectory(eq("ok"), eq("同名"), eq(""), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), PageRequest.of(0, 100), 1));
+        when(songs.findArtistSamples(eq("ok"), any())).thenReturn(samples);
 
         List<Map<String, Object>> result = service.list("同名", null, null, 100);
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0)).containsEntry("name", "同名歌手").containsEntry("songCount", 7);
+        assertThat(result.get(0)).containsEntry("name", "同名歌手").containsEntry("songCount", 7L);
         assertThat((List<?>) result.get(0).get("songs")).hasSize(5);
+        verify(songs, never()).findByStatus(eq("ok"), any(Pageable.class));
     }
 
     @Test
-    void artistAfterTheFirstFiveThousandSongsRemainsVisible() {
-        when(songs.findByStatus(eq("ok"), any(Pageable.class))).thenAnswer(invocation -> {
-            Pageable pageable = invocation.getArgument(1, Pageable.class);
-            int firstId = pageable.getPageNumber() * pageable.getPageSize() + 1;
-            int lastId = Math.min(firstId + pageable.getPageSize() - 1, 5001);
-            List<Song> content = java.util.stream.IntStream.rangeClosed(firstId, lastId)
-                    .mapToObj(index -> song((long) index,
-                            index == 5001 ? "边界歌手" : "普通歌手",
-                            index == 5001 ? "边界歌曲" : "歌曲" + index,
-                            "未知", false, index == 5001 ? 1 : 0))
-                    .toList();
-            return new PageImpl<>(content, pageable, 5001);
-        });
+    void listUsesTheDatabaseKeywordPathWithoutWalkingEverySong() {
+        SongRepository.ArtistDirectoryProjection row = directoryRow("边界歌手", "未知", false, 1L);
+        when(songs.pageArtistDirectory(eq("ok"), eq("边界歌手"), eq(""), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), PageRequest.of(0, 100), 1));
+        when(songs.findArtistSamples(eq("ok"), any())).thenReturn(List.of());
 
         List<Map<String, Object>> result = service.list("边界歌手", null, null, 100);
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0))
                 .containsEntry("name", "边界歌手")
-                .containsEntry("songCount", 1);
-        verify(songs, times(11)).findByStatus(eq("ok"), any(Pageable.class));
+                .containsEntry("songCount", 1L);
+        verify(songs, times(1)).pageArtistDirectory(eq("ok"), eq("边界歌手"), eq(""), eq(null), any(Pageable.class));
+        verify(songs, never()).findByStatus(eq("ok"), any(Pageable.class));
     }
 
     @Test
-    void onlyReportsReviewedWhenEveryGroupedSongHasTheManualLock() {
-        Song locked = song(1L, "歌手", "歌曲一", "女歌手", true, 2);
-        Song unlocked = song(2L, "歌手", "歌曲二", "女歌手", false, 1);
-        givenSongs(List.of(locked, unlocked));
+    void usesProfileReviewStateInsteadOfSongMetadataLocks() {
+        SongRepository.ArtistDirectoryProjection row = directoryRow("歌手", "女歌手", false, 2L);
+        when(songs.pageArtistDirectory(eq("ok"), eq(""), eq(""), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), PageRequest.of(0, 100), 1))
+                .thenReturn(new PageImpl<>(List.of(row), PageRequest.of(0, 100), 1));
+        when(row.getReviewed()).thenReturn(false, true);
+        when(songs.findArtistSamples(eq("ok"), any())).thenReturn(List.of());
 
         assertThat(service.list(null, null, null, 100).get(0)).containsEntry("reviewed", false);
-
-        unlocked.lockMetadata("artistGender");
         assertThat(service.list(null, null, null, 100).get(0)).containsEntry("reviewed", true);
+        verify(songs, never()).findByStatus(eq("ok"), any(Pageable.class));
     }
 
     @Test
-    void manualReviewWritesAndLocksEverySongWithTheSameName() {
+    void manualReviewChangesArtistProfileWithoutWritingSongGender() {
         Song first = song(1L, "歌手", "歌曲一", "未知", false, 2);
         Song second = song(2L, "歌手", "歌曲二", "未知", false, 1);
-        givenSongs(List.of(first, second));
+        when(songs.countByArtistKeyAndStatus("歌手", "ok")).thenReturn(2L);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        ReflectionTestUtils.setField(service, "artistProfiles", profiles);
 
         Map<String, Object> result = service.apply("歌手", "男歌手");
 
         assertThat(result).containsEntry("updated", 2).containsEntry("gender", "男歌手");
         assertThat(List.of(first, second)).allSatisfy(song -> {
-            assertThat(song.getArtistGender()).isEqualTo("男歌手");
-            assertThat(song.isMetadataLocked("artistGender")).isTrue();
+            assertThat(song.getArtistGender()).isEqualTo("未知");
+            assertThat(song.isMetadataLocked("artistGender")).isFalse();
         });
-        verify(songs).saveAll(List.of(first, second));
+        verify(profiles).setGender("歌手", "男歌手");
+        verify(songs, never()).saveAll(any());
+    }
+
+    @Test
+    void manualReviewDoesNotContaminateCollaboratingArtist() {
+        Song collaborative = song(1L, "周杰伦_蔡依林", "合唱歌曲", "未知", false, 1);
+        when(songs.countByArtistKeyAndStatus("周杰伦", "ok")).thenReturn(1L);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        ReflectionTestUtils.setField(service, "artistProfiles", profiles);
+
+        service.apply("周杰伦", "男歌手");
+
+        assertThat(collaborative.getArtistGender()).isEqualTo("未知");
+        assertThat(collaborative.isMetadataLocked("artistGender")).isFalse();
+        verify(profiles).setGender("周杰伦", "男歌手");
+        verify(songs, never()).saveAll(any());
+    }
+
+    @Test
+    void manualReviewAlsoUpdatesTheApplicationOwnedArtistProfile() {
+        Song only = song(1L, "歌手", "歌曲", "未知", false, 1);
+        when(songs.countByArtistKeyAndStatus("歌手", "ok")).thenReturn(1L);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        ReflectionTestUtils.setField(service, "artistProfiles", profiles);
+
+        service.apply("歌手", "男歌手");
+
+        verify(profiles).setGender("歌手", "男歌手");
     }
 
     @Test
     void returnsManualFallbackWhenAiIsNotConfigured() {
         Song sample = song(1L, "歌手", "歌曲", "未知", false, 1);
-        givenSongs(List.of(sample));
+        when(songs.findRepresentativeSongsByArtistKeyAndStatus(eq("歌手"), eq("ok"), any(Pageable.class)))
+                .thenReturn(List.of(sample));
         when(aiConfig.isConfigured()).thenReturn(false);
 
         assertThat(service.analyze("歌手"))
@@ -116,20 +149,182 @@ class ArtistLibraryServiceTest {
     void batchAnalysisReturnsOneSuggestionPerDistinctArtist() {
         Song first = song(1L, "歌手甲", "歌曲一", "未知", false, 1);
         Song second = song(2L, "歌手乙", "歌曲二", "未知", false, 1);
-        givenSongs(List.of(first, second));
+        when(songs.findRepresentativeSongsByArtistKeyAndStatus(
+                eq("歌手甲"), eq("ok"), any(Pageable.class))).thenReturn(List.of(first));
+        when(songs.findRepresentativeSongsByArtistKeyAndStatus(
+                eq("歌手乙"), eq("ok"), any(Pageable.class))).thenReturn(List.of(second));
         when(aiConfig.isConfigured()).thenReturn(false);
 
         List<Map<String, Object>> result = service.analyzeBatch(List.of("歌手甲", "歌手甲", "歌手乙"));
 
         assertThat(result).extracting(item -> item.get("artist")).containsExactly("歌手甲", "歌手乙");
         assertThat(result).allSatisfy(item -> assertThat(item).containsEntry("source", "LOCAL"));
-        verify(songs, times(1)).findByStatus(eq("ok"), any(Pageable.class));
+        verify(songs, never()).findByStatus(eq("ok"), any(Pageable.class));
         verify(songs, never()).findAll();
     }
 
-    private void givenSongs(List<Song> library) {
+    @Test
+    void neverSendsPlaceholderArtistToAiAnalysis() {
+        Song placeholder = song(1L, "佚名", "歌曲", "未知", false, 1);
+        when(songs.findByArtistIgnoreCaseAndStatus("佚名", "ok")).thenReturn(List.of(placeholder));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.analyze("佚名"))
+                .isInstanceOf(com.homektv.web.ApiException.class)
+                .hasMessageContaining("占位歌手");
+        verify(aiConfig, never()).isConfigured();
+    }
+
+    @Test
+    void analyzesSongsThroughIndependentArtistAssociations() {
+        Song collaborative = song(1L, "单依纯_王子异", "合唱歌曲", "未知", false, 1);
+        when(songs.findRepresentativeSongsByArtistKeyAndStatus(eq("王子异"), eq("ok"), any(Pageable.class)))
+                .thenReturn(List.of(collaborative));
+        when(aiConfig.isConfigured()).thenReturn(false);
+
+        Map<String, Object> result = service.analyze("王子异");
+
+        assertThat(result).containsEntry("source", "LOCAL");
+        assertThat((List<?>) result.get("songs")).extracting("title")
+                .containsExactly("合唱歌曲");
+        verify(songs).findRepresentativeSongsByArtistKeyAndStatus(eq("王子异"), eq("ok"), any(Pageable.class));
+    }
+
+    @Test
+    void batchAnalysisUsesIndependentArtistAssociationsForCollaborativeSongs() {
+        Song collaborative = song(1L, "单依纯_王子异", "合唱歌曲", "未知", false, 1);
         when(songs.findByStatus(eq("ok"), any(Pageable.class)))
-                .thenReturn(new PageImpl<>(library));
+                .thenReturn(new PageImpl<>(List.of(collaborative)));
+        when(songs.findRepresentativeSongsByArtistKeyAndStatus(
+                eq("王子异"), eq("ok"), any(Pageable.class)))
+                .thenReturn(List.of(collaborative));
+        when(aiConfig.isConfigured()).thenReturn(false);
+
+        List<Map<String, Object>> result = service.analyzeBatch(List.of("王子异"));
+
+        assertThat((List<?>) result.getFirst().get("songs")).extracting("title")
+                .containsExactly("合唱歌曲");
+        verify(songs).findRepresentativeSongsByArtistKeyAndStatus(
+                eq("王子异"), eq("ok"), any(Pageable.class));
+    }
+
+    @Test
+    void pagedDirectoryUsesDatabaseAggregationAndReturnsTotal() {
+        SongRepository.ArtistDirectoryProjection row = mock(SongRepository.ArtistDirectoryProjection.class);
+        when(row.getArtistKey()).thenReturn("zhoujielun");
+        when(row.getName()).thenReturn("周杰伦");
+        when(row.getGender()).thenReturn("男歌手");
+        when(row.getSongCount()).thenReturn(7285L);
+        when(row.getReviewed()).thenReturn(false);
+        when(row.getArtistKind()).thenReturn("PERSON");
+        when(row.getAvatarPath()).thenReturn(null);
+        when(songs.pageArtistDirectory(eq("ok"), eq(""), eq(""), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), Pageable.ofSize(50), 7286));
+        when(songs.findArtistSamples(eq("ok"), any())).thenReturn(List.of());
+
+        ArtistLibraryService.ArtistPage result = service.page(null, null, null, 0, 50);
+
+        assertThat(result.total()).isEqualTo(7286);
+        assertThat(result.items()).hasSize(1);
+        assertThat(result.items().getFirst())
+                .containsEntry("artistKey", "zhoujielun")
+                .containsEntry("name", "周杰伦")
+                .containsEntry("songCount", 7285L);
+        verify(songs, never()).findByStatus(eq("ok"), any(Pageable.class));
+    }
+
+    @Test
+    void pagedDirectoryClampsPageSizeAndKeepsStablePageValues() {
+        when(songs.pageArtistDirectory(eq("ok"), eq("歌手"), eq("男歌手"), eq(true), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(new ArrayList<>(), Pageable.ofSize(100), 0));
+
+        ArtistLibraryService.ArtistPage result = service.page("歌手", "男歌手", true, -5, 1000);
+
+        assertThat(result.page()).isZero();
+        assertThat(result.size()).isEqualTo(100);
+        assertThat(result.items()).isEmpty();
+    }
+
+    @Test
+    void staleProfileCannotMakeUnattributedDirectoryRowEligibleForAnalysis() {
+        SongRepository.ArtistDirectoryProjection row = directoryRow("佚名", "男歌手", false, 7285L);
+        when(row.getArtistKey()).thenReturn("佚名");
+        when(row.getArtistKind()).thenReturn("PERSON");
+        when(row.getAvatarPath()).thenReturn("artist-covers/stale.jpg");
+        when(songs.pageArtistDirectory(eq("ok"), eq(""), eq(""), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), Pageable.ofSize(50), 1));
+        when(songs.findArtistSamples(eq("ok"), any())).thenReturn(List.of());
+
+        Map<String, Object> result = service.page(null, null, null, 0, 50).items().getFirst();
+
+        assertThat(result).containsEntry("artistKind", "UNATTRIBUTED")
+                .containsEntry("avatarUrl", null);
+    }
+
+    @Test
+    void compatibilityListUsesDatabasePagesInsteadOfMaterializingAllSongs() {
+        SongRepository.ArtistDirectoryProjection row = mock(SongRepository.ArtistDirectoryProjection.class);
+        when(row.getArtistKey()).thenReturn("zhoujielun");
+        when(row.getName()).thenReturn("周杰伦");
+        when(row.getGender()).thenReturn("未知");
+        when(row.getSongCount()).thenReturn(7285L);
+        when(row.getReviewed()).thenReturn(false);
+        when(row.getArtistKind()).thenReturn("PERSON");
+        when(row.getAvatarPath()).thenReturn(null);
+        when(songs.pageArtistDirectory(eq("ok"), eq(""), eq(""), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), Pageable.ofSize(100), 1));
+        when(songs.findArtistSamples(eq("ok"), any())).thenReturn(List.of());
+
+        List<Map<String, Object>> result = service.listForCompatibility(null, null, null, 500);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst()).containsEntry("name", "周杰伦");
+        verify(songs, never()).findByStatus(eq("ok"), any(Pageable.class));
+    }
+
+    @Test
+    void directListAlsoUsesTheBoundedDatabaseDirectoryPath() {
+        SongRepository.ArtistDirectoryProjection row = mock(SongRepository.ArtistDirectoryProjection.class);
+        when(row.getArtistKey()).thenReturn("zhoujielun");
+        when(row.getName()).thenReturn("周杰伦");
+        when(row.getGender()).thenReturn("未知");
+        when(row.getSongCount()).thenReturn(7285L);
+        when(row.getReviewed()).thenReturn(false);
+        when(row.getArtistKind()).thenReturn("PERSON");
+        when(row.getAvatarPath()).thenReturn(null);
+        when(songs.pageArtistDirectory(eq("ok"), eq("周"), eq(""), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), Pageable.ofSize(100), 1));
+        when(songs.findArtistSamples(eq("ok"), any())).thenReturn(List.of());
+
+        List<Map<String, Object>> result = service.list("周", null, null, 100);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst()).containsEntry("name", "周杰伦");
+        verify(songs, never()).findByStatus(eq("ok"), any(Pageable.class));
+    }
+
+    private SongRepository.ArtistDirectoryProjection directoryRow(String name, String gender,
+                                                                     boolean reviewed, long songCount) {
+        SongRepository.ArtistDirectoryProjection row = mock(SongRepository.ArtistDirectoryProjection.class);
+        when(row.getArtistKey()).thenReturn(ArtistCreditParser.key(name));
+        when(row.getName()).thenReturn(name);
+        when(row.getGender()).thenReturn(gender);
+        when(row.getSongCount()).thenReturn(songCount);
+        when(row.getReviewed()).thenReturn(reviewed);
+        when(row.getArtistKind()).thenReturn("PERSON");
+        when(row.getAvatarPath()).thenReturn(null);
+        return row;
+    }
+
+    private SongRepository.ArtistSongProjection sampleRow(String artist, String title, long id) {
+        SongRepository.ArtistSongProjection row = mock(SongRepository.ArtistSongProjection.class);
+        when(row.getArtistKey()).thenReturn(ArtistCreditParser.key(artist));
+        when(row.getSongId()).thenReturn(id);
+        when(row.getTitle()).thenReturn(title);
+        when(row.getArtist()).thenReturn(artist);
+        when(row.getLanguage()).thenReturn("国语");
+        when(row.getMediaType()).thenReturn("KTV_VIDEO");
+        when(row.getCoverPath()).thenReturn(null);
+        return row;
     }
 
     private Song song(Long id, String artist, String title, String gender, boolean locked, int playCount) {

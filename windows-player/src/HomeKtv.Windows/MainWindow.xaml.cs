@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
+using System.Windows.Media.Imaging;
 using Microsoft.Win32;
 using HomeKtv.Windows.Display;
 using HomeKtv.Windows.Mpv;
@@ -18,12 +19,19 @@ public partial class MainWindow : Window
     private PlayerSettings settings = new();
     private PlaybackTerminal? terminal;
     private bool suppressDisplaySelection;
+    private string? artistAvatarUrl;
+    private long artistAvatarRequestId;
+    private DateTimeOffset artistAvatarAttemptAt = DateTimeOffset.MinValue;
+    private readonly Dictionary<string, BitmapImage?> artistAvatarCache = new(StringComparer.Ordinal);
+    private const int ArtistAvatarCacheLimit = 128;
+    private static readonly TimeSpan ArtistAvatarRetryDelay = TimeSpan.FromSeconds(30);
 
     public MainWindow()
     {
         InitializeComponent();
         settings = settingsStore.Load();
         ServerAddressText.Text = settings.ServerAddress;
+        PlayerCredentialText.Password = settings.PlayerCredential;
         RefreshDisplays();
         ApplySavedWindowPlacement();
         SystemEvents.DisplaySettingsChanged += DisplaySettingsChanged;
@@ -65,6 +73,7 @@ public partial class MainWindow : Window
             var targetDisplay = RefreshDisplays();
             var endpoint = ServerEndpoint.Parse(ServerAddressText.Text);
             settings.ServerAddress = ServerAddressText.Text.Trim();
+            settings.PlayerCredential = PlayerCredentialText.Password.Trim();
             if (targetDisplay is not null)
             {
                 settings.DisplayId = targetDisplay.StableId;
@@ -73,7 +82,7 @@ public partial class MainWindow : Window
             PersistSettings();
 
             var server = new HttpServerApi(endpoint, settings.ClientToken);
-            var socket = new KtvWebSocketClient(endpoint, settings.ClientToken);
+            var socket = new KtvWebSocketClient(endpoint, settings.ClientToken, settings.PlayerCredential);
             var output = new MpvProcessController(new MpvProcessSessionFactory(
                 new MpvLaunchOptions(
                     settings.MpvExecutablePath,
@@ -169,9 +178,65 @@ public partial class MainWindow : Window
         var song = snapshot.Playing?.Song;
         CurrentTitleText.Text = song is null ? "暂无播放" : $"{song.Title} · {song.Artist}";
         CurrentStateText.Text = $"{snapshot.State} · {snapshot.VocalMode} · {snapshot.AudioLayout.Layout}";
+        LoadArtistAvatar(song?.ArtistAvatarUrl);
         VolumeSlider.Value = Math.Clamp(snapshot.Volume, 0, 100);
         if (song is { DurationMs: > 0 }) SeekSlider.Maximum = song.DurationMs;
         RenderPosition(snapshot.PositionMs);
+    }
+
+    private async void LoadArtistAvatar(string? url)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (string.Equals(url, artistAvatarUrl, StringComparison.Ordinal)
+            && (url is null
+                || artistAvatarCache.ContainsKey(url)
+                || now - artistAvatarAttemptAt < ArtistAvatarRetryDelay)) return;
+        var requestId = ++artistAvatarRequestId;
+        artistAvatarUrl = url;
+        artistAvatarAttemptAt = now;
+        CurrentArtistAvatarImage.Source = null;
+        CurrentArtistAvatarImage.Visibility = Visibility.Collapsed;
+        if (terminal is null || string.IsNullOrWhiteSpace(url)) return;
+        if (artistAvatarCache.TryGetValue(url, out var cached))
+        {
+            CurrentArtistAvatarImage.Source = cached;
+            CurrentArtistAvatarImage.Visibility = cached is null ? Visibility.Collapsed : Visibility.Visible;
+            return;
+        }
+
+        try
+        {
+            var bytes = await terminal.GetAssetBytesAsync(url);
+            if (requestId != artistAvatarRequestId || !string.Equals(url, artistAvatarUrl, StringComparison.Ordinal)) return;
+            var image = ToBitmap(bytes);
+            if (image is null) return;
+            artistAvatarCache[url] = image;
+            if (artistAvatarCache.Count > ArtistAvatarCacheLimit)
+            {
+                var oldest = artistAvatarCache.Keys.FirstOrDefault();
+                if (oldest is not null) artistAvatarCache.Remove(oldest);
+            }
+            CurrentArtistAvatarImage.Source = image;
+            CurrentArtistAvatarImage.Visibility = Visibility.Visible;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Trace.TraceInformation("Artist avatar unavailable: {0}", exception.Message);
+        }
+    }
+
+    private static BitmapImage? ToBitmap(byte[]? bytes)
+    {
+        if (bytes is null || bytes.Length == 0) return null;
+        using var stream = new MemoryStream(bytes, writable: false);
+        var image = new BitmapImage();
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        image.StreamSource = stream;
+        image.EndInit();
+        image.Freeze();
+        return image;
     }
 
     private void RenderPosition(long positionMs)
@@ -193,6 +258,15 @@ public partial class MainWindow : Window
     {
         var old = terminal;
         terminal = null;
+        ++artistAvatarRequestId;
+        artistAvatarUrl = null;
+        artistAvatarAttemptAt = DateTimeOffset.MinValue;
+        artistAvatarCache.Clear();
+        if (CurrentArtistAvatarImage is not null)
+        {
+            CurrentArtistAvatarImage.Source = null;
+            CurrentArtistAvatarImage.Visibility = Visibility.Collapsed;
+        }
         if (old is not null) await old.DisposeAsync();
     }
 
@@ -290,14 +364,8 @@ public partial class MainWindow : Window
 
     private void PersistSettings()
     {
-        try
-        {
-            settingsStore.Save(settings);
-        }
-        catch (IOException)
-        {
-            // A settings failure must not stop playback or close the player.
-        }
+        var result = PlayerSettingsSaveFeedback.Execute(() => settingsStore.Save(settings));
+        if (!result.Succeeded) StatusText.Text = result.ErrorMessage;
     }
 
     private void SaveWindowPlacement()

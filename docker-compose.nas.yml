@@ -89,7 +89,7 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${SERVER_PORT}/api/health | grep -q '\"status\":\"UP\"'"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${SERVER_PORT}/api/ready | grep -q '\"status\":\"UP\"'"]
       interval: 10s
       timeout: 5s
       retries: 20

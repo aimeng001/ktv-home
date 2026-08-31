@@ -40,6 +40,7 @@ app:
   ffprobe-path: ${KTV_FFPROBE_PATH:ffprobe}
   transcode:
     ffmpeg-path: ${KTV_FFMPEG_PATH:ffmpeg}
+    timeout-seconds: ${KTV_TRANSCODE_TIMEOUT_SECONDS:1800}
     dri-path: ${KTV_DRI_PATH:/dev/dri}
     drm-sys-path: ${KTV_DRM_SYS_PATH:/sys/class/drm}
     rkmpp-device-path: ${KTV_RKMPP_DEVICE_PATH:/dev/mpp_service}

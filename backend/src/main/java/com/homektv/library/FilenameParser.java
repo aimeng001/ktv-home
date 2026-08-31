@@ -8,14 +8,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * 文件名规则兜底解析（P1.2，详设§9.3）。
- *
- * <p>标准格式为「歌手-歌名-语种-分类」。解析标准格式时先从右侧确认
- * 语种和分类，再在剩余部分中匹配歌手库；这样歌手或歌名中的连字符不会
- * 被误当成固定的第一个分隔符。</p>
- *
- * <p>标签缺失时仍保留 Home KTV 原有的「歌手 - 歌名」「歌名 - 歌手」
- * 兼容规则。解析只处理字符串，不会修改或重命名源文件。</p>
+ * Parses song metadata from media filenames.
  */
 public final class FilenameParser {
 
@@ -23,16 +16,13 @@ public final class FilenameParser {
 
     private static final Map<String, String> LANGUAGE_ALIASES = Map.ofEntries(
             Map.entry("国语", "国语"),
-            Map.entry("中文", "国语"),
             Map.entry("普通话", "国语"),
             Map.entry("mandarin", "国语"),
-            Map.entry("zh-cn", "国语"),
-            Map.entry("zh_cn", "国语"),
+            Map.entry("zh", "国语"),
             Map.entry("粤语", "粤语"),
+            Map.entry("广东话", "粤语"),
             Map.entry("cantonese", "粤语"),
             Map.entry("yue", "粤语"),
-            Map.entry("zh-hk", "粤语"),
-            Map.entry("zh_hk", "粤语"),
             Map.entry("闽南语", "闽南语"),
             Map.entry("台语", "闽南语"),
             Map.entry("hokkien", "闽南语"),
@@ -56,41 +46,33 @@ public final class FilenameParser {
             Map.entry("未知", "未知")
     );
 
+    private static final Map<String, String> VOCAL_FORM_ALIASES = Map.of(
+            "合唱", "合唱",
+            "对唱", "对唱",
+            "男女对唱", "对唱",
+            "独唱", "独唱",
+            "组合", "组合",
+            "群星", "群星"
+    );
+
     private FilenameParser() {}
 
-    /**
-     * 使用当前数据库歌手库为空的安全默认值解析文件名。
-     * 多段且无法可靠确认歌手的标准名称会进入 NEEDS_REVIEW。
-     */
     public static ParsedMeta parse(String filename) {
         return parse(filename, DEFAULT_RULE, List.of());
     }
 
-    /**
-     * 使用已有歌手名称解析标准文件名。歌手名称完全匹配时，优先选择最长匹配。
-     */
     public static ParsedMeta parse(String filename, Collection<String> knownArtists) {
         return parse(filename, DEFAULT_RULE, prepareKnownArtists(knownArtists));
     }
 
-    /**
-     * 保留原有手工重解析入口。
-     */
     public static ParsedMeta parse(String filename, String rule) {
         return parse(filename, rule, List.of());
     }
 
-    /**
-     * 按规则解析文件名，并可复用已有歌手库。
-     */
     public static ParsedMeta parse(String filename, String rule, Collection<String> knownArtists) {
         return parse(filename, rule, prepareKnownArtists(knownArtists));
     }
 
-    /**
-     * Prepare the normalized artist lookup once for a scan. Reusing this index
-     * avoids rebuilding a map for every media filename in a large library.
-     */
     static ArtistIndex prepareKnownArtists(Collection<String> knownArtists) {
         Map<String, String> normalizedArtists = new HashMap<>();
         if (knownArtists != null) {
@@ -112,30 +94,24 @@ public final class FilenameParser {
         String base = stripExtension(filename).trim();
         if (base.isBlank()) return ParsedMeta.unrecognized(base);
 
-        // Strip catalogue numbers and transport/version markers before identifying fields.
+        // Strip catalogue numbers, category brackets, and transport/version markers before identifying fields.
         base = base.replaceFirst("^\\s*\\d{1,5}\\s*[-._)】]\\s*", "");
-        base = base.replaceAll("\\s*\\[(?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK)\\]\\s*$", "");
-        base = base.replaceAll("\\s*\\((?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|Official Video)\\)\\s*$", "");
-        base = base.replaceAll("(?i)\\s*[-|]\\s*(KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK)\\s*$", "");
+        base = base.replaceFirst("^\\s*【[^】]+】\\s*", "");
+        base = base.replaceFirst("(?i)^\\s*\\[(?:\\d+|KTV|MTV|MV|LIVE|4K|1080P|HD|UHD|超清|高清|修复|无损|经典|新歌|儿歌|戏曲|民歌)[^\\]]*\\]\\s*", "");
+        base = base.replaceAll("(?i)\\s*\\[(?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|4K|1080P|HD|UHD|超清|高清|修复|无损)\\]\\s*$", "");
+        base = base.replaceAll("(?i)\\s*\\((?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|Official Video|4K|1080P|HD|UHD|超清|高清|修复|无损)\\)\\s*$", "");
+        base = base.replaceAll("(?i)\\s*[-|]\\s*(KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|4K|1080P|HD|UHD)\\s*$", "");
 
-        // Keep underscores intact for the first standard-format pass. In the
-        // library, an underscore is also used inside a collaborative artist
-        // block (for example, "ArtistA_ArtistB-Title-国语-合唱"). Converting
-        // it to a dash before locating the metadata suffix loses that boundary.
         String dashSeparated = normalizeDashSeparators(base);
         List<String> dashParts = splitParts(dashSeparated);
         MetadataSuffix dashSuffix = findMetadataSuffix(dashParts);
         if (dashSuffix != null) {
             ParsedMeta standard = parseStandard(dashParts, dashSuffix, artistIndex, base.trim());
-            if (standard.recognized() || hasCollaborativeArtistMarker(dashParts)) {
+            if (standard.recognized() || hasCollaborativeArtistMarker(dashParts) || standard.needsReview()) {
                 return standard;
             }
         }
 
-        // Preserve the existing legacy behavior for filenames that used an
-        // underscore as a field separator rather than as part of an artist
-        // block. This fallback is intentionally reached only after the
-        // underscore-preserving standard pass above.
         String normalized = dashSeparated.replace('_', '-');
         List<String> parts = splitParts(normalized);
 
@@ -147,14 +123,17 @@ public final class FilenameParser {
     }
 
     private static String normalizeDashSeparators(String value) {
-        return value
+        String s = value;
+        if (s.contains("——")) s = s.replace("——", "\uE000");
+        s = s
                 .replace('－', '-')
-                .replace('—', '-')
                 .replace('–', '-')
+                .replace('—', '-')
                 .replace('｜', '|')
                 .replace('|', '-')
                 .replace('/', '-')
                 .replace('\\', '-');
+        return s.replace("\uE000", "——");
     }
 
     private static boolean hasCollaborativeArtistMarker(List<String> parts) {
@@ -163,21 +142,34 @@ public final class FilenameParser {
 
     private static ParsedMeta parseStandard(List<String> parts, MetadataSuffix suffix,
                                              ArtistIndex artistIndex, String fallbackTitle) {
-        List<String> identity = parts.subList(0, suffix.languageIndex());
+        List<String> identity = new ArrayList<>(parts.subList(0, suffix.languageIndex()));
         if (identity.stream().anyMatch(String::isBlank)) {
             return ParsedMeta.unrecognized(fallbackTitle);
         }
 
-        ArtistMatch existingArtist = longestExistingArtist(identity, artistIndex);
-        if (existingArtist != null) {
-            String title = join(identity, existingArtist.partCount());
-            return ParsedMeta.of(title, existingArtist.name(), suffix.language(), suffix.category());
+        // 剥离可能存在的多余前置语种（例如："国语-苏晨-坚强-国语-流行"）
+        if (identity.size() >= 3 && canonicalLanguage(identity.get(0)) != null) {
+            identity.remove(0);
         }
 
-        // 两段剩余部分只有一个身份分隔点，兼容标准的「歌手-歌名」形式。
-        // 三段以上若没有歌手库证据，不能安全猜测歌手/歌名边界。
+        // 提取可能存在的演唱形式（例如："张庭 钟丽缇 王祖蓝-爱上幼儿园-合唱-国语-流行"）
+        String vocalForm = "";
+        if (identity.size() >= 3) {
+            String candidateVocal = VOCAL_FORM_ALIASES.get(identity.get(identity.size() - 1));
+            if (candidateVocal != null) {
+                vocalForm = candidateVocal;
+                identity.remove(identity.size() - 1);
+            }
+        }
+
+        ArtistMatch existingArtist = longestExistingArtist(identity, artistIndex);
+        if (existingArtist != null && existingArtist.partCount() < identity.size()) {
+            String title = join(identity, existingArtist.partCount());
+            return ParsedMeta.of(title, existingArtist.name(), suffix.language(), suffix.category(), vocalForm);
+        }
+
         if (identity.size() == 2) {
-            return ParsedMeta.of(identity.get(1), identity.get(0), suffix.language(), suffix.category());
+            return ParsedMeta.of(identity.get(1), identity.get(0), suffix.language(), suffix.category(), vocalForm);
         }
         return ParsedMeta.unrecognized(fallbackTitle);
     }
@@ -194,7 +186,6 @@ public final class FilenameParser {
             return ParsedMeta.unrecognized(fallbackTitle);
         }
 
-        // 对旧格式中的多段歌名也尝试复用歌手库；未命中时继续保留原来的首分隔符行为。
         ArtistMatch existingArtist = longestExistingArtist(parts, artistIndex);
         if (existingArtist != null && existingArtist.partCount() < parts.size()
                 && !"title_artist".equals(rule)) {
@@ -207,8 +198,7 @@ public final class FilenameParser {
     }
 
     private static MetadataSuffix findMetadataSuffix(List<String> parts) {
-        // 从右向左找最近的「已知语种-非空分类」组合。
-        for (int languageIndex = parts.size() - 2; languageIndex >= 2; languageIndex--) {
+        for (int languageIndex = parts.size() - 2; languageIndex >= 1; languageIndex--) {
             String language = canonicalLanguage(parts.get(languageIndex));
             String category = parts.get(languageIndex + 1);
             if (language != null && !category.isBlank()) {
@@ -245,7 +235,12 @@ public final class FilenameParser {
     private static List<String> splitParts(String value) {
         String[] values = value.split("\\s*-\\s*", -1);
         List<String> result = new ArrayList<>(values.length);
-        for (String item : values) result.add(cleanPart(item));
+        for (String item : values) {
+            String cleaned = cleanPart(item);
+            if (!cleaned.isBlank()) {
+                result.add(cleaned);
+            }
+        }
         return result;
     }
 
@@ -258,7 +253,9 @@ public final class FilenameParser {
     }
 
     private static String cleanPart(String value) {
-        return value.replaceAll("^\\s*[【\\[][^】\\]]+[】\\]]\\s*", "").trim();
+        String cleaned = value.replaceFirst("^\\s*【[^】]+】\\s*", "");
+        cleaned = cleaned.replaceAll("(?i)\\s*\\[(?:4K|1080P|HD|UHD|超清|高清|修复|无损|Live版|Live|Official Video)[^\\]]*\\]\\s*$", "");
+        return cleaned.trim();
     }
 
     static String stripExtension(String filename) {

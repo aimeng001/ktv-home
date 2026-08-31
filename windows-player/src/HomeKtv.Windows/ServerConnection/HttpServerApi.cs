@@ -68,12 +68,54 @@ public sealed class HttpServerApi : IPlaybackServerApi, IDisposable
         using var response = await http.PostAsJsonAsync(
                 new Uri(endpoint.ApiBaseUri, "control"), request, ProtocolJson.Options, cancellationToken)
             .ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode) return null;
+        if (!response.IsSuccessStatusCode)
+        {
+            throw await ReadApiExceptionAsync(response, cancellationToken).ConfigureAwait(false);
+        }
         return await response.Content.ReadFromJsonAsync<QueueSnapshot>(ProtocolJson.Options, cancellationToken)
             .ConfigureAwait(false);
     }
 
     public string StreamUrl(long fileId) => new Uri(endpoint.ApiBaseUri, $"stream/{fileId}").ToString();
+
+    /** Downloads a server-local image such as artistAvatarUrl; remote absolute URLs are rejected. */
+    public async Task<byte[]?> GetAssetBytesAsync(string? path, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(path) || Uri.IsWellFormedUriString(path, UriKind.Absolute)) return null;
+        var uri = new Uri(endpoint.BaseUri, path.TrimStart('/'));
+        using var response = await http.GetAsync(uri, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<KtvApiException> ReadApiExceptionAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var fallback = $"HTTP {(int)response.StatusCode}";
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return new KtvApiException((int)response.StatusCode, null, fallback);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+            var code = root.TryGetProperty("code", out var codeValue)
+                ? codeValue.GetString()
+                : null;
+            var message = root.TryGetProperty("message", out var messageValue)
+                ? messageValue.GetString()
+                : null;
+            return new KtvApiException((int)response.StatusCode, code,
+                string.IsNullOrWhiteSpace(message) ? fallback : message);
+        }
+        catch (JsonException)
+        {
+            return new KtvApiException((int)response.StatusCode, null, fallback);
+        }
+    }
 
     public void Dispose() => http.Dispose();
 }

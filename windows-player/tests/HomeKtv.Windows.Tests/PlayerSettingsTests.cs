@@ -1,9 +1,19 @@
 using HomeKtv.Windows.Settings;
+using System.IO;
 
 namespace HomeKtv.Windows.Tests;
 
 public sealed class PlayerSettingsTests
 {
+    [Fact]
+    public void Reports_file_permission_failures_instead_of_succeeding_silently()
+    {
+        var result = PlayerSettingsSaveFeedback.Execute(() => throw new IOException("read-only"));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("设置保存失败，请检查目录权限。", result.ErrorMessage);
+    }
+
     [Fact]
     public void Saves_and_loads_display_selection_and_window_placement()
     {
@@ -14,6 +24,7 @@ public sealed class PlayerSettingsTests
             store.Save(new PlayerSettings
             {
                 ServerAddress = "192.168.1.20:8080",
+                PlayerCredential = "tv-secret",
                 DisplayId = @"\\.\DISPLAY2",
                 DisplayIndex = 1,
                 Window = new WindowPlacementSettings
@@ -29,6 +40,7 @@ public sealed class PlayerSettingsTests
 
             var loaded = store.Load();
 
+            Assert.Equal("tv-secret", loaded.PlayerCredential);
             Assert.Equal(@"\\.\DISPLAY2", loaded.DisplayId);
             Assert.Equal(1, loaded.DisplayIndex);
             Assert.Equal(@"\\.\DISPLAY2", loaded.Window.DisplayId);
@@ -57,6 +69,7 @@ public sealed class PlayerSettingsTests
             Assert.Equal("192.168.1.20:8080", loaded.ServerAddress);
             Assert.Equal(1, loaded.DisplayIndex);
             Assert.Equal(string.Empty, loaded.DisplayId);
+            Assert.Equal(string.Empty, loaded.PlayerCredential);
             Assert.NotNull(loaded.Window);
         }
         finally

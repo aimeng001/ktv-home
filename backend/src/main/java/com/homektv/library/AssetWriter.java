@@ -10,6 +10,8 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.Optional;
 
 /**
  * 歌词/封面缓存落盘（P1.4）。写入 data 目录的 lyrics/ 与 covers/ 子目录，
@@ -43,6 +45,55 @@ public class AssetWriter {
         return rel;
     }
 
+    /** Write an artist avatar to an application-owned cache, keyed by artist identity. */
+    public String writeArtistCover(String artistKey, byte[] image, String ext) {
+        String rel = "artist-covers/" + digest(artistKey) + "." + (ext == null ? "jpg" : ext);
+        write(rel, image);
+        return rel;
+    }
+
+    /**
+     * Checks an application-owned cache path without treating a stale database
+     * path as a valid avatar. The path is relative to app.data-path and is
+     * never allowed to escape that directory or the external-library boundary.
+     */
+    public boolean isReadableCache(String relativePath) {
+        return readableCachePath(relativePath).isPresent();
+    }
+
+    /** Returns a verified real cache path for serving, or empty when unsafe/missing. */
+    public Optional<Path> readableCachePath(String relativePath) {
+        if (relativePath == null || relativePath.isBlank()) return Optional.empty();
+        try {
+            Path cacheRoot = dataRoot.toAbsolutePath().normalize();
+            Path target = cacheRoot.resolve(relativePath).normalize();
+            if (!target.startsWith(cacheRoot)) return Optional.empty();
+            Path realRoot = cacheRoot.toRealPath();
+            Path realTarget = target.toRealPath();
+            if (!realTarget.startsWith(realRoot)) return Optional.empty();
+            LibraryModePolicy.requireCacheOutsideExternalSource(props, realTarget);
+            return Files.isRegularFile(realTarget) && Files.isReadable(realTarget)
+                    ? Optional.of(realTarget) : Optional.empty();
+        } catch (RuntimeException failure) {
+            log.debug("资源缓存路径不可读：{} - {}", relativePath, failure.getMessage());
+            return Optional.empty();
+        } catch (IOException failure) {
+            log.debug("资源缓存路径不可读：{} - {}", relativePath, failure.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /** Deletes one verified application-owned cache file, if it still exists. */
+    public void deleteReadableCache(String relativePath) {
+        readableCachePath(relativePath).ifPresent(path -> {
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException failure) {
+                log.debug("资源缓存清理失败：{} - {}", relativePath, failure.getMessage());
+            }
+        });
+    }
+
     public String writePlaylistCover(Long playlistId, byte[] image, String ext) {
         String rel = "playlist-covers/" + playlistId + "-" + System.currentTimeMillis() + "." + (ext == null ? "jpg" : ext);
         write(rel, image);
@@ -67,6 +118,18 @@ public class AssetWriter {
         } catch (IOException e) {
             log.warn("资源落盘失败：{} - {}", relPath, e.getMessage());
             throw new UncheckedIOException(e);
+        }
+    }
+
+    private static String digest(String value) {
+        try {
+            byte[] bytes = MessageDigest.getInstance("SHA-256")
+                    .digest((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+            StringBuilder out = new StringBuilder(bytes.length * 2);
+            for (byte item : bytes) out.append(String.format("%02x", item & 0xff));
+            return out.toString();
+        } catch (Exception failure) {
+            throw new IllegalStateException("无法生成艺术家缓存键", failure);
         }
     }
 }

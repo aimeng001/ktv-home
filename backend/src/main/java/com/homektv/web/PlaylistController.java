@@ -2,6 +2,7 @@ package com.homektv.web;
 
 import com.homektv.library.PlaylistPublicService;
 import com.homektv.config.AppProperties;
+import com.homektv.domain.Playlist;
 import com.homektv.repo.PlaylistRepository;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -83,6 +84,7 @@ public class PlaylistController {
     @GetMapping("/{id}/cover")
     public ResponseEntity<Resource> cover(@PathVariable Long id) {
         return playlistRepository.findById(id)
+                .filter(Playlist::isPublicVisible)
                 .filter(playlist -> playlist.getCoverPath() != null)
                 .map(playlist -> serveCover(playlist.getCoverPath()))
                 .orElse(ResponseEntity.notFound().build());

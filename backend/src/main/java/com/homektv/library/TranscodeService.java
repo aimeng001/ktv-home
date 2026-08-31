@@ -5,28 +5,63 @@ import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.web.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 
 /** Creates a TV-compatible H.264/AAC derivative without touching the source file. */
 @Service
 public class TranscodeService {
+    @FunctionalInterface
+    interface ProcessLauncher {
+        Process start(List<String> command) throws java.io.IOException;
+    }
+
     private final SongFileRepository files;
     private final AppProperties props;
+    private final String ffmpegPath;
+    private final ProcessLauncher processLauncher;
+    private final Duration timeout;
 
     /** Compatibility constructor for callers that use the original managed-mode service directly. */
     public TranscodeService(SongFileRepository files) {
-        this(files, new AppProperties());
+        this(files, new AppProperties(), "ffmpeg", TranscodeService::startProcess,
+                MediaProcessRunner.DEFAULT_TIMEOUT);
     }
 
     @Autowired
+    public TranscodeService(SongFileRepository files, AppProperties props,
+                            @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath,
+                            @Value("${app.transcode.timeout-seconds:1800}") long timeoutSeconds) {
+        this(files, props, ffmpegPath, TranscodeService::startProcess,
+                MediaProcessRunner.fromSeconds(timeoutSeconds));
+    }
+
     public TranscodeService(SongFileRepository files, AppProperties props) {
+        this(files, props, "ffmpeg", TranscodeService::startProcess,
+                MediaProcessRunner.DEFAULT_TIMEOUT);
+    }
+
+    TranscodeService(SongFileRepository files, AppProperties props, Duration timeout) {
+        this(files, props, "ffmpeg", TranscodeService::startProcess, timeout);
+    }
+
+    TranscodeService(SongFileRepository files, AppProperties props, String ffmpegPath,
+                     ProcessLauncher processLauncher) {
+        this(files, props, ffmpegPath, processLauncher, MediaProcessRunner.DEFAULT_TIMEOUT);
+    }
+
+    TranscodeService(SongFileRepository files, AppProperties props, String ffmpegPath,
+                     ProcessLauncher processLauncher, Duration timeout) {
         this.files = files;
         this.props = props;
+        this.ffmpegPath = ffmpegPath;
+        this.processLauncher = processLauncher;
+        this.timeout = timeout;
     }
 
     public Result transcodeSong(Long songId) {
@@ -57,15 +92,18 @@ public class TranscodeService {
         }
         boolean completed = false;
         try {
-            Process process = new ProcessBuilder("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            Process process = processLauncher.start(List.of(ffmpegPath, "-hide_banner", "-loglevel", "error", "-y",
                     "-i", input.toString(), "-map", "0:v:0?", "-map", "0:a?",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-profile:v", "high",
-                    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-c:s", "copy", output.toString())
-                    .redirectErrorStream(true).start();
-            String log = ProcessOutputTail.read(process.getInputStream(),
-                    StandardCharsets.UTF_8, MediaTranscoder.MAX_PROCESS_LOG_BYTES);
-            int code = process.waitFor();
-            if (code != 0 || !Files.isReadable(output)) throw new ApiException("TRANSCODE_FAILED", log);
+                    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-c:s", "copy", output.toString()));
+            MediaProcessRunner.Result result = MediaProcessRunner.run(process, timeout);
+            if (result.timedOut()) throw new ApiException("TRANSCODE_TIMEOUT", "ffmpeg 转码超时");
+            String log = result.output();
+            int code = result.exitCode();
+            if (code != 0 || !Files.isReadable(output) || Files.size(output) == 0) {
+                throw new ApiException("TRANSCODE_FAILED", log == null || log.isBlank()
+                        ? "ffmpeg 转码失败" : log);
+            }
             SongFile derivative = existing != null ? existing : new SongFile();
             derivative.setSongId(source.getSongId());
             derivative.setFilePath(output.toString());
@@ -101,6 +139,10 @@ public class TranscodeService {
     private static String stripExtension(String name) {
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    private static Process startProcess(List<String> command) throws java.io.IOException {
+        return new ProcessBuilder(command).redirectErrorStream(true).start();
     }
 
     public record Result(Long sourceFileId, String outputPath, long outputBytes) {}

@@ -1,0 +1,1 @@
+import{r as a}from"./index-DcagivkL.js";function f(s,o=null){const n=a(o),e=a("idle"),u=a(null);let r=0;async function c(...i){const l=++r;e.value="loading",u.value=null;try{const t=await s(...i);return l!==r?void 0:(n.value=t,e.value="success",n.value)}catch(t){if(l!==r)return;u.value=t,e.value="error";return}}return{data:n,status:e,error:u,load:c}}export{f as u};

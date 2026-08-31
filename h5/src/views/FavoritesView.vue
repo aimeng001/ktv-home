@@ -4,7 +4,8 @@
     <main>
       <!-- 收藏页头部 / Favorites header -->
       <div class="intro"><span>❤️</span><div><h1>喜欢的歌</h1><p>收藏保存在当前手机身份下</p></div></div>
-      <div v-if="loading" class="tip">加载中…</div>
+      <div v-if="favoritesStatus === 'loading'" class="tip">加载中…</div>
+      <div v-else-if="favoritesStatus === 'error'" class="tip error-tip">收藏读取失败：{{ favoritesError?.message || '网络错误，请稍后重试' }} <button class="retry" @click="load">重试</button></div>
       <div v-else-if="!songs.length" class="empty"><span>♡</span><strong>还没有收藏歌曲</strong><p>在歌曲右侧点爱心即可收藏</p></div>
       <!-- 歌曲列表（含点歌按钮） / Song list with queuing -->
       <div v-else class="list">
@@ -31,13 +32,22 @@ import TabBar from '../components/TabBar.vue'
 import { useFavoritesStore } from '../stores/favorites'
 import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
+import { useAsyncResource } from '../composables/useAsyncResource'
+import { useOrderLock } from '../composables/useOrderLock'
 
 const user = useUserStore()
 const favorites = useFavoritesStore()
 const { toast } = useToast()
 const controls = makeControls(user.clientToken)
-const songs = ref([])
-const loading = ref(true)
+const { executeOrder } = useOrderLock()
+const favoritesResource = useAsyncResource(async () => {
+  const result = await api.favorites(user.clientToken)
+  await favorites.load(user.clientToken, true)
+  return result
+}, [])
+const songs = favoritesResource.data
+const favoritesStatus = favoritesResource.status
+const favoritesError = favoritesResource.error
 const orderedIds = reactive(new Set())
 
 onMounted(load)
@@ -53,52 +63,40 @@ watch(() => favorites.ids.slice(), ids => {
  * On failure, clears the list to avoid showing stale data.
  */
 async function load() {
-  loading.value = true
-  try {
-    songs.value = await api.favorites(user.clientToken)
-    await favorites.load(user.clientToken, true)
-  } catch {
-    songs.value = []
-  } finally {
-    loading.value = false
-  }
+  await favoritesResource.load()
 }
 
 /**
- * 将歌曲加入播放队列（点歌）。
- * 成功后将 song.id 标记为已点，避免重复操作。
- *
+ * 将歌曲加入播放队列（点歌，带防抖并发锁）。
  * @param {Object} song - 歌曲对象，需包含 id 属性。
- *
- * Queues a song for playback.
- * On success, marks the song id as ordered to prevent duplicate operations.
- *
- * @param {Object} song - Song object, must contain an id property.
  */
 async function order(song) {
-  try {
-    await controls.order(song.id)
-    orderedIds.add(song.id)
-    toast('已加入队列')
-  } catch (error) {
-    toast(error.code === 'SONG_IN_QUEUE' ? (error.message || '已在队列中') : (error.message || '点歌失败'))
-  }
+  await executeOrder(song.id, async () => {
+    try {
+      await controls.order(song.id)
+      orderedIds.add(song.id)
+      toast('已加入队列')
+    } catch (error) {
+      toast(error.code === 'SONG_IN_QUEUE' ? (error.message || '已在队列中') : (error.message || '点歌失败'))
+    }
+  })
 }
 </script>
 
 <style scoped>
-.page { min-height: 100vh; padding-bottom: 74px; }
-.top { height: 54px; padding: 0 16px; display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; border-bottom: 1px solid var(--line); }
-.top button { text-align: left; font-size: 28px; color: var(--dim); }
-.top strong { text-align: center; }
-.top span { color: var(--dim2); font-size: 12px; white-space: nowrap; }
-main { padding: 16px; }
-.intro { display: flex; gap: 14px; align-items: center; padding: 18px; margin-bottom: 10px; border-radius: var(--radius); background: linear-gradient(135deg, rgba(248,113,113,.16), var(--panel)); border: 1px solid rgba(248,113,113,.18); }
-.intro > span { font-size: 34px; }
-.intro h1 { font-size: 20px; }
-.intro p, .empty p { color: var(--dim); font-size: 13px; margin-top: 4px; }
-.tip, .empty { color: var(--dim2); text-align: center; padding: 48px 0; }
-.empty { display: flex; flex-direction: column; align-items: center; gap: 7px; }
-.empty > span { color: #f87171; font-size: 48px; }
-.empty strong { color: var(--text); }
+.page { min-height: 100vh; padding-bottom: 74px; display: flex; flex-direction: column; }
+.top { height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.top button { background: none; border: none; color: var(--gold); font-size: 24px; padding: 0 8px; cursor: pointer; }
+.intro { display: flex; align-items: center; gap: 14px; padding: 20px 16px; background: linear-gradient(180deg, rgba(255,107,97,.12) 0%, transparent 100%); }
+.intro span { font-size: 32px; }
+.intro h1 { font-size: 20px; font-weight: 700; margin: 0; }
+.intro p { margin: 4px 0 0; color: var(--dim); font-size: 12px; }
+.list { padding: 0 8px; }
+.tip { color: var(--dim2); font-size: 13px; padding: 40px 0; text-align: center; }
+.error-tip { color: var(--coral); display: flex; align-items: center; justify-content: center; gap: 8px; }
+.retry { border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 4px; padding: 2px 8px; font-size: 12px; }
+.empty { text-align: center; padding: 60px 0; color: var(--dim); }
+.empty span { font-size: 40px; color: var(--dim2); display: block; margin-bottom: 12px; }
+.empty strong { display: block; font-size: 15px; color: var(--text); margin-bottom: 6px; }
+.empty p { font-size: 12px; color: var(--dim2); margin: 0; }
 </style>

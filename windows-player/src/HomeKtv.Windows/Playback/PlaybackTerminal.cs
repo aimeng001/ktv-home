@@ -64,6 +64,9 @@ public sealed class PlaybackTerminal : IAsyncDisposable
     public QueueSnapshot? CurrentSnapshot => Volatile.Read(ref snapshot);
     public long CurrentPositionMs { get; private set; }
 
+    public Task<byte[]?> GetAssetBytesAsync(string? path, CancellationToken cancellationToken = default) =>
+        server.GetAssetBytesAsync(path, cancellationToken);
+
     public event Action<bool>? ConnectionChanged;
     public event Action<QueueSnapshot>? SnapshotChanged;
     public event Action<long>? PositionChanged;

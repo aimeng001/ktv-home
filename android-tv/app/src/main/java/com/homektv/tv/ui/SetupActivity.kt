@@ -46,6 +46,7 @@ class SetupActivity : AppCompatActivity() {
         discovery = LanDiscovery(this)
         binding = ActivitySetupBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        binding.inputCredential.setText(config.playerCredential)
 
         binding.btnRefresh.setOnClickListener { startScan() }
         binding.btnConnect.setOnClickListener { submitManual() }
@@ -189,6 +190,7 @@ class SetupActivity : AppCompatActivity() {
         binding.txtScanStatus.text = getString(R.string.setup_verifying, server.hostPort)
         lifecycleScope.launch {
             if (scanner.validate(server.hostPort)) {
+                config.playerCredential = binding.inputCredential.text.toString()
                 config.rememberServer(server)
                 startActivity(Intent(this@SetupActivity, MainActivity::class.java))
                 finish()

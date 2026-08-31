@@ -20,4 +20,11 @@ class LibraryScanMemoryLifecycleTest {
         assertThat(fields)
                 .doesNotContain("cachedArtistNames", "cachedArtistIndex");
     }
+
+    @Test
+    void scanProgressIncludesRateAndEtaProjections() {
+        LibraryScanService.ScanProgress progress = LibraryScanService.ScanProgress.idle();
+        assertThat(progress.probedPerSecond()).isEqualTo(0.0);
+        assertThat(progress.estimatedRemainingSeconds()).isNull();
+    }
 }

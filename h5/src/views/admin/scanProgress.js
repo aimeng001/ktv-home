@@ -64,3 +64,13 @@ export function scanPhaseLabel(phase) {
     COMPLETED: '扫描完成'
   }[phase] || '正在扫描源路径'
 }
+
+export function formatEta(seconds) {
+  if (!seconds || seconds <= 0) return ''
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) return `${h}小时${m}分`
+  if (m > 0) return `${m}分${s}秒`
+  return `${s}秒`
+}

@@ -24,6 +24,7 @@ import android.view.Gravity
 import androidx.annotation.OptIn
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import androidx.appcompat.app.AppCompatActivity
@@ -129,6 +130,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var recommendations: List<com.homektv.tv.net.SongDto> = emptyList()
     private var recommendationOffset = 0
     private val recommendationCovers = mutableMapOf<Long, android.graphics.Bitmap?>()
+    private val artistAvatars = LinkedHashMap<String, android.graphics.Bitmap>(128, 0.75f, true)
+    private var artistAvatarUrl: String? = null
+    private var artistAvatarRequestAt = 0L
+    private var artistAvatarRequestId = 0L
+    private var artistAvatarJob: Job? = null
     private var standbyCarouselEnabled = true
     private var antiBurnEnabled = true
     private var standbyIntervalMs = 8_000L
@@ -239,6 +245,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     private fun renderAudioPreview() {
         showPlayer(audioMode = true)
+        updateArtistAvatar(null)
         binding.imgAudioCover.setImageDrawable(null)
         binding.txtAudioFallback.text = "晴天"
         binding.txtAudioTitle.text = "晴天"
@@ -545,7 +552,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             val releaseKey = "${release.versionCode}:${release.version}"
             if (checkedReleaseVersion == releaseKey) return@launch
             checkedReleaseVersion = releaseKey
-            if (release.versionCode == BuildConfig.VERSION_CODE.toLong() || promptedReleaseVersion == releaseKey) return@launch
+            if (!isServerUpdateAvailable(BuildConfig.VERSION_CODE.toLong(), release.versionCode)
+                || promptedReleaseVersion == releaseKey) return@launch
 
             val apk = when {
                 Build.SUPPORTED_ABIS.contains("arm64-v8a") -> release.tv.arm64V8a
@@ -1054,6 +1062,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.txtMediaBadge.text = if (song.mediaType == "KTV_VIDEO") "KTV版" else "MV"
         binding.txtPlayerTitle.text = song.title
         binding.txtPlayerArtist.text = song.artist
+        updateArtistAvatar(song.artistAvatarUrl)
         binding.txtOrderedBy.text = current.orderedByNick?.let { "$it 点" } ?: ""
         val next = snapshot.list.firstOrNull { it.status == "waiting" }
         binding.nextPanel.visibility = if (next?.song != null) View.VISIBLE else View.GONE
@@ -1068,6 +1077,49 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             if (snapshot.vocalMode == "original") "原唱中" else "伴唱中"
         } else ""
         binding.txtDuration.text = formatMs(song.durationMs.toLong())
+    }
+
+    /** Loads the cached server avatar without blocking playback or allowing stale songs to win. */
+    private fun updateArtistAvatar(rawUrl: String?) {
+        if (!::binding.isInitialized) return
+        val url = rawUrl?.trim()?.takeIf { it.isNotEmpty() }
+        val now = System.currentTimeMillis()
+        val cached = url?.let { artistAvatars[it] }
+        if (url == artistAvatarUrl && (cached != null || now - artistAvatarRequestAt < 30_000L)) return
+
+        artistAvatarUrl = url
+        artistAvatarRequestAt = now
+        val requestId = ++artistAvatarRequestId
+        artistAvatarJob?.cancel()
+        artistAvatarJob = null
+        binding.imgPlayerArtistAvatar.setImageDrawable(null)
+        binding.imgPlayerArtistAvatar.visibility = View.GONE
+        binding.imgAudioArtistAvatar.setImageDrawable(null)
+        binding.imgAudioArtistAvatar.visibility = View.GONE
+        if (url == null) return
+
+        if (cached != null) {
+            showArtistAvatar(cached)
+            return
+        }
+        artistAvatarJob = lifecycleScope.launch {
+            val bitmap = mediaApi.fetchUrl(url)?.let { bytes ->
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
+            if (bitmap != null) {
+                artistAvatars[url] = bitmap
+                if (artistAvatars.size > 128) artistAvatars.remove(artistAvatars.entries.first().key)
+            }
+            if (requestId != artistAvatarRequestId || url != artistAvatarUrl) return@launch
+            if (bitmap != null) showArtistAvatar(bitmap)
+        }
+    }
+
+    private fun showArtistAvatar(bitmap: android.graphics.Bitmap) {
+        binding.imgPlayerArtistAvatar.setImageBitmap(bitmap)
+        binding.imgPlayerArtistAvatar.visibility = View.VISIBLE
+        binding.imgAudioArtistAvatar.setImageBitmap(bitmap)
+        binding.imgAudioArtistAvatar.visibility = View.VISIBLE
     }
 
     private fun updateProgress(positionMs: Long) {

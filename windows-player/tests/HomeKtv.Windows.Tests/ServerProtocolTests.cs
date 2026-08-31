@@ -32,6 +32,16 @@ public sealed class ServerProtocolTests
     }
 
     [Fact]
+    public void Websocket_uri_escapes_optional_player_credential()
+    {
+        var endpoint = ServerEndpoint.Parse("http://192.168.1.10:8080");
+
+        var uri = endpoint.WebSocketUri("windows-token", "secret/电视 1");
+
+        Assert.Contains("player_credential=secret%2F%E7%94%B5%E8%A7%86%201", uri.Query);
+    }
+
+    [Fact]
     public void Discovery_response_requires_the_existing_home_ktv_protocol_marker()
     {
         var response = DiscoveryResponseParser.Parse(

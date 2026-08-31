@@ -34,10 +34,15 @@ public class ExternalCoverService {
     }
 
     public String download(MusicProvider provider, String coverUrl, String fingerprint, Duration timeout) {
-        return guard.call(provider, () -> downloadLimited(provider, coverUrl, fingerprint, timeout));
+        return guard.call(provider, () -> downloadLimited(provider, coverUrl, fingerprint, timeout, false));
     }
 
-    private String downloadLimited(MusicProvider provider, String coverUrl, String fingerprint, Duration timeout) {
+    public String downloadArtistAvatar(MusicProvider provider, String avatarUrl, String artistKey, Duration timeout) {
+        return guard.call(provider, () -> downloadLimited(provider, avatarUrl, artistKey, timeout, true));
+    }
+
+    private String downloadLimited(MusicProvider provider, String coverUrl, String fingerprint,
+                                   Duration timeout, boolean artistAvatar) {
         if (coverUrl == null || coverUrl.isBlank()) throw new ApiException("EXTERNAL_COVER_MISSING", "外部歌曲没有可用封面");
         URI uri;
         try { uri = URI.create(coverUrl); } catch (RuntimeException ex) { throw invalid(); }
@@ -54,7 +59,10 @@ public class ExternalCoverService {
             byte[] bytes;
             try (InputStream input = response.body()) { bytes = input.readNBytes(MAX_BYTES + 1); }
             if (bytes.length == 0 || bytes.length > MAX_BYTES) throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面为空或超过 5 MB");
-            return writer.writeCover(fingerprint, imageNormalizer.normalize(bytes), "jpg");
+            byte[] normalized = imageNormalizer.normalize(bytes);
+            return artistAvatar
+                    ? writer.writeArtistCover(fingerprint, normalized, "jpg")
+                    : writer.writeCover(fingerprint, normalized, "jpg");
         } catch (ApiException ex) {
             throw ex;
         } catch (Exception ex) {

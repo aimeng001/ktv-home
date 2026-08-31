@@ -34,6 +34,7 @@ public class SongReparseService {
     @Transactional(readOnly = true)
     public List<Preview> preview(List<Long> songIds, String rule) {
         validateRule(rule);
+        List<String> knownArtists = existingArtistNames();
         List<Preview> result = new ArrayList<>();
         for (Long songId : songIds) {
             Song song = songRepository.findById(songId).orElse(null);
@@ -45,7 +46,7 @@ public class SongReparseService {
                 continue;
             }
             String filename = Path.of(file.getFilePath()).getFileName().toString();
-            ParsedMeta parsed = FilenameParser.parse(filename, rule);
+            ParsedMeta parsed = FilenameParser.parse(filename, rule, knownArtists);
             String artist = parsed.artist().isBlank() ? "未知歌手" : parsed.artist();
             result.add(new Preview(songId, song.getTitle(), song.getArtist(), filename,
                     parsed.title(), artist, parsed.recognized(), parsed.recognized() ? null : "文件名无法识别"));
@@ -56,6 +57,8 @@ public class SongReparseService {
     @Transactional
     public ApplyResult apply(List<Long> songIds, String rule) {
         List<Preview> previews = preview(songIds, rule);
+        List<String> knownArtists = artistCreditService == null
+                ? List.of() : existingArtistNames();
         int updated = 0;
         int skipped = 0;
         for (Preview preview : previews) {
@@ -80,7 +83,11 @@ public class SongReparseService {
             song.setStatus("ok");
             songRepository.save(song);
             if (artistCreditService != null) {
-                artistCreditService.replace(song.getId(), song.getArtist());
+                if (knownArtists.isEmpty()) {
+                    artistCreditService.replace(song.getId(), song.getArtist());
+                } else {
+                    artistCreditService.replace(song.getId(), song.getArtist(), knownArtists);
+                }
             }
             updated++;
         }
@@ -91,6 +98,11 @@ public class SongReparseService {
         if (!"artist_title".equals(rule) && !"title_artist".equals(rule)) {
             throw new ApiException("INVALID_REPARSE_RULE", "不支持的重解析规则");
         }
+    }
+
+    private List<String> existingArtistNames() {
+        List<String> artists = songRepository.findDistinctArtistByStatus("ok");
+        return artists == null ? List.of() : artists;
     }
 
     public record Preview(Long songId, String currentTitle, String currentArtist, String filename,

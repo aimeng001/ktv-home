@@ -88,9 +88,16 @@ export const api = {
   addSongToPlaylist: (id, songId) => request(`/playlists/${id}/songs`, { method: 'POST', body: JSON.stringify({ songId }) }),
   orderPlaylist: (id, clientToken) => request(`/playlists/${id}/order`, { method: 'POST', body: JSON.stringify({ clientToken }) }),
   browseArtists: () => request('/browse/artists'),
+  browseArtistPage: (params = {}) => request('/browse/artists/page?' + new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value !== '' && value != null)
+  ).toString()),
+  browseArtistInitials: (gender = '') => request('/browse/artists/initials?' + new URLSearchParams(
+    gender ? { gender } : {}
+  ).toString()),
   browseLanguages: () => request('/browse/languages'),
   browseTags: () => request('/browse/tags'),
   browseSongs: (params = {}) => request('/browse/songs?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString()),
+  browseSongPage: (params = {}) => request('/browse/songs/page?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString()),
   addWish: (keyword, clientToken) =>
     request('/wishes', { method: 'POST', body: JSON.stringify({ keyword, client_token: clientToken }) }),
   registerUser: (clientToken, nickname) =>
@@ -163,7 +170,7 @@ export const api = {
     body.append('file', file)
     return request('/admin/standby/logo', { method: 'POST', body })
   },
-  adminWishes: () => request('/wishes'),
+  adminWishes: () => request('/admin/wishes'),
 
   // ADM-04 AI 曲库与主题歌单
   // ADM-04 AI song library and themed playlists
@@ -176,6 +183,7 @@ export const api = {
   adminAiPlaylists: () => request('/admin/ai/playlists'),
   adminAiPlaylist: (id) => request(`/admin/ai/playlists/${id}`),
   adminAiCreatePlaylist: (body) => request('/admin/ai/playlists', { method: 'POST', body: JSON.stringify(body) }),
+  adminAiSavePlaylistPreview: (body) => request('/admin/ai/playlists/from-preview', { method: 'POST', body: JSON.stringify(body) }),
   adminAiUpdatePlaylist: (id, body) => request(`/admin/ai/playlists/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   adminAiDeletePlaylist: (id) => request(`/admin/ai/playlists/${id}`, { method: 'DELETE' }),
   adminAiGeneratePlaylist: (body) => request('/admin/ai/playlists/generate', { method: 'POST', body: JSON.stringify(body) }),
@@ -184,6 +192,7 @@ export const api = {
   adminAiPutConfig: (body) => request('/admin/ai/config', { method: 'PUT', body: JSON.stringify(body) }),
   adminAiModels: () => request('/admin/ai/config/models'),
   adminArtists: (params = {}) => request('/admin/artists?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString()),
+  adminArtistPage: (params = {}) => request('/admin/artists/page?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString()),
   adminAnalyzeArtist: (artist) => request('/admin/artists/analyze', { method: 'POST', body: JSON.stringify({ artist }) }),
   adminAnalyzeArtists: (artists) => request('/admin/artists/analyze-batch', { method: 'POST', body: JSON.stringify({ artists }) }),
   adminApplyArtistGender: (artist, gender) => request('/admin/artists/apply', { method: 'POST', body: JSON.stringify({ artist, gender }) }),

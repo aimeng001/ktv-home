@@ -23,6 +23,9 @@
             <TextBlock VerticalAlignment="Center" Margin="0,0,8,0">Server</TextBlock>
             <TextBox x:Name="ServerAddressText" Width="330" Margin="0,0,8,0"
                      ToolTip="例如 192.168.1.10:8080" />
+            <TextBlock VerticalAlignment="Center" Margin="0,0,8,0">密钥</TextBlock>
+            <PasswordBox x:Name="PlayerCredentialText" Width="150" Margin="0,0,8,0"
+                         ToolTip="服务端启用 KTV_PLAYER_CREDENTIAL 时填写" />
             <Button Content="发现" Width="72" Margin="0,0,8,0" Click="Discover_Click" />
             <Button Content="连接" Width="72" Click="Connect_Click" />
         </StackPanel>
@@ -42,12 +45,20 @@
 
         <Border Grid.Row="3" Margin="0,20,0,12" Padding="18"
                 BorderBrush="#D0D5DD" BorderThickness="1" CornerRadius="8">
-            <StackPanel>
-                <TextBlock x:Name="CurrentTitleText" FontSize="26" FontWeight="SemiBold"
-                           Text="暂无播放" />
-                <TextBlock x:Name="CurrentStateText" Margin="0,8,0,0"
-                           Foreground="DarkSlateGray" Text="idle" />
-            </StackPanel>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="64" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Image x:Name="CurrentArtistAvatarImage" Grid.Column="0" Width="56" Height="56"
+                       Margin="0,0,16,0" Stretch="UniformToFill" Visibility="Collapsed" />
+                <StackPanel Grid.Column="1">
+                    <TextBlock x:Name="CurrentTitleText" FontSize="26" FontWeight="SemiBold"
+                               Text="暂无播放" />
+                    <TextBlock x:Name="CurrentStateText" Margin="0,8,0,0"
+                               Foreground="DarkSlateGray" Text="idle" />
+                </StackPanel>
+            </Grid>
         </Border>
 
         <StackPanel Grid.Row="4">

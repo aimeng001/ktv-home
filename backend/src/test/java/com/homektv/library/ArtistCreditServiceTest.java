@@ -52,4 +52,22 @@ class ArtistCreditServiceTest {
         verify(repository).deleteBySongId(8L);
         verify(repository).saveAll(any());
     }
+
+    @Test
+    void storesEveryKnownSpaceSeparatedArtistAsAnIndependentAssociation() {
+        SongArtistRepository repository = mock(SongArtistRepository.class);
+        when(repository.findBySongIdOrderByArtistOrder(9L)).thenReturn(List.of());
+        when(repository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ArtistCreditService service = new ArtistCreditService(repository);
+        service.replace(9L, "张庭 钟丽缇 王祖蓝",
+                List.of("张庭", "钟丽缇", "王祖蓝"));
+
+        var saved = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(repository).saveAll(saved.capture());
+        @SuppressWarnings("unchecked")
+        List<SongArtist> credits = (List<SongArtist>) saved.getValue();
+        assertThat(credits).extracting(SongArtist::getArtistName)
+                .containsExactly("张庭", "钟丽缇", "王祖蓝");
+    }
 }

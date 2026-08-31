@@ -26,7 +26,7 @@ export const usePlayerStore = defineStore('player', {
       accompanimentChannel: 'RIGHT'
     },
     queue: [],             // 点歌队列 | [{queueId, song, orderedBy, orderedByNick, status}]
-    tvOnline: true,        // TV 是否在线（P2.13） | Whether the TV is online (P2.13)
+    tvOnline: null,        // TV 状态在首次服务端快照前未知 | Unknown until the first server snapshot
     connectedPhones: 0,
     lastEffect: null
   }),
@@ -116,7 +116,7 @@ export const usePlayerStore = defineStore('player', {
       this.vocalMode = snap.vocalMode ?? this.vocalMode
       this.audioLayout = snap.audioLayout ?? this.audioLayout
       this.queue = snap.list ?? []
-      this.tvOnline = snap.tvOnline ?? true
+      if (typeof snap.tvOnline === 'boolean') this.tvOnline = snap.tvOnline
       this.connectedPhones = snap.connectedPhones ?? 0
     }
   }

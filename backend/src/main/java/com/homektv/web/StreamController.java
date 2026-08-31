@@ -3,6 +3,7 @@ package com.homektv.web;
 import com.homektv.config.AppProperties;
 import com.homektv.domain.SongFile;
 import com.homektv.library.LibraryModePolicy;
+import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.repo.SongFileRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
@@ -48,15 +49,22 @@ public class StreamController {
 
     private final SongFileRepository fileRepo;
     private final AppProperties props;
+    private final SongAvailabilityPolicy availabilityPolicy;
 
     public StreamController(SongFileRepository fileRepo) {
-        this(fileRepo, new AppProperties());
+        this(fileRepo, new AppProperties(), new SongAvailabilityPolicy(fileRepo));
+    }
+
+    public StreamController(SongFileRepository fileRepo, AppProperties props) {
+        this(fileRepo, props, new SongAvailabilityPolicy(fileRepo));
     }
 
     @Autowired
-    public StreamController(SongFileRepository fileRepo, AppProperties props) {
+    public StreamController(SongFileRepository fileRepo, AppProperties props,
+                            SongAvailabilityPolicy availabilityPolicy) {
         this.fileRepo = fileRepo;
         this.props = props;
+        this.availabilityPolicy = availabilityPolicy;
     }
 
     /**
@@ -82,6 +90,9 @@ public class StreamController {
 
         SongFile sf = fileRepo.findById(fileId).orElse(null);
         if (sf == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!availabilityPolicy.isReadyFile(sf)) {
             return ResponseEntity.notFound().build();
         }
 

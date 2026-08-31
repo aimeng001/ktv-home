@@ -6,7 +6,7 @@
         <p>管理 H5 展示歌单，并使用 AI 根据曲库标签策划歌曲。</p>
       </div>
       <div class="page-actions">
-        <router-link v-if="!aiConfigured" class="secondary action-button" :to="{ name: 'admin-settings', query: { section: 'ai' } }">
+        <router-link v-if="aiConfigState === 'ready' && !aiConfigured" class="secondary action-button" :to="{ name: 'admin-settings', query: { section: 'ai' } }">
           <Settings2 :size="15" />配置 AI
         </router-link>
         <button class="secondary icon-text-button" :disabled="loading" title="刷新歌单" @click="refreshAll">
@@ -16,6 +16,8 @@
     </header>
 
     <div v-if="message" class="notice">{{ message }}</div>
+    <div v-if="playlistsError" class="notice error-notice" role="alert"><span>歌单读取失败：{{ playlistsError }}</span><button class="text-btn" @click="loadPlaylists">重试</button></div>
+    <div v-if="aiConfigError" class="notice error-notice" role="alert"><span>AI 配置读取失败：{{ aiConfigError }}</span><button class="text-btn" @click="loadAiConfig">重试</button></div>
 
     <section class="filter-panel">
       <label>
@@ -55,7 +57,7 @@
         <span>共 {{ filteredPlaylists.length }} 个主题歌单</span>
         <div class="toolbar-actions">
           <button class="secondary action-button" @click="newPlaylist"><Plus :size="15" />新建歌单</button>
-          <button class="primary action-button" :disabled="!aiConfigured" :title="aiConfigured ? '使用 AI 策划歌单' : '请先配置 AI 模型'" @click="openGenerator">
+          <button class="primary action-button" :disabled="aiConfigState !== 'ready' || !aiConfigured" :title="aiConfigState === 'ready' && aiConfigured ? '使用 AI 策划歌单' : '请先配置 AI 模型'" @click="openGenerator">
             <Sparkles :size="15" />AI 生成歌单
           </button>
         </div>
@@ -90,6 +92,7 @@
           </tbody>
         </table>
       </div>
+      <div v-else-if="playlistsError" class="table-empty error-empty" role="alert"><ListMusic :size="24" /><strong>歌单暂时无法读取</strong><button class="text-btn" @click="loadPlaylists">重试</button></div>
       <div v-else class="table-empty"><ListMusic :size="24" /><span>暂无符合条件的主题歌单</span></div>
 
       <div class="pager">
@@ -206,6 +209,9 @@ const message = ref('')
 const playlists = ref([])
 const selectedPlaylist = ref(null)
 const aiConfigured = ref(false)
+const aiConfigState = ref('loading')
+const aiConfigError = ref('')
+const playlistsError = ref('')
 const page = ref(0)
 const editorOpen = ref(false)
 const generatorOpen = ref(false)
@@ -240,15 +246,27 @@ onMounted(refreshAll)
 
 async function refreshAll() {
   loading.value = true
-  try { await Promise.all([loadPlaylists(), loadAiConfig()]) } finally { loading.value = false }
+  try { await Promise.allSettled([loadPlaylists(), loadAiConfig()]) } finally { loading.value = false }
 }
 async function loadPlaylists() {
-  playlists.value = await api.adminAiPlaylists().catch(() => [])
-  if (page.value >= totalPages.value) page.value = totalPages.value - 1
+  try {
+    playlists.value = await api.adminAiPlaylists()
+    playlistsError.value = ''
+    if (page.value >= totalPages.value) page.value = totalPages.value - 1
+  } catch (error) {
+    playlistsError.value = error?.message || '网络错误，请稍后重试'
+  }
 }
 async function loadAiConfig() {
-  const config = await api.adminAiConfig().catch(() => ({}))
-  aiConfigured.value = !!(config.enabled && config.apiKeyConfigured && config.bulkModel)
+  try {
+    const config = await api.adminAiConfig()
+    aiConfigured.value = !!(config.enabled && config.apiKeyConfigured && config.bulkModel)
+    aiConfigError.value = ''
+    aiConfigState.value = 'ready'
+  } catch (error) {
+    aiConfigError.value = error?.message || '网络错误，请稍后重试'
+    aiConfigState.value = 'error'
+  }
 }
 function search() { page.value = 0 }
 function resetFilters() { Object.assign(filters, { keyword: '', source: '', visibility: '' }); page.value = 0 }
@@ -317,8 +335,13 @@ async function previewPlaylist() {
 async function savePlaylistPreview() {
   await run(async () => {
     const preview = playlistPreview.value
-    const saved = await api.adminAiCreatePlaylist({ name: preview.name, description: preview.description, theme: 'AI 策划', publicVisible: true })
-    for (const songId of preview.songIds || []) await api.adminAiAddPlaylistSong(saved.id, songId)
+    await api.adminAiSavePlaylistPreview({
+      name: preview.name,
+      description: preview.description,
+      theme: 'AI 策划',
+      publicVisible: true,
+      songIds: preview.songIds || []
+    })
     generatorOpen.value = false
     playlistPreview.value = null
     await loadPlaylists()
@@ -396,7 +419,7 @@ async function run(action) {
 
 <style scoped>
 .page-head{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:18px}.page-head h1{margin:0;color:#172033;font-size:22px;line-height:1.25}.page-head p{margin:6px 0 0;color:#64748b;font-size:13px}.page-actions,.toolbar-actions,.filter-actions,.row-actions,.action-button,.icon-text-button,.icon-actions{display:flex;align-items:center}.page-actions,.toolbar-actions,.filter-actions{gap:8px}.primary,.secondary{height:36px;padding:0 14px;border-radius:6px;font-size:12px;font-weight:600}.primary{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid #2563eb;background:#2563eb;color:#fff}.primary:hover:not(:disabled){border-color:#1d4ed8;background:#1d4ed8}.secondary{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid #cbd5e1;background:#fff;color:#475569}.secondary:hover:not(:disabled){border-color:#94a3b8;background:#f8fafc;color:#172033}.primary:disabled,.secondary:disabled,.link:disabled,.icon-button:disabled{cursor:not-allowed;opacity:.45}.spin{animation:spin .8s linear infinite}
-.notice{margin-bottom:14px;padding:10px 12px;border:1px solid #bbf7d0;border-radius:6px;background:#f0fdf4;color:#166534;font-size:12px}.filter-panel{display:flex;align-items:flex-end;flex-wrap:wrap;gap:10px;padding:12px 14px;margin-bottom:14px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}.filter-panel>label{display:flex;flex:0 0 180px;flex-direction:column;gap:5px;color:#475569;font-size:12px}.filter-panel>label:first-child{flex-basis:280px}.filter-panel input,.filter-panel select{width:100%;height:36px;padding:0 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#172033;font:inherit;font-size:13px;line-height:normal;outline:0}.filter-panel select{appearance:none;padding-right:34px;cursor:pointer}.select-control{position:relative;display:block}.select-control svg{position:absolute;right:10px;top:50%;color:#64748b;pointer-events:none;transform:translateY(-50%)}.filter-panel input:focus,.filter-panel select:focus,.field input:focus,.field textarea:focus,.add-song-bar input:focus{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.notice{margin-bottom:14px;padding:10px 12px;border:1px solid #bbf7d0;border-radius:6px;background:#f0fdf4;color:#166534;font-size:12px}.error-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;border-color:#fecaca;background:#fef2f2;color:#b91c1c}.error-empty{color:#b91c1c}.filter-panel{display:flex;align-items:flex-end;flex-wrap:wrap;gap:10px;padding:12px 14px;margin-bottom:14px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}.filter-panel>label{display:flex;flex:0 0 180px;flex-direction:column;gap:5px;color:#475569;font-size:12px}.filter-panel>label:first-child{flex-basis:280px}.filter-panel input,.filter-panel select{width:100%;height:36px;padding:0 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#172033;font:inherit;font-size:13px;line-height:normal;outline:0}.filter-panel select{appearance:none;padding-right:34px;cursor:pointer}.select-control{position:relative;display:block}.select-control svg{position:absolute;right:10px;top:50%;color:#64748b;pointer-events:none;transform:translateY(-50%)}.filter-panel input:focus,.filter-panel select:focus,.field input:focus,.field textarea:focus,.add-song-bar input:focus{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
 .table-panel{overflow:hidden;border:1px solid #e2e8f0;border-radius:8px;background:#fff}.toolbar,.pager{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;color:#64748b;font-size:12px}.toolbar{border-bottom:1px solid #e2e8f0}.pager{border-top:1px solid #e2e8f0}.pager>div{display:flex;gap:8px}.table-scroll{position:relative;overflow:auto}.table-empty{display:grid;min-height:220px;place-content:center;justify-items:center;gap:9px;color:#94a3b8;font-size:12px}.table-empty svg{color:#cbd5e1}table{width:100%;min-width:1050px;border-collapse:separate;border-spacing:0}th,td{padding:11px 12px;border-bottom:1px solid #eef2f7;text-align:left;white-space:nowrap}th{background:#f8fafc;color:#64748b;font-size:11px;font-weight:600}td{background:#fff;color:#334155;font-size:12px}td small{display:block;margin-top:4px;color:#94a3b8;font-size:10px}.playlist-name-cell{display:flex;align-items:center;gap:10px;min-width:230px}.playlist-name-cell>div:last-child{min-width:0}.playlist-name-cell strong,.playlist-name-cell small{display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cover-thumb{display:grid;place-items:center;width:42px;height:42px;flex:none;border:1px solid #dbeafe;border-radius:6px;background:#eff6ff center/cover no-repeat;color:#2563eb}.song-count{font-size:13px}.updated-at{color:#64748b}.status{display:inline-flex;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:600}.status.green{background:#dcfce7;color:#15803d}.status.blue{background:#dbeafe;color:#1d4ed8}.status.amber{background:#fef3c7;color:#a16207}.status.neutral{background:#f1f5f9;color:#475569}.action-cell{position:sticky;right:0;z-index:2;width:220px;min-width:220px;border-left:1px solid #e2e8f0;box-shadow:-10px 0 14px -14px rgba(15,23,42,.55)}th.action-cell{z-index:3}.row-actions{gap:6px}.link{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:30px;padding:0 8px;border:1px solid #dbe3ee;border-radius:6px;background:#fff;color:#2563eb;font-size:11px;font-weight:600}.link:hover:not(:disabled){border-color:#bfdbfe;background:#eff6ff}.danger-text{color:#b91c1c}.danger-text:hover:not(:disabled){border-color:#fecaca;background:#fef2f2}.empty{padding:48px;text-align:center;color:#94a3b8}.empty.compact{padding:26px}
 .mask{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:20px;background:rgba(15,23,42,.48)}.modal{display:flex;width:min(620px,calc(100vw - 32px));max-height:calc(100vh - 40px);flex-direction:column;overflow:hidden;border-radius:8px;background:#fff;box-shadow:0 20px 55px rgba(15,23,42,.22)}.generator-modal,.songs-modal{width:min(920px,calc(100vw - 32px))}.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px 20px;border-bottom:1px solid #e2e8f0}.modal-head h2{margin:0;color:#172033;font-size:17px}.modal-head p{margin:5px 0 0;color:#64748b;font-size:11px}.modal-body{overflow:auto;padding:18px 20px}.modal-actions{display:flex;justify-content:flex-end;gap:8px;padding:13px 20px;border-top:1px solid #e2e8f0;background:#f8fafc}.icon-button{display:grid;place-items:center;width:34px;height:34px;flex:none;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569}.icon-button:hover:not(:disabled){background:#f8fafc;color:#172033}.icon-button.small{width:30px;height:30px}.danger-icon{border-color:#fecaca;color:#b91c1c}.danger-icon:hover:not(:disabled){background:#fef2f2}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.field{display:flex;flex-direction:column;gap:6px;color:#475569;font-size:12px}.field.wide{grid-column:1/-1}.field input,.field textarea,.add-song-bar input{width:100%;min-height:36px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#172033;font:inherit;font-size:12px;outline:0}.field textarea{resize:vertical;line-height:1.55}.cover-row{display:flex;align-items:center;gap:14px;margin-top:16px;padding-top:16px;border-top:1px solid #e2e8f0}.cover-preview{display:grid;place-items:center;width:72px;height:72px;flex:none;border:1px solid #dbeafe;border-radius:6px;background:#eff6ff center/cover no-repeat;color:#2563eb}.cover-row>div:last-child{display:flex;align-items:flex-start;flex-direction:column;gap:5px}.cover-row small,.check-row small{color:#94a3b8;font-size:10px}.upload-button{display:inline-flex;align-items:center;gap:5px;margin-top:3px;color:#2563eb;font-size:11px;font-weight:600;cursor:pointer}.upload-button input{display:none}.check-row{display:flex;align-items:flex-start;gap:9px;margin-top:16px;padding:12px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;color:#334155;font-size:12px}.check-row input{width:15px;height:15px;margin-top:2px;accent-color:#2563eb}.check-row span{display:flex;flex-direction:column;gap:3px}
 .generator-controls{display:flex;align-items:flex-end;gap:10px;margin-top:12px}.limit-field{width:130px;flex:none}.generator-controls>small{align-self:center;color:#64748b;font-size:10px}.preview-section{margin-top:18px;padding-top:16px;border-top:1px solid #e2e8f0}.preview-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.preview-head strong{color:#172033;font-size:14px}.preview-head p{margin:5px 0 0;color:#64748b;font-size:11px}.preview-head>span{padding:3px 8px;border-radius:4px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:700}.preview-meta{margin:10px 0;color:#64748b;font-size:10px}.preview-table,.song-table-scroll{overflow:auto;border:1px solid #e2e8f0;border-radius:6px}.preview-table{max-height:280px}.preview-table table,.song-table{min-width:100%;}.preview-table th,.preview-table td,.song-table th,.song-table td{padding:9px 10px}.preview-table th:first-child{width:64px}.preview-action-cell{width:74px;text-align:center}.preview-action-cell .icon-button{margin:auto}

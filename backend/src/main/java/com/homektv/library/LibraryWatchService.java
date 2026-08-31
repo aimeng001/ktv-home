@@ -5,6 +5,7 @@ import com.homektv.ws.WsBroadcaster;
 import com.homektv.ws.WsEvent;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.*;
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.stream.Stream;
@@ -27,13 +29,14 @@ import static java.nio.file.StandardWatchEventKinds.*;
 public class LibraryWatchService {
 
     private static final Logger log = LoggerFactory.getLogger(LibraryWatchService.class);
-    private static final long DEBOUNCE_MS = 3000;
+    private static final Duration DEFAULT_DEBOUNCE = Duration.ofSeconds(3);
 
     private final AppProperties props;
     private final SettingService settingService;
     private final LibraryScanService scanService;
     private final MediaImportService importService;
     private final WsBroadcaster broadcaster;
+    private final Duration debounceDelay;
 
     private WatchService watchService;
     private ExecutorService watchExecutor;
@@ -41,14 +44,26 @@ public class LibraryWatchService {
     private ScheduledFuture<?> pendingScan;
     private volatile boolean running;
 
+    @Autowired
     public LibraryWatchService(AppProperties props, SettingService settingService,
                                LibraryScanService scanService, MediaImportService importService,
                                WsBroadcaster broadcaster) {
+        this(props, settingService, scanService, importService, broadcaster, DEFAULT_DEBOUNCE);
+    }
+
+    /** Package-private overload keeps filesystem tests deterministic without changing production timing. */
+    LibraryWatchService(AppProperties props, SettingService settingService,
+                        LibraryScanService scanService, MediaImportService importService,
+                        WsBroadcaster broadcaster, Duration debounceDelay) {
         this.props = props;
         this.settingService = settingService;
         this.scanService = scanService;
         this.importService = importService;
         this.broadcaster = broadcaster;
+        if (debounceDelay == null || debounceDelay.isNegative()) {
+            throw new IllegalArgumentException("debounce delay must not be negative");
+        }
+        this.debounceDelay = debounceDelay;
     }
 
     @PostConstruct
@@ -144,12 +159,12 @@ public class LibraryWatchService {
         }
     }
 
-    /** 防抖：3s 内的多次变更合并为一次扫描 */
+    /** 防抖：配置时长内的多次变更合并为一次扫描。 */
     private synchronized void scheduleScan() {
         if (pendingScan != null && !pendingScan.isDone()) {
             pendingScan.cancel(false);
         }
-        pendingScan = debounceExecutor.schedule(this::runScan, DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+        pendingScan = debounceExecutor.schedule(this::runScan, debounceDelay.toMillis(), TimeUnit.MILLISECONDS);
     }
 
     private void runScan() {

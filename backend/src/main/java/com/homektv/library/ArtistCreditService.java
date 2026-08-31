@@ -23,6 +23,11 @@ public class ArtistCreditService {
     }
 
     @Transactional
+    public void replace(long songId, String artistCredit, Collection<String> knownArtists) {
+        replace(songId, ArtistCreditParser.parse(artistCredit, knownArtists));
+    }
+
+    @Transactional
     public void replace(long songId, Collection<String> artistNames) {
         List<String> normalized = ArtistCreditParser.normalize(artistNames);
         List<SongArtist> existing = repository.findBySongIdOrderByArtistOrder(songId);

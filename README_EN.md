@@ -132,7 +132,7 @@ To build from source instead, run:
 ```bash
 docker compose up -d --build --wait
 docker compose ps
-curl http://127.0.0.1:${KTV_HTTP_PORT:-8080}/api/health
+curl http://127.0.0.1:${KTV_HTTP_PORT:-8080}/api/ready
 ```
 
 | Service | Default port | Purpose |
@@ -216,7 +216,8 @@ The resulting APK is at
 | --- | --- |
 | Mobile songbook | `http://<host-ip>:8080/m` |
 | Administration | `http://<host-ip>:8080/m/admin` |
-| Health check | `http://<host-ip>:8080/api/health` |
+| Discovery health check | `http://<host-ip>:8080/api/health` |
+| Container readiness (including database) | `http://<host-ip>:8080/api/ready` |
 
 ## Local Development
 
