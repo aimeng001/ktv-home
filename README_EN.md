@@ -2,11 +2,13 @@
 
 [中文](README.md) | **English**
 
-Home KTV turns a NAS or Linux host into a private, LAN-only karaoke system:
-use the Android TV app for playback, scan the on-screen QR code with a phone to
-pick songs, and manage the music library from a browser. The server keeps the
-queue, lyrics, playback state, media processing, and song metadata in sync in
-real time.
+> Documentation sync: 2026-08-31. This README follows the current source and release layout; pending internal remediation is not presented as completed functionality.
+
+Home KTV turns a NAS, Linux host, or Docker Desktop machine into a private,
+LAN-only karaoke system. Use either the Android TV client or the Windows 11
+Player for playback, and use a phone browser for song selection and remote
+control. The server keeps the queue, lyrics, playback state, media processing,
+and song metadata in sync in real time.
 
 > Home KTV is designed for a trusted home LAN. It does not provide public-login
 > or Internet-facing security controls. Do not expose it directly to the
@@ -21,16 +23,20 @@ real time.
 
 ## Highlights
 
-- **Three connected clients:** Spring Boot server, Vue 3 mobile songbook and
-  administration UI, plus an Android TV player based on Media3/ExoPlayer.
+- **One server and three user surfaces:** Spring Boot server, Vue 3 mobile/admin
+  H5, Android TV based on Media3/ExoPlayer, and a Windows 11 Player built with
+  .NET 10/WPF plus mpv JSON IPC.
 - **Phone-first song selection:** no app installation or registration required;
   search by title, artist, Chinese name, full pinyin, or pinyin initials.
 - **TV playback built for karaoke:** dual audio tracks, vocal/accompaniment
   switching without reloading, animated LRC lyrics, remote-control support,
   reconnect recovery, QR-code pairing, and burn-in protection.
-- **Media-library workflow:** scan source media, inspect with FFprobe, dedupe by
-  MD5, direct-copy compatible files, transcode incompatible media, and import
-  sidecar lyrics and cover art.
+- **Two library modes:** `MANAGED` can import, direct-copy, transcode, and safely
+  clean processed source media; `EXTERNAL_READ_ONLY` indexes and plays an
+  existing NAS library without modifying the source files.
+- **Media-library workflow:** scan source media, inspect with FFprobe, dedupe where
+  content verification is needed, direct-copy compatible files, transcode
+  incompatible media, and import sidecar lyrics and cover art.
 - **Real-time room control:** the queue, playback state, lyrics, volume, and
   controls synchronize through WebSocket.
 
@@ -54,9 +60,12 @@ real time.
   bulk/reasoning models, model discovery, concurrency limits, and local-rule fallback
   for supported parsing tasks. AI-only operations ask for configuration instead of
   fabricating results.
-- **Release delivery:** signed 32-bit and 64-bit Release APKs are bundled in the Docker
-  image, the administration UI shows a once-per-version notice, and TV clients can
-  download and open the ABI-matched installer.
+- **Windows Player:** server discovery/manual connection, WebSocket reconnect,
+  playback-state recovery, `DUAL_TRACK`/`DUAL_CHANNEL`, display selection and
+  borderless fullscreen output.
+- **Release delivery:** signed 32-bit and 64-bit Android Release APKs are bundled
+  in the Docker image, and the Windows x64 Player is published as a separate
+  release ZIP. TV clients can download and open the ABI-matched Android installer.
 - **Migration safety:** Flyway V15 preserves source history, while a migration safety
   test rejects direct table deletion, truncation, and destructive drops.
 
@@ -67,7 +76,8 @@ real time.
 - A NAS, Linux host, or Docker Desktop installation with Docker Compose
 - At least 1 GB of available memory is recommended
 - Phone, Android TV, and server on the same LAN
-- Android TV 8.0 (API 26) or later
+- Android TV 8.0 (API 26) or later when using the Android player
+- Windows 11 x64 when using the Windows Player; the release is self-contained but requires a separate `mpv.exe`
 
 ### 1. Configure storage and credentials
 
@@ -84,6 +94,7 @@ replace the database password:
 KTV_SOURCE_MUSIC_DIR=/volume1/home-ktv/source-music
 KTV_MUSIC_DIR=/volume1/home-ktv/music
 KTV_DB_PASSWORD=replace-with-a-strong-password
+KTV_ADMIN_PASSWORD=replace-with-an-admin-password
 ```
 
 The server writes processed files into `KTV_MUSIC_DIR`, so ensure the container
@@ -210,6 +221,19 @@ cd android-tv
 The resulting APK is at
 `android-tv/app/build/outputs/apk/debug/app-debug.apk`.
 
+### 4. Windows Player
+
+GitHub Releases also publish `home-ktv-windows-player-<version>-win-x64.zip`.
+Extract it and run `HomeKtv.Windows.exe`. The .NET application is self-contained,
+but the package intentionally does **not** bundle a third-party `mpv.exe`. Install
+an x64 Windows build of mpv and either place `mpv.exe` next to the Home KTV
+executable, make it available on `PATH`, or configure an absolute
+`MpvExecutablePath` in `%LOCALAPPDATA%\HomeKtv.Windows\settings.json`.
+
+The player can discover the server on the LAN or connect to `<host-ip>:8080`
+manually. It supports display selection, borderless fullscreen, reconnect/recovery,
+and both dual-track and left/right-channel karaoke audio layouts.
+
 ## Common URLs
 
 | Purpose | URL |
@@ -221,7 +245,7 @@ The resulting APK is at
 
 ## Local Development
 
-Development requires Node.js 20+, JDK 21, JDK 17, Docker, and the Android SDK.
+Development requires Node.js 20+, JDK 21, JDK 17, Docker, and the Android SDK. Windows Player development additionally requires the .NET 10 SDK.
 
 ```bash
 # PostgreSQL
@@ -235,10 +259,16 @@ cd h5 && npm install && npm run dev
 
 # Android TV (JDK 17)
 cd android-tv && ./gradlew testDebugUnitTest assembleDebug
+
+# Windows Player (.NET 10)
+cd windows-player
+dotnet test HomeKtv.Windows.sln -c Release
+dotnet build HomeKtv.Windows.sln -c Release
 ```
 
-Run tests with `cd backend && ./mvnw test`, `cd h5 && npm test`, and
-`cd android-tv && ./gradlew testDebugUnitTest`.
+Run the full module tests with `cd backend && ./mvnw test`, `cd h5 && npm test`,
+`cd android-tv && ./gradlew testDebugUnitTest`, and
+`cd windows-player && dotnet test HomeKtv.Windows.sln -c Release`.
 
 ## Media Notes
 
@@ -257,6 +287,13 @@ the optional reasoning model falls back to the bulk model when left empty. The
 settings page can discover models where supported and test authentication, chat,
 and JSON capabilities.
 
+**The current request path still requires a non-empty API key.** Fully unauthenticated
+local Ollama/LM Studio/OpenAI-compatible endpoints are therefore not completely
+supported yet and are tracked in the remediation plan. With Docker deployments,
+`localhost` means the Home KTV container itself, not the host running Ollama; use
+an address that the Home KTV server can actually reach. Private/LAN AI addresses
+still require the explicit `KTV_AI_ALLOW_PRIVATE_NETWORK=true` opt-in.
+
 Stored API keys are encrypted with AES-256-GCM. Keep the generated
 `data/secrets/config.key` file with the application data backup. When AI is not
 configured or a request fails, embedded tags, filenames, lyric tags, and directory
@@ -273,6 +310,14 @@ files provide device passthrough but do not guarantee that the prebuilt image
 can enable hardware encoding out of the box. See the
 [Chinese hardware-transcoding section](README.md#硬件转码) for the exact commands
 and host-device requirements.
+
+## Known Limitations
+
+- Home KTV targets a trusted home LAN and must not be exposed directly to the Internet.
+- The Windows release currently requires a separately installed/configured `mpv.exe`.
+- Fully unauthenticated local OpenAI-compatible AI endpoints are not yet supported by the current request path.
+- Android TV auto-start/background behavior can depend on vendor-specific permissions.
+- Hardware encoding has only been physically verified on the Intel VAAPI path described above.
 
 ## License and Media Responsibility
 

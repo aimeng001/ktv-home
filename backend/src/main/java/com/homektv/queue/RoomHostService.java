@@ -42,7 +42,7 @@ public class RoomHostService {
         if (existing != null && !existing.equals(user.getId()) && userRepository.existsById(existing)) {
             throw new ApiException("HOST_ALREADY_CLAIMED", "房主已由其他用户认领");
         }
-        settingService.putAll(Map.of(HOST_USER_ID, user.getId()));
+        settingService.putInternal(HOST_USER_ID, user.getId());
         return status(clientToken);
     }
 
@@ -50,7 +50,7 @@ public class RoomHostService {
     public Map<String, Object> release(String clientToken) {
         userRepository.lockRoomHost();
         requireHost(clientToken);
-        settingService.putAll(Map.of(HOST_USER_ID, 0));
+        settingService.putInternal(HOST_USER_ID, 0L);
         return status(clientToken);
     }
 

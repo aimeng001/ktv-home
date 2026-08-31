@@ -94,6 +94,32 @@ public class AssetWriter {
         });
     }
 
+    /**
+     * Checks and returns a verified real standby logo path within dataRoot/standby/.
+     * Prevents directory traversal, arbitrary data file access, and symlink escape.
+     */
+    public Optional<Path> readableStandbyLogo(String relativePath) {
+        if (relativePath == null || relativePath.isBlank()) return Optional.empty();
+        try {
+            Path cacheRoot = dataRoot.toAbsolutePath().normalize();
+            Path standbyRoot = cacheRoot.resolve("standby").normalize();
+            Path target = cacheRoot.resolve(relativePath).normalize();
+            if (!target.startsWith(standbyRoot)) return Optional.empty();
+            if (!Files.exists(standbyRoot)) return Optional.empty();
+
+            Path realStandby = standbyRoot.toRealPath();
+            Path realTarget = target.toRealPath();
+            if (!realTarget.startsWith(realStandby)) return Optional.empty();
+
+            LibraryModePolicy.requireCacheOutsideExternalSource(props, realTarget);
+            return Files.isRegularFile(realTarget) && Files.isReadable(realTarget)
+                    ? Optional.of(realTarget) : Optional.empty();
+        } catch (Exception failure) {
+            log.debug("待机 Logo 路径不合法：{} - {}", relativePath, failure.getMessage());
+            return Optional.empty();
+        }
+    }
+
     public String writePlaylistCover(Long playlistId, byte[] image, String ext) {
         String rel = "playlist-covers/" + playlistId + "-" + System.currentTimeMillis() + "." + (ext == null ? "jpg" : ext);
         write(rel, image);

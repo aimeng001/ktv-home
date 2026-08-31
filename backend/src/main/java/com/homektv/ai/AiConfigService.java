@@ -105,7 +105,6 @@ public class AiConfigService {
         ResolvedConfig config = resolve();
         if (!config.enabled()) throw new ApiException("AI_DISABLED", "AI 分析未启用，请先配置 AI 模型");
         if (config.baseUrl().isBlank()) throw new ApiException("AI_BASE_URL_MISSING", "AI API Base URL 未配置，请先配置 AI 模型");
-        if (config.apiKey().isBlank()) throw new ApiException("AI_KEY_MISSING", "AI API Key 未配置，请先配置 AI 模型");
         if (config.bulkModel().isBlank()) throw new ApiException("AI_MODEL_MISSING", "批量模型 ID 未配置，请先配置 AI 模型");
         validateOutboundBaseUrl(config.baseUrl());
     }
@@ -118,8 +117,15 @@ public class AiConfigService {
     /** Returns whether an AI request can be made without throwing a user-facing configuration error. */
     public boolean isConfigured() {
         ResolvedConfig config = resolve();
-        return config.enabled() && !config.baseUrl().isBlank() && !config.apiKey().isBlank()
-                && !config.bulkModel().isBlank();
+        if (!config.enabled() || config.baseUrl().isBlank() || config.bulkModel().isBlank()) {
+            return false;
+        }
+        try {
+            validateOutboundBaseUrl(config.baseUrl());
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private void validate(ConfigUpdate value, String bulkModel, String reasoningModel) {

@@ -48,13 +48,13 @@
         </section>
 
         <section v-show="section === 'ai'" class="section ai-section" id="section-ai">
-          <SectionHead title="AI 模型" description="支持任意 OpenAI-compatible 服务，未配置时继续使用本地解析"><Bot :size="19" /><template #aside><span class="source-pill" :class="{ok: ai.apiKeyConfigured && ai.enabled}"><i></i>{{ ai.enabled && ai.apiKeyConfigured ? '服务可用' : '未配置' }}</span></template></SectionHead>
+          <SectionHead title="AI 模型" description="支持任意 OpenAI-compatible 服务，未配置时继续使用本地解析"><Bot :size="19" /><template #aside><span class="source-pill" :class="{ok: isAiConfigured(ai)}"><i></i>{{ isAiConfigured(ai) ? '服务可用' : '未配置' }}</span></template></SectionHead>
           <div class="ai-status"><div><span>配置来源</span><strong>{{ sourceLabel(ai.sources?.bulk_model) }}</strong></div><div><span>最近测试</span><strong>{{ ai.lastTestAt ? formatTime(ai.lastTestAt) : '尚未测试' }}</strong></div><div><span>JSON 模式</span><strong>{{ ai.jsonMode || 'AUTO' }}</strong></div></div>
           <div class="setting-group">
             <div class="group-head"><strong>服务连接</strong><span>兼容 Chat Completions 的服务地址与鉴权</span></div>
             <SettingRow id="ai_enabled" label="启用 AI" hint="AI 故障不会中断扫描、转码和入库"><Toggle v-model="aiForm.enabled" /></SettingRow>
             <SettingRow label="服务预设" hint="仅填充地址，所有字段仍可修改"><div class="presets"><button v-for="preset in presets" :key="preset.name" class="preset" @click="applyPreset(preset)">{{ preset.name }}</button></div></SettingRow>
-            <SettingRow id="ai_base_url" label="API Base URL" hint="填写完整 API 前缀"><input v-model="aiForm.baseUrl" class="input wide" placeholder="https://api.example.com/v1" /></SettingRow>
+            <SettingRow id="ai_base_url" label="API Base URL" hint="填写完整 API 前缀；Docker 部署使用局域网 AI 时需填写主机 IP 并设置 KTV_AI_ALLOW_PRIVATE_NETWORK=true"><input v-model="aiForm.baseUrl" class="input wide" placeholder="https://api.example.com/v1" /></SettingRow>
             <SettingRow id="ai_api_key" label="API Key" hint="留空保留已配置的 Key"><div class="key-control"><input v-model="aiForm.apiKey" class="input wide" type="password" placeholder="输入新的 API Key" /><div class="key-meta" v-if="ai.apiKeyConfigured"><span class="key-tail">已配置 · ****{{ ai.apiKeySuffix }}</span><button class="text-btn danger" @click="clearKey = !clearKey">{{ clearKey ? '取消清除' : '清除 Key' }}</button></div></div></SettingRow>
           </div>
           <div class="setting-group">
@@ -144,7 +144,7 @@
             <div class="group-head"><strong>待机品牌</strong><span>欢迎语和 Logo 会显示在 TV 待机页</span></div>
             <SettingRow label="待机欢迎语"><input v-model="form.standby_welcome" class="input wide" /></SettingRow>
             <SettingRow label="欢迎语副标题"><textarea v-model="form.standby_subtitle" class="input wide" rows="2"></textarea></SettingRow>
-            <SettingRow id="standby_logo" label="待机 Logo" :hint="form.standby_logo_path ? '已配置自定义 Logo' : '使用默认 Logo'"><label class="upload-btn">上传图片<input type="file" accept="image/png,image/jpeg,image/webp" @change="uploadStandbyLogo" /></label></SettingRow>
+            <SettingRow id="standby_logo" label="待机 Logo" :hint="form.standby_logo_configured ? '已配置自定义 Logo' : '使用默认 Logo'"><label class="upload-btn">上传图片<input type="file" accept="image/png,image/jpeg,image/webp" @change="uploadStandbyLogo" /></label></SettingRow>
           </div>
         </section>
 
@@ -178,7 +178,7 @@ import {
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
-import { canonicalizeSettings, loadSettingsSections, releaseLabel, runSettingsAction, saveDirtySections } from './settingsState'
+import { canonicalizeSettings, loadSettingsSections, releaseLabel, runSettingsAction, saveDirtySections, editableSettingsPayload, isAiConfigured } from './settingsState'
 
 const route = useRoute(); const router = useRouter()
 const categories = [
@@ -190,7 +190,7 @@ const categories = [
   { key: 'maintenance', label: '数据维护', description: '修复与清理', icon: Wrench }
 ]
 const search = ref(''); const section = ref(route.query.section && categories.some(x => x.key === route.query.section) ? route.query.section : 'basic')
-const form = reactive({ library_watch_enabled:false, display_address:'', external_default_audio_layout:'NORMAL_STEREO', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_path:'', anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false })
+const form = reactive({ library_watch_enabled:false, display_address:'', external_default_audio_layout:'NORMAL_STEREO', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_configured:false, anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false })
 const ai = reactive({ enabled:false, apiKeyConfigured:false, apiKeySuffix:null, sources:{}, capabilities:{}, lastTestAt:null })
 const aiForm = reactive({ enabled:false, baseUrl:'', apiKey:'', bulkModel:'', reasoningModel:'', timeoutSeconds:60, identityThreshold:.97, classificationThreshold:.92, jsonMode:'AUTO', bulkConcurrency:2, reasoningConcurrency:1 })
 const musicForm = reactive({enabled:false,providers:[],resultLimit:20,timeoutSeconds:5,searchCacheHours:6,concurrencyLimit:1,requestIntervalMs:1500,autoApplyThreshold:.95})
@@ -201,7 +201,7 @@ const releaseInfo = reactive({ version:'' })
 const libraryMode = ref(null)
 const sectionState = reactive({ general: 'loading', ai: 'loading', music: 'loading' })
 const sectionErrors = reactive({})
-const presets = [{name:'DeepSeek',baseUrl:'https://api.deepseek.com/v1'},{name:'OpenAI',baseUrl:'https://api.openai.com/v1'},{name:'Ollama',baseUrl:'http://localhost:11434/v1'},{name:'自定义',baseUrl:''}]
+const presets = [{name:'DeepSeek',baseUrl:'https://api.deepseek.com/v1'},{name:'OpenAI',baseUrl:'https://api.openai.com/v1'},{name:'Ollama / 本地模型',baseUrl:''},{name:'自定义',baseUrl:''}]
 const containerOptions=['mp4','m4v','mkv','mov','ts','m2ts','mts','mpg','mpeg','vob','avi','webm','wmv','asf','flv','f4v','3gp','3g2','rm','rmvb'].map(value=>({value,label:value.toUpperCase()}))
 const videoOptions=['h264','hevc','mpeg2video','mpeg4','vp8','vp9','av1','vc1','wmv3','wmv2','theora','prores','dnxhd','mjpeg','dvvideo','h263','rawvideo'].map(value=>({value,label:value.toUpperCase()}))
 const audioOptions=['aac','mp3','mp2','ac3','eac3','dts','truehd','flac','alac','opus','vorbis','ape','wmav1','wmav2','pcm_s16le','pcm_s24le','pcm_s32le','pcm_f32le'].map(value=>({value,label:value.toUpperCase()}))
@@ -298,7 +298,7 @@ async function load(){
   loading.value=false
 }
 watch([form,aiForm,musicForm],()=>{ if(!loading.value) dirty.value=snapshot(form)!==original.value||snapshot(aiForm)!==aiOriginal.value||snapshot(musicForm)!==musicOriginal.value },{deep:true})
-async function saveAll(){ const {successes,failures}=await saveDirtySections([{name:'基础设置',dirty:generalDirty.value,state:sectionState.general,save:async()=>{const updated=await api.adminPutSettings({...form});Object.assign(form,canonicalizeSettings(updated));return updated}},{name:'AI 设置',dirty:aiDirty.value,state:sectionState.ai,save:async()=>{const config=await api.adminAiPutConfig({...aiForm,apiKey:aiForm.apiKey||null,clearApiKey:clearKey.value});Object.assign(ai,config);aiForm.apiKey='';clearKey.value=false;return config}},{name:'音乐元数据设置',dirty:musicDirty.value,state:sectionState.music,save:async()=>{const music=await api.adminPutMusicSourceConfig({...musicForm});Object.assign(musicForm,{enabled:music.enabled,providers:music.providers,resultLimit:music.resultLimit,timeoutSeconds:music.timeoutSeconds,searchCacheHours:music.searchCacheHours,concurrencyLimit:music.concurrencyLimit,requestIntervalMs:music.requestIntervalMs,autoApplyThreshold:music.autoApplyThreshold});musicStatus.value=music.providerStatus||[];return music}}]); for(const item of successes){if(item.name==='基础设置')original.value=snapshot(form);if(item.name==='AI 设置')aiOriginal.value=snapshot(aiForm);if(item.name==='音乐元数据设置')musicOriginal.value=snapshot(musicForm)} dirty.value=generalDirty.value||aiDirty.value||musicDirty.value; if(failures.length){const saved=successes.map(item=>item.name).join('、')||'无';const failed=failures.map(item=>item.name).join('、');await alertDialog(`已保存：${saved}。保存失败：${failed}。失败部分仍保留为未保存状态。`,{title:'设置保存不完整',tone:'warning'})} }
+async function saveAll(){ const {successes,failures}=await saveDirtySections([{name:'基础设置',dirty:generalDirty.value,state:sectionState.general,save:async()=>{const updated=await api.adminPutSettings(editableSettingsPayload(form));Object.assign(form,canonicalizeSettings(updated));return updated}},{name:'AI 设置',dirty:aiDirty.value,state:sectionState.ai,save:async()=>{const config=await api.adminAiPutConfig({...aiForm,apiKey:aiForm.apiKey||null,clearApiKey:clearKey.value});Object.assign(ai,config);aiForm.apiKey='';clearKey.value=false;return config}},{name:'音乐元数据设置',dirty:musicDirty.value,state:sectionState.music,save:async()=>{const music=await api.adminPutMusicSourceConfig({...musicForm});Object.assign(musicForm,{enabled:music.enabled,providers:music.providers,resultLimit:music.resultLimit,timeoutSeconds:music.timeoutSeconds,searchCacheHours:music.searchCacheHours,concurrencyLimit:music.concurrencyLimit,requestIntervalMs:music.requestIntervalMs,autoApplyThreshold:music.autoApplyThreshold});musicStatus.value=music.providerStatus||[];return music}}]); for(const item of successes){if(item.name==='基础设置')original.value=snapshot(form);if(item.name==='AI 设置')aiOriginal.value=snapshot(aiForm);if(item.name==='音乐元数据设置')musicOriginal.value=snapshot(musicForm)} dirty.value=generalDirty.value||aiDirty.value||musicDirty.value; if(failures.length){const saved=successes.map(item=>item.name).join('、')||'无';const failed=failures.map(item=>item.name).join('、');await alertDialog(`已保存：${saved}。保存失败：${failed}。失败部分仍保留为未保存状态。`,{title:'设置保存不完整',tone:'warning'})} }
 function resetChanges(){ Object.assign(form,JSON.parse(original.value)); Object.assign(aiForm,JSON.parse(aiOriginal.value)); Object.assign(musicForm,JSON.parse(musicOriginal.value)); dirty.value=false }
 function chooseModel(model){ if(modelTarget.value==='reasoning') aiForm.reasoningModel=model; else aiForm.bulkModel=model }
 async function loadModels(target='bulk'){ modelTarget.value=target; try { models.value=(await api.adminAiModels()).models||[] } catch(e){ await alertDialog(e.message||'模型列表获取失败') } }

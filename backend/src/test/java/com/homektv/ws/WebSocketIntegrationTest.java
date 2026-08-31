@@ -47,6 +47,7 @@ class WebSocketIntegrationTest {
 
     @LocalServerPort int port;
     @Autowired SongRepository songRepo;
+    @Autowired com.homektv.repo.SongFileRepository songFileRepo;
     @Autowired com.homektv.web.ControlController controlController;
     @Autowired ObjectMapper mapper;
 
@@ -88,6 +89,15 @@ class WebSocketIntegrationTest {
         s.setTitle("晴天"); s.setArtist("周杰伦");
         s.setMediaType("KTV_VIDEO"); s.setFingerprint("ws-fp-" + System.nanoTime());
         Long songId = songRepo.save(s).getId();
+        com.homektv.domain.SongFile sf = new com.homektv.domain.SongFile();
+        sf.setSongId(songId);
+        sf.setFilePath("/music/qingtian-" + System.nanoTime() + ".mp4");
+        sf.setFormat("mp4");
+        sf.setMediaType("KTV_VIDEO");
+        sf.setValid(true);
+        sf.setProbePending(false);
+        sf.setFileMtime(java.time.OffsetDateTime.now());
+        songFileRepo.save(sf);
 
         WebSocketSession session = connect();
         awaitEvent(WsEvent.SYNC_FULL); // 先消费连接快照

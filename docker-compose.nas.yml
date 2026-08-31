@@ -50,6 +50,7 @@ services:
       # Set this before deployment to unlock /m/admin; empty keeps admin APIs disabled.
       # 部署前请设置此项以解锁 /m/admin；留空会关闭管理接口。
       KTV_ADMIN_PASSWORD: "${KTV_ADMIN_PASSWORD:-}"
+      KTV_PLAYER_CREDENTIAL: "${KTV_PLAYER_CREDENTIAL:-}"
       KTV_DISCOVERY_ENABLED: "true"
       KTV_DISCOVERY_NAME: "${KTV_DISCOVERY_NAME:-家庭KTV}"
       KTV_AI_ENABLED: "${KTV_AI_ENABLED:-false}"

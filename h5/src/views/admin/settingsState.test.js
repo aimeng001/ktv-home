@@ -1,7 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
-import { canonicalizeSettings, releaseLabel, saveDirtySections, loadSettingsSections, canSaveSection, runSettingsAction } from './settingsState'
+import { canonicalizeSettings, releaseLabel, saveDirtySections, loadSettingsSections, canSaveSection, runSettingsAction, editableSettingsPayload } from './settingsState'
 
 describe('admin settings state', () => {
+  it('strips internal runtime state from form submission payload', () => {
+    const dirtyForm = {
+      display_address: '192.168.1.100',
+      standby_interval_sec: 10,
+      room_host_user_id: 123,
+      standby_logo_path: 'standby/logo.png',
+      standby_logo_configured: true,
+      transcode_hardware_auto_configured: true
+    }
+    const payload = editableSettingsPayload(dirtyForm)
+    expect(payload).toEqual({
+      display_address: '192.168.1.100',
+      standby_interval_sec: 10
+    })
+  })
+
   it('uses display_address as the canonical key while reading legacy qr_address', () => {
     expect(canonicalizeSettings({ qr_address: '192.168.1.10:8080' })).toEqual({
       display_address: '192.168.1.10:8080'

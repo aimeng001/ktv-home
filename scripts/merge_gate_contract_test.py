@@ -357,6 +357,26 @@ class MergeGateContractTests(unittest.TestCase):
         self.assertIn(expected_options, env_example)
         self.assertNotIn("MaxRAMPercentage=70", env_example)
 
+    def test_production_compose_wires_player_credential(self) -> None:
+        for filename in (
+            "docker-compose.yml",
+            "docker-compose.nas.yml",
+            "docker-compose.prebuilt.yml",
+        ):
+            compose = (REPOSITORY / filename).read_text(encoding="utf-8")
+            self.assertIn(
+                "KTV_PLAYER_CREDENTIAL",
+                compose,
+                f"Missing KTV_PLAYER_CREDENTIAL in {filename}",
+            )
+
+        env_example = (REPOSITORY / ".env.example").read_text(encoding="utf-8")
+        self.assertIn(
+            "KTV_PLAYER_CREDENTIAL",
+            env_example,
+            "Missing KTV_PLAYER_CREDENTIAL in .env.example",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

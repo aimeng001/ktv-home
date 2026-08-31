@@ -1,3 +1,41 @@
+export const EDITABLE_GENERAL_KEYS = [
+  'library_watch_enabled',
+  'display_address',
+  'external_default_audio_layout',
+  'delete_source_after_transcode',
+  'tv_video_scale_mode',
+  'standby_carousel',
+  'standby_source',
+  'standby_song_ids',
+  'anti_burn',
+  'mini_qr',
+  'standby_welcome',
+  'standby_subtitle',
+  'standby_interval_sec',
+  'direct_copy_containers',
+  'direct_copy_video_codecs',
+  'direct_copy_audio_codecs',
+  'transcode_audio_only',
+  'transcode_output_container',
+  'transcode_video_codec',
+  'transcode_audio_codec',
+  'transcode_hardware_acceleration'
+]
+
+export function editableSettingsPayload(settings = {}) {
+  const payload = {}
+  for (const key of EDITABLE_GENERAL_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(settings, key)) {
+      payload[key] = settings[key]
+    }
+  }
+  return payload
+}
+
+export function isAiConfigured(config) {
+  return Boolean(config?.enabled && config?.baseUrl && config?.bulkModel)
+}
+
 export function canonicalizeSettings(settings = {}) {
   const result = { ...settings }
   if (!String(result.display_address ?? '').trim()) {

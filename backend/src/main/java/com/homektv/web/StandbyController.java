@@ -1,6 +1,6 @@
 package com.homektv.web;
 
-import com.homektv.config.AppProperties;
+import com.homektv.library.AssetWriter;
 import com.homektv.library.SettingService;
 import com.homektv.library.StandbyContentService;
 import org.springframework.core.io.FileSystemResource;
@@ -10,8 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -24,12 +23,12 @@ import java.util.Map;
 public class StandbyController {
     private final StandbyContentService service;
     private final SettingService settingService;
-    private final Path dataRoot;
+    private final AssetWriter assetWriter;
 
-    public StandbyController(StandbyContentService service, SettingService settingService, AppProperties properties) {
+    public StandbyController(StandbyContentService service, SettingService settingService, AssetWriter assetWriter) {
         this.service = service;
         this.settingService = settingService;
-        this.dataRoot = Path.of(properties.getDataPath());
+        this.assetWriter = assetWriter;
     }
 
     /**
@@ -64,10 +63,16 @@ public class StandbyController {
     public ResponseEntity<Resource> logo() {
         Object value = settingService.getAll().get("standby_logo_path");
         if (value == null) return ResponseEntity.notFound().build();
-        Path file = dataRoot.resolve(value.toString()).normalize();
-        if (!file.startsWith(dataRoot.normalize()) || !Files.isReadable(file)) return ResponseEntity.notFound().build();
-        String name = file.getFileName().toString().toLowerCase();
-        MediaType type = name.endsWith(".png") ? MediaType.IMAGE_PNG : name.endsWith(".webp") ? MediaType.parseMediaType("image/webp") : MediaType.IMAGE_JPEG;
-        return ResponseEntity.ok().contentType(type).body(new FileSystemResource(file));
+        return assetWriter.readableStandbyLogo(value.toString())
+                .map(file -> {
+                    String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
+                    MediaType type = name.endsWith(".png") ? MediaType.IMAGE_PNG :
+                            name.endsWith(".webp") ? MediaType.parseMediaType("image/webp") :
+                            (name.endsWith(".jpg") || name.endsWith(".jpeg")) ? MediaType.IMAGE_JPEG : null;
+                    if (type == null) return ResponseEntity.notFound().<Resource>build();
+                    Resource resource = new FileSystemResource(file);
+                    return ResponseEntity.ok().contentType(type).body(resource);
+                })
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 }

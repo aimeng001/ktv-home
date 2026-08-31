@@ -57,7 +57,7 @@ const loading=ref(false),busy=ref(false),configured=ref(false),message=ref(''),t
 const drafts=reactive({}),mergeTargets=reactive({}),repairProgress=reactive({total:0,completed:0,review:0,failed:0,paused:0,running:false})
 
 onMounted(refresh)
-async function refresh(){loading.value=true;try{const [values,config]=await Promise.all([api.adminAiTasks().catch(()=>[]),api.adminAiConfig().catch(()=>({}))]);tasks.value=values;configured.value=!!(config.enabled&&config.apiKeyConfigured&&config.bulkModel)}finally{loading.value=false}}
+async function refresh(){loading.value=true;try{const [values,config]=await Promise.all([api.adminAiTasks().catch(()=>[]),api.adminAiConfig().catch(()=>({}))]);tasks.value=values;configured.value=!!(config.enabled&&config.baseUrl&&config.bulkModel)}finally{loading.value=false}}
 function parseResult(task){try{return JSON.parse(task.resultJson||'{}')}catch{return{}}}
 function draft(task){if(!drafts[task.id]){const value=parseResult(task);drafts[task.id]={title:value.title||task.targetTitle||'',artist:value.artist||task.targetArtist||'',artistGender:value.artistGender||'未知',language:value.language||'未知',era:value.era||'未知',ageRange:value.ageRange||'未知',vocalForm:value.vocalForm||'未知',confidence:Number(value.confidence||0),genresText:(value.genres||[]).join(', '),themesText:(value.themes||[]).join(', '),reason:value.reason||''}}return drafts[task.id]}
 function splitTags(value){return String(value||'').split(/[,，]/).map(item=>item.trim()).filter(Boolean)}

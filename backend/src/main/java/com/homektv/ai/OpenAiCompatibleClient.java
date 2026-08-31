@@ -196,11 +196,17 @@ public class OpenAiCompatibleClient {
         for (int attempt = 0; attempt < 4; attempt++) {
             try {
                 if ("GET".equals(method)) {
-                    return client.get().uri(path).header(HttpHeaders.AUTHORIZATION, "Bearer " + config.apiKey())
-                            .retrieve().body(JsonNode.class);
+                    var req = client.get().uri(path);
+                    if (config.apiKey() != null && !config.apiKey().isBlank()) {
+                        req.header(HttpHeaders.AUTHORIZATION, "Bearer " + config.apiKey());
+                    }
+                    return req.retrieve().body(JsonNode.class);
                 }
-                return client.post().uri(path).header(HttpHeaders.AUTHORIZATION, "Bearer " + config.apiKey())
-                        .contentType(MediaType.APPLICATION_JSON).body(body).retrieve().body(JsonNode.class);
+                var req = client.post().uri(path).contentType(MediaType.APPLICATION_JSON).body(body);
+                if (config.apiKey() != null && !config.apiKey().isBlank()) {
+                    req.header(HttpHeaders.AUTHORIZATION, "Bearer " + config.apiKey());
+                }
+                return req.retrieve().body(JsonNode.class);
             } catch (HttpStatusCodeException e) {
                 last = e;
                 int status = e.getStatusCode().value();

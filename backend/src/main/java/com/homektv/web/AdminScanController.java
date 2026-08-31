@@ -407,7 +407,7 @@ public class AdminScanController {
      */
     @GetMapping("/settings")
     public Map<String, Object> getSettings() {
-        return settingService.getAll();
+        return settingService.getEditable();
     }
 
     /**
@@ -424,9 +424,9 @@ public class AdminScanController {
                     settingService.transcodePolicy().videoCodec())).toLowerCase();
             transcodeHardwareService.requireAvailable(codec);
         }
-        settingService.putAll(settings);
+        settingService.putEditable(settings);
         libraryWatchService.reloadFromSettings();
-        return settingService.getAll();
+        return settingService.getEditable();
     }
 
     /**

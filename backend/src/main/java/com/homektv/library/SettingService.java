@@ -46,7 +46,30 @@ public class SettingService {
             Map.entry("room_host_user_id", 0L));
     private static final Set<String> TRANSCODE_KEYS = TRANSCODE_DEFAULTS.keySet();
     private static final Set<String> ALLOWED_KEYS = new HashSet<>();
-    static { ALLOWED_KEYS.addAll(TRANSCODE_DEFAULTS.keySet()); ALLOWED_KEYS.addAll(GENERAL_DEFAULTS.keySet()); }
+    private static final Set<String> INTERNAL_KEYS = Set.of(
+            "standby_logo_path",
+            "room_host_user_id",
+            "transcode_hardware_auto_configured",
+            "qr_address"
+    );
+    private static final Set<String> STRING_KEYS = Set.of(
+            "display_address",
+            "standby_welcome",
+            "standby_subtitle",
+            "qr_address",
+            "transcode_video_codec",
+            "transcode_audio_codec"
+    );
+    public static final Set<String> EDITABLE_KEYS;
+    public static final int MAX_STANDBY_SONGS = 100;
+
+    static {
+        ALLOWED_KEYS.addAll(TRANSCODE_DEFAULTS.keySet());
+        ALLOWED_KEYS.addAll(GENERAL_DEFAULTS.keySet());
+        EDITABLE_KEYS = ALLOWED_KEYS.stream()
+                .filter(key -> !INTERNAL_KEYS.contains(key))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
 
     private final SettingRepository repo;
     private final ObjectMapper mapper;
@@ -69,6 +92,21 @@ public class SettingService {
         return out;
     }
 
+    /** 读取可供前端编辑的公开设置，不返回内部状态 */
+    @Transactional(readOnly = true)
+    public Map<String, Object> getEditable() {
+        Map<String, Object> all = getAll();
+        Map<String, Object> out = new HashMap<>();
+        for (String key : EDITABLE_KEYS) {
+            if (all.containsKey(key)) {
+                out.put(key, all.get(key));
+            }
+        }
+        Object logo = all.get("standby_logo_path");
+        out.put("standby_logo_configured", logo != null && !logo.toString().isBlank());
+        return out;
+    }
+
     public boolean isLibraryWatchEnabled() {
         return Boolean.TRUE.equals(getAll().get(LIBRARY_WATCH_ENABLED));
     }
@@ -83,25 +121,55 @@ public class SettingService {
         }
     }
 
-    /** 批量写入设置 */
+    /** 批量写入设置（内部及系统级） */
     @Transactional
     public void putAll(Map<String, Object> settings) {
+        if (settings == null) return;
         settings.forEach((k, v) -> {
             validateKeyValue(k, v);
-            Setting s = repo.findById(k).orElseGet(() -> {
-                Setting ns = new Setting();
-                ns.setKey(k);
-                return ns;
-            });
-            s.setValue(write(v));
-            repo.save(s);
+            saveValidated(k, v);
         });
+    }
+
+    /** 写入用户可编辑设置（管理员 API 入口） */
+    @Transactional
+    public void putEditable(Map<String, Object> settings) {
+        if (settings == null) return;
+        settings.forEach((k, v) -> {
+            if (!EDITABLE_KEYS.contains(k)) {
+                throw new com.homektv.web.ApiException("SETTING_NOT_ALLOWED", "不允许修改设置：" + k);
+            }
+            validateKeyValue(k, v);
+            saveValidated(k, v);
+        });
+    }
+
+    /** 写入内部运行状态设置 */
+    @Transactional
+    public void putInternal(String key, Object value) {
+        if (!INTERNAL_KEYS.contains(key)) {
+            throw new IllegalArgumentException("非内部设置键：" + key);
+        }
+        validateKeyValue(key, value);
+        saveValidated(key, value);
+    }
+
+    private void saveValidated(String key, Object value) {
+        Setting s = repo.findById(key).orElseGet(() -> {
+            Setting ns = new Setting();
+            ns.setKey(key);
+            return ns;
+        });
+        s.setValue(write(value));
+        repo.save(s);
     }
 
     private void validateKeyValue(String key, Object value) {
         if (!ALLOWED_KEYS.contains(key)) throw new com.homektv.web.ApiException("SETTING_NOT_ALLOWED", "不允许修改设置：" + key);
-        if (value instanceof String text && text.length() > 1000)
-            throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 文本过长");
+        if (STRING_KEYS.contains(key)) {
+            if (!(value instanceof String)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是字符串");
+            if (((String) value).length() > 1000) throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 文本过长");
+        }
         if (Set.of(LIBRARY_WATCH_ENABLED, "standby_carousel", "anti_burn", "mini_qr", "transcode_audio_only",
                 "transcode_hardware_acceleration", "transcode_hardware_auto_configured", DELETE_SOURCE_AFTER_TRANSCODE).contains(key)) {
             if (!(value instanceof Boolean)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是布尔值");
@@ -109,6 +177,19 @@ public class SettingService {
         if (key.endsWith("_interval_sec")) {
             if (!(value instanceof Number number) || number.intValue() < 3 || number.intValue() > 60)
                 throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 必须在 3 到 60 之间");
+        }
+        if ("standby_song_ids".equals(key)) {
+            if (!(value instanceof List<?> ids)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是数组");
+            if (ids.size() > MAX_STANDBY_SONGS) throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 最多包含 " + MAX_STANDBY_SONGS + " 首歌曲");
+            Set<Long> set = new HashSet<>();
+            for (Object item : ids) {
+                if (!(item instanceof Number n) || n.longValue() <= 0 || n.doubleValue() != n.longValue()) {
+                    throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "待机歌曲 ID 必须为正整数");
+                }
+                if (!set.add(n.longValue())) {
+                    throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "待机歌曲 ID 不能重复");
+                }
+            }
         }
         if (key.startsWith("direct_copy_") && (key.contains("codec") || key.contains("container"))) {
             if (!(value instanceof List<?>)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是数组或选项值");

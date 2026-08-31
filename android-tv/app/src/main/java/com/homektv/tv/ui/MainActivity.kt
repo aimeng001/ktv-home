@@ -53,8 +53,10 @@ import com.homektv.tv.player.DesiredPlaybackState
 import com.homektv.tv.player.PlaybackLoadProjection
 import com.homektv.tv.player.PlaybackSeekGate
 import com.homektv.tv.player.supportsVocalSwitch
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -129,7 +131,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private val progressHide = Runnable { hidePlaybackProgress() }
     private var recommendations: List<com.homektv.tv.net.SongDto> = emptyList()
     private var recommendationOffset = 0
-    private val recommendationCovers = mutableMapOf<Long, android.graphics.Bitmap?>()
+    private val recommendationCovers = RecommendationCoverCache<android.graphics.Bitmap>(64)
     private val artistAvatars = LinkedHashMap<String, android.graphics.Bitmap>(128, 0.75f, true)
     private var artistAvatarUrl: String? = null
     private var artistAvatarRequestAt = 0L
@@ -968,7 +970,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setBackgroundColor(getColor(R.color.panel))
                 setImageResource(R.drawable.home_ktv_logo)
-                recommendationCovers[song.id]?.let(::setImageBitmap)
+                recommendationCovers.get(song.id)?.let(::setImageBitmap)
             }
             card.addView(cover, LinearLayout.LayoutParams(dp(50), dp(50)))
 
@@ -993,13 +995,24 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 ellipsize = android.text.TextUtils.TruncateAt.END
             })
 
-            if (song.coverUrl != null && !recommendationCovers.containsKey(song.id)) {
+            if (song.coverUrl != null && recommendationCovers.tryStartLoad(song.id)) {
                 lifecycleScope.launch {
-                    val bitmap = mediaApi.fetchCover(song.id)?.let {
-                        BitmapFactory.decodeByteArray(it, 0, it.size)
+                    try {
+                        val bytes = mediaApi.fetchCover(song.id)
+                        val bitmap = withContext(Dispatchers.Default) {
+                            bytes?.let {
+                                BitmapFactory.decodeByteArray(it, 0, it.size)
+                            }
+                        }
+                        if (bitmap != null) {
+                            recommendationCovers.complete(song.id, bitmap)
+                            if (song in visible) cover.setImageBitmap(bitmap)
+                        } else {
+                            recommendationCovers.fail(song.id)
+                        }
+                    } catch (e: Exception) {
+                        recommendationCovers.fail(song.id)
                     }
-                    recommendationCovers[song.id] = bitmap
-                    if (bitmap != null && song in visible) cover.setImageBitmap(bitmap)
                 }
             }
         }

@@ -12,6 +12,8 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class StandbyContentService {
@@ -66,7 +68,7 @@ public class StandbyContentService {
         };
         try {
             String path = assetWriter.writeStandbyLogo(file.getBytes(), ext);
-            settingService.putAll(Map.of("standby_logo_path", path));
+            settingService.putInternal("standby_logo_path", path);
             return path;
         } catch (IOException e) {
             throw new ApiException("IMAGE_WRITE_FAILED", "Logo 保存失败");
@@ -93,13 +95,24 @@ public class StandbyContentService {
     }
 
     private List<Song> customSongs(Object value) {
-        if (!(value instanceof List<?> ids)) return List.of();
-        List<Song> songs = new ArrayList<>();
-        for (Object id : ids) {
-            if (!(id instanceof Number number)) continue;
-            songRepository.findById(number.longValue()).filter(this::valid).ifPresent(songs::add);
-        }
-        return songs;
+        if (!(value instanceof List<?> ids) || ids.isEmpty()) return List.of();
+        List<Long> longIds = ids.stream()
+                .filter(Number.class::isInstance)
+                .map(Number.class::cast)
+                .map(Number::longValue)
+                .filter(id -> id > 0)
+                .distinct()
+                .toList();
+        if (longIds.isEmpty()) return List.of();
+
+        Map<Long, Song> map = songRepository.findAllById(longIds).stream()
+                .filter(this::valid)
+                .collect(Collectors.toMap(Song::getId, Function.identity(), (a, b) -> a, LinkedHashMap::new));
+
+        return longIds.stream()
+                .map(map::get)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     private boolean valid(Song song) { return "ok".equals(song.getStatus()); }

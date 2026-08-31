@@ -260,7 +260,7 @@ async function loadPlaylists() {
 async function loadAiConfig() {
   try {
     const config = await api.adminAiConfig()
-    aiConfigured.value = !!(config.enabled && config.apiKeyConfigured && config.bulkModel)
+    aiConfigured.value = !!(config.enabled && config.baseUrl && config.bulkModel)
     aiConfigError.value = ''
     aiConfigState.value = 'ready'
   } catch (error) {

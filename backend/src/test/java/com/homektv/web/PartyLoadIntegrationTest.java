@@ -63,6 +63,7 @@ class PartyLoadIntegrationTest {
     @LocalServerPort int port;
     @Autowired TestRestTemplate rest;
     @Autowired SongRepository songRepo;
+    @Autowired com.homektv.repo.SongFileRepository songFileRepo;
     @Autowired ObjectMapper mapper;
 
     @Test
@@ -131,7 +132,17 @@ class PartyLoadIntegrationTest {
             song.setArtist("测试歌手" + index);
             song.setMediaType("KTV_VIDEO");
             song.setFingerprint("party-load-" + System.nanoTime() + "-" + index);
-            ids.add(songRepo.save(song).getId());
+            Long songId = songRepo.save(song).getId();
+            com.homektv.domain.SongFile sf = new com.homektv.domain.SongFile();
+            sf.setSongId(songId);
+            sf.setFilePath("/music/party-load-" + System.nanoTime() + "-" + index + ".mp4");
+            sf.setFormat("mp4");
+            sf.setMediaType("KTV_VIDEO");
+            sf.setValid(true);
+            sf.setProbePending(false);
+            sf.setFileMtime(java.time.OffsetDateTime.now());
+            songFileRepo.save(sf);
+            ids.add(songId);
         }
         return ids;
     }

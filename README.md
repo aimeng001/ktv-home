@@ -2,6 +2,8 @@
 
 **中文** | [English](README_EN.md)
 
+> 文档同步状态：2026-08-31。本文按当前源码和发布结构更新；尚未完成的内部整改不会写成已实现能力。
+
 ## 界面预览
 
 | 手机点歌首页 | Android TV 待机页 | 曲库与服务仪表盘 |
@@ -11,32 +13,35 @@
 
 Home KTV 是一套运行在家庭 NAS 或 Linux 主机上的局域网点歌系统。电视负责播放，手机通过微信扫码进入点歌页，服务端管理曲库、队列、歌词、播放记录和系统设置。
 
-系统由三个客户端组成：
+系统由一个服务端和三个使用入口组成：
 
 - **服务端**：Spring Boot、PostgreSQL、FFmpeg/FFprobe、WebSocket
 - **手机端**：Vue 3 H5 点歌页和管理后台，无需安装 App
-- **电视端**：Android TV 客户端，基于 Media3/ExoPlayer
+- **Android TV**：基于 Media3/ExoPlayer 的电视播放端
+- **Windows 11 Player**：基于 .NET 10/WPF + mpv 的播放端，可通过 HDMI/扩展屏输出到电视
 
 > 项目面向可信家庭局域网；管理后台支持独立密码，但普通点歌和遥控仍按局域网信任模型工作，请勿直接暴露到互联网。
 
 ## 典型使用流程
 
-1. 在 NAS 或 Linux 主机启动 Home KTV，通过管理后台扫描并整理本地曲库。
-2. Android TV 客户端自动发现局域网服务，连接后在大屏上显示点歌二维码。
-3. 家人用微信或手机浏览器扫码加入，各自搜歌、收藏和点歌，无需安装 App。
-4. 点歌队列、播放进度、歌词、音量与原唱/伴唱状态在电视和手机间实时同步。
-5. 演唱结束后可在手机查看最近演唱，管理员则可在后台维护歌曲、歌手、歌单和转码任务。
+1. 在 NAS、Linux 主机或 Docker Desktop 启动 Home KTV，通过管理后台扫描并维护曲库。
+2. 选择 Android TV 或 Windows Player 作为播放端；Android TV 可自动发现服务，Windows Player 可发现或手工填写服务地址。
+3. 家人用微信或手机浏览器进入 H5，各自搜歌、收藏和点歌，无需安装手机 App。
+4. 点歌队列、播放进度、歌词、音量与原唱/伴唱状态通过 Server 在手机和当前播放端之间同步。
+5. 演唱结束后可查看最近演唱，管理员可维护歌曲、歌手、歌单、元数据和转码任务。
 
 ## 本版本更新
 
-- **源文件流水线**：扫描时重新判断文件是否需要转码；兼容文件直接移动到 KTV 曲库并清理原始管理记录，不兼容文件保留在原始音乐管理中等待转码。批量转码支持进度和插队，自动清理完成后会提醒重新扫描源路径。
+- **双曲库模式**：保留 `MANAGED` 导入/直拷/转码流程，同时提供 `EXTERNAL_READ_ONLY` 只读 NAS 曲库；只读模式只索引、探测和播放，不删除、移动、重命名、覆盖或原地转码源文件。
+- **源文件流水线**：Managed 模式扫描时重新判断文件是否需要转码；兼容文件直接进入 KTV 曲库，不兼容文件保留在原始音乐管理中等待转码。批量转码支持进度和插队，安全清理完成后会提醒重新扫描源路径。
 - **KTV 曲库管理**：歌曲列表使用分页查询和固定操作区；元数据刮削支持全量批次、暂停、继续、进度明细、置信度自动写入、人工审核、手工编辑、单曲重新匹配和封面回显。
 - **歌手库**：按规范化名称汇总歌手，支持性别状态、批量 AI 分析和人工复核；同名歌手审核时会展示代表歌曲作为判断依据。
 - **手机点歌页**：歌曲列表统一显示封面，语种和分类提升为主要入口，歌手支持男歌手、女歌手筛选，并可把歌曲加入已有歌单。
 - **主题歌单**：使用已整理的曲库元数据生成可编辑预览，单个歌单最多 100 首；不足 100 首也可保存，AI 生成的歌单支持删除。
 - **设置中心**：改为分类侧栏、搜索和右侧内容区，支持基础配置、AI 模型、入库与转码、TV 显示、音乐元数据和数据维护分类及深链接。
 - **AI 配置与降级**：支持任意 OpenAI-compatible 地址和模型 ID、模型列表探测、单/双模型、能力测试和并发限制。未配置密钥或调用失败时，具备本地规则的解析任务自动降级；没有等价本地能力的 AI 操作会提示管理员先配置模型。
-- **发布与升级**：发布流水线只构建签名 Release APK，将 32 位和 64 位安装包内置到 Docker 镜像；管理后台按版本显示公告，TV 连接后可下载适合设备架构的安装包并打开系统安装界面。
+- **Windows Player**：新增 win-x64 播放终端，复用 Server 的 HTTP/WebSocket 协议，支持 mpv JSON IPC、显示器选择、无边框全屏、断线重连和双音轨/左右声道原伴唱。
+- **发布与升级**：发布流水线构建签名 Android Release APK、Docker 镜像和 Windows Player ZIP；Android 32/64 位 APK 内置到服务端镜像，TV 可按 ABI 下载升级，Windows Player 作为独立 Release Asset。
 - **升级安全**：Flyway V15 保留历史源记录，不执行清表或批量删除；迁移安全测试会阻止直接提交 `DELETE FROM`、`TRUNCATE TABLE` 和 `DROP TABLE/COLUMN`。
 
 ## 主要功能
@@ -62,6 +67,16 @@ Home KTV 是一套运行在家庭 NAS 或 Linux 主机上的局域网点歌系�
 - 播放页显示“微信扫码点歌”二维码
 - 支持 Android 8.0（API 26）及以上版本
 
+### Windows 11 Player
+
+- 使用 .NET 10/WPF，播放核心由独立 `mpv.exe` + JSON IPC 驱动
+- 支持服务端自动发现或手工地址连接
+- 支持播放、暂停、停止、Seek、重唱、切歌和音量
+- 支持 `DUAL_TRACK` 与 `DUAL_CHANNEL` 原唱/伴唱
+- 支持 WebSocket 断线重连和播放状态恢复
+- 支持显示器选择、电视无边框全屏和 Windows 11 DPI/多显示器基础适配
+- Release ZIP 为 self-contained Windows x64 程序，但当前不捆绑第三方 `mpv.exe`
+
 ### 曲库管理
 
 - 原始素材分析、MD5 去重、自动直拷和批量转码
@@ -75,16 +90,20 @@ Home KTV 是一套运行在家庭 NAS 或 Linux 主机上的局域网点歌系�
 ## 系统结构
 
 ```text
-手机浏览器 / 微信
-        │ HTTP + WebSocket
-        ▼
-Home KTV 服务端 ───── PostgreSQL
-        │
-        ├── /source-music  原始素材目录
-        ├── /music         可点播曲库目录
-        │
-        └── Android TV     视频、音轨、歌词和控制
+                         PostgreSQL
+                             │
+手机浏览器 / 微信 ───── Home KTV Server ───── Android TV
+     H5                HTTP + WebSocket          Media3
+                             │
+                             ├── /source-music
+                             ├── /music
+                             ├── /data
+                             │
+                             └──────── Windows Player
+                                      WPF + mpv
 ```
+
+`MANAGED` 模式允许 Home KTV 按导入流程处理 `/source-music`；`EXTERNAL_READ_ONLY` 模式使用只读 NAS 挂载，只建立索引、FFprobe 和播放，不修改源曲库。
 
 服务端默认使用以下入口：
 
@@ -102,7 +121,8 @@ Home KTV 服务端 ───── PostgreSQL
 - 支持 Docker Compose 的 NAS、Linux 主机或 Docker Desktop
 - 建议至少 1 GB 可用内存
 - 手机、Android TV 和服务端位于同一局域网
-- Android TV 8.0（API 26）或更高版本
+- Android TV 8.0（API 26）或更高版本（使用 Android 播放端时）
+- Windows 11 x64（使用 Windows Player 时）；Windows Release 为 self-contained，但需要单独可用的 `mpv.exe`
 
 ### 1. 配置目录和密码
 
@@ -262,7 +282,19 @@ adb install -r android-tv/app/build/outputs/apk/debug/app-debug.apk
 
 也可以通过 U 盘或电视文件管理器安装。首次启动会尝试自动发现服务端；发现失败时填写 `<主机IP>:8080`。部分电视盒子需要额外允许未知来源、自启动和后台运行。
 
-### 5. 开始点歌
+### 5. 安装 Windows Player
+
+GitHub Release 会生成 `home-ktv-windows-player-<版本号>-win-x64.zip`。解压后运行 `HomeKtv.Windows.exe`。
+
+Windows Player 是 self-contained .NET 发布包，但当前 **不包含 `mpv.exe`**。首次使用前请安装 Windows x64 版 mpv，并任选一种方式让播放器找到它：
+
+1. 将 `mpv.exe` 放在 `HomeKtv.Windows.exe` 同一目录；
+2. 把 mpv 加入 Windows `PATH`；
+3. 在 `%LOCALAPPDATA%\HomeKtv.Windows\settings.json` 中设置绝对 `MpvExecutablePath`。
+
+启动后可以使用局域网发现或手工填写 `<主机IP>:8080`。播放窗口支持选择显示器并输出无边框全屏。
+
+### 6. 开始点歌
 
 TV 连接成功后会显示二维码。手机使用微信扫码进入点歌页，选择歌曲后电视自动播放；队列、播放状态、歌词和遥控操作通过 WebSocket 实时同步。
 
@@ -340,6 +372,8 @@ source-music/
 | `KTV_DATA_DIR` | `./data` | 宿主机应用数据目录 |
 | `KTV_PG_DIR` | `./postgres` | 宿主机 PostgreSQL 数据目录 |
 | `KTV_HTTP_PORT` | `8080` | Web、API、WebSocket 和媒体流端口 |
+| `KTV_LIBRARY_MODE` | `MANAGED` | 曲库模式；NAS 专用 Compose 固定为 `EXTERNAL_READ_ONLY` |
+| `KTV_ADMIN_PASSWORD` | 空 | 管理后台密码；生产环境建议设置 |
 | `KTV_DISCOVERY_NAME` | `家庭KTV` | TV 发现列表中的名称 |
 | `KTV_DB_NAME` | `ktv` | PostgreSQL 数据库名 |
 | `KTV_DB_USER` | `ktv` | PostgreSQL 用户名 |
@@ -400,6 +434,8 @@ KTV_AI_ALLOW_PRIVATE_NETWORK=false
 ```
 
 模型 ID 不做固定枚举限制；增强模型留空时复用批量模型。后台可以尝试获取模型列表并检测鉴权、Chat Completions 和 JSON 输出能力，不支持模型列表或 JSON Mode 的服务仍可手工配置和自动回退。
+
+**当前版本的 AI 调用链仍要求 API Key 非空。** 因此完全无鉴权的 Ollama/LM Studio/OpenAI-compatible 服务尚未完整兼容；该问题已进入开发整改计划。Docker 部署时也不要把 `localhost` 当成宿主机本地模型地址：`localhost` 指向 Home KTV 容器自身，应填写服务端实际能够访问的局域网地址。
 
 管理后台保存的 API Key 使用 AES-256-GCM 加密，接口只返回配置状态和尾号。主密钥优先读取 `KTV_CONFIG_MASTER_KEY`，否则生成到数据目录的 `secrets/config.key`。不要删除或丢失该文件，否则已保存的 API Key 无法解密。
 
@@ -464,7 +500,7 @@ docker compose logs -f db
 
 ## 本地开发
 
-开发环境需要 Node.js 20+、JDK 21、JDK 17、Docker 和 Android SDK。
+开发环境需要 Node.js 20+、JDK 21、JDK 17、Docker、Android SDK；开发 Windows Player 还需要 .NET 10 SDK。
 
 ```bash
 # PostgreSQL
@@ -482,6 +518,11 @@ npm run dev
 # Android TV，JDK 17
 cd android-tv
 ./gradlew testDebugUnitTest assembleDebug
+
+# Windows Player，.NET 10
+cd windows-player
+dotnet test HomeKtv.Windows.sln -c Release
+dotnet build HomeKtv.Windows.sln -c Release
 ```
 
 测试命令：
@@ -490,6 +531,7 @@ cd android-tv
 cd backend && ./mvnw test
 cd h5 && npm test
 cd android-tv && ./gradlew testDebugUnitTest
+cd windows-player && dotnet test HomeKtv.Windows.sln -c Release
 ```
 
 目录结构：
@@ -498,7 +540,8 @@ cd android-tv && ./gradlew testDebugUnitTest
 backend/      Spring Boot 服务端、数据库、扫描、转码和实时控制
 h5/           Vue 3 手机点歌端与管理后台
 android-tv/   Kotlin Android TV 客户端
-scripts/      备份、恢复和媒体辅助脚本
+windows-player/ .NET 10/WPF Windows 播放客户端
+scripts/      备份、恢复、发布契约和媒体辅助脚本
 ```
 
 ## 常见问题
@@ -540,6 +583,8 @@ scripts/      备份、恢复和媒体辅助脚本
 - 蓝牙麦克风延迟和音质取决于电视盒子固件，实时演唱优先使用 USB 或有线设备。
 - 不同 KTV 视频的音轨顺序并不统一，首次导入后建议抽查。
 - Android TV 自启动和后台保活可能需要盒子厂商的额外权限。
+- Windows Player 当前需要用户单独提供 `mpv.exe`，Release ZIP 不捆绑第三方 mpv。
+- 当前 AI 调用链要求非空 API Key；完全无鉴权的本地 OpenAI-compatible 服务仍在整改中。
 
 ## 许可与媒体责任
 

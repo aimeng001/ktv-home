@@ -21,10 +21,18 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class PlaylistPublicService {
     private static final int MAX_PLAYLIST_SONGS = 100;
+    private static final Set<String> SKIPPABLE_ORDER_ERRORS = Set.of(
+            "SONG_IN_QUEUE",
+            "FILE_MISSING",
+            "SONG_NOT_FOUND",
+            SongAvailabilityPolicy.SONG_NOT_READY
+    );
+
     private final PlaylistRepository playlistRepository;
     private final PlaylistSongRepository playlistSongRepository;
     private final SongRepository songRepository;
@@ -61,7 +69,7 @@ public class PlaylistPublicService {
                     value.put("coverUrl", playlist.getCoverPath() == null ? null : "/api/playlists/" + playlist.getId() + "/cover");
                     value.put("aiGenerated", playlist.isAiGenerated());
                     value.put("songCount", items.size());
-                    value.put("preview", items.stream().limit(3).map(this::songDto).toList());
+                    value.put("preview", items.stream().map(this::songDto).filter(java.util.Objects::nonNull).limit(3).toList());
                     return value;
                 }).toList();
     }
@@ -91,8 +99,11 @@ public class PlaylistPublicService {
                 queueService.order(item.getSongId(), userId, false);
                 ordered++;
             } catch (ApiException exception) {
-                if ("SONG_IN_QUEUE".equals(exception.getCode()) || "FILE_MISSING".equals(exception.getCode())) skipped++;
-                else throw exception;
+                if (SKIPPABLE_ORDER_ERRORS.contains(exception.getCode())) {
+                    skipped++;
+                } else {
+                    throw exception;
+                }
             }
         }
         boolean started = ordered > 0 && playbackService.startIfIdle();
