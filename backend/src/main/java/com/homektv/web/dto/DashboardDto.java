@@ -14,5 +14,13 @@ public record DashboardDto(
         long totalPlays,
         int connectedClients,
         String playerState,
-        String nowPlayingTitle
-) {}
+        String nowPlayingTitle,
+        long externalIndexedFiles
+) {
+    public DashboardDto(long totalSongs, long ktvCount, long mvCount, long audioCount,
+                        long unrecognizedCount, long totalPlays, int connectedClients,
+                        String playerState, String nowPlayingTitle) {
+        this(totalSongs, ktvCount, mvCount, audioCount, unrecognizedCount,
+                totalPlays, connectedClients, playerState, nowPlayingTitle, 0L);
+    }
+}

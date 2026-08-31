@@ -81,6 +81,7 @@ public interface SongFileRepository extends JpaRepository<SongFile, Long> {
                                       @Param("filePath") String filePath,
                                       Pageable pageable);
     long countByFileRoleAndProbePendingTrue(String fileRole);
+    long countByFileRoleAndValidTrue(String fileRole);
     @Query("SELECT COALESCE(MAX(file.id), 0) FROM SongFile file WHERE file.fileRole = :fileRole")
     Long findMaxIdByFileRole(@Param("fileRole") String fileRole);
     @Query(value = """

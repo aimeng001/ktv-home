@@ -59,11 +59,18 @@ describe('scanPercent', () => {
     expect(scanPercent({ running: false, phase: 'COMPLETED' })).toBe(100)
     expect(scanPercent({ running: true, phase: 'DISCOVERING' })).toBe(0)
   })
+
+  it('reports failed scans as 0 percent even if finishedAt is set', () => {
+    expect(scanPercent({ running: false, state: 'FAILED', finishedAt: '2026-09-01T00:00:00Z' })).toBe(0)
+    expect(scanPercent({ running: false, phase: 'FAILED', finishedAt: '2026-09-01T00:00:00Z' })).toBe(0)
+  })
 })
 
 describe('scanPhaseLabel', () => {
   it('explains the current bounded scan phase', () => {
     expect(scanPhaseLabel('FAST_INDEX')).toBe('正在建立快速索引')
     expect(scanPhaseLabel('MEDIA_PROBE')).toBe('正在读取媒体信息')
+    expect(scanPhaseLabel('COMPLETED', 'FAILED')).toBe('扫描失败')
+    expect(scanPhaseLabel('COMPLETED', 'PARTIAL')).toBe('部分扫描完成')
   })
 })

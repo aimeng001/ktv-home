@@ -24,6 +24,7 @@ public final class FilenameParser {
             Map.entry("cantonese", "粤语"),
             Map.entry("yue", "粤语"),
             Map.entry("闽南语", "闽南语"),
+            Map.entry("闽南", "闽南语"),
             Map.entry("台语", "闽南语"),
             Map.entry("hokkien", "闽南语"),
             Map.entry("nan", "闽南语"),

@@ -86,6 +86,7 @@ class FilenameParserTest {
     void recognizesOtherAndUnknownAsStandardLanguages() {
         assertStandard("草蜢-爱-其他-流行.mkv", "草蜢", "爱", "其他", "流行");
         assertStandard("草蜢-爱-未知-流行.mkv", "草蜢", "爱", "未知", "流行");
+        assertStandard("一绫-爱情烧抹退-闽南-流行.mkv", "一绫", "爱情烧抹退", "闽南语", "流行");
     }
 
     @Test

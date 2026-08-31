@@ -104,6 +104,9 @@ public class AdminService {
     @Transactional(readOnly = true)
     public DashboardDto dashboard() {
         long total = songRepo.count();
+        long externalFiles = LibraryModePolicy.isExternalReadOnly(props)
+                ? fileRepo.countByFileRoleAndValidTrue(LibraryModePolicy.EXTERNAL_FILE_ROLE)
+                : 0L;
         return new DashboardDto(
                 total,
                 songRepo.countByMediaType(MediaClassifier.KTV_VIDEO),
@@ -112,7 +115,8 @@ public class AdminService {
                 songRepo.countByStatus("unrecognized"),
                 historyRepo.count(),
                 broadcaster.sessionCount(),
-                null, null   // 播放状态由前端另查 /queue，避免重复
+                null, null,   // 播放状态由前端另查 /queue，避免重复
+                externalFiles
         );
     }
 

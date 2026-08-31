@@ -16,7 +16,7 @@ export function normalizeScanProgress(value = {}) {
         secondaryCount: value.skipped || 0,
         duplicateCount: 0,
         unrecognizedCount: value.unrecognized || 0,
-        failedCount: 0
+        failedCount: value.failedPaths || 0
       }
     : {
         mode: 'MANAGED',
@@ -35,8 +35,9 @@ export function normalizeScanProgress(value = {}) {
  * completion as the end of the media-probe phase.
  */
 export function scanPercent(value = {}) {
+  if (value.state === 'FAILED' || value.phase === 'FAILED') return 0
   const phase = value.phase
-  if (phase === 'COMPLETED' || (!value.running && value.finishedAt)) return 100
+  if (phase === 'COMPLETED' || (!value.running && value.finishedAt && value.state !== 'FAILED')) return 100
   if (phase === 'DISCOVERING') return 0
   if (phase === 'FAST_INDEX') {
     const discovered = Math.max(Number(value.discovered) || 0, Number(value.total) || 0)
@@ -56,7 +57,9 @@ export function scanPercent(value = {}) {
     : (value.running ? 0 : 100)
 }
 
-export function scanPhaseLabel(phase) {
+export function scanPhaseLabel(phase, state) {
+  if (state === 'FAILED' || phase === 'FAILED') return '扫描失败'
+  if (state === 'PARTIAL') return '部分扫描完成'
   return {
     DISCOVERING: '正在读取文件列表',
     FAST_INDEX: '正在建立快速索引',

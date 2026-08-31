@@ -68,6 +68,7 @@ class AdminServiceIntegrationTest {
         assertThat(d.mvCount()).isEqualTo(1);
         assertThat(d.audioCount()).isEqualTo(2);
         assertThat(d.unrecognizedCount()).isEqualTo(1);
+        assertThat(d.externalIndexedFiles()).isGreaterThanOrEqualTo(0);
     }
 
     @Test

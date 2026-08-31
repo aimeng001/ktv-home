@@ -59,6 +59,8 @@ services:
       KTV_AI_MODEL: "${KTV_AI_MODEL:-deepseek-v4-flash}"
       KTV_AI_AUTO_APPLY_CONFIDENCE: "${KTV_AI_AUTO_APPLY_CONFIDENCE:-0.90}"
       KTV_AI_ALLOW_PRIVATE_NETWORK: "${KTV_AI_ALLOW_PRIVATE_NETWORK:-false}"
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
       JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--Xms256m -Xmx2048m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -XX:+ExitOnOutOfMemoryError}"
       TZ: *timezone
     mem_limit: ${KTV_APP_MEMORY_LIMIT:-4g}

@@ -153,6 +153,14 @@ public class LibraryScanService {
         this.seenPathStore = seenPathStore;
     }
 
+    public enum ScanState {
+        IDLE,
+        RUNNING,
+        COMPLETED,
+        PARTIAL,
+        FAILED
+    }
+
     public record ScanResult(int scanned, int added, int updated, int skipped, int unrecognized,
                              int fastIndexed, int probeQueued, int probeCalls, int hashCalls,
                              int dbUpdates, int missing) {
@@ -165,7 +173,20 @@ public class LibraryScanService {
                                int added, int updated, int skipped, int unrecognized,
                                OffsetDateTime startedAt, OffsetDateTime finishedAt,
                                String phase, int discovered, int fastIndexed, int probeQueued,
-                               int probeCompleted, double probedPerSecond, Long estimatedRemainingSeconds) {
+                               int probeCompleted, double probedPerSecond, Long estimatedRemainingSeconds,
+                               ScanState state, int failedPaths, String errorCode, String errorMessage) {
+        public ScanProgress(boolean running, int total, int completed, String currentFile,
+                            int added, int updated, int skipped, int unrecognized,
+                            OffsetDateTime startedAt, OffsetDateTime finishedAt,
+                            String phase, int discovered, int fastIndexed, int probeQueued,
+                            int probeCompleted, double probedPerSecond, Long estimatedRemainingSeconds) {
+            this(running, total, completed, currentFile, added, updated, skipped, unrecognized,
+                    startedAt, finishedAt, phase, discovered, fastIndexed, probeQueued, probeCompleted,
+                    probedPerSecond, estimatedRemainingSeconds,
+                    running ? ScanState.RUNNING : finishedAt != null ? (phase != null && phase.contains("FAIL") ? ScanState.FAILED : ScanState.COMPLETED) : ScanState.IDLE,
+                    0, null, null);
+        }
+
         public ScanProgress(boolean running, int total, int completed, String currentFile,
                             int added, int updated, int skipped, int unrecognized,
                             OffsetDateTime startedAt, OffsetDateTime finishedAt,
@@ -189,7 +210,8 @@ public class LibraryScanService {
 
         static ScanProgress idle() {
             return new ScanProgress(false, 0, 0, null, 0, 0, 0, 0,
-                    null, null, "IDLE", 0, 0, 0, 0, 0.0, null);
+                    null, null, "IDLE", 0, 0, 0, 0, 0.0, null,
+                    ScanState.IDLE, 0, null, null);
         }
     }
 
@@ -219,8 +241,17 @@ public class LibraryScanService {
             if (!Files.isDirectory(root)) {
                 log.warn("曲库目录不存在：{}", root);
                 ScanResult result = new ScanResult(0, 0, 0, 0, 0);
-                publishProgress(false, 0, 0, null, new ScanTotals(), PHASE_COMPLETED,
-                        0, 0, 0, startedAt, OffsetDateTime.now());
+                publishProgress(false, 0, 0, null, new ScanTotals(), "FAILED",
+                        0, 0, 0, startedAt, OffsetDateTime.now(),
+                        ScanState.FAILED, 1, "ROOT_DIRECTORY_NOT_FOUND", "曲库目录不存在：" + root);
+                return result;
+            }
+            if (!Files.isReadable(root)) {
+                log.warn("曲库根目录不可读：{}", root);
+                ScanResult result = new ScanResult(0, 0, 0, 0, 0);
+                publishProgress(false, 0, 0, null, new ScanTotals(), "FAILED",
+                        0, 0, 0, startedAt, OffsetDateTime.now(),
+                        ScanState.FAILED, 1, "ROOT_NOT_READABLE", "曲库根目录无读取权限：" + root);
                 return result;
             }
 
@@ -229,8 +260,9 @@ public class LibraryScanService {
                 rootContext = ScanRootContext.create(root, LibraryModePolicy.isExternalReadOnly(props));
             } catch (RuntimeException failure) {
                 log.error("无法安全解析曲库根目录，停止本轮扫描：{}", failure.getMessage());
-                publishProgress(false, 0, 0, null, new ScanTotals(), PHASE_COMPLETED,
-                        0, 0, 0, startedAt, OffsetDateTime.now());
+                publishProgress(false, 0, 0, null, new ScanTotals(), "FAILED",
+                        0, 0, 0, startedAt, OffsetDateTime.now(),
+                        ScanState.FAILED, 1, "ROOT_PARSE_ERROR", failure.getMessage());
                 return new ScanResult(0, 0, 0, 0, 0);
             }
 
@@ -248,13 +280,22 @@ public class LibraryScanService {
             ScanTotals totals = new ScanTotals();
             int[] discovered = {0};
             boolean[] enumerationComplete = {true};
+            String[] lastErrorMessage = {null};
             Deque<DirectoryLyricIndex> directoryLyrics = new ArrayDeque<>();
             try {
                 try {
                 Files.walkFileTree(root, new SimpleFileVisitor<>() {
                     @Override
                     public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                        if (!rootContext.allowsVisitedDirectory(dir)) {
+                        PathAccessResult access = rootContext.checkVisitedDirectory(dir);
+                        if (access.decision() == PathAccessDecision.SAFE_SKIP) {
+                            return FileVisitResult.SKIP_SUBTREE;
+                        }
+                        if (access.decision() == PathAccessDecision.ACCESS_FAILURE) {
+                            enumerationComplete[0] = false;
+                            counters.failedPaths++;
+                            lastErrorMessage[0] = access.failureReason();
+                            log.warn("读取曲库目录受阻：{} - {}", dir, access.failureReason());
                             return FileVisitResult.SKIP_SUBTREE;
                         }
                         DirectoryLyricIndex index = DirectoryLyricIndex.load(dir);
@@ -291,6 +332,8 @@ public class LibraryScanService {
                             }
                         } catch (RuntimeException failure) {
                             enumerationComplete[0] = false;
+                            counters.failedPaths++;
+                            lastErrorMessage[0] = failure.getMessage();
                             log.warn("快速索引失败，跳过：{} - {}", file, failure.getMessage());
                         }
                         return FileVisitResult.CONTINUE;
@@ -304,6 +347,8 @@ public class LibraryScanService {
                         }
                         if (failure != null) {
                             enumerationComplete[0] = false;
+                            counters.failedPaths++;
+                            lastErrorMessage[0] = failure.getMessage();
                             log.warn("读取曲库目录失败，保留待重试：{} - {}", dir, failure.getMessage());
                         }
                         return FileVisitResult.CONTINUE;
@@ -312,12 +357,16 @@ public class LibraryScanService {
                     @Override
                     public FileVisitResult visitFileFailed(Path file, IOException failure) {
                         enumerationComplete[0] = false;
-                        log.warn("读取曲库文件失败，保留待重试：{} - {}", file, failure.getMessage());
+                        counters.failedPaths++;
+                        lastErrorMessage[0] = failure == null ? "读取文件失败" : failure.getMessage();
+                        log.warn("读取曲库文件失败，保留待重试：{} - {}", file, failure == null ? "未知异常" : failure.getMessage());
                         return FileVisitResult.CONTINUE;
                     }
                 });
             } catch (IOException e) {
                 enumerationComplete[0] = false;
+                counters.failedPaths++;
+                lastErrorMessage[0] = e.getMessage();
                 log.error("遍历曲库失败：{}", e.getMessage());
             }
             if (!batch.isEmpty()) {
@@ -366,9 +415,18 @@ public class LibraryScanService {
                     totals.skipped, totals.unrecognized, counters.fastIndexed,
                     counters.probeQueued, counters.probeCalls, counters.hashCalls,
                     counters.dbUpdates, counters.missing);
-            publishProgress(false, discovered[0], discovered[0], null, totals, PHASE_COMPLETED,
+            ScanState finalState = counters.failedPaths > 0 && discovered[0] == 0
+                    ? ScanState.FAILED
+                    : counters.failedPaths > 0
+                    ? ScanState.PARTIAL
+                    : ScanState.COMPLETED;
+            String finalErrorCode = counters.failedPaths > 0 ? "SCAN_PARTIAL_OR_FAILED" : null;
+            String finalErrorMsg = counters.failedPaths > 0 ? lastErrorMessage[0] : null;
+            publishProgress(false, discovered[0], discovered[0], null, totals,
+                    finalState == ScanState.FAILED ? "FAILED" : PHASE_COMPLETED,
                     counters.fastIndexed, counters.probeQueued, totals.probeCompleted,
-                    startedAt, OffsetDateTime.now());
+                    startedAt, OffsetDateTime.now(),
+                    finalState, counters.failedPaths, finalErrorCode, finalErrorMsg);
             return result;
             } finally {
                 cleanupSeenPaths(scanId);
@@ -791,6 +849,15 @@ public class LibraryScanService {
                                  ScanTotals totals, String phase, int fastIndexed, int probeQueued,
                                  int probeCompleted, OffsetDateTime startedAt,
                                  OffsetDateTime finishedAt) {
+        publishProgress(running, total, completed, currentFile, totals, phase, fastIndexed, probeQueued,
+                probeCompleted, startedAt, finishedAt, null, 0, null, null);
+    }
+
+    private void publishProgress(boolean running, int total, int completed, String currentFile,
+                                 ScanTotals totals, String phase, int fastIndexed, int probeQueued,
+                                 int probeCompleted, OffsetDateTime startedAt,
+                                 OffsetDateTime finishedAt,
+                                 ScanState explicitState, int failedPaths, String errorCode, String errorMessage) {
         double rate = 0.0;
         Long eta = null;
         if (running && probeCompleted > 0) {
@@ -805,13 +872,29 @@ public class LibraryScanService {
                 }
             }
         }
+        ScanState state = explicitState;
+        if (state == null) {
+            if (running) {
+                state = ScanState.RUNNING;
+            } else if (finishedAt != null) {
+                if (failedPaths > 0 && total == 0) {
+                    state = ScanState.FAILED;
+                } else if (failedPaths > 0) {
+                    state = ScanState.PARTIAL;
+                } else {
+                    state = ScanState.COMPLETED;
+                }
+            } else {
+                state = ScanState.IDLE;
+            }
+        }
         scanProgress.set(new ScanProgress(running, total, completed, currentFile,
                 totals == null ? 0 : totals.added,
                 totals == null ? 0 : totals.updated,
                 totals == null ? 0 : totals.skipped,
                 totals == null ? 0 : totals.unrecognized,
                 startedAt, finishedAt, phase, total, fastIndexed, probeQueued, probeCompleted,
-                rate, eta));
+                rate, eta, state, failedPaths, errorCode, errorMessage));
     }
 
     private static int safeInt(long value) {
@@ -822,16 +905,21 @@ public class LibraryScanService {
     public ScanProgress startScan() {
         if (!scanRunning.compareAndSet(false, true)) return scanProgress.get();
         scanProgress.set(new ScanProgress(true, 0, 0, null, 0, 0, 0, 0,
-                OffsetDateTime.now(), null));
+                OffsetDateTime.now(), null, PHASE_DISCOVERING, 0, 0, 0, 0, 0.0, null,
+                ScanState.RUNNING, 0, null, null));
         try {
             scanExecutor.submit(() -> {
                 try {
                     scanAllInternal();
                 } catch (RuntimeException exception) {
+                    log.error("曲库扫描发生未捕获异常", exception);
                     ScanProgress failed = scanProgress.get();
                     scanProgress.set(new ScanProgress(false, failed.total(), failed.completed(), null,
                             failed.added(), failed.updated(), failed.skipped() + 1,
-                            failed.unrecognized(), failed.startedAt(), OffsetDateTime.now()));
+                            failed.unrecognized(), failed.startedAt(), OffsetDateTime.now(),
+                            "FAILED", failed.discovered(), failed.fastIndexed(), failed.probeQueued(),
+                            failed.probeCompleted(), 0.0, null,
+                            ScanState.FAILED, failed.failedPaths() + 1, "SCAN_RUNTIME_ERROR", exception.getMessage()));
                 } finally {
                     scanRunning.set(false);
                 }
@@ -1913,6 +2001,18 @@ public class LibraryScanService {
 
     private record IngestState(IngestOutcome outcome, Long songId, Long songFileId) {}
 
+    enum PathAccessDecision {
+        ALLOW,
+        SAFE_SKIP,
+        ACCESS_FAILURE
+    }
+
+    record PathAccessResult(PathAccessDecision decision, String failureReason) {
+        static PathAccessResult allow() { return new PathAccessResult(PathAccessDecision.ALLOW, null); }
+        static PathAccessResult safeSkip() { return new PathAccessResult(PathAccessDecision.SAFE_SKIP, null); }
+        static PathAccessResult failure(String reason) { return new PathAccessResult(PathAccessDecision.ACCESS_FAILURE, reason); }
+    }
+
     private static final class ScanCounters {
         private int fastIndexed;
         private int probeQueued;
@@ -1920,6 +2020,7 @@ public class LibraryScanService {
         private int hashCalls;
         private int dbUpdates;
         private int missing;
+        private int failedPaths;
     }
 
     private static final class ScanTotals {
@@ -1930,8 +2031,6 @@ public class LibraryScanService {
         private int probeCompleted;
         private OffsetDateTime probeStartedAt;
     }
-
-
 
     private record ScanRootContext(Path configuredRoot, Path realRoot, boolean external) {
         private static ScanRootContext create(Path root, boolean external) {
@@ -1944,15 +2043,26 @@ public class LibraryScanService {
             }
         }
 
-        private boolean allowsVisitedDirectory(Path directory) {
+        private PathAccessResult checkVisitedDirectory(Path directory) {
             Path candidate = directory.toAbsolutePath().normalize();
-            if (!candidate.startsWith(configuredRoot) || Files.isSymbolicLink(directory)) return false;
-            if (!external) return true;
-            try {
-                return directory.toRealPath().startsWith(realRoot);
-            } catch (IOException failure) {
-                return false;
+            if (!candidate.startsWith(configuredRoot) || Files.isSymbolicLink(directory)) {
+                return PathAccessResult.safeSkip();
             }
+            if (!external) return PathAccessResult.allow();
+            try {
+                if (!directory.toRealPath().startsWith(realRoot)) {
+                    return PathAccessResult.safeSkip();
+                }
+                return PathAccessResult.allow();
+            } catch (AccessDeniedException failure) {
+                return PathAccessResult.failure("访问权限被拒绝 (Access Denied): " + failure.getMessage());
+            } catch (IOException failure) {
+                return PathAccessResult.failure("IO异常: " + failure.getMessage());
+            }
+        }
+
+        private boolean allowsVisitedDirectory(Path directory) {
+            return checkVisitedDirectory(directory).decision() == PathAccessDecision.ALLOW;
         }
 
         /** Fast-path for walkFileTree: the parent directory was already boundary-checked. */
