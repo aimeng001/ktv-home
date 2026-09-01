@@ -153,4 +153,27 @@ class FilenameParserTest {
         assertStandard("[4K超清]Beyond-海阔天空-粤语-摇滚.mkv", "Beyond", "海阔天空", "粤语", "摇滚");
         assertStandard("Beyond-海阔天空 [4K修复]-粤语-摇滚.mkv", "Beyond", "海阔天空", "粤语", "摇滚");
     }
+
+    @Test
+    void parsesNumericArtistNamesCorrectlyWithoutMistakingThemAsTrackNumbers() {
+        assertStandard("1983-风打雨下-国语-流行.mkv", "1983", "风打雨下", "国语", "流行");
+        assertStandard("1976-前王子-国语-流行.mkv", "1976", "前王子", "国语", "流行");
+        assertStandard("51-自己-国语-流行.mkv", "51", "自己", "国语", "流行");
+        assertStandard("51-喇勹一赛-国语-流行.mkv", "51", "喇勹一赛", "国语", "流行");
+        assertStandard("1314-我从陕北来-国语-流行.mkv", "1314", "我从陕北来", "国语", "流行");
+        assertStandard("1976-世界尽头-国语-流行.mkv", "1976", "世界尽头", "国语", "流行");
+        assertStandard("51-标准-国语-流行.mkv", "51", "标准", "国语", "流行");
+    }
+
+    @Test
+    void stripsLeadingTrackNumbersWhenFollowedByArtistAndTitle() {
+        assertStandard("01-周杰伦-晴天-国语-流行.mkv", "周杰伦", "晴天", "国语", "流行");
+        assertStandard("002.周杰伦-晴天-国语-流行.mkv", "周杰伦", "晴天", "国语", "流行");
+        assertStandard("【03】周杰伦-晴天-国语-流行.mkv", "周杰伦", "晴天", "国语", "流行");
+        assertStandard("(04) 周杰伦-晴天-国语-流行.mkv", "周杰伦", "晴天", "国语", "流行");
+
+        ParsedMeta legacyWithTrack = FilenameParser.parse("01-周杰伦-晴天.mkv");
+        assertThat(legacyWithTrack.artist()).isEqualTo("周杰伦");
+        assertThat(legacyWithTrack.title()).isEqualTo("晴天");
+    }
 }

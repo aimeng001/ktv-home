@@ -96,7 +96,8 @@ public final class FilenameParser {
         if (base.isBlank()) return ParsedMeta.unrecognized(base);
 
         // Strip catalogue numbers, category brackets, and transport/version markers before identifying fields.
-        base = base.replaceFirst("^\\s*\\d{1,5}\\s*[-._)】]\\s*", "");
+        base = base.replaceFirst("^\\s*[（(【\\[]\\s*\\d{1,5}\\s*[)）】\\]]\\s*", "");
+        base = base.replaceFirst("^\\s*\\d{1,5}\\s*[.、)】]\\s*", "");
         base = base.replaceFirst("^\\s*【[^】]+】\\s*", "");
         base = base.replaceFirst("(?i)^\\s*\\[(?:\\d+|KTV|MTV|MV|LIVE|4K|1080P|HD|UHD|超清|高清|修复|无损|经典|新歌|儿歌|戏曲|民歌)[^\\]]*\\]\\s*", "");
         base = base.replaceAll("(?i)\\s*\\[(?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|4K|1080P|HD|UHD|超清|高清|修复|无损)\\]\\s*$", "");
@@ -153,6 +154,11 @@ public final class FilenameParser {
             identity.remove(0);
         }
 
+        // 剥离可能存在的曲目序号前缀（例如："01-周杰伦-晴天-国语-流行"，此时 identity 有 3 段以上）
+        if (identity.size() >= 3 && identity.get(0).matches("^\\d{1,5}$")) {
+            identity.remove(0);
+        }
+
         // 提取可能存在的演唱形式（例如："张庭 钟丽缇 王祖蓝-爱上幼儿园-合唱-国语-流行"）
         String vocalForm = "";
         if (identity.size() >= 3) {
@@ -181,16 +187,21 @@ public final class FilenameParser {
             return ParsedMeta.unrecognized(fallbackTitle);
         }
 
-        String left = parts.get(0);
-        String right = join(parts, 1);
+        List<String> effectiveParts = new ArrayList<>(parts);
+        if (effectiveParts.size() >= 3 && effectiveParts.get(0).matches("^\\d{1,5}$")) {
+            effectiveParts.remove(0);
+        }
+
+        String left = effectiveParts.get(0);
+        String right = join(effectiveParts, 1);
         if (left.matches("(?i)track|track\\s*\\d*") && right.matches("\\d{2,}")) {
             return ParsedMeta.unrecognized(fallbackTitle);
         }
 
-        ArtistMatch existingArtist = longestExistingArtist(parts, artistIndex);
-        if (existingArtist != null && existingArtist.partCount() < parts.size()
+        ArtistMatch existingArtist = longestExistingArtist(effectiveParts, artistIndex);
+        if (existingArtist != null && existingArtist.partCount() < effectiveParts.size()
                 && !"title_artist".equals(rule)) {
-            return ParsedMeta.of(join(parts, existingArtist.partCount()), existingArtist.name());
+            return ParsedMeta.of(join(effectiveParts, existingArtist.partCount()), existingArtist.name());
         }
 
         return "title_artist".equals(rule)
