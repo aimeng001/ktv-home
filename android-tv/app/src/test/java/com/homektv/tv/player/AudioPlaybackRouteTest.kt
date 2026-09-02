@@ -18,4 +18,9 @@ class AudioPlaybackRouteTest {
     fun normalStereoUsesPassthroughRoute() {
         assertEquals(AudioPlaybackRoute.PASSTHROUGH, AudioPlaybackRoute.forLayout("NORMAL_STEREO"))
     }
+
+    @Test
+    fun multiTrackNormalStereoUsesTrackSelectionRoute() {
+        assertEquals(AudioPlaybackRoute.TRACK_SELECTION, AudioPlaybackRoute.forLayout("NORMAL_STEREO", audioTracks = 2))
+    }
 }

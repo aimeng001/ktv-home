@@ -321,7 +321,7 @@ class PlaybackEngine(
     }
 
     private fun applyVocalSelection() {
-        when (AudioPlaybackRoute.forLayout(requestedAudioLayout.layout)) {
+        when (AudioPlaybackRoute.forLayout(requestedAudioLayout.layout, requestedAudioTrackCount)) {
             AudioPlaybackRoute.PASSTHROUGH -> {
                 channelAudioProcessor.setMode(PcmChannelMode.STEREO)
                 return

@@ -82,4 +82,41 @@ class AudioLayoutResolverTest {
 
         assertThat(result.layout()).isEqualTo(AudioLayout.DUAL_TRACK);
     }
+
+    @Test
+    void externalNormalStereoDefaultPromotesTwoTracksToDualTrack() {
+        var result = resolver.resolve(
+                LibraryMode.EXTERNAL_READ_ONLY,
+                AudioLayoutSource.AUTO_DEFAULT,
+                AudioLayout.NORMAL_STEREO,
+                2,
+                AudioLayout.NORMAL_STEREO);
+
+        assertThat(result.layout()).isEqualTo(AudioLayout.DUAL_TRACK);
+        assertThat(result.source()).isEqualTo(AudioLayoutSource.AUTO_DEFAULT);
+    }
+
+    @Test
+    void legacyNormalStereoTwoTrackMediaIsUpgradedToDualTrack() {
+        var result = resolver.resolve(
+                LibraryMode.EXTERNAL_READ_ONLY,
+                AudioLayoutSource.LEGACY,
+                AudioLayout.NORMAL_STEREO,
+                2,
+                AudioLayout.NORMAL_STEREO);
+
+        assertThat(result.layout()).isEqualTo(AudioLayout.DUAL_TRACK);
+    }
+
+    @Test
+    void manualNormalStereoTwoTrackMediaStaysNormalStereo() {
+        var result = resolver.resolve(
+                LibraryMode.EXTERNAL_READ_ONLY,
+                AudioLayoutSource.MANUAL,
+                AudioLayout.NORMAL_STEREO,
+                2,
+                AudioLayout.DUAL_TRACK);
+
+        assertThat(result.layout()).isEqualTo(AudioLayout.NORMAL_STEREO);
+    }
 }

@@ -7,8 +7,8 @@ enum class AudioPlaybackRoute {
     PCM_CHANNEL_MAPPING;
 
     companion object {
-        fun forLayout(layout: String?): AudioPlaybackRoute = when {
-            layout.equals("DUAL_TRACK", ignoreCase = true) -> TRACK_SELECTION
+        fun forLayout(layout: String?, audioTracks: Int = 1): AudioPlaybackRoute = when {
+            audioTracks > 1 || layout.equals("DUAL_TRACK", ignoreCase = true) -> TRACK_SELECTION
             layout.equals("DUAL_CHANNEL", ignoreCase = true) -> PCM_CHANNEL_MAPPING
             else -> PASSTHROUGH
         }

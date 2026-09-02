@@ -25,4 +25,9 @@ class AudioLayoutCapabilitiesTest {
     fun missingLayoutDoesNotClaimVocalSwitchSupport() {
         assertFalse(supportsVocalSwitch(null))
     }
+
+    @Test
+    fun multiTrackNormalStereoSupportsVocalSwitch() {
+        assertTrue(supportsVocalSwitch(AudioLayout.normalStereo(), audioTracks = 2))
+    }
 }

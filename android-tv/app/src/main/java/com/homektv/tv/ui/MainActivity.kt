@@ -1086,7 +1086,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             binding.txtLyricCurrent.text = song.title
             binding.txtLyricPrevious.setLine(null, 0L)
         }
-        binding.txtVocalMode.text = if (supportsVocalSwitch(snapshot.audioLayout)) {
+        binding.txtVocalMode.text = if (supportsVocalSwitch(snapshot.audioLayout, audioTrackCount)) {
             if (snapshot.vocalMode == "original") "原唱中" else "伴唱中"
         } else ""
         binding.txtDuration.text = formatMs(song.durationMs.toLong())

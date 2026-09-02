@@ -22,11 +22,19 @@ public final class AudioLayoutResolver {
         AudioLayoutSource effectiveSource = source == null
                 ? AudioLayoutSource.LEGACY : source;
 
-        if (effectiveSource == AudioLayoutSource.MANUAL
-                || effectiveSource == AudioLayoutSource.LEGACY) {
+        if (effectiveSource == AudioLayoutSource.MANUAL) {
             if (current == AudioLayout.DUAL_TRACK && audioTracks < 2) {
                 return new Result(AudioLayout.NORMAL_STEREO, effectiveSource);
             }
+            return new Result(current, effectiveSource);
+        }
+
+        // 物理上有 2 条以上独立音轨的媒体，未人工锁定前默认必须作为 DUAL_TRACK 处理
+        if (audioTracks >= 2) {
+            return new Result(AudioLayout.DUAL_TRACK, AudioLayoutSource.AUTO_DEFAULT);
+        }
+
+        if (effectiveSource == AudioLayoutSource.LEGACY) {
             return new Result(current, effectiveSource);
         }
 
@@ -36,14 +44,9 @@ public final class AudioLayoutResolver {
             if (configured == AudioLayout.DUAL_TRACK && audioTracks < 2) {
                 return new Result(AudioLayout.NORMAL_STEREO, AudioLayoutSource.AUTO_DEFAULT);
             }
-            if (configured == AudioLayout.DUAL_CHANNEL && audioTracks >= 2) {
-                return new Result(AudioLayout.DUAL_TRACK, AudioLayoutSource.AUTO_DEFAULT);
-            }
             return new Result(configured, AudioLayoutSource.AUTO_DEFAULT);
         }
 
-        return new Result(
-                audioTracks >= 2 ? AudioLayout.DUAL_TRACK : AudioLayout.NORMAL_STEREO,
-                AudioLayoutSource.AUTO_DEFAULT);
+        return new Result(AudioLayout.NORMAL_STEREO, AudioLayoutSource.AUTO_DEFAULT);
     }
 }
