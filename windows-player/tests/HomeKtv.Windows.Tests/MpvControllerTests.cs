@@ -36,9 +36,9 @@ public sealed class MpvControllerTests
 
         Assert.DoesNotContain(session.Commands, command => command[0]?.ToString() == "loadfile");
         Assert.DoesNotContain(session.Commands, command => command[0]?.ToString() == "seek");
-        var filter = session.Commands.Single(command => command[0]?.ToString() == "af");
-        Assert.Equal("set", filter[1]?.ToString());
-        Assert.Contains("c0=c1|c1=c1", filter[2]?.ToString());
+        var filter = session.Commands.Single(command => command[0]?.ToString() == "set_property" && command[1]?.ToString() == "af");
+        var serialized = JsonSerializer.Serialize(filter[2]);
+        Assert.Contains("c0=c1|c1=c1", serialized);
     }
 
     [Fact]

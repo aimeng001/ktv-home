@@ -113,13 +113,19 @@ public static class MpvCommands
         ["set_property", "aid", trackId];
 
     public static object?[] SetChannelFilter(Playback.ChannelMapMode mode) =>
-        ["af", "set", mode switch
+        mode switch
         {
-            Playback.ChannelMapMode.STEREO => "pan=stereo|c0=c0|c1=c1",
-            Playback.ChannelMapMode.LEFT_MONO => "pan=stereo|c0=c0|c1=c0",
-            Playback.ChannelMapMode.RIGHT_MONO => "pan=stereo|c0=c1|c1=c1",
+            Playback.ChannelMapMode.STEREO => ["set_property", "af", Array.Empty<object>()],
+            Playback.ChannelMapMode.LEFT_MONO => ["set_property", "af", new object[]
+            {
+                new { name = "lavfi", options = new Dictionary<string, string> { ["graph"] = "pan=stereo|c0=c0|c1=c0" } }
+            }],
+            Playback.ChannelMapMode.RIGHT_MONO => ["set_property", "af", new object[]
+            {
+                new { name = "lavfi", options = new Dictionary<string, string> { ["graph"] = "pan=stereo|c0=c1|c1=c1" } }
+            }],
             _ => throw new ArgumentOutOfRangeException(nameof(mode)),
-        }];
+        };
 }
 
 public static class MpvTrackMapper
