@@ -42,6 +42,7 @@ services:
       KTV_SOURCE_LIBRARY_PATH: /source-music
       KTV_LIBRARY_PATH: /music
       KTV_LIBRARY_MODE: ${KTV_LIBRARY_MODE:-MANAGED}
+      KTV_AVATAR_LIBRARY_PATH: /avatar-library
       KTV_DATA_PATH: /data
       KTV_ADMIN_PASSWORD: ${KTV_ADMIN_PASSWORD:-}
       KTV_PLAYER_CREDENTIAL: "${KTV_PLAYER_CREDENTIAL:-}"
@@ -78,6 +79,12 @@ services:
       - type: bind
         source: ${KTV_DATA_DIR:-./data}
         target: /data
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ${KTV_AVATAR_LIBRARY_DIR:-./avatar-library}
+        target: /avatar-library
+        read_only: true
         bind:
           create_host_path: true
     depends_on:

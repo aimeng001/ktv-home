@@ -61,6 +61,7 @@ import SongRow from '../components/SongRow.vue'
 import NowPlayingBar from '../components/NowPlayingBar.vue'
 import { useAsyncResource } from '../composables/useAsyncResource'
 import { useOrderLock } from '../composables/useOrderLock'
+import { formatOrderToast } from './orderFeedbackState'
 import { Search, UserRound, Sparkles, UsersRound, ListMusic, Heart, Languages, LayoutGrid } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -103,9 +104,9 @@ onMounted(loadHot)
 async function order(song) {
   await executeOrder(song.id, async () => {
     try {
-      await controls.order(song.id)
+      const res = await controls.order(song.id)
       orderedIds.add(song.id)
-      toast('已加入队列')
+      toast(formatOrderToast(res))
     } catch (e) {
       if (e.code === 'SONG_IN_QUEUE') {
         toast(e.message || '这首歌已在队列中')

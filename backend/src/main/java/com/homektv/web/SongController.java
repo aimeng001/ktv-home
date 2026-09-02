@@ -2,20 +2,22 @@ package com.homektv.web;
 
 import com.homektv.config.AppProperties;
 import com.homektv.domain.Song;
+import com.homektv.library.AssetWriter;
 import com.homektv.library.SongSearchService;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.dto.SongDetailDto;
 import com.homektv.web.dto.SongDto;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 歌曲搜索/详情/资源 API（P1.6/P1.7，详设§11.1）。
@@ -29,19 +31,21 @@ public class SongController {
     private final SongSearchService searchService;
     private final SongRepository songRepo;
     private final SongFileRepository fileRepo;
-    private final Path dataRoot;
+    private final AssetWriter assetWriter;
 
-    /**
-     * 构造器，注入搜索服务、歌曲仓库、文件仓库及数据根路径配置。
-     *
-     * Constructor injecting search service, song repository, file repository, and data root path configuration.
-     */
+    /** Compatibility constructor for test callers providing AppProperties directly. */
     public SongController(SongSearchService searchService, SongRepository songRepo,
                           SongFileRepository fileRepo, AppProperties props) {
+        this(searchService, songRepo, fileRepo, new AssetWriter(props));
+    }
+
+    @Autowired
+    public SongController(SongSearchService searchService, SongRepository songRepo,
+                          SongFileRepository fileRepo, AssetWriter assetWriter) {
         this.searchService = searchService;
         this.songRepo = songRepo;
         this.fileRepo = fileRepo;
-        this.dataRoot = Path.of(props.getDataPath());
+        this.assetWriter = assetWriter;
     }
 
     /**
@@ -106,17 +110,17 @@ public class SongController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    private ResponseEntity<Resource> serveFile(String relPath, MediaType type) {
-        Path file = dataRoot.resolve(relPath).normalize();
-        // 防目录穿越：必须仍在 dataRoot 下
-        if (!file.startsWith(dataRoot.normalize()) || !Files.isRegularFile(file) || !Files.isReadable(file)) {
+    private ResponseEntity<Resource> serveFile(String relPath, MediaType fallbackType) {
+        Path file = assetWriter.readableCachePath(relPath).orElse(null);
+        if (file == null) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok().contentType(type).body(new FileSystemResource(file));
+        return ResponseEntity.ok().contentType(fallbackType).body(new FileSystemResource(file));
     }
 
     private static MediaType guessImageType(String path) {
-        String p = path.toLowerCase();
+        if (path == null) return MediaType.IMAGE_JPEG;
+        String p = path.toLowerCase(Locale.ROOT);
         if (p.endsWith(".png")) return MediaType.IMAGE_PNG;
         if (p.endsWith(".webp")) return MediaType.parseMediaType("image/webp");
         return MediaType.IMAGE_JPEG;

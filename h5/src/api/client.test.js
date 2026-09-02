@@ -122,4 +122,17 @@ describe('api client admin authentication', () => {
       '/api/browse/songs/page?artist=%E5%91%A8%E6%9D%B0%E4%BC%A6&sort=title&page=1&size=50'
     )
   })
+
+  it('adminScanLocalAvatars issues a POST request to /admin/artists/local-avatars/scan', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ success: true, matched: 12 })
+    )
+
+    const result = await api.adminScanLocalAvatars()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/artists/local-avatars/scan')
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST')
+    expect(result).toEqual({ success: true, matched: 12 })
+  })
 })

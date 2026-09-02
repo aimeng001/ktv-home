@@ -74,6 +74,8 @@ backend/src/main/resources/application-local.yml
 /KTV_AGENT_PROMPTS.txt
 /软件崩溃.md
 /问题清单.md
+/整改方案.md
+/整改计划.md
 
 # Local remediation plan artifacts
 /tasks/

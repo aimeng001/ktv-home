@@ -38,8 +38,12 @@ public class WishController {
         if (keyword == null || keyword.isBlank()) {
             throw new ApiException("INVALID_ARGUMENT", "缺少关键词");
         }
+        String trimmed = keyword.trim();
+        if (trimmed.length() > 100) {
+            throw new ApiException("INVALID_ARGUMENT", "心愿关键词不能超过 100 个字符");
+        }
         Wish w = new Wish();
-        w.setKeyword(keyword.trim());
+        w.setKeyword(trimmed);
         w.setCreatedBy(userService.resolveUserId(body.get("client_token")));
         wishRepo.save(w);
         return Map.of("status", "ok");

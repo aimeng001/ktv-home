@@ -15,15 +15,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ArtistProfileBootstrap {
     private static final Logger log = LoggerFactory.getLogger(ArtistProfileBootstrap.class);
     private final ArtistProfileService profiles;
-    private final ArtistAvatarJobService avatarJobs;
+    private final LocalAvatarResolver localAvatarResolver;
     private final ArtistCreditReconciliationService creditReconciliation;
     private final AtomicBoolean refreshRunning = new AtomicBoolean(false);
     private final AtomicBoolean creditsReconciled = new AtomicBoolean(false);
 
-    public ArtistProfileBootstrap(ArtistProfileService profiles, ArtistAvatarJobService avatarJobs,
+    public ArtistProfileBootstrap(ArtistProfileService profiles, LocalAvatarResolver localAvatarResolver,
                                   ArtistCreditReconciliationService creditReconciliation) {
         this.profiles = profiles;
-        this.avatarJobs = avatarJobs;
+        this.localAvatarResolver = localAvatarResolver;
         this.creditReconciliation = creditReconciliation;
     }
 
@@ -39,19 +39,13 @@ public class ArtistProfileBootstrap {
         refreshNow();
     }
 
-    /** Covers manual metadata edits that do not start a library scan. */
-    @Scheduled(initialDelay = 20_000L, fixedDelay = 60_000L)
-    public void scheduledRefresh() {
-        refreshNow();
-    }
-
     private void refreshNow() {
         if (!refreshRunning.compareAndSet(false, true)) return;
         try {
             reconcileCreditsOnce();
             int count = profiles.backfillFromSongs();
-            avatarJobs.enqueuePendingProfiles();
-            log.info("artist profile backfill completed: {} source names", count);
+            int matched = localAvatarResolver.resolveAllCandidates();
+            log.info("artist profile backfill completed: {} source names, {} local avatars resolved", count, matched);
         } catch (RuntimeException failure) {
             log.warn("artist profile backfill did not complete: {}", failure.getMessage());
         } finally {

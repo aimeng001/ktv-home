@@ -46,6 +46,7 @@ services:
       KTV_SOURCE_LIBRARY_PATH: /source-music
       KTV_LIBRARY_PATH: /music
       KTV_LIBRARY_MODE: EXTERNAL_READ_ONLY
+      KTV_AVATAR_LIBRARY_PATH: /avatar-library
       KTV_DATA_PATH: /data
       # Set this before deployment to unlock /m/admin; empty keeps admin APIs disabled.
       # 部署前请设置此项以解锁 /m/admin；留空会关闭管理接口。
@@ -86,6 +87,12 @@ services:
       - type: bind
         source: "${KTV_DATA_DIR:-./data}"
         target: /data
+        bind:
+          create_host_path: true
+      - type: bind
+        source: "${KTV_AVATAR_LIBRARY_DIR:-./avatar-library}"
+        target: /avatar-library
+        read_only: true
         bind:
           create_host_path: true
     depends_on:

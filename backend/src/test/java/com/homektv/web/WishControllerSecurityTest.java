@@ -39,4 +39,20 @@ class WishControllerSecurityTest {
         mvc.perform(get("/api/wishes"))
                 .andExpect(status().isMethodNotAllowed());
     }
+
+    @Test
+    void rejectsKeywordExceedingMaxLength() {
+        WishRepository wishes = mock(WishRepository.class);
+        UserService userService = mock(UserService.class);
+        WishController controller = new WishController(wishes, userService);
+
+        java.util.Map<String, String> body = java.util.Map.of(
+                "keyword", "A".repeat(101),
+                "client_token", "user-token"
+        );
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.add(body))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("不能超过 100 个字符");
+    }
 }

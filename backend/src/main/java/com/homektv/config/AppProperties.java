@@ -35,6 +35,9 @@ public class AppProperties {
     /** Optional shared credential for TV WebSocket clients. */
     private String playerCredential = "";
 
+    /** 外部歌手头像库目录（容器内 /avatar-library）。External artist avatar library directory (inside container: /avatar-library). */
+    private String avatarLibraryPath = "/avatar-library";
+
     /** AI 曲库分析配置。AI music library analysis configuration. */
     private Ai ai = new Ai();
 
@@ -53,6 +56,8 @@ public class AppProperties {
     public void setKtvLibraryPath(String ktvLibraryPath) { this.ktvLibraryPath = ktvLibraryPath; }
     public LibraryMode getLibraryMode() { return libraryMode; }
     public void setLibraryMode(LibraryMode libraryMode) { this.libraryMode = libraryMode; }
+    public String getAvatarLibraryPath() { return avatarLibraryPath; }
+    public void setAvatarLibraryPath(String avatarLibraryPath) { this.avatarLibraryPath = avatarLibraryPath; }
     public boolean isExternalReadOnly() { return LibraryMode.EXTERNAL_READ_ONLY.equals(libraryMode); }
     public String getDataPath() { return dataPath; }
     public void setDataPath(String dataPath) { this.dataPath = dataPath; }

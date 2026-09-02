@@ -1,19 +1,21 @@
 package com.homektv.web;
 
-import com.homektv.library.PlaylistPublicService;
 import com.homektv.config.AppProperties;
 import com.homektv.domain.Playlist;
+import com.homektv.library.AssetWriter;
+import com.homektv.library.PlaylistPublicService;
 import com.homektv.repo.PlaylistRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-import java.util.Map;
-import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * 歌单控制器，提供歌单列表、详情、点歌和封面等 REST API 接口。
@@ -25,12 +27,18 @@ import java.nio.file.Path;
 public class PlaylistController {
     private final PlaylistPublicService service;
     private final PlaylistRepository playlistRepository;
-    private final Path dataRoot;
+    private final AssetWriter assetWriter;
 
+    /** Compatibility constructor for test callers providing AppProperties directly. */
     public PlaylistController(PlaylistPublicService service, PlaylistRepository playlistRepository, AppProperties properties) {
+        this(service, playlistRepository, new AssetWriter(properties));
+    }
+
+    @Autowired
+    public PlaylistController(PlaylistPublicService service, PlaylistRepository playlistRepository, AssetWriter assetWriter) {
         this.service = service;
         this.playlistRepository = playlistRepository;
-        this.dataRoot = Path.of(properties.getDataPath());
+        this.assetWriter = assetWriter;
     }
 
     /**
@@ -91,9 +99,11 @@ public class PlaylistController {
     }
 
     private ResponseEntity<Resource> serveCover(String relativePath) {
-        Path file = dataRoot.resolve(relativePath).normalize();
-        if (!file.startsWith(dataRoot.normalize()) || !Files.isReadable(file)) return ResponseEntity.notFound().build();
-        String name = file.getFileName().toString().toLowerCase();
+        Path file = assetWriter.readableCachePath(relativePath).orElse(null);
+        if (file == null) {
+            return ResponseEntity.notFound().build();
+        }
+        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
         MediaType type = name.endsWith(".png") ? MediaType.IMAGE_PNG
                 : name.endsWith(".webp") ? MediaType.parseMediaType("image/webp") : MediaType.IMAGE_JPEG;
         return ResponseEntity.ok().contentType(type).body(new FileSystemResource(file));

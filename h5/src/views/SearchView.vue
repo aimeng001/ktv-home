@@ -60,6 +60,7 @@ import TabBar from '../components/TabBar.vue'
 import SongRow from '../components/SongRow.vue'
 import { searchViewState } from './searchState'
 import { createSearchController } from './searchController'
+import { formatOrderToast } from './orderFeedbackState'
 import { ChevronLeft, Search, X } from 'lucide-vue-next'
 
 const user = useUserStore()
@@ -127,9 +128,9 @@ function retrySearch() {
 async function order(song) {
   await executeOrder(song.id, async () => {
     try {
-      await controls.order(song.id)
+      const res = await controls.order(song.id)
       orderedIds.add(song.id)
-      toast('已加入队列')
+      toast(formatOrderToast(res))
     } catch (e) {
       toast(e.code === 'SONG_IN_QUEUE' ? (e.message || '已在队列中') : (e.message || '点歌失败'))
     }

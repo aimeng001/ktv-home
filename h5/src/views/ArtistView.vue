@@ -34,6 +34,7 @@ import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
 import { useAsyncResource } from '../composables/useAsyncResource'
 import { useOrderLock } from '../composables/useOrderLock'
+import { formatOrderToast } from './orderFeedbackState'
 import TabBar from '../components/TabBar.vue'
 import SongRow from '../components/SongRow.vue'
 
@@ -126,9 +127,9 @@ function setGender(value) { artistGender.value = value; load(true) }
 async function order(song) {
   await executeOrder(song.id, async () => {
     try {
-      await controls.order(song.id)
+      const res = await controls.order(song.id)
       orderedIds.add(song.id)
-      toast('已加入队列')
+      toast(formatOrderToast(res))
     } catch (error) {
       toast(error.code === 'SONG_IN_QUEUE' ? (error.message || '已在队列中') : (error.message || '点歌失败'))
     }

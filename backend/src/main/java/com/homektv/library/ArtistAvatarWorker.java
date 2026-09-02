@@ -70,10 +70,6 @@ public class ArtistAvatarWorker {
         }
     }
 
-    /** Retries deferred provider failures without requiring another library scan. */
-    @Scheduled(initialDelay = 30_000L, fixedDelay = 60_000L)
-    public void scheduledTrigger() { trigger(); }
-
     public void process() {
         try {
             int processed = 0;

@@ -36,6 +36,7 @@
             <SettingRow id="library_watch_enabled" label="源目录自动扫描" hint="关闭后只在仪表盘手动扫描"><Toggle v-model="form.library_watch_enabled" /></SettingRow>
             <SettingRow label="扫描源目录"><span class="readonly path-value">/source-music</span></SettingRow>
             <SettingRow label="KTV 曲库目录"><span class="readonly path-value">/music</span></SettingRow>
+            <SettingRow label="歌手头像库目录" hint="本地头像自动识别与匹配路径"><span class="readonly path-value">/avatar-library (或 /data 任意子目录)</span></SettingRow>
           </div>
           <div class="setting-group">
             <div class="group-head"><strong>外部曲库音频默认</strong><span>只用于外部只读曲库中新建索引的文件；单曲设置优先</span></div>

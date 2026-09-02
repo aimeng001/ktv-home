@@ -36,6 +36,7 @@ import api, { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
 import { useOrderLock } from '../composables/useOrderLock'
+import { formatOrderToast } from './orderFeedbackState'
 import SongRow from '../components/SongRow.vue'
 import TabBar from '../components/TabBar.vue'
 
@@ -67,9 +68,9 @@ onMounted(async () => { try { playlist.value = await api.playlistDetail(route.pa
 async function orderSong(song) {
   await executeOrder(song.id, async () => {
     try {
-      await controls.order(song.id)
+      const res = await controls.order(song.id)
       orderedIds.add(song.id)
-      toast('已加入队列')
+      toast(formatOrderToast(res))
     } catch (error) {
       toast(error.code === 'SONG_IN_QUEUE' ? (error.message || '已在队列中') : (error.message || '点歌失败'))
     }

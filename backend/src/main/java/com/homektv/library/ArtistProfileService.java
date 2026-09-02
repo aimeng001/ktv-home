@@ -123,6 +123,38 @@ public class ArtistProfileService {
     }
 
     @Transactional
+    public boolean setAvatarReady(String artistKey, String provider, String path) {
+        return jdbc.update("""
+                UPDATE artist_profiles
+                SET avatar_path=?, avatar_provider=?, avatar_status='READY',
+                    avatar_error=NULL, updated_at=now()
+                WHERE artist_key=?
+                """, path, provider, artistKey) > 0;
+    }
+
+    public List<Profile> unresolvedProfiles(int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 50_000));
+        try {
+            return jdbc.query("""
+                    SELECT artist_key, display_name, artist_kind, avatar_path,
+                           avatar_provider, avatar_external_id, avatar_status
+                    FROM artist_profiles
+                    WHERE artist_kind IN ('PERSON', 'GROUP')
+                      AND (avatar_path IS NULL OR trim(avatar_path) = '' OR avatar_status <> 'READY')
+                    ORDER BY updated_at, artist_key
+                    LIMIT ?
+                    """, (rs, index) -> new Profile(
+                    rs.getString("artist_key"), rs.getString("display_name"),
+                    rs.getString("artist_kind"), rs.getString("avatar_path"),
+                    rs.getString("avatar_provider"), rs.getString("avatar_external_id"),
+                    rs.getString("avatar_status")), safeLimit);
+        } catch (DataAccessException failure) {
+            log.debug("unresolved artist profiles lookup unavailable: {}", failure.getMessage());
+            return List.of();
+        }
+    }
+
+    @Transactional
     public boolean markAvatarReadyIfClaimed(String artistKey, String provider, String externalId, String path,
                                             long jobId, String claimToken) {
         return jdbc.update("""
@@ -130,11 +162,11 @@ public class ArtistProfileService {
                 SET avatar_path=?, avatar_provider=?, avatar_external_id=?,
                     avatar_status='READY', avatar_error=NULL, updated_at=now()
                 WHERE artist_key=?
-                  AND EXISTS (
-                      SELECT 1 FROM artist_avatar_jobs job
-                      WHERE job.id=? AND job.artist_key=artist_profiles.artist_key
+                AND EXISTS (
+                    SELECT 1 FROM artist_avatar_jobs job
+                    WHERE job.id=? AND job.artist_key=artist_profiles.artist_key
                         AND job.status='PROCESSING' AND job.claim_token=?::uuid
-                  )
+                )
                 """, path, provider, externalId, artistKey, jobId, claimToken) > 0;
     }
 

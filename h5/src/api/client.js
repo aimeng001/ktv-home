@@ -193,6 +193,12 @@ export const api = {
   adminAiModels: () => request('/admin/ai/config/models'),
   adminArtists: (params = {}) => request('/admin/artists?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString()),
   adminArtistPage: (params = {}) => request('/admin/artists/page?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString()),
+  adminScanLocalAvatars: () => request('/admin/artists/local-avatars/scan', { method: 'POST' }),
+  adminUploadArtistAvatar: (artistKey, file) => {
+    const body = new FormData()
+    body.append('file', file)
+    return request(`/admin/artists/${encodeURIComponent(artistKey)}/avatar`, { method: 'POST', body })
+  },
   adminAnalyzeArtist: (artist) => request('/admin/artists/analyze', { method: 'POST', body: JSON.stringify({ artist }) }),
   adminAnalyzeArtists: (artists) => request('/admin/artists/analyze-batch', { method: 'POST', body: JSON.stringify({ artists }) }),
   adminApplyArtistGender: (artist, gender) => request('/admin/artists/apply', { method: 'POST', body: JSON.stringify({ artist, gender }) }),
