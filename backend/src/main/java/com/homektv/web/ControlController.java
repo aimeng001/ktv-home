@@ -3,6 +3,7 @@ package com.homektv.web;
 import com.homektv.domain.QueueItem;
 import com.homektv.queue.PlaybackService;
 import com.homektv.queue.QueueService;
+import com.homektv.queue.RoomHostService;
 import com.homektv.queue.SnapshotService;
 import com.homektv.queue.UserService;
 import com.homektv.repo.QueueItemRepository;
@@ -29,16 +30,19 @@ public class ControlController {
     private final UserService userService;
     private final QueueItemRepository queueRepo;
     private final WsBroadcaster broadcaster;
+    private final RoomHostService roomHostService;
 
     public ControlController(QueueService queueService, PlaybackService playbackService,
                              SnapshotService snapshotService, UserService userService,
-                             QueueItemRepository queueRepo, WsBroadcaster broadcaster) {
+                             QueueItemRepository queueRepo, WsBroadcaster broadcaster,
+                             RoomHostService roomHostService) {
         this.queueService = queueService;
         this.playbackService = playbackService;
         this.snapshotService = snapshotService;
         this.userService = userService;
         this.queueRepo = queueRepo;
         this.broadcaster = broadcaster;
+        this.roomHostService = roomHostService;
     }
 
     /**
@@ -85,7 +89,7 @@ public class ControlController {
                 broadcast(WsEvent.QUEUE_UPDATED);
             }
             case "cancel" -> {
-                cancelWithPermission(req.longParam("queue_id"), userId);
+                cancelWithPermission(req.longParam("queue_id"), userId, req.clientToken());
                 broadcast(WsEvent.QUEUE_UPDATED);
             }
             case "play", "pause", "stop" -> {
@@ -151,14 +155,14 @@ public class ControlController {
     }
 
     /**
-     * 删歌权限：本人点的才能删（详设§4.4.3；TV/后台删任意由其它入口处理）。
-     * Cancel permission: only the user who ordered a song may remove it
-     * (detailed design §4.4.3; TV/backend arbitrary deletion is handled by other endpoints).
+     * 删歌权限：本人或当前房主可删（详设§4.4.3；TV/后台删任意由其它入口处理）。
+     * Cancel permission: only the user who ordered a song or the room host may remove it.
      */
-    private void cancelWithPermission(Long queueId, Long userId) {
+    private void cancelWithPermission(Long queueId, Long userId, String clientToken) {
         QueueItem item = queueRepo.findById(queueId)
                 .orElseThrow(() -> new ApiException("QUEUE_ITEM_NOT_FOUND", "队列项不存在"));
-        if (item.getOrderedBy() != null && !item.getOrderedBy().equals(userId)) {
+        boolean isHost = roomHostService != null && roomHostService.isHost(clientToken);
+        if (!isHost && item.getOrderedBy() != null && !item.getOrderedBy().equals(userId)) {
             throw new ApiException("FORBIDDEN", "只能删除自己点的歌曲");
         }
         queueService.cancel(queueId);

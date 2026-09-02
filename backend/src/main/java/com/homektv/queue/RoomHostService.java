@@ -22,6 +22,12 @@ public class RoomHostService {
         this.userRepository = userRepository;
     }
 
+    public boolean isHost(String clientToken) {
+        Long currentUserId = resolveExistingUserId(clientToken);
+        Long hostUserId = hostUserId();
+        return hostUserId != null && hostUserId.equals(currentUserId);
+    }
+
     public Map<String, Object> status(String clientToken) {
         Long currentUserId = resolveExistingUserId(clientToken);
         Long hostUserId = hostUserId();

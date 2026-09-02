@@ -41,4 +41,30 @@ describe('search controller', () => {
     expect(controller.state().error).toBe('')
     expect(controller.state().loading).toBe(false)
   })
+
+  it('supports loadMore to paginate results beyond the first page', async () => {
+    const page0 = Array.from({ length: 50 }, (_, i) => ({ id: i + 1, title: `Song ${i + 1}` }))
+    const page1 = [{ id: 51, title: 'Song 51' }]
+    const client = {
+      searchSongs: vi.fn()
+        .mockResolvedValueOnce(page0)
+        .mockResolvedValueOnce(page1)
+    }
+    const controller = createSearchController(client, { schedule: runImmediately })
+
+    controller.setQuery('周杰伦', '')
+    await controller.waitForIdle()
+
+    expect(client.searchSongs).toHaveBeenCalledWith('周杰伦', '', 0)
+    expect(controller.state().results.length).toBe(50)
+    expect(controller.state().hasMore).toBe(true)
+    expect(controller.state().page).toBe(0)
+
+    await controller.loadMore('周杰伦', '')
+
+    expect(client.searchSongs).toHaveBeenCalledWith('周杰伦', '', 1)
+    expect(controller.state().results.length).toBe(51)
+    expect(controller.state().hasMore).toBe(false)
+    expect(controller.state().page).toBe(1)
+  })
 })

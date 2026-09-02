@@ -12,7 +12,7 @@ export function createSearchController(client, {
   let timer = null
   let sequence = 0
   let pending = Promise.resolve()
-  let current = { results: [], loading: false, error: '' }
+  let current = { results: [], loading: false, loadingMore: false, hasMore: false, page: 0, error: '' }
 
   function publish(patch) {
     current = { ...current, ...patch }
@@ -32,10 +32,51 @@ export function createSearchController(client, {
     try {
       const data = await client.searchSongs(query, filter, 0)
       if (requestSequence !== sequence) return
-      publish({ results: data, error: '', loading: false })
+      const list = Array.isArray(data) ? data : (data?.content || [])
+      publish({
+        results: list,
+        page: 0,
+        hasMore: list.length >= 50,
+        error: '',
+        loading: false,
+        loadingMore: false
+      })
     } catch (error) {
       if (requestSequence !== sequence) return
-      publish({ results: [], error: error?.message || '搜索请求失败', loading: false })
+      publish({
+        results: [],
+        page: 0,
+        hasMore: false,
+        error: error?.message || '搜索请求失败',
+        loading: false,
+        loadingMore: false
+      })
+    }
+  }
+
+  async function loadMore(query, filter = '') {
+    if (current.loading || current.loadingMore || !current.hasMore) return
+    const value = String(query ?? '').trim()
+    if (!value) return
+    const requestSequence = sequence
+    const nextPage = current.page + 1
+    publish({ loadingMore: true, error: '' })
+    try {
+      const data = await client.searchSongs(value, filter, nextPage)
+      if (requestSequence !== sequence) return
+      const list = Array.isArray(data) ? data : (data?.content || [])
+      publish({
+        results: [...current.results, ...list],
+        page: nextPage,
+        hasMore: list.length >= 50,
+        loadingMore: false
+      })
+    } catch (error) {
+      if (requestSequence !== sequence) return
+      publish({
+        loadingMore: false,
+        error: error?.message || '加载更多失败'
+      })
     }
   }
 
@@ -43,10 +84,10 @@ export function createSearchController(client, {
     invalidate()
     const value = String(query ?? '').trim()
     if (!value) {
-      publish({ results: [], error: '', loading: false })
+      publish({ results: [], page: 0, hasMore: false, error: '', loading: false, loadingMore: false })
       return
     }
-    publish({ loading: true, error: '' })
+    publish({ loading: true, error: '', hasMore: false })
     timer = schedule(() => {
       timer = null
       pending = request(value, filter)
@@ -57,10 +98,10 @@ export function createSearchController(client, {
     invalidate()
     const value = String(query ?? '').trim()
     if (!value) {
-      publish({ results: [], error: '', loading: false })
+      publish({ results: [], page: 0, hasMore: false, error: '', loading: false, loadingMore: false })
       return Promise.resolve()
     }
-    publish({ loading: true, error: '' })
+    publish({ loading: true, error: '', hasMore: false })
     pending = request(value, filter)
     return pending
   }
@@ -75,7 +116,7 @@ export function createSearchController(client, {
 
   function clear() {
     invalidate()
-    publish({ results: [], error: '', loading: false })
+    publish({ results: [], page: 0, hasMore: false, error: '', loading: false, loadingMore: false })
   }
 
   function dispose() {
@@ -85,6 +126,7 @@ export function createSearchController(client, {
   return {
     setQuery,
     setFilter,
+    loadMore,
     retry,
     clear,
     dispose,

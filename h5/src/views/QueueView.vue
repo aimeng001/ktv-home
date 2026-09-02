@@ -37,7 +37,7 @@
           <div class="t">{{ q.song?.title }}</div>
           <div class="s">{{ q.song?.artist }} · {{ q.orderedByNick || '他人' }} 点</div>
         </div>
-        <template v-if="isMine(q)">
+        <template v-if="isMine(q) || host.isHost">
           <button class="chip gold" @click="top(q)">顶歌</button>
           <button class="chip" @click="cancel(q)">删除</button>
         </template>

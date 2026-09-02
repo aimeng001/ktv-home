@@ -154,18 +154,43 @@
           <div class="setting-group">
             <div class="group-head"><strong>曲库维护</strong><span>修复元数据并处理待办内容</span></div>
             <SettingRow label="存量曲库修复" hint="修复歌名、歌手、语种、演唱形式、年代和主题"><router-link class="btn ghost small" :to="{name:'admin-ktv-library'}">前往 KTV 曲库</router-link></SettingRow>
-            <SettingRow label="未处理心愿" hint="来自手机点歌端的缺歌反馈"><span class="metric-value">{{ wishes.length }}<small>条</small></span></SettingRow>
+            <SettingRow label="用户心愿单" hint="来自手机点歌端的缺歌反馈">
+              <div class="wish-row-actions">
+                <span class="metric-value">{{ wishes.length }}<small>条</small></span>
+                <button type="button" class="btn ghost small" @click="openWishesModal">查看详情 / 导出</button>
+              </div>
+            </SettingRow>
           </div>
           <div class="setting-group">
             <div class="group-head"><strong>系统信息</strong><span>当前部署版本</span></div>
             <SettingRow label="应用版本"><span class="readonly">{{ releaseLabel(releaseInfo) }}</span></SettingRow>
             <SettingRow label="使用范围"><span class="readonly">家庭局域网自用</span></SettingRow>
+            <SettingRow label="系统诊断包" hint="一键下载脱敏运行日志与挂载诊断包"><button type="button" class="btn ghost small" :disabled="downloadingDiag" @click="downloadDiag">{{ downloadingDiag ? '打包中…' : '下载诊断日志包' }}</button></SettingRow>
           </div>
         </section>
         </main>
       </div>
       <div v-if="dirty" class="save-bar"><span><AlertCircle :size="16" />有未保存的修改</span><button class="btn ghost" @click="resetChanges"><RotateCcw :size="14" />放弃修改</button><button class="btn" @click="saveAll"><Save :size="14" />保存设置</button></div>
     </div>
+    <div v-if="wishesModalOpen" class="mask" @click.self="wishesModalOpen = false"><div class="modal wish-modal">
+      <div class="match-head">
+        <div><h2>缺歌心愿单</h2><p>共 {{ wishes.length }} 条用户反馈记录</p></div>
+        <div class="wish-head-actions">
+          <button type="button" class="btn ghost small" :disabled="exportingWishes || !wishes.length" @click="exportWishesCsv"><Download :size="14" />{{ exportingWishes ? '导出中…' : '导出 CSV' }}</button>
+          <button type="button" class="icon-button" title="关闭" @click="wishesModalOpen = false"><X :size="17" /></button>
+        </div>
+      </div>
+      <div class="wish-list">
+        <div v-for="w in wishes" :key="w.id" class="wish-item">
+          <div class="wish-content">
+            <strong>{{ w.keyword }}</strong>
+            <small>提交时间：{{ formatTime(w.createdAt) }} · 用户 ID: {{ w.createdBy || '游客' }}</small>
+          </div>
+          <button type="button" class="link danger-text" title="删除记录" @click="deleteWish(w)"><Trash2 :size="14" />删除</button>
+        </div>
+        <div v-if="!wishes.length" class="empty">暂无心愿记录</div>
+      </div>
+    </div></div>
   </AdminLayout>
 </template>
 
@@ -173,8 +198,8 @@
 import { computed, h, onBeforeUnmount, onMounted, reactive, ref, watch, nextTick } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import {
-  AlertCircle, Bot, ChevronRight, Database, RotateCcw, Save, Search,
-  SlidersHorizontal, TestTube2, Tv, Wrench, Music2
+  AlertCircle, Bot, ChevronRight, Database, Download, RotateCcw, Save, Search,
+  SlidersHorizontal, TestTube2, Trash2, Tv, Wrench, Music2, X
 } from 'lucide-vue-next'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
@@ -261,7 +286,7 @@ function resetLoadState() { Object.assign(sectionState, { general: 'loading', ai
 function selectSection(value){ section.value=value; router.replace({query:{...route.query,section:value}}) }
 function jump(item){ selectSection(item.section); nextTick(()=>document.getElementById(item.key)?.scrollIntoView({behavior:'smooth',block:'center'})) }
 function sourceLabel(value){ return value==='DATABASE'?'管理后台':value==='ENVIRONMENT'?'环境变量':value==='NONE'?'未配置':'默认值' }
-function formatTime(value){ return value ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '' }
+function formatTime(value){ return value ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '—' }
 function applyPreset(p){ if(p.baseUrl) aiForm.baseUrl=p.baseUrl }
 async function load(){
   loading.value=true
@@ -316,6 +341,65 @@ async function restoreTranscodeDefaults(){
 }
 function setStandbySongIds(value){ form.standby_song_ids=[...new Set(value.split(/[,，\s]+/).map(Number).filter(id=>Number.isInteger(id)&&id>0))] }
 async function uploadStandbyLogo(event){ const file=event.target.files?.[0]; if(!file)return; try{await api.adminUploadStandbyLogo(file); Object.assign(form,canonicalizeSettings(await api.adminGetSettings())); original.value=snapshot(form)}catch(e){await alertDialog(e.message||'Logo 上传失败')}finally{event.target.value=''} }
+
+const wishesModalOpen = ref(false)
+const exportingWishes = ref(false)
+const downloadingDiag = ref(false)
+
+function openWishesModal() {
+  wishesModalOpen.value = true
+}
+
+async function deleteWish(w) {
+  if (!await confirmDialog(`确定删除心愿记录“${w.keyword}”？`, { title: '删除心愿', tone: 'warning' })) return
+  try {
+    await api.adminDeleteWish(w.id)
+    wishes.value = wishes.value.filter(item => item.id !== w.id)
+  } catch (err) {
+    await alertDialog(err.message || '删除失败')
+  }
+}
+
+async function exportWishesCsv() {
+  if (exportingWishes.value) return
+  exportingWishes.value = true
+  try {
+    const blob = await api.adminExportWishesCsv()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'ktv-wishes.csv'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    await alertDialog(err.message || '导出失败')
+  } finally {
+    exportingWishes.value = false
+  }
+}
+
+async function downloadDiag() {
+  if (downloadingDiag.value) return
+  downloadingDiag.value = true
+  try {
+    const blob = await api.adminDownloadDiagnostics()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'home-ktv-diagnostics.zip'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    await alertDialog(err.message || '下载诊断包失败')
+  } finally {
+    downloadingDiag.value = false
+  }
+}
+
 onMounted(load)
 function beforeUnload(e){ if(dirty.value){e.preventDefault();e.returnValue=''} }
 onMounted(()=>window.addEventListener('beforeunload',beforeUnload)); onBeforeUnmount(()=>window.removeEventListener('beforeunload',beforeUnload))
@@ -411,6 +495,22 @@ textarea.input{height:auto;min-height:58px;padding:8px 10px;resize:vertical}
 .upload-btn{display:inline-flex;align-items:center;min-height:34px;padding:0 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#2563eb;font-size:11px;font-weight:600;cursor:pointer}.upload-btn:hover{background:#f8fafc}.upload-btn input{display:none}
 .settings-load-alert,.settings-error{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;margin-bottom:14px;border:1px solid #fed7aa;border-radius:8px;background:#fff7ed;color:#9a3412;font-size:12px}.settings-error{display:block;border-color:#fecaca;background:#fef2f2;color:#b91c1c}.settings-load-alert .text-btn{flex:none}.save-bar{position:fixed;right:24px;bottom:16px;z-index:50;display:flex;align-items:center;justify-content:flex-end;gap:10px;width:min(720px,calc(100vw - 292px));padding:10px 12px;border:1px solid #334155;border-radius:8px;background:#172033;color:#fff;box-shadow:0 10px 30px rgba(15,23,42,.24)}
 .save-bar>span{display:flex;align-items:center;gap:7px;margin-right:auto;font-size:11px}.save-bar .btn{min-height:34px}.save-bar .btn.ghost{background:transparent;border-color:#64748b;color:#e2e8f0}.save-bar .btn.ghost:hover{background:#334155;color:#fff}
+.wish-row-actions{display:flex;align-items:center;gap:12px}
+.mask{position:fixed;inset:0;background:rgba(15,23,42,.45);display:grid;place-items:center;z-index:100}
+.modal{width:min(560px,calc(100vw - 32px));background:#fff;border-radius:8px;padding:22px;box-shadow:0 18px 50px rgba(15,23,42,.18)}
+.match-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding-bottom:14px;border-bottom:1px solid #e2e8f0}
+.match-head h2{margin:0;font-size:17px}.match-head p{margin-top:5px;color:#64748b;font-size:11px}
+.wish-head-actions{display:flex;align-items:center;gap:8px}
+.icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #cbd5e1;border-radius:6px;color:#475569;background:#fff;cursor:pointer}
+.icon-button:hover{background:#f8fafc}
+.wish-list{max-height:420px;overflow-y:auto;margin-top:14px;border:1px solid #e2e8f0;border-radius:7px}
+.wish-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid #eef2f7}
+.wish-item:last-child{border-bottom:0}
+.wish-content strong{display:block;color:#1e293b;font-size:13px}
+.wish-content small{display:block;color:#94a3b8;font-size:11px;margin-top:3px}
+.link{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 8px;border:1px solid #dbe3ee;border-radius:6px;background:#fff;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
+.danger-text{color:#b91c1c}.danger-text:hover{border-color:#fecaca;background:#fef2f2}
+.empty{text-align:center;padding:36px;color:#94a3b8;font-size:12px}
 @media(max-width:1040px){
   .settings-shell{grid-template-columns:218px minmax(0,1fr);gap:14px}
   .setting-row{grid-template-columns:minmax(160px,210px) minmax(0,1fr);gap:18px}

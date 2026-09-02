@@ -2,8 +2,8 @@
   <div class="entry">
     <!-- 品牌区：Logo + 标题 / Branding: logo + title -->
     <div class="logo">🎤</div>
-    <div class="title">家庭KTV</div>
-    <div class="room">房间：客厅</div>
+    <div class="title">{{ welcomeText }}</div>
+    <div class="room">{{ roomLabel }}</div>
 
     <!-- 昵称输入区 / Nickname input -->
     <div class="field">
@@ -28,7 +28,7 @@
  * Entry page — user enters a nickname and proceeds to the song-request system.
  * Supports random nickname generation, local memory, and automatic dedup on nickname conflict.
  */
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { usePlayerStore } from '../stores/player'
@@ -38,9 +38,26 @@ const router = useRouter()
 const user = useUserStore()
 const player = usePlayerStore()
 
+const welcomeText = ref('家庭KTV')
+const roomLabel = ref('房间：客厅')
+
 // 默认回填已存昵称或随机建议值（详设 H5-01）
-	// Default: fallback to saved nickname or a random suggestion (spec H5-01)
+// Default: fallback to saved nickname or a random suggestion (spec H5-01)
 const nickname = ref(user.suggestNickname())
+
+onMounted(async () => {
+  try {
+    const data = await api.standbyContent()
+    if (data?.welcomeText) welcomeText.value = data.welcomeText
+    if (data?.subtitle) {
+      const lines = data.subtitle.split('\n')
+      if (lines[1]) roomLabel.value = lines[1]
+      else if (lines[0]) roomLabel.value = lines[0]
+    }
+  } catch {
+    // keep default fallback
+  }
+})
 
 /**
  * 点击"进入点歌"按钮：注册昵称并跳转到首页。

@@ -14,7 +14,8 @@
     <!-- 筛选面板 / Filter panel -->
     <section v-if="!externalMode" class="filter-panel">
       <label><span>关键词</span><input v-model.trim="filters.keyword" placeholder="歌名、歌手或文件名" @keyup.enter="search" /></label>
-      <label><span>处理状态</span><span class="select-control"><select v-model="filters.status"><option value="">全部状态</option><option value="pending">待转码</option><option value="duplicate">重复</option><option value="transcoded">已转码</option><option value="unrecognized">未识别</option><option value="failed">失败</option></select><ChevronDown :size="15" aria-hidden="true" /></span></label>
+      <label><span>处理状态</span><span class="select-control"><select v-model="filters.status" @change="search"><option value="">全部状态</option><option value="pending">待转码</option><option value="duplicate">重复</option><option value="transcoded">已转码</option><option value="unrecognized">未识别</option><option value="failed">失败</option></select><ChevronDown :size="15" aria-hidden="true" /></span></label>
+      <label><span>格式分析</span><span class="select-control"><select v-model="filters.formatAnalysis" @change="search"><option value="">全部格式</option><option value="DIRECT_COPY">可直拷</option><option value="TRANSCODE_REQUIRED">需转码</option></select><ChevronDown :size="15" aria-hidden="true" /></span></label>
       <div class="filter-actions"><button class="secondary" @click="reset">重置</button><button class="primary" @click="search">查询</button></div>
     </section>
 

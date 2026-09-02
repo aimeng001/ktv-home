@@ -135,4 +135,47 @@ describe('api client admin authentication', () => {
     expect(fetchMock.mock.calls[0][1].method).toBe('POST')
     expect(result).toEqual({ success: true, matched: 12 })
   })
+
+  it('adminDeleteWish issues DELETE to /api/admin/wishes/{id}', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ status: 'ok' }))
+
+    await api.adminDeleteWish(123)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/wishes/123')
+    expect(fetchMock.mock.calls[0][1].method).toBe('DELETE')
+  })
+
+  it('adminExportWishesCsv issues GET to /api/admin/wishes/export returning a blob', async () => {
+    const blob = new Blob(['csv-content'], { type: 'text/csv' })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'text/csv; charset=UTF-8' },
+      blob: async () => blob
+    })
+
+    const result = await api.adminExportWishesCsv()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/wishes/export')
+    expect(result).toBe(blob)
+  })
+
+  it('adminDownloadDiagnostics issues POST to /api/admin/diagnostics/bundle returning a blob', async () => {
+    const blob = new Blob(['zip-content'], { type: 'application/zip' })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'application/zip' },
+      blob: async () => blob
+    })
+
+    const result = await api.adminDownloadDiagnostics()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/diagnostics/bundle')
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST')
+    expect(result).toBe(blob)
+  })
 })

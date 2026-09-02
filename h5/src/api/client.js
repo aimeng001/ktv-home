@@ -52,6 +52,34 @@ async function request(path, options = {}) {
   return ct.includes('application/json') ? res.json() : res.text()
 }
 
+async function requestBlob(path, options = {}) {
+  const { headers: optionHeaders, ...fetchOptions } = options
+  const headers = {
+    ...(optionHeaders || {})
+  }
+  if (path === '/admin' || path.startsWith('/admin/')) {
+    const token = getAdminToken()
+    if (token) headers['X-Admin-Token'] = token
+  }
+  const res = await fetch(BASE + path, {
+    ...fetchOptions,
+    headers
+  })
+  if (!res.ok) {
+    let body = null
+    try { body = await res.json() } catch { /* ignore */ }
+    if (res.status === 401 && body?.code === 'ADMIN_AUTH_REQUIRED') {
+      clearAdminToken()
+      window.dispatchEvent(new CustomEvent('home-ktv-admin-auth-required'))
+    }
+    const err = new Error(body?.message || `HTTP ${res.status}`)
+    err.code = body?.code
+    err.status = res.status
+    throw err
+  }
+  return res.blob()
+}
+
 export const api = {
   health: () => request('/health'),
   releaseInfo: () => request('/release'),
@@ -171,6 +199,9 @@ export const api = {
     return request('/admin/standby/logo', { method: 'POST', body })
   },
   adminWishes: () => request('/admin/wishes'),
+  adminDeleteWish: (id) => request(`/admin/wishes/${id}`, { method: 'DELETE' }),
+  adminExportWishesCsv: () => requestBlob('/admin/wishes/export'),
+  adminDownloadDiagnostics: () => requestBlob('/admin/diagnostics/bundle', { method: 'POST' }),
 
   // ADM-04 AI 曲库与主题歌单
   // ADM-04 AI song library and themed playlists

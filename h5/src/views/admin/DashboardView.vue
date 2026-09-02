@@ -1,6 +1,12 @@
 <template>
   <AdminLayout active="dashboard">
-    <header class="page-head"><div><h1>仪表盘</h1><p>扫描源路径并查看曲库、转码与播放服务状态</p></div><button class="primary" :disabled="scanning" @click="scan">{{ scanning ? '扫描中…' : externalMode ? '扫描外部只读曲库' : '扫描源路径' }}</button></header>
+    <header class="page-head">
+      <div><h1>仪表盘</h1><p>扫描源路径并查看曲库、转码与播放服务状态</p></div>
+      <div class="header-actions">
+        <button class="secondary" :disabled="downloadingDiag" @click="downloadDiag"><Download :size="15" />{{ downloadingDiag ? '打包中…' : '下载诊断包' }}</button>
+        <button class="primary" :disabled="scanning" @click="scan">{{ scanning ? '扫描中…' : externalMode ? '扫描外部只读曲库' : '扫描源路径' }}</button>
+      </div>
+    </header>
     <!-- 统计卡片 / Stats cards -->
     <section class="stats"><article><span>{{ externalMode ? '外部曲库文件' : '原始素材' }}</span><strong>{{ sourceTotal }}</strong><small>{{ externalMode ? 'NAS 只读索引' : '/source-music' }}</small></article><article><span>KTV曲库</span><strong>{{ d.totalSongs ?? 0 }}</strong><small>/music，可点歌</small></article><article><span>{{ externalMode ? '源文件转码' : '待转码' }}</span><strong>{{ pendingCount }}</strong><small>{{ externalMode ? '只读模式已禁用' : '等待批量转码入库' }}</small></article><article><span>未识别</span><strong>{{ d.unrecognizedCount ?? 0 }}</strong><small>需补录元数据</small></article></section>
     <!-- 扫描进度 / Scan progress -->
@@ -46,11 +52,13 @@
  * batch transcoding progress, and playback service status.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { Download } from 'lucide-vue-next'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog } from '../../composables/useDialog'
 import { normalizeScanProgress, scanPercent as calculateScanPercent, scanPhaseLabel, formatEta } from './scanProgress'
 const d=ref({}),queue=ref({}),progress=ref({}),scanning=ref(false),scanResult=ref(null),scanProgress=ref({}),sourceTotal=ref(0),pendingCount=ref(0)
+const downloadingDiag=ref(false)
 const libraryMode=ref('MANAGED')
 let scanTimer=null
 /**
@@ -123,6 +131,26 @@ async function pollScan(){const previous=scanning.value;const value=await api.ad
  */
 async function scan(){if(scanning.value)return;try{scanProgress.value=await api.adminStartScan();scanning.value=true;scanResult.value=null;startPolling()}catch(e){await alertDialog(e.message||'扫描失败')}}
 
+async function downloadDiag(){
+  if(downloadingDiag.value)return
+  downloadingDiag.value=true
+  try{
+    const blob=await api.adminDownloadDiagnostics()
+    const url=URL.createObjectURL(blob)
+    const a=document.createElement('a')
+    a.href=url
+    a.download='home-ktv-diagnostics.zip'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }catch(err){
+    await alertDialog(err.message||'下载诊断包失败')
+  }finally{
+    downloadingDiag.value=false
+  }
+}
+
 /**
  * 将 ISO 时间字符串格式化为中文本地时间。
  *
@@ -137,5 +165,5 @@ onMounted(load)
 onUnmounted(stopPolling)
 </script>
 <style scoped>
-.page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.page-head h1{font-size:22px}.page-head p{color:#64748b;font-size:13px;margin-top:6px}.primary{height:36px;padding:0 15px;border-radius:6px;background:#2563eb;color:#fff;font-size:13px}.primary:disabled{opacity:.5}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}.stats article{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px}.stats span,.stats small{display:block;color:#64748b;font-size:12px}.stats strong{display:block;font-size:26px;margin:8px 0 6px}.stats small{color:#94a3b8}.scan-progress{padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:14px;color:#1e40af}.scan-progress.complete{background:#f0fdf4;border-color:#bbf7d0;color:#166534}.scan-progress.failed{background:#fef2f2;border-color:#fecaca;color:#991b1b}.scan-progress.failed .track{background:#fee2e2}.scan-progress.failed .track i{background:#dc2626}.error-msg{color:#b91c1c;font-weight:600}.progress-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.progress-head div{min-width:0}.progress-head strong,.progress-head span{display:block}.progress-head span{margin-top:4px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.progress-head b{font-size:18px}.track{height:7px;margin:12px 0 9px;background:#dbeafe;border-radius:4px;overflow:hidden}.complete .track{background:#dcfce7}.track i{display:block;height:100%;background:#2563eb;transition:width .25s}.complete .track i{background:#16a34a}.progress-meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px}.progress-meta .failed{color:#b91c1c;font-weight:700}.panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px}.panel-head{display:flex;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e2e8f0}.text-btn,.link{color:#2563eb;font-size:12px}.link:disabled{color:#94a3b8}table{width:100%;border-collapse:collapse;font-size:12px}th{padding:11px 14px;text-align:left;background:#f8fafc;color:#64748b}td{padding:13px 14px;border-top:1px solid #eef2f7;color:#475569}td strong,td small{display:block}td small{color:#94a3b8;margin-top:4px}.status{display:inline-flex;padding:3px 8px;border-radius:999px;font-weight:600}.green{background:#dcfce7;color:#166534}.blue{background:#dbeafe;color:#1d4ed8}.neutral{background:#f1f5f9;color:#475569}@media(max-width:900px){.stats{grid-template-columns:1fr 1fr}.panel{overflow:auto}table{min-width:760px}}
+.page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.page-head h1{font-size:22px}.page-head p{color:#64748b;font-size:13px;margin-top:6px}.header-actions{display:flex;align-items:center;gap:10px}.primary,.secondary{height:36px;padding:0 15px;border-radius:6px;font-size:13px}.primary{background:#2563eb;color:#fff}.secondary{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #cbd5e1;color:#334155}.primary:disabled,.secondary:disabled{opacity:.5}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}.stats article{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px}.stats span,.stats small{display:block;color:#64748b;font-size:12px}.stats strong{display:block;font-size:26px;margin:8px 0 6px}.stats small{color:#94a3b8}.scan-progress{padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:14px;color:#1e40af}.scan-progress.complete{background:#f0fdf4;border-color:#bbf7d0;color:#166534}.scan-progress.failed{background:#fef2f2;border-color:#fecaca;color:#991b1b}.scan-progress.failed .track{background:#fee2e2}.scan-progress.failed .track i{background:#dc2626}.error-msg{color:#b91c1c;font-weight:600}.progress-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.progress-head div{min-width:0}.progress-head strong,.progress-head span{display:block}.progress-head span{margin-top:4px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.progress-head b{font-size:18px}.track{height:7px;margin:12px 0 9px;background:#dbeafe;border-radius:4px;overflow:hidden}.complete .track{background:#dcfce7}.track i{display:block;height:100%;background:#2563eb;transition:width .25s}.complete .track i{background:#16a34a}.progress-meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px}.progress-meta .failed{color:#b91c1c;font-weight:700}.panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px}.panel-head{display:flex;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e2e8f0}.text-btn,.link{color:#2563eb;font-size:12px}.link:disabled{color:#94a3b8}table{width:100%;border-collapse:collapse;font-size:12px}th{padding:11px 14px;text-align:left;background:#f8fafc;color:#64748b}td{padding:13px 14px;border-top:1px solid #eef2f7;color:#475569}td strong,td small{display:block}td small{color:#94a3b8;margin-top:4px}.status{display:inline-flex;padding:3px 8px;border-radius:999px;font-weight:600}.green{background:#dcfce7;color:#166534}.blue{background:#dbeafe;color:#1d4ed8}.neutral{background:#f1f5f9;color:#475569}@media(max-width:900px){.stats{grid-template-columns:1fr 1fr}.panel{overflow:auto}table{min-width:760px}}
 </style>

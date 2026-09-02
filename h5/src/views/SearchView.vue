@@ -24,6 +24,11 @@
         <div class="cnt"><b>搜索结果</b><span>{{ results.length }} 首歌曲</span></div>
         <SongRow v-for="s in results" :key="s.id" :song="s" :keyword="kw"
                  :extra="fmtDur(s.durationMs)" :ordered="orderedIds.has(s.id)" @order="order" />
+        <div v-if="hasMore" class="load-more-wrap">
+          <button class="btn ghost small load-more-btn" :disabled="loadingMore" @click="loadMore">
+            {{ loadingMore ? '加载中…' : '加载更多歌曲' }}
+          </button>
+        </div>
       </template>
       <div v-else-if="searchState === 'error'" class="error-state" role="alert">
         <div class="e-title">搜索失败：{{ searchError }}</div>
@@ -82,7 +87,8 @@ const filters = [
   { label: 'MV', value: 'MV' },
   { label: '纯音频', value: 'AUDIO' }
 ]
-/** 已点歌 ID 集合，用于高亮标记 / Ordered song ID set, for highlight marking */
+const hasMore = ref(false)
+const loadingMore = ref(false)
 const orderedIds = reactive(new Set())
 const inp = ref(null)
 const searchState = computed(() => searchViewState(kw.value, loading.value, searchError.value, results.value))
@@ -90,9 +96,15 @@ const searchController = createSearchController(api, {
   onState: next => {
     results.value = next.results
     loading.value = next.loading
+    loadingMore.value = next.loadingMore
+    hasMore.value = next.hasMore
     searchError.value = next.error
   }
 })
+
+function loadMore() {
+  searchController.loadMore(kw.value, activeFilter.value)
+}
 
 onMounted(() => inp.value?.focus())
 onBeforeUnmount(() => searchController.dispose())
@@ -182,4 +194,7 @@ function fmtDur(ms) {
 .empty { text-align: center; padding: 40px 0; color: var(--dim); }
 .error-state { text-align: center; padding: 36px 0; }
 .e-title { color: var(--text); font-size: 14px; margin-bottom: 12px; }
+.load-more-wrap { display: flex; justify-content: center; padding: 14px 0 20px; }
+.load-more-btn { min-width: 140px; padding: 8px 16px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text); font-size: 12px; cursor: pointer; }
+.load-more-btn:disabled { opacity: .5; }
 </style>
