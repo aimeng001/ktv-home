@@ -28,7 +28,8 @@ export const usePlayerStore = defineStore('player', {
     queue: [],             // 点歌队列 | [{queueId, song, orderedBy, orderedByNick, status}]
     tvOnline: null,        // TV 状态在首次服务端快照前未知 | Unknown until the first server snapshot
     connectedPhones: 0,
-    lastEffect: null
+    lastEffect: null,
+    historyRevision: 0
   }),
   getters: {
     queueCount: (s) => s.queue.length,
@@ -88,6 +89,9 @@ export const usePlayerStore = defineStore('player', {
           break
         case 'effect_play':
           this.lastEffect = payload?.effect_id ?? null
+          break
+        case 'history_updated':
+          this.historyRevision += 1
           break
         default:
           break

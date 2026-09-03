@@ -21,8 +21,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.ArrayList;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -50,10 +54,19 @@ public class HistoryController {
      *
      * Constructor, injects all dependent services and repositories.
      */
+    @Autowired
     public HistoryController(PlayHistoryRepository historyRepo, SongRepository songRepo,
                              AppUserRepository userRepo, QueueService queueService,
                              PlaybackService playbackService, SnapshotService snapshotService,
                              UserService userService, WsBroadcaster broadcaster) {
+        this(historyRepo, songRepo, userRepo, queueService, playbackService, snapshotService,
+                userService, broadcaster, Clock.systemDefaultZone());
+    }
+
+    HistoryController(PlayHistoryRepository historyRepo, SongRepository songRepo,
+                      AppUserRepository userRepo, QueueService queueService,
+                      PlaybackService playbackService, SnapshotService snapshotService,
+                      UserService userService, WsBroadcaster broadcaster, Clock clock) {
         this.historyRepo = historyRepo;
         this.songRepo = songRepo;
         this.userRepo = userRepo;
@@ -62,7 +75,10 @@ public class HistoryController {
         this.snapshotService = snapshotService;
         this.userService = userService;
         this.broadcaster = broadcaster;
+        this.clock = clock;
     }
+
+    private final Clock clock;
 
     /**
      * 查询最近 50 条已播歌曲记录。
@@ -93,9 +109,17 @@ public class HistoryController {
                                          @RequestParam(defaultValue = "false") boolean mine) {
         Long currentUserId = clientToken == null || clientToken.isBlank()
                 ? null : userRepo.findByClientToken(clientToken).map(AppUser::getId).orElse(null);
+        OffsetDateTime since = LocalDate.now(clock)
+                .atStartOfDay(clock.getZone())
+                .toOffsetDateTime();
+        List<PlayHistory> histories = mine
+                ? currentUserId == null
+                        ? List.of()
+                        : historyRepo.findTop50ByPlayedByAndPlayedAtGreaterThanEqualOrderByPlayedAtDesc(
+                                currentUserId, since)
+                : historyRepo.findTop50ByPlayedAtGreaterThanEqualOrderByPlayedAtDesc(since);
         List<RecentHistoryDto> result = new ArrayList<>();
-        for (PlayHistory history : historyRepo.findTop50ByOrderByPlayedAtDesc()) {
-            if (mine && (currentUserId == null || !currentUserId.equals(history.getPlayedBy()))) continue;
+        for (PlayHistory history : histories) {
             songRepo.findById(history.getSongId()).ifPresent(song -> {
                 String nickname = history.getPlayedBy() == null ? "家人" : userRepo.findById(history.getPlayedBy())
                         .map(AppUser::getNickname).orElse("家人");

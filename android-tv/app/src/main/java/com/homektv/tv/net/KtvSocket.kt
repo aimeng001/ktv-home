@@ -63,12 +63,18 @@ class KtvSocket(
     private val leaseGate = ActivePlayerLeaseGate()
     private val syncReadyGate = SyncReadyGate()
     private val socketEpoch = SocketEpochGate()
+    private val reportServerHost = config.serverHost
+    private val finishedOutbox = FinishedReportOutbox(
+        config.pendingFinishedQueueIds(reportServerHost),
+        { queueIds -> config.savePendingFinishedQueueIds(queueIds, reportServerHost) },
+    )
 
     // 15s 应用层心跳
     private val heartbeat = object : Runnable {
         override fun run() {
             val generation = leaseGate.activeGeneration()
             if (generation == null) listener.onPlayerRole(false)
+            else flushFinishedReports(generation)
             ws?.send("""{"type":"ping","payload":{"generation":${generation ?: "null"}}}""")
             main.postDelayed(this, HEARTBEAT_MS)
         }
@@ -89,6 +95,7 @@ class KtvSocket(
         reconnectGate.markRun()
         socketEpoch.invalidate()
         main.removeCallbacks(heartbeat)
+        finishedOutbox.onDisconnected()
         ws?.close(1000, "client closing")
         ws = null
         syncReadyGate.onDisconnect()
@@ -109,12 +116,9 @@ class KtvSocket(
 
     /** 上行播放完成（P1.33 自动连播）。 */
     fun sendFinished(queueId: Long? = null) {
-        val generation = leaseGate.activeGeneration() ?: return
-        val payload = buildJsonObject {
-            queueId?.let { put("queue_id", it) }
-            put("generation", generation)
-        }
-        ws?.send(buildSocketMessage("finished", payload))
+        val id = queueId?.takeIf { it > 0 } ?: return
+        finishedOutbox.enqueue(id)
+        leaseGate.activeGeneration()?.let(::flushFinishedReports)
     }
 
     /** 播放文件不可读时上报，服务端会标记当前项异常并推进队列。 */
@@ -183,6 +187,7 @@ class KtvSocket(
                 if (closed || !socketEpoch.isCurrent(epoch) || ws != null) return@post
                 main.removeCallbacks(heartbeat)
                 syncReadyGate.onDisconnect()
+                finishedOutbox.onDisconnected()
                 leaseGate.disconnect()
                 listener.onPlayerRole(false)
                 listener.onConnectionChanged(false)
@@ -197,6 +202,7 @@ class KtvSocket(
                 if (closed || !socketEpoch.isCurrent(epoch) || ws != null) return@post
                 main.removeCallbacks(heartbeat)
                 syncReadyGate.onDisconnect()
+                finishedOutbox.onDisconnected()
                 leaseGate.disconnect()
                 listener.onPlayerRole(false)
                 listener.onConnectionChanged(false)
@@ -214,6 +220,13 @@ class KtvSocket(
                 val leaseMs = runCatching { assignment["lease_ms"]?.jsonPrimitive?.long }.getOrNull() ?: return
                 leaseGate.apply(role, generation, leaseMs)
                 listener.onPlayerRole(leaseGate.activeGeneration() != null)
+                leaseGate.activeGeneration()?.let(::flushFinishedReports)
+            }
+            "playback_report_ack" -> {
+                val ack = payload as? JsonObject ?: return
+                val queueId = runCatching { ack["queue_id"]?.jsonPrimitive?.long }.getOrNull() ?: return
+                val status = ack["status"]?.jsonPrimitive?.contentOrNullSafe() ?: return
+                finishedOutbox.acknowledge(queueId, status)
             }
             "progress" -> {
                 val pos = (payload as? JsonObject)?.get("position_ms")?.jsonPrimitive?.long ?: 0L
@@ -245,6 +258,13 @@ class KtvSocket(
     private fun kotlinx.serialization.json.JsonPrimitive.contentOrNullSafe(): String? =
         if (isString) content else content.ifEmpty { null }
 
+    private fun flushFinishedReports(generation: Long) {
+        val socket = ws ?: return
+        finishedOutbox.flush(generation) { queueId, currentGeneration ->
+            socket.send(buildFinishedMessage(queueId, currentGeneration))
+        }
+    }
+
     companion object {
         private const val TAG = "KtvSocket"
         private const val HEARTBEAT_MS = 15_000L   // TV 15s 心跳（详设§4.1）
@@ -271,6 +291,14 @@ internal fun buildPlayErrorMessage(
         put("message", message)
         fileId?.let { put("file_id", it) }
         queueId?.let { put("queue_id", it) }
+        put("generation", generation)
+    },
+)
+
+internal fun buildFinishedMessage(queueId: Long, generation: Long): String = buildSocketMessage(
+    "finished",
+    buildJsonObject {
+        put("queue_id", queueId)
         put("generation", generation)
     },
 )

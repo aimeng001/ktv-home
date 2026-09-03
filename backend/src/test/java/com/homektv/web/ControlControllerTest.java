@@ -116,6 +116,20 @@ class ControlControllerTest {
     }
 
     @Test
+    void httpFinishedIsRejectedBecauseOnlyTheActiveTvMayReportCompletion() {
+        UserService userService = new UserService(null) {
+            @Override public Long resolveUserId(String clientToken) { return 42L; }
+        };
+        ControlController controller = new ControlController(
+                null, null, null, userService, null, null, null);
+
+        assertThatThrownBy(() -> controller.control(
+                new ControlRequest("finished", Map.of(), "guest-token")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("未知指令");
+    }
+
+    @Test
     void seekUsesAPlatformNeutralPositionEvent() {
         AtomicReference<WsEvent> broadcast = new AtomicReference<>();
         AtomicLong position = new AtomicLong();

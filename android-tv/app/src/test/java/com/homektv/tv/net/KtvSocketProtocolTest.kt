@@ -24,4 +24,14 @@ class KtvSocketProtocolTest {
         assertEquals("3", payload["generation"]?.jsonPrimitive?.content)
         assertTrue(payload["message"]!!.jsonPrimitive.isString)
     }
+
+    @Test
+    fun finishedMessageCarriesQueueIdentityAndCurrentLeaseGeneration() {
+        val root = Json.parseToJsonElement(buildFinishedMessage(42L, 7L)).jsonObject
+        val payload = root["payload"]!!.jsonObject
+
+        assertEquals("finished", root["type"]?.jsonPrimitive?.content)
+        assertEquals("42", payload["queue_id"]?.jsonPrimitive?.content)
+        assertEquals("7", payload["generation"]?.jsonPrimitive?.content)
+    }
 }

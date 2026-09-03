@@ -22,6 +22,8 @@ public record WsEvent(String type, Object payload) {
     public static final String EFFECT_PLAY = "effect_play";
     public static final String TOAST = "toast";
     public static final String PLAYER_ROLE = "player_role";
+    public static final String PLAYBACK_REPORT_ACK = "playback_report_ack";
+    public static final String HISTORY_UPDATED = "history_updated";
 
     /**
      * 创建 WsEvent 实例的静态工厂方法。

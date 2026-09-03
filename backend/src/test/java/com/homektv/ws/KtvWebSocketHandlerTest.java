@@ -3,6 +3,7 @@ package com.homektv.ws;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.queue.PlaybackService;
 import com.homektv.queue.PlaybackTransitionResult;
+import com.homektv.queue.FinishResult;
 import com.homektv.queue.PositionUpdateResult;
 import com.homektv.queue.SnapshotService;
 import org.junit.jupiter.api.BeforeEach;
@@ -87,6 +88,28 @@ class KtvWebSocketHandlerTest {
     }
 
     @Test
+    void finishedReportIsAcknowledgedAndBroadcastsHistoryChangeOnlyWhenApplied() throws Exception {
+        WebSocketSession active = playerSession("active", "active-token", 2);
+        handler.afterConnectionEstablished(active);
+        clearInvocations(broadcaster);
+        when(playbackService.onFinished(21L))
+                .thenReturn(FinishResult.applied(new com.homektv.domain.PlayerState(), 21L));
+
+        handler.handleTextMessage(active, new TextMessage(
+                "{\"type\":\"finished\",\"payload\":{\"queue_id\":21,\"generation\":1}}"));
+
+        verify(playbackService).onFinished(21L);
+        var ack = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster).sendTo(eq(active), ack.capture());
+        assertThat(ack.getValue().type()).isEqualTo(WsEvent.PLAYBACK_REPORT_ACK);
+        assertThat(((Map<?, ?>) ack.getValue().payload()).get("status")).isEqualTo("APPLIED");
+        var broadcasts = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster, org.mockito.Mockito.times(2)).broadcastPlayback(broadcasts.capture());
+        assertThat(broadcasts.getAllValues()).extracting(WsEvent::type)
+                .containsExactly(WsEvent.NOW_PLAYING, WsEvent.HISTORY_UPDATED);
+    }
+
+    @Test
     void playErrorMessageForwardsBothFileAndQueueIdentity() throws Exception {
         when(playbackService.onPlayError(7L, 8L))
                 .thenReturn(PlaybackTransitionResult.accepted(new com.homektv.domain.PlayerState()));
@@ -148,6 +171,17 @@ class KtvWebSocketHandlerTest {
                 "{\"type\":\"progress\",\"payload\":{\"position_ms\":500}}"));
 
         verify(playbackService, never()).updatePosition(any(), any(Long.class));
+    }
+
+    @Test
+    void finishedReportWithoutQueueIdentityIsRejectedBeforePlaybackMutation() throws Exception {
+        WebSocketSession active = activeLegacySession();
+
+        handler.handleTextMessage(active, new TextMessage(
+                "{\"type\":\"finished\",\"payload\":{}}"));
+
+        verify(playbackService, never()).onFinished(any());
+        verify(broadcaster, never()).sendTo(eq(active), any(WsEvent.class));
     }
 
     @Test

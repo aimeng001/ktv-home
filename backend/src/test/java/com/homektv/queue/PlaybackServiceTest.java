@@ -1,6 +1,7 @@
 package com.homektv.queue;
 
 import com.homektv.domain.PlayerState;
+import com.homektv.domain.PlayHistory;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
@@ -25,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
@@ -148,6 +150,23 @@ class PlaybackServiceTest {
 
         verify(queueRepository).lockQueueMutation();
         verify(playerRepository).getSingletonForUpdate();
+    }
+
+    @Test
+    void finishedTransitionRecordsHistoryOnceAndTreatsRetryAsAlreadyApplied() {
+        Song song = new Song();
+        song.setId(2L);
+        when(historyRepository.existsByQueueId(100L)).thenReturn(false, true);
+        when(songRepository.findById(2L)).thenReturn(Optional.of(song));
+
+        FinishResult first = playbackService.onFinished(100L);
+        FinishResult retry = playbackService.onFinished(100L);
+
+        assertThat(first.status()).isEqualTo(FinishResult.Status.APPLIED);
+        assertThat(retry.status()).isEqualTo(FinishResult.Status.ALREADY_APPLIED);
+        assertThat(currentQueue.getStatus()).isEqualTo(QueueService.DONE);
+        assertThat(song.getPlayCount()).isEqualTo(1);
+        verify(historyRepository, times(1)).save(any(PlayHistory.class));
     }
 
     @Test

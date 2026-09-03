@@ -26,6 +26,11 @@ public class PlayHistory {
     @Column(name = "song_id", nullable = false)
     private Long songId;
 
+    /** 产生该历史记录的队列项ID，用于完成事件幂等。 */
+    // English: Queue item that produced this history row, used for completion idempotency.
+    @Column(name = "queue_id")
+    private Long queueId;
+
     /** 点歌人ID。 */
     // English: ID of the user who requested the song.
     @Column(name = "played_by")
@@ -43,6 +48,8 @@ public class PlayHistory {
     public void setId(Long id) { this.id = id; }
     public Long getSongId() { return songId; }
     public void setSongId(Long songId) { this.songId = songId; }
+    public Long getQueueId() { return queueId; }
+    public void setQueueId(Long queueId) { this.queueId = queueId; }
     public Long getPlayedBy() { return playedBy; }
     public void setPlayedBy(Long playedBy) { this.playedBy = playedBy; }
     public OffsetDateTime getPlayedAt() { return playedAt; }

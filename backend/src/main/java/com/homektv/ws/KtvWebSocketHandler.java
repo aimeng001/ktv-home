@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.queue.PlaybackService;
 import com.homektv.queue.PlaybackTransitionResult;
 import com.homektv.queue.PositionUpdateResult;
+import com.homektv.queue.FinishResult;
 import com.homektv.queue.SnapshotService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -113,8 +114,19 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 // TV 上报当前曲目播放完成 → 推进队列并广播
                 Long queueId = node.path("payload").path("queue_id").isNumber()
                         ? node.path("payload").path("queue_id").asLong() : null;
-                playbackService.onFinished(queueId);
-                broadcaster.broadcastPlayback(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
+                if (queueId == null || queueId <= 0) {
+                    return;
+                }
+                FinishResult result = playbackService.onFinished(queueId);
+                broadcaster.sendTo(session, WsEvent.of(WsEvent.PLAYBACK_REPORT_ACK,
+                        java.util.Map.of(
+                                "queue_id", queueId,
+                                "status", result.status().name())));
+                if (result.status() == FinishResult.Status.APPLIED) {
+                    broadcaster.broadcastPlayback(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
+                    broadcaster.broadcastPlayback(WsEvent.of(WsEvent.HISTORY_UPDATED,
+                            java.util.Map.of("queue_id", queueId)));
+                }
             }
             case "play_error" -> {
                 // TV 无法读取当前媒体时按异常切歌，避免队列卡死；将原因同步给手机端。

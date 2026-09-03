@@ -27,8 +27,9 @@
  * Recent history page — shows songs sung tonight, supports filtering by
  * "All / Mine", and allows one-tap re-adding to the singing queue.
  */
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import api from '../api/client'
+import { usePlayerStore } from '../stores/player'
 import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
 import { confirmDialog } from '../composables/useDialog'
@@ -36,6 +37,7 @@ import { useAsyncResource } from '../composables/useAsyncResource'
 import TabBar from '../components/TabBar.vue'
 
 const user = useUserStore()
+const player = usePlayerStore()
 const { toast } = useToast()
 const mineOnly = ref(false)
 const busyId = ref(null)
@@ -45,6 +47,7 @@ const historyStatus = historyResource.status
 const historyError = historyResource.error
 
 onMounted(load)
+watch(() => player.historyRevision, load)
 /**
  * 加载最近演唱历史列表。
  *

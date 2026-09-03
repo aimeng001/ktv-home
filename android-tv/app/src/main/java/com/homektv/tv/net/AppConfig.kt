@@ -67,6 +67,30 @@ class AppConfig(context: Context) {
         get() = prefs.getString(KEY_PLAYER_CREDENTIAL, "").orEmpty()
         set(value) = prefs.edit { putString(KEY_PLAYER_CREDENTIAL, value.trim()) }
 
+    /** Finished queue reports waiting for a server acknowledgement. */
+    fun pendingFinishedQueueIds(serverHost: String? = this.serverHost): List<Long> =
+        prefs.getString(pendingFinishedKey(serverHost), null)
+            ?.split(',')
+            ?.mapNotNull { it.trim().toLongOrNull()?.takeIf { id -> id > 0 } }
+            ?.distinct()
+            ?.take(MAX_PENDING_FINISHED)
+            ?: emptyList()
+
+    /** Persists only valid, bounded queue IDs; the source media is never touched. */
+    @Synchronized
+    fun savePendingFinishedQueueIds(queueIds: List<Long>, serverHost: String? = this.serverHost) {
+        val value = queueIds.asSequence()
+            .filter { it > 0 }
+            .distinct()
+            .take(MAX_PENDING_FINISHED)
+            .joinToString(",")
+        prefs.edit(commit = true) {
+            val key = pendingFinishedKey(serverHost)
+            if (value.isEmpty()) remove(key)
+            else putString(key, value)
+        }
+    }
+
     /** WebSocket 地址：ws://host:port/ws?client_type=tv&client_token=xxx */
     fun wsUrl(clientToken: String): String {
         return buildTvWebSocketUrl(serverHost.orEmpty(), clientToken, playerCredential)
@@ -113,7 +137,12 @@ class AppConfig(context: Context) {
         private const val KEY_MICROPHONE_MONITOR = "microphone_monitor_enabled"
         private const val KEY_PLAYER_CREDENTIAL = "player_credential"
         private const val KEY_SAVED_SERVERS = "saved_servers"
+        private const val KEY_PENDING_FINISHED_PREFIX = "pending_finished_queue_ids_"
         private const val MAX_SAVED_SERVERS = 10
+        private const val MAX_PENDING_FINISHED = 100
+
+        private fun pendingFinishedKey(serverHost: String?): String =
+            KEY_PENDING_FINISHED_PREFIX + serverHost.orEmpty().trim()
 
         /**
          * 归一化用户输入：去空格、剥离 http(s):// 前缀与尾部斜杠；

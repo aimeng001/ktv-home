@@ -26,7 +26,10 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
     private readonly string clientToken;
     private readonly string? playerCredential;
     private readonly SemaphoreSlim sendLock = new(1, 1);
+    private readonly SemaphoreSlim finishedFlushLock = new(1, 1);
     private readonly ConcurrentQueue<string> reliableMessages = new();
+    private readonly PendingPlaybackReportStore pendingFinishedStore;
+    private readonly PendingPlaybackReportQueue pendingFinishedReports;
     private readonly CancellationTokenSource lifetime = new();
     private ClientWebSocket? socket;
     private long generation;
@@ -36,6 +39,11 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         this.endpoint = endpoint;
         this.clientToken = clientToken;
         this.playerCredential = playerCredential;
+        pendingFinishedStore = new(
+            scope: $"{endpoint.BaseUri.AbsoluteUri}|{clientToken}");
+        pendingFinishedReports = new(
+            pendingFinishedStore.Load(),
+            pendingFinishedStore.Save);
     }
 
     public event Action<bool>? ConnectionChanged;
@@ -67,6 +75,8 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
             }
             finally
             {
+                pendingFinishedReports.OnDisconnected();
+                Volatile.Write(ref generation, 0);
                 ConnectionChanged?.Invoke(false);
                 socket = null;
             }
@@ -82,8 +92,12 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         SendTextAsync(ServerMessageFactory.Progress(positionMs, queueId, activeGeneration), cancellationToken);
 
     public Task<bool> SendFinishedAsync(long queueId, long? activeGeneration = null,
-        CancellationToken cancellationToken = default) =>
-        SendReliableAsync(ServerMessageFactory.Finished(queueId, activeGeneration), cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        _ = activeGeneration; // The queue is serialized with the current lease generation at flush time.
+        pendingFinishedReports.Enqueue(queueId);
+        return FlushFinishedReportsAsync(cancellationToken);
+    }
 
     public Task<bool> SendPlayErrorAsync(long queueId, long? fileId, string message, long? activeGeneration = null,
         CancellationToken cancellationToken = default) =>
@@ -124,6 +138,10 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
         {
             var currentGeneration = Volatile.Read(ref generation);
+            if (currentGeneration > 0)
+            {
+                await FlushFinishedReportsAsync(cancellationToken).ConfigureAwait(false);
+            }
             await SendTextAsync(ServerMessageFactory.Ping(currentGeneration > 0 ? currentGeneration : null),
                 cancellationToken).ConfigureAwait(false);
         }
@@ -161,6 +179,17 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         }
 
         if (message is null) return;
+        if (message.Type == "playback_report_ack"
+            && message.Payload is { } acknowledgement
+            && acknowledgement.TryGetProperty("queue_id", out var acknowledgedQueueId)
+            && acknowledgedQueueId.TryGetInt64(out var queueId)
+            && queueId > 0
+            && acknowledgement.TryGetProperty("status", out var acknowledgementStatus)
+            && acknowledgementStatus.ValueKind == JsonValueKind.String)
+        {
+            pendingFinishedReports.Acknowledge(queueId, acknowledgementStatus.GetString());
+            return;
+        }
         if ((message.Type == "player_role" || message.Type == "pong")
             && message.Payload is { } rolePayload
             && rolePayload.TryGetProperty("role", out var role)
@@ -173,6 +202,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
                 string.Equals(assignment.Role, "ACTIVE", StringComparison.OrdinalIgnoreCase)
                     ? assignment.Generation : 0);
             PlayerAssignmentReceived?.Invoke(assignment);
+            await FlushFinishedReportsAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
         if (SnapshotEvents.Contains(message.Type))
@@ -236,6 +266,39 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         }
     }
 
+    private async Task<bool> FlushFinishedReportsAsync(CancellationToken cancellationToken)
+    {
+        var active = socket;
+        var currentGeneration = Volatile.Read(ref generation);
+        if (active?.State != WebSocketState.Open || currentGeneration <= 0) return false;
+
+        await finishedFlushLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var sent = false;
+            foreach (var report in pendingFinishedReports.Snapshot())
+            {
+                try
+                {
+                    await SendOnSocketAsync(active, report.Serialize(currentGeneration), cancellationToken)
+                        .ConfigureAwait(false);
+                    sent = true;
+                }
+                catch (Exception exception) when (exception is WebSocketException or IOException
+                    or ObjectDisposedException)
+                {
+                    return sent;
+                }
+            }
+
+            return sent;
+        }
+        finally
+        {
+            finishedFlushLock.Release();
+        }
+    }
+
     private async Task FlushReliableMessagesAsync(
         ClientWebSocket active,
         CancellationToken cancellationToken)
@@ -285,5 +348,6 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         }
         lifetime.Dispose();
         sendLock.Dispose();
+        finishedFlushLock.Dispose();
     }
 }

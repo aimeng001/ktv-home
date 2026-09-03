@@ -145,22 +145,33 @@ public class PlaybackService {
         return playerRepo.save(ps);
     }
 
-    /** 播放完成（TV 上报）：当前行标记 done，写历史，推进下一首。 */
     @Transactional
-    public PlayerState onFinished() {
-        return onFinished(null);
-    }
-
-    @Transactional
-    public PlayerState onFinished(Long expectedQueueId) {
+    public FinishResult onFinished(Long expectedQueueId) {
         queueRepo.lockQueueMutation();
         PlayerState ps = playerRepo.getSingletonForUpdate();
-        if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
-            return ps;
+        if (expectedQueueId == null) {
+            return FinishResult.stale(ps, null);
         }
-        markCurrent(ps, QueueService.DONE, true);
+
+        if (!expectedQueueId.equals(ps.getCurrentQueueId())) {
+            return historyRepo.existsByQueueId(expectedQueueId)
+                    ? FinishResult.alreadyApplied(ps, expectedQueueId)
+                    : FinishResult.stale(ps, expectedQueueId);
+        }
+
+        QueueItem item = queueRepo.findById(expectedQueueId).orElse(null);
+        if (item == null || !QueueService.PLAYING.equals(item.getStatus())) {
+            return historyRepo.existsByQueueId(expectedQueueId)
+                    ? FinishResult.alreadyApplied(ps, expectedQueueId)
+                    : FinishResult.stale(ps, expectedQueueId);
+        }
+
+        item.setStatus(QueueService.DONE);
+        item.setPlayedAt(OffsetDateTime.now());
+        queueRepo.save(item);
+        recordHistory(item);
         advanceToNext(ps);
-        return playerRepo.save(ps);
+        return FinishResult.applied(playerRepo.save(ps), expectedQueueId);
     }
 
     @Transactional
@@ -320,16 +331,22 @@ public class PlaybackService {
                 item.setPlayedAt(OffsetDateTime.now());
                 queueRepo.save(item);
                 if (recordHistory) {
-                    PlayHistory h = new PlayHistory();
-                    h.setSongId(item.getSongId());
-                    h.setPlayedBy(item.getOrderedBy());
-                    historyRepo.save(h);
-                    songRepo.findById(item.getSongId()).ifPresent(s -> {
-                        s.setPlayCount(s.getPlayCount() + 1);
-                        songRepo.save(s);
-                    });
+                    recordHistory(item);
                 }
             }
+        });
+    }
+
+    private void recordHistory(QueueItem item) {
+        if (historyRepo.existsByQueueId(item.getId())) return;
+        PlayHistory h = new PlayHistory();
+        h.setQueueId(item.getId());
+        h.setSongId(item.getSongId());
+        h.setPlayedBy(item.getOrderedBy());
+        historyRepo.save(h);
+        songRepo.findById(item.getSongId()).ifPresent(s -> {
+            s.setPlayCount(s.getPlayCount() + 1);
+            songRepo.save(s);
         });
     }
 

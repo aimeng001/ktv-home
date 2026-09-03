@@ -216,10 +216,12 @@ public sealed class PlaybackTerminal : IAsyncDisposable
             return;
         }
 
-        if (!leaseGate.TryGetGeneration(out var generation)) return;
+        if (lifetime.IsCancellationRequested) return;
         try
         {
-            await socket.SendFinishedAsync(queueId, generation, lifetime.Token).ConfigureAwait(false);
+            // The socket owns the durable outbox and will attach the generation
+            // that is valid when the report is actually sent.
+            await socket.SendFinishedAsync(queueId, cancellationToken: lifetime.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException)
         {

@@ -4,6 +4,7 @@ import com.homektv.domain.AppUser;
 import com.homektv.domain.AudioChannel;
 import com.homektv.domain.AudioLayout;
 import com.homektv.domain.PlayerState;
+import com.homektv.domain.PlayHistory;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
@@ -222,10 +223,19 @@ class QueuePlaybackIntegrationTest {
     void finishedIncrementsPlayCountAndWritesHistory() {
         queueService.order(song1, user1, false);
         playbackService.play();
-        playbackService.onFinished();
+        Long queueId = playerRepo.getSingleton().getCurrentQueueId();
+
+        FinishResult first = playbackService.onFinished(queueId);
+        FinishResult retry = playbackService.onFinished(queueId);
 
         Song s = songRepo.findById(song1).orElseThrow();
         assertThat(s.getPlayCount()).isEqualTo(1);
+        assertThat(historyRepo.count()).isEqualTo(1);
+        assertThat(historyRepo.findAll()).singleElement()
+                .extracting(PlayHistory::getQueueId)
+                .isEqualTo(queueId);
+        assertThat(first.status()).isEqualTo(FinishResult.Status.APPLIED);
+        assertThat(retry.status()).isEqualTo(FinishResult.Status.ALREADY_APPLIED);
     }
 
     @Test

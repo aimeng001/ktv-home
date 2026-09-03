@@ -44,5 +44,12 @@ public interface PlayHistoryRepository extends JpaRepository<PlayHistory, Long> 
      */
     List<PlayHistory> findTop50ByOrderByPlayedAtDesc();
 
+    List<PlayHistory> findTop50ByPlayedAtGreaterThanEqualOrderByPlayedAtDesc(OffsetDateTime since);
+
+    List<PlayHistory> findTop50ByPlayedByAndPlayedAtGreaterThanEqualOrderByPlayedAtDesc(
+            Long playedBy, OffsetDateTime since);
+
+    boolean existsByQueueId(Long queueId);
+
     void deleteBySongId(Long songId);
 }

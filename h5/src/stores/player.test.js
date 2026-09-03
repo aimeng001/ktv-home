@@ -53,6 +53,15 @@ describe('usePlayerStore', () => {
     expect(p.lastEffect).toBe('clap')
   })
 
+  it('history_updated increments the history revision', () => {
+    const p = usePlayerStore()
+    expect(p.historyRevision).toBe(0)
+
+    p.handleEvent('history_updated', { queue_id: 42 })
+
+    expect(p.historyRevision).toBe(1)
+  })
+
   it('无播放时 nowPlaying 为 null', () => {
     const p = usePlayerStore()
     p.handleEvent('sync_full', { ...snapshot, playing: null })

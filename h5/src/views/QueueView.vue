@@ -67,7 +67,7 @@
  * Queue view — shows now-playing, upcoming queue, and playback history,
  * with support for boosting, removing, skipping tracks, and host management.
  */
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { usePlayerStore } from '../stores/player'
 import { useUserStore } from '../stores/user'
 import api, { makeControls } from '../api/client'
@@ -90,10 +90,17 @@ const nowPlayingStyle = computed(() => nowPlayingCover.value ? {
 } : {})
 
 onMounted(async () => {
-  const [loadedHistory, loadedHost] = await Promise.all([api.history().catch(() => []), api.roomHostStatus(user.clientToken).catch(() => null)])
-  history.value = loadedHistory
+  const [loadedHistory, loadedHost] = await Promise.all([loadHistory(), api.roomHostStatus(user.clientToken).catch(() => null)])
   if (loadedHost) host.value = loadedHost
 })
+
+watch(() => player.historyRevision, loadHistory)
+
+async function loadHistory() {
+  const loadedHistory = await api.history().catch(() => [])
+  history.value = loadedHistory
+  return loadedHistory
+}
 
 /**
  * 从已播历史中重新点歌，将歌曲加入待播队列。

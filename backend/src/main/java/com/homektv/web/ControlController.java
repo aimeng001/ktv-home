@@ -108,7 +108,7 @@ public class ControlController {
                 dispatchPlayback(action);
                 broadcast(WsEvent.PLAYBACK_RESTARTED);
             }
-            case "next", "finished" -> {
+            case "next" -> {
                 dispatchPlayback(action);
                 broadcast(WsEvent.NOW_PLAYING);
             }
@@ -142,7 +142,6 @@ public class ControlController {
             case "stop" -> playbackService.stop();
             case "restart" -> playbackService.restart();
             case "next" -> playbackService.next();
-            case "finished" -> playbackService.onFinished();
         }
     }
 
