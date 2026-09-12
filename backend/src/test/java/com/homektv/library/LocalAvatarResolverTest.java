@@ -116,6 +116,14 @@ class LocalAvatarResolverTest {
     }
 
     @Test
+    void boundedImageReadRejectsAFileThatGrewAfterTheInitialSizeCheck(@TempDir Path tempDir) throws Exception {
+        Path image = tempDir.resolve("grown-avatar.jpg");
+        Files.write(image, new byte[(int) LocalAvatarResolver.MAX_FILE_SIZE + 1]);
+
+        assertThat(LocalAvatarResolver.readBounded(image)).isNull();
+    }
+
+    @Test
     void skipsPlaceholderArtistsAndMissingFiles(@TempDir Path tempDir) throws Exception {
         Path avatarsDir = tempDir.resolve("avatars");
         Files.createDirectories(avatarsDir);

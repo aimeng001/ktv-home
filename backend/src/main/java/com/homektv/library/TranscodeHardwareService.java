@@ -7,10 +7,10 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.TimeUnit;
 
 @Service
 public class TranscodeHardwareService {
@@ -115,12 +115,8 @@ public class TranscodeHardwareService {
     boolean run(List<String> command) {
         try {
             Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            boolean finished = process.waitFor(15, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                return false;
-            }
-            return process.exitValue() == 0;
+            MediaProcessRunner.Result result = MediaProcessRunner.run(process, Duration.ofSeconds(15));
+            return !result.timedOut() && result.exitCode() == 0;
         } catch (IOException e) {
             return false;
         } catch (InterruptedException e) {

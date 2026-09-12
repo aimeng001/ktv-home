@@ -157,7 +157,7 @@ class PartyLoadIntegrationTest {
                     events.offer(message.getPayload());
                 }
             }, new WebSocketHttpHeaders(), URI.create(
-                    "ws://localhost:" + port + "/ws?client_type=phone&client_token=" + token(index)))
+                    "ws://localhost:" + port + "/ws?client_type=h5&client_token=" + token(index)))
                     .get(5, TimeUnit.SECONDS);
             clients.add(new ClientConnection(session, events));
         }

@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -33,6 +34,7 @@ public class FFprobeService {
     private static final Logger log = LoggerFactory.getLogger(FFprobeService.class);
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
     private static final Duration OUTPUT_DRAIN_TIMEOUT = Duration.ofSeconds(5);
+    static final int MAX_OUTPUT_BYTES = 1 * 1024 * 1024;
 
     private final String ffprobePath;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -95,7 +97,7 @@ public class FFprobeService {
         try {
             boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
             if (!finished) {
-                process.destroyForcibly();
+                destroyAndWait(process);
                 throw new MediaProbeException("ffprobe 探测超时：" + file);
             }
             String stdout = stdoutTask.get(OUTPUT_DRAIN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
@@ -105,24 +107,55 @@ public class FFprobeService {
             }
             return parse(stdout);
         } catch (ExecutionException e) {
+            if (e.getCause() instanceof OutputLimitExceededException) {
+                throw new MediaProbeException("ffprobe 输出超过上限：" + file, e.getCause());
+            }
             throw new MediaProbeException("读取 ffprobe 输出失败：" + file, e);
         } catch (TimeoutException e) {
-            process.destroyForcibly();
+            destroyAndWait(process);
             throw new MediaProbeException("读取 ffprobe 输出超时：" + file, e);
         } catch (InterruptedException e) {
-            process.destroyForcibly();
+            destroyAndWait(process);
             Thread.currentThread().interrupt();
             throw new MediaProbeException("ffprobe 探测被中断：" + file, e);
         } finally {
-            if (process.isAlive()) process.destroyForcibly();
+            if (process.isAlive()) destroyAndWait(process);
             stdoutTask.cancel(true);
             stderrTask.cancel(true);
         }
     }
 
+    private static void destroyAndWait(Process process) {
+        if (process == null || !process.isAlive()) return;
+        process.destroyForcibly();
+        try {
+            process.waitFor(OUTPUT_DRAIN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     private static String readUtf8(InputStream stream) throws IOException {
         try (stream) {
-            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(MAX_OUTPUT_BYTES, 8192));
+            byte[] buffer = new byte[8192];
+            int total = 0;
+            int count;
+            while ((count = stream.read(buffer)) != -1) {
+                if (count == 0) continue;
+                if (count > MAX_OUTPUT_BYTES - total) {
+                    throw new OutputLimitExceededException();
+                }
+                output.write(buffer, 0, count);
+                total += count;
+            }
+            return output.toString(StandardCharsets.UTF_8);
+        }
+    }
+
+    private static final class OutputLimitExceededException extends IOException {
+        private OutputLimitExceededException() {
+            super("ffprobe output exceeds the configured limit");
         }
     }
 

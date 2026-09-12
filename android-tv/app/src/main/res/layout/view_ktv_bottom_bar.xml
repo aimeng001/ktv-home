@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="68dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@drawable/player_glass"
+    android:paddingHorizontal="20dp"
+    android:paddingVertical="8dp">
+
+    <!-- 左侧：正在播放歌曲信息 -->
+    <LinearLayout
+        android:id="@+id/nowPlayingInfoContainer"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1.2"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:id="@+id/imgNowPlayingDisc"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/vinyl_disc"
+            android:contentDescription="正在播放" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/txtNowPlayingTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="暂无播放"
+                android:textColor="@android:color/white"
+                android:textSize="17sp"
+                android:textStyle="bold"
+                android:singleLine="true" />
+
+            <TextView
+                android:id="@+id/txtNowPlayingArtist"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="请先点歌"
+                android:textColor="@color/dim"
+                android:textSize="12sp"
+                android:singleLine="true" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/txtVocalBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/karaoke_label"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="3dp"
+            android:text="伴唱"
+            android:textColor="@android:color/white"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- 中间：核心快捷播控按键 -->
+    <LinearLayout
+        android:id="@+id/playbackControls"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnPlayPause"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:background="@drawable/btn_keyboard_key"
+            android:textColor="@color/color_keyboard_key_text"
+            android:text="暂停"
+            android:textSize="13sp"
+            android:focusable="true" />
+
+        <Button
+            android:id="@+id/btnNext"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_keyboard_key"
+            android:textColor="@color/color_keyboard_key_text"
+            android:text="切歌"
+            android:textSize="13sp"
+            android:focusable="true" />
+
+        <Button
+            android:id="@+id/btnRestart"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_keyboard_key"
+            android:textColor="@color/color_keyboard_key_text"
+            android:text="重唱"
+            android:textSize="13sp"
+            android:focusable="true" />
+
+        <Button
+            android:id="@+id/btnVocalToggle"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_keyboard_key"
+            android:textColor="@color/color_keyboard_key_text"
+            android:text="原唱/伴唱"
+            android:textSize="13sp"
+            android:focusable="true" />
+
+        <Button
+            android:id="@+id/btnEffectApplause"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_keyboard_key"
+            android:textColor="@color/color_keyboard_key_text"
+            android:text="👏 鼓掌"
+            android:textSize="13sp"
+            android:focusable="true" />
+
+        <Button
+            android:id="@+id/btnEffectCheer"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_keyboard_key"
+            android:textColor="@color/color_keyboard_key_text"
+            android:text="🎉 喝彩"
+            android:textSize="13sp"
+            android:focusable="true" />
+    </LinearLayout>
+
+    <!-- 右侧：已点队列入口抽屉按钮 -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnQueueBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="46dp"
+            android:background="@drawable/btn_gold"
+            android:textColor="#111317"
+            android:text="已点 0 首"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:paddingHorizontal="16dp"
+            android:focusable="true" />
+    </LinearLayout>
+</LinearLayout>

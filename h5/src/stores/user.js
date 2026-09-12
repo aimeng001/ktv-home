@@ -8,6 +8,7 @@ import { defineStore } from 'pinia'
 // localStorage 存储键名 / localStorage storage keys
 const TOKEN_KEY = 'ktv_client_token'
 const NICK_KEY = 'ktv_nickname'
+const USER_ID_KEY = 'ktv_server_user_id'
 
 /**
  * 生成客户端唯一标识 token：优先使用原生 crypto.randomUUID()，不可用时降级为随机字符串。
@@ -44,12 +45,17 @@ export const useUserStore = defineStore('user', {
     // 客户端唯一标识 / client unique token
     clientToken: localStorage.getItem(TOKEN_KEY) || '',
     // 用户昵称 / user nickname
-    nickname: localStorage.getItem(NICK_KEY) || ''
+    nickname: localStorage.getItem(NICK_KEY) || '',
+    // 服务端 POST /user 返回的稳定身份；仅有本地昵称不代表可写。
+    serverUserId: Number(localStorage.getItem(USER_ID_KEY)) || null,
+    registrationError: ''
   }),
   getters: {
     // 是否已完成初次进入（有 token 且有昵称）
     // Whether the user has completed initial registration (has both token and nickname)
-    isRegistered: (s) => !!s.clientToken && !!s.nickname
+    isRegistered: (s) => !!s.clientToken && !!s.nickname,
+    isServerRegistered: (s) => Number.isInteger(s.serverUserId) && s.serverUserId > 0,
+    isReady: (s) => !!s.clientToken && !!s.nickname && Number.isInteger(s.serverUserId) && s.serverUserId > 0 && !s.registrationError
   },
   actions: {
     /**
@@ -88,6 +94,30 @@ export const useUserStore = defineStore('user', {
       this.ensureToken()
       this.nickname = (nickname || '').trim() || genNickname()
       localStorage.setItem(NICK_KEY, this.nickname)
+      this.serverUserId = null
+      this.registrationError = ''
+      localStorage.removeItem(USER_ID_KEY)
+    },
+
+    /** 保存服务端最终昵称和用户 id；缺失 id 时保持不可写。 */
+    markRegistrationSuccess(profile) {
+      const id = Number(profile?.id)
+      if (!Number.isInteger(id) || id <= 0 || !profile?.nickname) {
+        this.markRegistrationFailure(new Error('服务端未返回有效用户身份'))
+        return false
+      }
+      this.serverUserId = id
+      localStorage.setItem(USER_ID_KEY, String(id))
+      this.setNickname(profile.nickname)
+      this.registrationError = ''
+      return true
+    },
+
+    /** 注册失败时清除可写身份，入口页必须停留并允许重试。 */
+    markRegistrationFailure(error) {
+      this.serverUserId = null
+      localStorage.removeItem(USER_ID_KEY)
+      this.registrationError = error?.message || '无法连接点歌服务，请重试'
     },
 
     /**

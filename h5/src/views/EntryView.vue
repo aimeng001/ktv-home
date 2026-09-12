@@ -14,7 +14,13 @@
       <div class="hint">已为你随机生成，可修改；本机记忆，下次免填</div>
     </div>
 
-    <button class="btn enter-btn" @click="enter">进入点歌</button>
+    <button class="btn enter-btn" :disabled="registering" @click="enter">
+      {{ registering ? '正在连接…' : '进入点歌' }}
+    </button>
+    <div v-if="registrationError" class="registration-error" role="alert">
+      {{ registrationError }}
+      <button class="retry" :disabled="registering" @click="enter">重试</button>
+    </div>
     <!-- 页脚提示 / Footer note -->
     <div class="foot">仅限家庭局域网使用 · 无需注册</div>
   </div>
@@ -44,6 +50,8 @@ const roomLabel = ref('房间：客厅')
 // 默认回填已存昵称或随机建议值（详设 H5-01）
 // Default: fallback to saved nickname or a random suggestion (spec H5-01)
 const nickname = ref(user.suggestNickname())
+const registering = ref(false)
+const registrationError = ref('')
 
 onMounted(async () => {
   try {
@@ -69,15 +77,23 @@ onMounted(async () => {
  * After registration, establishes the WebSocket connection and routes to home.
  */
 async function enter() {
+  if (registering.value) return
   user.register(nickname.value)
+  registering.value = true
+  registrationError.value = ''
   // 同步到服务端并取回去重后的最终昵称（P2.13 昵称冲突显序号）
   // Sync to server and fetch the deduped final nickname (P2.13 nickname conflict → suffix)
   try {
     const res = await api.registerUser(user.clientToken, user.nickname)
-    if (res?.nickname) user.setNickname(res.nickname)
-  } catch { /* 离线也可继续，稍后重连同步 / offline is ok, re-sync on reconnect */ }
-  player.connect()
-  router.replace({ name: 'home' })
+    if (!user.markRegistrationSuccess(res)) throw new Error('服务端未返回有效用户身份')
+    player.connect()
+    router.replace({ name: 'home' })
+  } catch (error) {
+    user.markRegistrationFailure(error)
+    registrationError.value = user.registrationError || '无法连接点歌服务，请重试'
+  } finally {
+    registering.value = false
+  }
 }
 </script>
 
@@ -113,5 +129,8 @@ async function enter() {
 }
 .hint { font-size: 11px; color: var(--dim2); margin-top: 10px; }
 .enter-btn { width: 100%; padding: 16px; font-size: 17px; border-radius: 14px; margin-top: 28px; }
+.enter-btn:disabled { opacity: .6; cursor: wait; }
+.registration-error { width: 100%; margin-top: 14px; color: #ffb4ab; font-size: 13px; text-align: center; }
+.registration-error .retry { margin-left: 8px; color: var(--gold); background: none; border: 0; text-decoration: underline; }
 .foot { margin-top: auto; font-size: 11px; color: var(--dim2); }
 </style>

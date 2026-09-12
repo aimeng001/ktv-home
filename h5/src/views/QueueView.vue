@@ -83,7 +83,7 @@ const controls = makeControls(user.clientToken)
 
 const history = ref([])
 const showHist = ref(false)
-const host = ref({ claimed: false, isHost: false, hostNickname: null })
+const host = ref({ claimed: false, isHost: false, hostNickname: null, revision: 0 })
 const nowPlayingCover = computed(() => player.nowPlaying?.song?.coverUrl || '')
 const nowPlayingStyle = computed(() => nowPlayingCover.value ? {
   backgroundImage: `linear-gradient(90deg,rgba(8,11,14,.94),rgba(8,11,14,.38)),url(${nowPlayingCover.value})`
@@ -91,10 +91,25 @@ const nowPlayingStyle = computed(() => nowPlayingCover.value ? {
 
 onMounted(async () => {
   const [loadedHistory, loadedHost] = await Promise.all([loadHistory(), api.roomHostStatus(user.clientToken).catch(() => null)])
-  if (loadedHost) host.value = loadedHost
+  mergeHost(loadedHost)
 })
 
 watch(() => player.historyRevision, loadHistory)
+watch(() => player.roomHost, value => {
+  mergeHost(value)
+}, { deep: true })
+
+function mergeHost(value) {
+  if (!value || typeof value !== 'object') return
+  const incomingRevision = Number(value.revision)
+  const currentRevision = Number(host.value.revision) || 0
+  if (Number.isFinite(incomingRevision) ? incomingRevision < currentRevision : currentRevision > 0) return
+  host.value = {
+    ...host.value,
+    ...value,
+    revision: Number.isFinite(incomingRevision) ? incomingRevision : currentRevision
+  }
+}
 
 async function loadHistory() {
   const loadedHistory = await api.history().catch(() => [])
@@ -119,16 +134,17 @@ async function reorder(song) {
 
 /**
  * 判断当前队列项是否由本人点歌。
- * orderedBy 为服务端 user id，H5 无法直接比对 id，改用昵称匹配（家庭场景足够）。
+ * orderedBy 与注册响应中的 serverUserId 比较；昵称不是权限依据。
  *
  * Check whether a queue entry was ordered by the current user.
- * The server exposes `orderedBy` as a user id; H5 matches by nickname
- * instead (serviceable for a family karaoke scenario).
+ * The server exposes `orderedBy` as a user id; duplicate nicknames are not
+ * treated as ownership.
  * @param {Object} q - 队列项 / queue entry
  * @returns {boolean}
  */
 function isMine(q) {
-  return q.orderedByNick && q.orderedByNick === user.nickname
+  return Number.isInteger(user.serverUserId) && user.serverUserId > 0 &&
+    Number(q.orderedBy) === user.serverUserId
 }
 
 /**
@@ -170,8 +186,8 @@ async function confirmNext() {
  * Claim the room host role.
  */
 async function claimHost() {
-  try { host.value = await api.claimRoomHost(user.clientToken); toast('你已成为房主') }
-  catch (error) { toast(error.message || '认领失败'); host.value = await api.roomHostStatus(user.clientToken).catch(() => host.value) }
+  try { mergeHost(await api.claimRoomHost(user.clientToken)); toast('你已成为房主') }
+  catch (error) { toast(error.message || '认领失败'); mergeHost(await api.roomHostStatus(user.clientToken).catch(() => host.value)) }
 }
 /**
  * 释放房主身份，允许其他人认领。
@@ -180,7 +196,7 @@ async function claimHost() {
  */
 async function releaseHost() {
   if (!await confirmDialog('释放后其他人可认领房主身份。', { title: '释放房主身份' })) return
-  try { host.value = await api.releaseRoomHost(user.clientToken); toast('已释放房主身份') }
+  try { mergeHost(await api.releaseRoomHost(user.clientToken)); toast('已释放房主身份') }
   catch (error) { toast(error.message || '释放失败') }
 }
 /**

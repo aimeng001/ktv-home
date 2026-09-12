@@ -3,6 +3,9 @@ package com.homektv.musicsource;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -12,18 +15,26 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 final class MusicSourceHttp {
-    private final HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
+    static final int MAX_BODY_BYTES = 5 * 1024 * 1024;
+    private final HttpClient client;
     private final ObjectMapper mapper;
     private final MusicProvider provider;
     private final Set<String> allowedHosts;
 
     MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts) {
+        this(mapper, provider, allowedHosts,
+                HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build());
+    }
+
+    MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts, HttpClient client) {
         this.mapper = mapper;
         this.provider = provider;
         this.allowedHosts = allowedHosts;
+        this.client = Objects.requireNonNull(client, "client");
     }
 
     JsonNode get(String url, Map<String, ?> headers, Duration timeout) {
@@ -44,16 +55,42 @@ final class MusicSourceHttp {
         }
         HttpRequest request = builder.build();
         try {
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() < 200 || response.statusCode() >= 300)
-                throw new MusicSourceException(provider, "上游返回 HTTP " + response.statusCode());
-            if (response.body().length() > 5_000_000) throw new MusicSourceException(provider, "上游响应过大");
-            return mapper.readTree(response.body());
+            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            try (InputStream body = response.body()) {
+                if (response.statusCode() < 200 || response.statusCode() >= 300)
+                    throw new MusicSourceException(provider, "上游返回 HTTP " + response.statusCode());
+                long declaredLength = response.headers().firstValueAsLong("Content-Length").orElse(-1);
+                if (declaredLength > MAX_BODY_BYTES) throw new ResponseTooLargeException();
+                return mapper.readTree(readAtMost(body, MAX_BODY_BYTES));
+            }
         } catch (MusicSourceException ex) {
             throw ex;
+        } catch (ResponseTooLargeException ex) {
+            throw new MusicSourceException(provider, "上游响应过大", ex);
         } catch (Exception ex) {
             if (ex instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new MusicSourceException(provider, "平台请求失败", ex);
+        }
+    }
+
+    static byte[] readAtMost(InputStream input, int limit) throws IOException {
+        if (limit < 0) throw new IllegalArgumentException("limit must not be negative");
+        ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(limit, 8192));
+        byte[] buffer = new byte[Math.min(Math.max(limit, 1), 8192)];
+        int total = 0;
+        int count;
+        while ((count = input.read(buffer)) != -1) {
+            if (count == 0) continue;
+            if (count > limit - total) throw new ResponseTooLargeException();
+            output.write(buffer, 0, count);
+            total += count;
+        }
+        return output.toByteArray();
+    }
+
+    private static final class ResponseTooLargeException extends IOException {
+        private ResponseTooLargeException() {
+            super("response body exceeds configured limit");
         }
     }
 

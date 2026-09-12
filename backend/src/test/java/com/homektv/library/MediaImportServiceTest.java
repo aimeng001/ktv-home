@@ -7,6 +7,7 @@ import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
 import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.SongFileRepository;
+import com.homektv.web.ApiException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -524,6 +525,38 @@ class MediaImportServiceTest {
     }
 
     @Test
+    void allPendingTranscodeRejectsAnUnboundedQueueBeforeMutatingRecords() {
+        List<MediaImportRecord> records = new ArrayList<>();
+        for (long id = 1; id <= MediaImportService.MAX_TRANSCODE_QUEUE + 1L; id++) {
+            records.add(transcodableRecord(id));
+        }
+        when(importRepo.findByIdGreaterThanOrderByIdAsc(anyLong(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(records));
+
+        ApiException exception = org.junit.jupiter.api.Assertions.assertThrows(ApiException.class,
+                () -> service.startPendingTranscode(null, true));
+
+        assertThat(exception.getCode()).isEqualTo("TRANSCODE_QUEUE_LIMIT");
+        verify(importRepo, never()).save(any(MediaImportRecord.class));
+        assertThat(service.getProgress().running()).isFalse();
+    }
+
+    @Test
+    void selectedTranscodeRejectsAnOversizedIdCollectionBeforeTheRepositoryQuery() {
+        List<Long> ids = new ArrayList<>();
+        for (long id = 1; id <= MediaImportService.MAX_TRANSCODE_QUEUE + 1L; id++) {
+            ids.add(id);
+        }
+
+        ApiException exception = org.junit.jupiter.api.Assertions.assertThrows(ApiException.class,
+                () -> service.startPendingTranscode(ids, false));
+
+        assertThat(exception.getCode()).isEqualTo("TRANSCODE_QUEUE_LIMIT");
+        verify(importRepo, never()).findByIdIn(any());
+        assertThat(service.getProgress().running()).isFalse();
+    }
+
+    @Test
     void failedLibraryIngestRemovesTheNewTranscodeOutput() throws Exception {
         MediaImportRecord record = pendingRecord(41L, "歌手 - 入库异常.mpg");
         when(importRepo.findByIdIn(List.of(41L))).thenReturn(List.of(record));
@@ -643,6 +676,14 @@ class MediaImportServiceTest {
         record.setSourcePath(source.toString());
         record.setSourceFilename(filename);
         record.setSourceMd5(new FileHashService().md5(source));
+        record.setAction(MediaImportService.PENDING_TRANSCODE);
+        record.setTranscodeRequired(true);
+        return record;
+    }
+
+    private MediaImportRecord transcodableRecord(long id) {
+        MediaImportRecord record = new MediaImportRecord();
+        record.setId(id);
         record.setAction(MediaImportService.PENDING_TRANSCODE);
         record.setTranscodeRequired(true);
         return record;

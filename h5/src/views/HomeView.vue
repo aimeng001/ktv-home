@@ -50,11 +50,11 @@
  * Home view — the main page of Home KTV.
  * Contains: now-playing bar, search entry, category grid, hot ranking.
  */
-import { onMounted, reactive } from 'vue'
+import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api, { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
-import { usePlayerStore } from '../stores/player'
+import { useQueuedSongIds } from '../composables/useQueuedSongIds'
 import { useToast } from '../composables/useToast'
 import TabBar from '../components/TabBar.vue'
 import SongRow from '../components/SongRow.vue'
@@ -66,16 +66,15 @@ import { Search, UserRound, Sparkles, UsersRound, ListMusic, Heart, Languages, L
 
 const router = useRouter()
 const user = useUserStore()
-const player = usePlayerStore()
 const { toast } = useToast()
 const controls = makeControls(user.clientToken)
-const { executeOrder } = useOrderLock()
+const { executeOrder, inflightIds } = useOrderLock()
+const { orderedIds, player } = useQueuedSongIds(inflightIds)
 
 const { data: hot, status: hotStatus, error: hotError, load: loadHot } = useAsyncResource(async () => {
   const ranked = await api.ranking(30)
   return ranked.length ? ranked : await api.newSongs()
 }, [])
-const orderedIds = reactive(new Set())
 
 /** 首页分类宫格数据 / Home page category grid items */
 const cats = [
@@ -105,7 +104,7 @@ async function order(song) {
   await executeOrder(song.id, async () => {
     try {
       const res = await controls.order(song.id)
-      orderedIds.add(song.id)
+      player.applyControlResponse(res)
       toast(formatOrderToast(res))
     } catch (e) {
       if (e.code === 'SONG_IN_QUEUE') {

@@ -89,10 +89,14 @@ if (-not (Test-Path -Path $MAVEN_M2_PATH)) {
 }
 
 $MAVEN_WRAPPER_DISTS = $null
-if ((Get-Item $MAVEN_M2_PATH).Target[0] -eq $null) {
+# PowerShell 7 throws when indexing Target on a regular directory because
+# Target is $null.  Windows users commonly have a real ~/.m2 directory, so
+# inspect the property before indexing it and keep the wrapper usable there.
+$mavenM2Target = (Get-Item $MAVEN_M2_PATH).Target
+if ($null -eq $mavenM2Target -or [string]::IsNullOrWhiteSpace([string]$mavenM2Target)) {
   $MAVEN_WRAPPER_DISTS = "$MAVEN_M2_PATH/wrapper/dists"
 } else {
-  $MAVEN_WRAPPER_DISTS = (Get-Item $MAVEN_M2_PATH).Target[0] + "/wrapper/dists"
+  $MAVEN_WRAPPER_DISTS = ([string]$mavenM2Target) + "/wrapper/dists"
 }
 
 $MAVEN_HOME_PARENT = "$MAVEN_WRAPPER_DISTS/$distributionUrlNameMain"
@@ -101,6 +105,20 @@ $MAVEN_HOME = "$MAVEN_HOME_PARENT/$MAVEN_HOME_NAME"
 
 if (Test-Path -Path "$MAVEN_HOME" -PathType Container) {
   Write-Verbose "found existing MAVEN_HOME at $MAVEN_HOME"
+  Write-Output "MVN_CMD=$MAVEN_HOME/bin/$MVN_CMD"
+  exit $?
+}
+
+# A Maven distribution may have been cached under a hash produced by an older
+# wrapper URL (for example after switching mirrors).  Reuse a valid versioned
+# distribution before attempting a network download; this keeps local tests
+# deterministic and avoids an unnecessary TLS/download failure.
+$cachedMavenHome = Get-ChildItem -Path $MAVEN_HOME_PARENT -Directory -ErrorAction SilentlyContinue |
+  Where-Object { Test-Path -Path (Join-Path $_.FullName "bin/$MVN_CMD") } |
+  Select-Object -First 1
+if ($cachedMavenHome) {
+  $MAVEN_HOME = $cachedMavenHome.FullName
+  Write-Verbose "found compatible cached MAVEN_HOME at $MAVEN_HOME"
   Write-Output "MVN_CMD=$MAVEN_HOME/bin/$MVN_CMD"
   exit $?
 }

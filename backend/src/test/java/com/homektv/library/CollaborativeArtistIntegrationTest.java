@@ -38,6 +38,7 @@ class CollaborativeArtistIntegrationTest {
     @Autowired SongRepository songRepository;
     @Autowired SongArtistRepository artistRepository;
     @Autowired ArtistCreditService artistCredits;
+    @Autowired ArtistCreditReconciliationService creditReconciliation;
     @Autowired CategoryBrowseService browseService;
     @Autowired SongSearchService searchService;
     @Autowired SongMergeService mergeService;
@@ -68,6 +69,27 @@ class CollaborativeArtistIntegrationTest {
         assertThat(bySecondArtist).extracting(SongDto::title)
                 .containsExactly("合唱歌曲");
 
+        assertThat(searchService.search("wzy", 0)).extracting(Song::getTitle)
+                .containsExactly("合唱歌曲");
+    }
+
+    @Test
+    void startupReconciliationRepairsMigrationRowsBeforePinyinSearch() {
+        Song song = save("合唱歌曲", "单依纯_王子异", "collaborative-legacy-search");
+        SongArtist legacy = new SongArtist();
+        legacy.setSongId(song.getId());
+        legacy.setArtistName("王子异");
+        legacy.setArtistKey(ArtistCreditParser.key("王子异"));
+        legacy.setArtistPy("");
+        legacy.setArtistInit("");
+        legacy.setArtistOrder(1);
+        artistRepository.saveAndFlush(legacy);
+
+        creditReconciliation.reconcileValidSongs();
+
+        assertThat(artistRepository.findBySongIdOrderByArtistOrder(song.getId()))
+                .extracting(SongArtist::getArtistInit)
+                .contains("wzy");
         assertThat(searchService.search("wzy", 0)).extracting(Song::getTitle)
                 .containsExactly("合唱歌曲");
     }

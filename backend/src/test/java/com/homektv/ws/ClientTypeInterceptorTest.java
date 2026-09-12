@@ -71,4 +71,84 @@ class ClientTypeInterceptorTest {
         assertThat(missingAccepted).isFalse();
         assertThat(validAccepted).isTrue();
     }
+
+    @Test
+    void preservesControllerPlatformAndDeviceModeMetadata() {
+        MockHttpServletRequest servletRequest = new MockHttpServletRequest("GET", "/ws");
+        servletRequest.setQueryString(
+                "client_type=controller&client_token=android-1&protocol_version=2" +
+                        "&platform=ANDROID_TABLET&device_mode=CONTROLLER");
+        Map<String, Object> attributes = new HashMap<>();
+
+        boolean accepted = new ClientTypeInterceptor().beforeHandshake(
+                new ServletServerHttpRequest(servletRequest),
+                mock(org.springframework.http.server.ServerHttpResponse.class),
+                mock(org.springframework.web.socket.WebSocketHandler.class),
+                attributes);
+
+        assertThat(accepted).isTrue();
+        assertThat(attributes).containsEntry("client_type", "controller");
+        assertThat(attributes).containsEntry("platform", "ANDROID_TABLET");
+        assertThat(attributes).containsEntry("device_mode", "CONTROLLER");
+    }
+
+    @Test
+    void defaultsMissingClientTypeToH5ForLegacyClients() {
+        MockHttpServletRequest servletRequest = new MockHttpServletRequest("GET", "/ws");
+        servletRequest.setQueryString("client_token=legacy-1");
+        Map<String, Object> attributes = new HashMap<>();
+
+        boolean accepted = new ClientTypeInterceptor().beforeHandshake(
+                new ServletServerHttpRequest(servletRequest),
+                mock(org.springframework.http.server.ServerHttpResponse.class),
+                mock(org.springframework.web.socket.WebSocketHandler.class),
+                attributes);
+
+        assertThat(accepted).isTrue();
+        assertThat(attributes).containsEntry("client_type", "h5");
+    }
+
+    @Test
+    void rejectsUnknownRolesAndOversizedHandshakeMetadata() {
+        MockHttpServletRequest unknownRole = new MockHttpServletRequest("GET", "/ws");
+        unknownRole.setQueryString("client_type=phone");
+        boolean unknownAccepted = new ClientTypeInterceptor().beforeHandshake(
+                new ServletServerHttpRequest(unknownRole),
+                mock(org.springframework.http.server.ServerHttpResponse.class),
+                mock(org.springframework.web.socket.WebSocketHandler.class),
+                new HashMap<>());
+
+        MockHttpServletRequest oversized = new MockHttpServletRequest("GET", "/ws");
+        oversized.setQueryString("client_type=h5&protocol_version=" + "x".repeat(257));
+        boolean oversizedAccepted = new ClientTypeInterceptor().beforeHandshake(
+                new ServletServerHttpRequest(oversized),
+                mock(org.springframework.http.server.ServerHttpResponse.class),
+                mock(org.springframework.web.socket.WebSocketHandler.class),
+                new HashMap<>());
+
+        assertThat(unknownAccepted).isFalse();
+        assertThat(oversizedAccepted).isFalse();
+    }
+
+    @Test
+    void rejectsInvalidPlatformAndDeviceModeValues() {
+        MockHttpServletRequest invalidPlatform = new MockHttpServletRequest("GET", "/ws");
+        invalidPlatform.setQueryString("client_type=controller&platform=UNKNOWN");
+        boolean platformAccepted = new ClientTypeInterceptor().beforeHandshake(
+                new ServletServerHttpRequest(invalidPlatform),
+                mock(org.springframework.http.server.ServerHttpResponse.class),
+                mock(org.springframework.web.socket.WebSocketHandler.class),
+                new HashMap<>());
+
+        MockHttpServletRequest invalidMode = new MockHttpServletRequest("GET", "/ws");
+        invalidMode.setQueryString("client_type=controller&device_mode=UNKNOWN");
+        boolean modeAccepted = new ClientTypeInterceptor().beforeHandshake(
+                new ServletServerHttpRequest(invalidMode),
+                mock(org.springframework.http.server.ServerHttpResponse.class),
+                mock(org.springframework.web.socket.WebSocketHandler.class),
+                new HashMap<>());
+
+        assertThat(platformAccepted).isFalse();
+        assertThat(modeAccepted).isFalse();
+    }
 }

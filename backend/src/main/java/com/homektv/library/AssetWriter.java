@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.config.AppProperties;
+import com.homektv.web.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -21,6 +22,8 @@ import java.util.Optional;
 public class AssetWriter {
 
     private static final Logger log = LoggerFactory.getLogger(AssetWriter.class);
+    static final int MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+    static final int MAX_LYRIC_BYTES = 1 * 1024 * 1024;
 
     private final Path dataRoot;
     private final AppProperties props;
@@ -34,13 +37,18 @@ public class AssetWriter {
     /** 写歌词缓存，返回相对路径 lyrics/{fingerprint}.lrc */
     public String writeLyric(String fingerprint, String lyricText) {
         String rel = "lyrics/" + fingerprint + ".lrc";
-        write(rel, lyricText.getBytes(StandardCharsets.UTF_8));
+        byte[] bytes = lyricText == null ? new byte[0] : lyricText.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length > MAX_LYRIC_BYTES) {
+            throw new ApiException("LYRIC_TOO_LARGE", "歌词不能超过 1MB");
+        }
+        write(rel, bytes);
         return rel;
     }
 
     /** 写封面缓存，返回相对路径 covers/{fingerprint}.{ext} */
     public String writeCover(String fingerprint, byte[] image, String ext) {
         String rel = "covers/" + fingerprint + "." + (ext == null ? "jpg" : ext);
+        requireImageSize(image);
         write(rel, image);
         return rel;
     }
@@ -48,6 +56,7 @@ public class AssetWriter {
     /** Write an artist avatar to an application-owned cache, keyed by artist identity. */
     public String writeArtistCover(String artistKey, byte[] image, String ext) {
         String rel = "artist-covers/" + digest(artistKey) + "." + (ext == null ? "jpg" : ext);
+        requireImageSize(image);
         write(rel, image);
         return rel;
     }
@@ -81,6 +90,10 @@ public class AssetWriter {
             log.debug("资源缓存路径不可读：{} - {}", relativePath, failure.getMessage());
             return Optional.empty();
         }
+    }
+
+    Path dataRootForCleanup() {
+        return dataRoot.toAbsolutePath().normalize();
     }
 
     /** Deletes one verified application-owned cache file, if it still exists. */
@@ -122,14 +135,25 @@ public class AssetWriter {
 
     public String writePlaylistCover(Long playlistId, byte[] image, String ext) {
         String rel = "playlist-covers/" + playlistId + "-" + System.currentTimeMillis() + "." + (ext == null ? "jpg" : ext);
+        requireImageSize(image);
         write(rel, image);
         return rel;
     }
 
     public String writeStandbyLogo(byte[] image, String ext) {
         String rel = "standby/logo-" + System.currentTimeMillis() + "." + (ext == null ? "png" : ext);
+        requireImageSize(image);
         write(rel, image);
         return rel;
+    }
+
+    private static void requireImageSize(byte[] image) {
+        if (image == null || image.length == 0) {
+            throw new ApiException("INVALID_IMAGE", "图片不能为空");
+        }
+        if (image.length > MAX_IMAGE_BYTES) {
+            throw new ApiException("IMAGE_TOO_LARGE", "图片不能超过 10MB");
+        }
     }
 
     private void write(String relPath, byte[] data) {

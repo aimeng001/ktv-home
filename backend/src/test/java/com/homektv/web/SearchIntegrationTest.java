@@ -3,6 +3,8 @@ package com.homektv.web;
 import com.homektv.domain.Song;
 import com.homektv.library.PinyinUtil;
 import com.homektv.library.SongSearchService;
+import com.homektv.domain.SongArtist;
+import com.homektv.repo.SongArtistRepository;
 import com.homektv.repo.SongRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +43,7 @@ class SearchIntegrationTest {
 
     @Autowired SongSearchService searchService;
     @Autowired SongRepository songRepo;
+    @Autowired SongArtistRepository songArtistRepo;
 
     @BeforeEach
     void seed() {
@@ -51,11 +54,11 @@ class SearchIntegrationTest {
         save("海阔天空", "Beyond", "MV", 50, "粤语", new String[]{"摇滚"});
     }
 
-    private void save(String title, String artist, String mediaType, int playCount) {
-        save(title, artist, mediaType, playCount, "未知", new String[0]);
+    private Song save(String title, String artist, String mediaType, int playCount) {
+        return save(title, artist, mediaType, playCount, "未知", new String[0]);
     }
 
-    private void save(String title, String artist, String mediaType, int playCount,
+    private Song save(String title, String artist, String mediaType, int playCount,
                       String language, String[] tags) {
         Song s = new Song();
         s.setTitle(title);
@@ -69,12 +72,18 @@ class SearchIntegrationTest {
         s.setMediaType(mediaType);
         s.setPlayCount(playCount);
         s.setFingerprint("fp-" + title);
-        songRepo.save(s);
+        return songRepo.save(s);
     }
 
     @Test
     void searchByChinese() {
         List<Song> r = searchService.search("晴天", 0);
+        assertThat(r).extracting(Song::getTitle).contains("晴天");
+    }
+
+    @Test
+    void searchByShortChineseSubstring() {
+        List<Song> r = searchService.search("天", 0);
         assertThat(r).extracting(Song::getTitle).contains("晴天");
     }
 
@@ -116,6 +125,89 @@ class SearchIntegrationTest {
     }
 
     @Test
+    void searchTreatsLikeWildcardsAsLiteralCharacters() {
+        save("100%爱", "测试歌手", "AUDIO", 1);
+        save("100_爱", "测试歌手", "AUDIO", 1);
+        save("路径\\歌曲", "测试歌手", "AUDIO", 1);
+
+        List<Song> percent = searchService.search("%", 0);
+        List<Song> underscore = searchService.search("_", 0);
+        List<Song> backslash = searchService.search("\\", 0);
+
+        assertThat(percent).extracting(Song::getTitle).containsExactly("100%爱");
+        assertThat(underscore).extracting(Song::getTitle).containsExactly("100_爱");
+        assertThat(backslash).extracting(Song::getTitle).containsExactly("路径\\歌曲");
+    }
+
+    @Test
+    void searchLanguageIsCaseInsensitiveForAsciiValues() {
+        save("English Song", "English Artist", "AUDIO", 1, "English", new String[0]);
+
+        List<Song> r = searchService.search("english", 0);
+
+        assertThat(r).extracting(Song::getTitle).contains("English Song");
+    }
+
+    @Test
+    void searchTagKeepsCaseInsensitiveSubstringBehavior() {
+        save("Rock Song", "Rock Artist", "AUDIO", 1, "English", new String[]{"Rock"});
+        save("摇滚歌曲", "中文歌手", "AUDIO", 1, "国语", new String[]{"摇滚"});
+
+        assertThat(searchService.search("rock", 0)).extracting(Song::getTitle).contains("Rock Song");
+        assertThat(searchService.search("滚", 0)).extracting(Song::getTitle).contains("摇滚歌曲");
+    }
+
+    @Test
+    void longTagSubstringUsesTheMaintainedProjection() {
+        save("标签投影歌曲", "普通歌手", "AUDIO", 1, "未知", new String[]{"Rock Music"});
+
+        assertThat(searchService.search("music", 0)).extracting(Song::getTitle)
+                .containsExactly("标签投影歌曲");
+    }
+
+    @Test
+    void longTagProjectionFollowsTagUpdates() {
+        Song song = save("标签更新歌曲", "普通歌手", "AUDIO", 1, "未知", new String[]{"Rock"});
+
+        assertThat(searchService.search("ock", 0)).extracting(Song::getTitle)
+                .containsExactly("标签更新歌曲");
+
+        song.setTags(new String[]{"Jazz"});
+        songRepo.saveAndFlush(song);
+
+        assertThat(searchService.search("ock", 0)).extracting(Song::getTitle)
+                .doesNotContain("标签更新歌曲");
+        assertThat(searchService.search("azz", 0)).extracting(Song::getTitle)
+                .containsExactly("标签更新歌曲");
+    }
+
+    @Test
+    void shortSearchProjectionFollowsSongMetadataUpdates() {
+        Song song = save("投影歌曲", "测试歌手", "AUDIO", 1, "未知", new String[]{"旧"});
+
+        assertThat(searchService.search("旧", 0)).extracting(Song::getTitle).contains("投影歌曲");
+
+        song.setTags(new String[]{"新"});
+        songRepo.saveAndFlush(song);
+
+        assertThat(searchService.search("旧", 0)).extracting(Song::getTitle)
+                .doesNotContain("投影歌曲");
+        assertThat(searchService.search("新", 0)).extracting(Song::getTitle)
+                .contains("投影歌曲");
+    }
+
+    @Test
+    void shortSearchProjectionFollowsIndependentPinyinRepair() {
+        Song song = save("拼音投影", "测试歌手", "AUDIO", 1);
+
+        song.setTitleInit("zz");
+        songRepo.saveAndFlush(song);
+
+        assertThat(searchService.search("zz", 0)).extracting(Song::getTitle)
+                .contains("拼音投影");
+    }
+
+    @Test
     void ktvRanksBeforeOthersAndExactFirst() {
         // 完全匹配「后来」应在前；KTV 版整体优先
         List<Song> r = searchService.search("后来", 0);
@@ -133,6 +225,37 @@ class SearchIntegrationTest {
         List<Song> result = searchService.search("分页歌曲", "MV", 0);
 
         assertThat(result).extracting(Song::getTitle).containsExactly("分页歌曲目标");
+    }
+
+    @Test
+    void mediaTypeFilterIsAppliedAcrossArtistLanguageAndTagCandidates() {
+        Song artistAudio = save("副歌手音频", "主歌手", "AUDIO", 1);
+        Song artistMv = save("副歌手视频", "主歌手", "MV", 1);
+        addArtistCredit(artistAudio, "Feature Singer");
+        addArtistCredit(artistMv, "Feature Singer");
+
+        save("语言音频", "普通歌手", "AUDIO", 1, "English", new String[0]);
+        save("语言视频", "普通歌手", "MV", 1, "English", new String[0]);
+        save("标签音频", "普通歌手", "AUDIO", 1, "未知", new String[]{"Rock"});
+        save("标签视频", "普通歌手", "MV", 1, "未知", new String[]{"Rock"});
+
+        assertThat(searchService.search("feature", "MV", 0)).extracting(Song::getTitle)
+                .containsExactly("副歌手视频");
+        assertThat(searchService.search("english", "MV", 0)).extracting(Song::getTitle)
+                .containsExactly("语言视频");
+        assertThat(searchService.search("rock", "MV", 0)).extracting(Song::getTitle)
+                .containsExactly("标签视频");
+    }
+
+    private void addArtistCredit(Song song, String name) {
+        SongArtist credit = new SongArtist();
+        credit.setSongId(song.getId());
+        credit.setArtistName(name);
+        credit.setArtistKey(name.toLowerCase(java.util.Locale.ROOT));
+        credit.setArtistPy(PinyinUtil.fullPinyin(name));
+        credit.setArtistInit(PinyinUtil.initials(name));
+        credit.setArtistOrder(0);
+        songArtistRepo.saveAndFlush(credit);
     }
 
     @Test

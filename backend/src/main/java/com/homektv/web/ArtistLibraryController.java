@@ -4,6 +4,7 @@ import com.homektv.library.ArtistLibraryService;
 import com.homektv.library.ArtistProfileService;
 import com.homektv.library.AssetWriter;
 import com.homektv.library.LocalAvatarResolver;
+import com.homektv.musicsource.CoverImageNormalizer;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -20,6 +21,7 @@ public class ArtistLibraryController {
     private final LocalAvatarResolver localAvatarResolver;
     private final AssetWriter assetWriter;
     private final ArtistProfileService profileService;
+    private CoverImageNormalizer coverImageNormalizer;
 
     public ArtistLibraryController(ArtistLibraryService service,
                                    LocalAvatarResolver localAvatarResolver,
@@ -29,6 +31,11 @@ public class ArtistLibraryController {
         this.localAvatarResolver = localAvatarResolver;
         this.assetWriter = assetWriter;
         this.profileService = profileService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCoverImageNormalizer(CoverImageNormalizer coverImageNormalizer) {
+        this.coverImageNormalizer = coverImageNormalizer;
     }
 
     @PostMapping("/{artistKey}/avatar")
@@ -50,7 +57,15 @@ public class ArtistLibraryController {
             throw new ApiException("INVALID_IMAGE_TYPE", "仅支持 JPG、PNG 或 WEBP 格式图片");
         }
         String cleanExt = ext.startsWith(".") ? ext.substring(1) : ext;
-        String relPath = assetWriter.writeArtistCover(artistKey, file.getBytes(), cleanExt);
+        byte[] image = file.getBytes();
+        if (coverImageNormalizer != null) {
+            try {
+                image = coverImageNormalizer.normalize(image);
+            } catch (ApiException failure) {
+                throw new ApiException("INVALID_IMAGE", "头像图片无法识别或尺寸过大");
+            }
+        }
+        String relPath = assetWriter.writeArtistCover(artistKey, image, "jpg");
         profileService.setAvatarReady(artistKey, "CUSTOM_UPLOAD", relPath);
         return Map.of("success", true, "avatarUrl", "/api/artists/avatar?key=" + artistKey);
     }

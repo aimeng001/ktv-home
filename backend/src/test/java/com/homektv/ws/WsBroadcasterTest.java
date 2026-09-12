@@ -38,6 +38,22 @@ class WsBroadcasterTest {
     }
 
     @Test
+    void separatesNativeControllersFromBrowserH5WithoutTreatingThemAsTv() {
+        WsBroadcaster broadcaster = new WsBroadcaster(new ObjectMapper());
+        WebSocketSession controller = session("controller-1", "controller");
+
+        broadcaster.register(controller);
+
+        assertThat(broadcaster.h5Count()).isZero();
+        assertThat(broadcaster.controllerCount()).isEqualTo(1);
+        assertThat(broadcaster.connectedPhonesCount()).isEqualTo(1);
+        assertThat(broadcaster.isTvOnline()).isFalse();
+        assertThat(broadcaster.unregister(controller)).isEqualTo("controller");
+        assertThat(broadcaster.h5Count()).isZero();
+        assertThat(broadcaster.controllerCount()).isZero();
+    }
+
+    @Test
     void failedBroadcastRemovesTheBrokenSession() throws Exception {
         WsBroadcaster broadcaster = new WsBroadcaster(new ObjectMapper());
         WebSocketSession session = session("broken", "tv");

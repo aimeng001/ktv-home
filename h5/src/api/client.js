@@ -86,8 +86,8 @@ export const api = {
 
   // 搜索/曲库（P1.6/P1.7）
   // Search / song library (P1.6/P1.7)
-  searchSongs: (keyword, type = '', page = 0) =>
-    request(`/songs?keyword=${encodeURIComponent(keyword)}&type=${type}&page=${page}`),
+  searchSongs: (keyword, type = '', page = 0, options = {}) =>
+    request(`/songs?keyword=${encodeURIComponent(keyword)}&type=${encodeURIComponent(type)}&page=${page}`, options),
   songDetail: (id) => request(`/songs/${id}`),
   lyricText: (id) => request(`/lyric/${id}`),
 
@@ -113,7 +113,6 @@ export const api = {
   removeFavorite: (songId, clientToken) => request(`/favorites/${songId}?clientToken=${encodeURIComponent(clientToken || '')}`, { method: 'DELETE' }),
   playlists: () => request('/playlists'),
   playlistDetail: (id) => request(`/playlists/${id}`),
-  addSongToPlaylist: (id, songId) => request(`/playlists/${id}/songs`, { method: 'POST', body: JSON.stringify({ songId }) }),
   orderPlaylist: (id, clientToken) => request(`/playlists/${id}/order`, { method: 'POST', body: JSON.stringify({ clientToken }) }),
   browseArtists: () => request('/browse/artists'),
   browseArtistPage: (params = {}) => request('/browse/artists/page?' + new URLSearchParams(

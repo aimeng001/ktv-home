@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.config.AppProperties;
+import com.homektv.musicsource.CoverImageNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -30,18 +31,24 @@ public class LocalAvatarResolver {
     private static final Set<String> IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".webp");
     private static final Set<String> EXCLUDED_DIRS = Set.of(
             "artist-covers", "covers", "lyrics", "standby", "secrets", "postgres", ".git", "cache");
-    private static final long MAX_FILE_SIZE = 15 * 1024 * 1024; // 15MB 保护
+    static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 与统一图片输入上限一致
     private static final Pattern BRACKET_PATTERN = Pattern.compile("[\\[\\(（【](.*?)[\\]\\)）】]");
 
     private final AppProperties props;
     private final AssetWriter assetWriter;
     private final ArtistProfileService profileService;
+    private CoverImageNormalizer coverImageNormalizer;
     private final AtomicBoolean resolving = new AtomicBoolean(false);
 
     public LocalAvatarResolver(AppProperties props, AssetWriter assetWriter, ArtistProfileService profileService) {
         this.props = props;
         this.assetWriter = assetWriter;
         this.profileService = profileService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCoverImageNormalizer(CoverImageNormalizer coverImageNormalizer) {
+        this.coverImageNormalizer = coverImageNormalizer;
     }
 
     /**
@@ -80,11 +87,19 @@ public class LocalAvatarResolver {
                 if (imagePath != null && Files.isRegularFile(imagePath) && Files.isReadable(imagePath)) {
                     try {
                         if (Files.size(imagePath) > MAX_FILE_SIZE) {
-                            log.warn("本地头像文件过大(>15MB)，跳过自动导入: {}", imagePath);
+                            log.warn("本地头像文件过大(>10MB)，跳过自动导入: {}", imagePath);
                             continue;
                         }
-                        byte[] bytes = Files.readAllBytes(imagePath);
+                        byte[] bytes = readBounded(imagePath);
+                        if (bytes == null) {
+                            log.warn("本地头像文件在读取期间超过 10MB，跳过自动导入: {}", imagePath);
+                            continue;
+                        }
                         String ext = extractExtension(imagePath);
+                        if (coverImageNormalizer != null) {
+                            bytes = coverImageNormalizer.normalize(bytes);
+                            ext = "jpg";
+                        }
                         String relPath = assetWriter.writeArtistCover(profile.artistKey(), bytes, ext);
                         profileService.setAvatarReady(profile.artistKey(), "LOCAL_PACK", relPath);
                         matched++;
@@ -99,6 +114,17 @@ public class LocalAvatarResolver {
             return matched;
         } finally {
             resolving.set(false);
+        }
+    }
+
+    /**
+     * Reads an image with a second, streamed size boundary. The initial Files.size check is
+     * only advisory because a file can be replaced or grow before it is opened.
+     */
+    static byte[] readBounded(Path imagePath) throws IOException {
+        try (var input = Files.newInputStream(imagePath)) {
+            byte[] bytes = input.readNBytes((int) MAX_FILE_SIZE + 1);
+            return bytes.length > MAX_FILE_SIZE ? null : bytes;
         }
     }
 

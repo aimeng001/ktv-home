@@ -49,8 +49,7 @@ public class WsBroadcaster {
         this(mapper, new ActivePlayerRegistry());
     }
 
-    /** 记录每个会话的 client_type（tv/h5），用于 TV 在线检测（P2.13）。
-     *  Records the client_type (tv/h5) of each session, used for TV online detection (P2.13). */
+    /** 记录每个会话的 client_type（tv/h5/controller），用于在线统计。 */
     private final Map<String, String> sessionTypes = new ConcurrentHashMap<>();
 
     /**
@@ -66,7 +65,7 @@ public class WsBroadcaster {
     }
 
     /**
-     * 注销会话，返回其 client_type（tv/h5，可能为 null），供离线清理等逻辑判断。
+     * 注销会话，返回其 client_type（tv/h5/controller，可能为 null），供离线清理等逻辑判断。
      *
      * Unregisters a session and returns its client_type (tv/h5, may be null) for offline cleanup logic.
      * @param session 要注销的 WebSocket 会话 / the WebSocket session to unregister
@@ -91,14 +90,19 @@ public class WsBroadcaster {
         return sessionTypes.containsValue("tv");
     }
 
-    /**
-     * 已连接的 H5 手机数。
-     *
-     * Number of connected H5 mobile clients.
-     * @return the count of connected H5 sessions
-     */
+    /** Number of connected browser H5 sessions (native controllers excluded). */
     public long h5Count() {
         return sessionTypes.values().stream().filter("h5"::equals).count();
+    }
+
+    /** Number of connected native controller sessions. */
+    public long controllerCount() {
+        return sessionTypes.values().stream().filter("controller"::equals).count();
+    }
+
+    /** Legacy QueueSnapshot field: browser H5 plus native controller observers. */
+    public long connectedPhonesCount() {
+        return h5Count() + controllerCount();
     }
 
     /**
@@ -109,7 +113,7 @@ public class WsBroadcaster {
      * @param event 要发送的事件 / the event to send
      */
     public void sendTo(WebSocketSession session, WsEvent event) {
-        send(session, serialize(event));
+        sendEvent(session, event);
     }
 
     /** Removes and closes a fenced player session so the client can reconnect cleanly. */
@@ -141,9 +145,8 @@ public class WsBroadcaster {
      * @param event 要广播的事件 / the event to broadcast
      */
     public void broadcast(WsEvent event) {
-        String json = serialize(event);
         for (WebSocketSession s : sessions.values()) {
-            send(s, json);
+            sendEvent(s, event);
         }
     }
 
@@ -153,13 +156,50 @@ public class WsBroadcaster {
      * second projection.
      */
     public void broadcastPlayback(WsEvent event) {
-        String json = serialize(event);
         String activeSessionId = playerRegistry.activeSessionId().orElse(null);
         for (WebSocketSession session : sessions.values()) {
             String type = sessionTypes.get(session.getId());
             if (!"tv".equals(type) || session.getId().equals(activeSessionId)) {
-                send(session, json);
+                sendEvent(session, event);
             }
+        }
+    }
+
+    private void sendEvent(WebSocketSession session, WsEvent event) {
+        if (event != null && event.payload() instanceof com.homektv.web.dto.QueueSnapshot snapshot) {
+            sendSnapshot(session, event.type(), snapshot);
+            return;
+        }
+        String json = serializeWithinBudget(event);
+        if (json == null) {
+            log.warn("拒绝超出 WebSocket 大小上限的事件: session={}, type={}",
+                    session.getId(), event == null ? null : event.type());
+            disconnect(session.getId());
+            return;
+        }
+        send(session, json);
+    }
+
+    private void sendSnapshot(WebSocketSession session, String eventType,
+                              com.homektv.web.dto.QueueSnapshot snapshot) {
+        String legacy = serializeWithinBudget(WsEvent.of(eventType, snapshot));
+        if (legacy != null) {
+            send(session, legacy);
+            return;
+        }
+        try {
+            QueueSnapshotChunker.stream(eventType, snapshot, mapper, chunk -> {
+                String json = serializeWithinBudget(WsEvent.of(WsEvent.SNAPSHOT_CHUNK, chunk));
+                if (json == null) {
+                    throw new QueueChunkTooLargeException(chunk.index(),
+                            "队列快照分片超过 WebSocket 大小上限");
+                }
+                send(session, json);
+            });
+        } catch (QueueChunkTooLargeException exception) {
+            log.warn("拒绝无法安全同步的队列快照: session={}, chunk={}",
+                    session.getId(), exception.getChunkIndex());
+            disconnect(session.getId());
         }
     }
 
@@ -177,9 +217,11 @@ public class WsBroadcaster {
         }
     }
 
-    private String serialize(WsEvent event) {
+    private String serializeWithinBudget(WsEvent event) {
         try {
-            return mapper.writeValueAsString(event);
+            byte[] bytes = BoundedJson.serialize(mapper, event, WsProtocolLimits.MAX_MESSAGE_BYTES);
+            if (bytes == null) return null;
+            return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
         } catch (Exception e) {
             log.warn("事件序列化失败: {}", e.getMessage());
             return null;

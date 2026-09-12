@@ -13,16 +13,24 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * WS 握手拦截器（P2.13）：从查询参数 client_type=tv|h5、client_token 存入会话属性，
+ * WS 握手拦截器（P2.13）：从查询参数 client_type=tv|h5|controller、client_token 存入会话属性，
  * 供 TV 在线检测与用户标识使用。
  *
  * WebSocket handshake interceptor (P2.13): extracts query parameters
- * {@code client_type=tv|h5} and {@code client_token} into session attributes
+ * {@code client_type=tv|h5|controller} and {@code client_token} into session attributes
  * for TV online detection and user identification.
  */
 public class ClientTypeInterceptor implements HandshakeInterceptor {
+
+    private static final Set<String> CLIENT_TYPES = Set.of("tv", "h5", "controller");
+    private static final Set<String> PLATFORMS = Set.of(
+            "WINDOWS", "ANDROID", "ANDROID_PHONE", "ANDROID_TABLET", "ANDROID_TV", "H5", "LEGACY");
+    private static final Set<String> DEVICE_MODES = Set.of("PLAYER", "CONTROLLER", "COMBINED");
+    private static final int MAX_QUERY_LENGTH = 4096;
+    private static final int MAX_VALUE_LENGTH = 256;
 
     private final AppProperties properties;
 
@@ -53,6 +61,11 @@ public class ClientTypeInterceptor implements HandshakeInterceptor {
             return false;
         }
 
+        String rawQuery = request.getURI().getRawQuery();
+        if (rawQuery != null && rawQuery.length() > MAX_QUERY_LENGTH) {
+            reject(response);
+            return false;
+        }
         Map<String, String> parameters;
         try {
             parameters = queryParameters(request.getURI().getRawQuery());
@@ -62,19 +75,47 @@ public class ClientTypeInterceptor implements HandshakeInterceptor {
         }
 
         String clientType = parameters.get("client_type");
+        if (clientType == null || clientType.isBlank()) clientType = "h5";
+        clientType = clientType.toLowerCase(java.util.Locale.ROOT);
+        if (!CLIENT_TYPES.contains(clientType)
+                || !bounded(parameters.get("client_token"))
+                || !bounded(parameters.get("player_credential"))
+                || !bounded(parameters.get("protocol_version"))
+                || !validPlatform(parameters.get("platform"))
+                || !validDeviceMode(parameters.get("device_mode"))) {
+            reject(response);
+            return false;
+        }
         if ("tv".equalsIgnoreCase(clientType)
                 && !matchesConfiguredCredential(parameters.get("player_credential"))) {
             reject(response);
             return false;
         }
 
-        for (String key : new String[]{"client_type", "client_token", "protocol_version", "platform"}) {
+        attributes.put("client_type", clientType);
+        for (String key : new String[]{"client_token", "protocol_version", "platform", "device_mode"}) {
             String value = parameters.get(key);
             if (value != null) {
                 attributes.put(key, value);
             }
         }
         return true;
+    }
+
+    private boolean bounded(String value) {
+        return value == null || value.length() <= MAX_VALUE_LENGTH;
+    }
+
+    private boolean validPlatform(String value) {
+        return value == null || value.isBlank()
+                || (value.length() <= MAX_VALUE_LENGTH
+                && PLATFORMS.contains(value.toUpperCase(java.util.Locale.ROOT)));
+    }
+
+    private boolean validDeviceMode(String value) {
+        return value == null || value.isBlank()
+                || (value.length() <= MAX_VALUE_LENGTH
+                && DEVICE_MODES.contains(value.toUpperCase(java.util.Locale.ROOT)));
     }
 
     private Map<String, String> queryParameters(String query) {

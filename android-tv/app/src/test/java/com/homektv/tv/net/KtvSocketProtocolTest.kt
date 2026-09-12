@@ -34,4 +34,13 @@ class KtvSocketProtocolTest {
         assertEquals("42", payload["queue_id"]?.jsonPrimitive?.content)
         assertEquals("7", payload["generation"]?.jsonPrimitive?.content)
     }
+
+    @Test
+    fun malformedRealtimePayloadsAreIgnoredInsteadOfThrowing() {
+        val malformed = Json.parseToJsonElement("{\"position_ms\":{},\"text\":[]}")
+
+        assertEquals(0L, parseProgressPosition(malformed))
+        assertEquals("", parseTextPayload(malformed, "text"))
+        assertEquals("", parseTextPayload(null, "text"))
+    }
 }

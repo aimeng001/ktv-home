@@ -11,6 +11,31 @@ class LanScannerTest {
     }
 
     @Test
+    fun validationRequiresHealthAndDatabaseReadiness() {
+        assertEquals(listOf("/api/health", "/api/ready"), LanScanner.VALIDATION_PATHS)
+    }
+
+    @Test
+    fun validationRejectsMissingOrDownReadiness() {
+        val scanner = LanScanner()
+        try {
+            assertTrue(!scanner.validationSatisfied(mapOf("/api/health" to true)))
+            assertTrue(
+                !scanner.validationSatisfied(
+                    mapOf("/api/health" to true, "/api/ready" to false),
+                ),
+            )
+            assertTrue(
+                scanner.validationSatisfied(
+                    mapOf("/api/health" to true, "/api/ready" to true),
+                ),
+            )
+        } finally {
+            scanner.close()
+        }
+    }
+
+    @Test
     fun prioritizesDefaultPortAcrossSubnet() {
         val targets = LanScanner().scanTargets("192.168.1.")
 

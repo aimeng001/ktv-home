@@ -43,12 +43,14 @@ public class SettingService {
             Map.entry("display_address", ""), Map.entry("standby_logo_path", ""),
             Map.entry(DELETE_SOURCE_AFTER_TRANSCODE, false),
             Map.entry(EXTERNAL_DEFAULT_AUDIO_LAYOUT, AudioLayout.NORMAL_STEREO.name()),
-            Map.entry("room_host_user_id", 0L));
+            Map.entry("room_host_user_id", 0L),
+            Map.entry("room_host_revision", 0L));
     private static final Set<String> TRANSCODE_KEYS = TRANSCODE_DEFAULTS.keySet();
     private static final Set<String> ALLOWED_KEYS = new HashSet<>();
     private static final Set<String> INTERNAL_KEYS = Set.of(
             "standby_logo_path",
             "room_host_user_id",
+            "room_host_revision",
             "transcode_hardware_auto_configured",
             "qr_address"
     );

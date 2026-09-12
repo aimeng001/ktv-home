@@ -192,15 +192,20 @@
 
     <!-- 播放层（P1.28）：叠在待机页之上，播放时显示、idle 时隐藏。
          完整播放页 UI（双行歌词/信息条/进度条 TV-02/03）在 P1.31/P1.32 叠加。 -->
-    <androidx.media3.ui.PlayerView
-        android:id="@+id/playerView"
+    <FrameLayout
+        android:id="@+id/fullscreenVideoAnchor"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@android:color/black"
-        android:visibility="gone"
-        app:use_controller="false"
-        app:resize_mode="zoom"
-        app:surface_type="surface_view" />
+        android:layout_height="match_parent">
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/playerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/black"
+            android:visibility="gone"
+            app:use_controller="false"
+            app:resize_mode="zoom"
+            app:surface_type="surface_view" />
+    </FrameLayout>
 
     <!-- TV-02 KTV 视频播放页叠加层 -->
     <FrameLayout
@@ -307,7 +312,9 @@
             <Button android:id="@+id/remoteVolDown" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="音量 -" />
             <Button android:id="@+id/remoteMute" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="静音" />
             <Button android:id="@+id/remoteQueue" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="播放队列" />
+            <Button android:id="@+id/remoteOrder" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="点歌台" />
             <Button android:id="@+id/remoteMicrophone" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="麦克风：关" />
+            <Button android:id="@+id/remoteSettings" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="服务器/模式" />
         </GridLayout>
     </LinearLayout>
 
@@ -379,4 +386,9 @@
             <LinearLayout android:id="@+id/queueList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
         </ScrollView>
     </LinearLayout>
+
+    <!-- TV-06 商用点歌台顶层 Overlay (Kiosk Mode) -->
+    <include
+        android:id="@+id/kioskOverlay"
+        layout="@layout/view_ktv_kiosk_overlay" />
 </FrameLayout>

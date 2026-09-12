@@ -8,6 +8,7 @@ import com.homektv.domain.SongFile;
 import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
 import com.homektv.media.MediaProbeException;
+import com.homektv.musicsource.CoverImageNormalizer;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
@@ -111,6 +112,7 @@ public class LibraryScanService {
     private final AtomicBoolean scanRunning = new AtomicBoolean();
     private final TransactionTemplate batchTransaction;
     private final LibraryScanSeenPathStore seenPathStore;
+    private CoverImageNormalizer coverImageNormalizer;
     @PersistenceContext
     private EntityManager entityManager;
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
@@ -151,6 +153,11 @@ public class LibraryScanService {
         this.songProjectionService = songProjectionService;
         this.batchTransaction = transactionManager == null ? null : new TransactionTemplate(transactionManager);
         this.seenPathStore = seenPathStore;
+    }
+
+    @Autowired
+    void setCoverImageNormalizer(CoverImageNormalizer coverImageNormalizer) {
+        this.coverImageNormalizer = coverImageNormalizer;
     }
 
     public enum ScanState {
@@ -1644,8 +1651,11 @@ public class LibraryScanService {
                 song.setLyricSource(Song.LYRIC_SOURCE_NONE);
             }
             if (tag.getCoverImage() != null) {
-                String coverPath = assetWriter.writeCover(fingerprint, tag.getCoverImage(), tag.getCoverExt());
-                song.setCoverPath(coverPath);
+                byte[] normalizedCover = normalizeEmbeddedCover(tag.getCoverImage());
+                if (normalizedCover != null) {
+                    String coverPath = assetWriter.writeCover(fingerprint, normalizedCover, "jpg");
+                    song.setCoverPath(coverPath);
+                }
             }
         }
         song = songRepo.save(song);
@@ -1744,6 +1754,16 @@ public class LibraryScanService {
         else if (!entry.existedBeforeScan() || entry.pendingBeforeScan()) outcome = IngestOutcome.ADDED;
         else outcome = IngestOutcome.UPDATED;
         return new IngestState(outcome, song.getId(), sf.getId());
+    }
+
+    private byte[] normalizeEmbeddedCover(byte[] source) {
+        if (coverImageNormalizer == null) return source;
+        try {
+            return coverImageNormalizer.normalize(source);
+        } catch (ApiException failure) {
+            log.warn("内嵌封面无效，跳过缓存：{}", failure.getMessage());
+            return null;
+        }
     }
 
     private AudioLayout configuredExternalDefaultAudioLayout() {
@@ -1889,8 +1909,20 @@ public class LibraryScanService {
         LyricSnapshot snapshot = precomputedSnapshot != null ? precomputedSnapshot : lyricSnapshotOf(sidecarLyric);
         if (!snapshot.present()) return SidecarLyricContent.absent();
         if (!snapshot.readable()) return SidecarLyricContent.unreadable();
+        if (snapshot.size() != null && snapshot.size() > AssetWriter.MAX_LYRIC_BYTES) {
+            log.warn("同名歌词过大，保留旧缓存并跳过读取：{}", sidecarLyric);
+            return SidecarLyricContent.unreadable();
+        }
         try {
-            String text = Files.readString(sidecarLyric, StandardCharsets.UTF_8);
+            byte[] bytes;
+            try (var input = Files.newInputStream(sidecarLyric)) {
+                bytes = input.readNBytes(AssetWriter.MAX_LYRIC_BYTES + 1);
+            }
+            if (bytes.length > AssetWriter.MAX_LYRIC_BYTES) {
+                log.warn("同名歌词读取时超过上限，保留旧缓存并跳过读取：{}", sidecarLyric);
+                return SidecarLyricContent.unreadable();
+            }
+            String text = new String(bytes, StandardCharsets.UTF_8);
             return new SidecarLyricContent(true, true,
                     LyricType.NONE.equals(LyricType.detect(text)) ? null : text);
         } catch (IOException e) {

@@ -13,6 +13,8 @@ npm-debug.log*
 
 # ===== Android / TV APK =====
 android-tv/.gradle/
+android-tv/.gradle-user-home/
+android-tv/.android-user-home/
 android-tv/build/
 android-tv/app/build/
 android-tv/local.properties
@@ -75,6 +77,9 @@ backend/src/main/resources/application-local.yml
 /软件崩溃.md
 /问题清单.md
 /整改方案.md
+/整改方案2.md
+/整改方案*.md
+/安卓端重做整改方案_融合审核版.md
 /整改计划.md
 
 # Local remediation plan artifacts

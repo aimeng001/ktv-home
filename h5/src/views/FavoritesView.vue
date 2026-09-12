@@ -25,7 +25,7 @@
  * Favorites are tied to the current device identity and differ across identities.
  */
 
-import { onMounted, reactive, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import api, { makeControls } from '../api/client'
 import SongRow from '../components/SongRow.vue'
 import TabBar from '../components/TabBar.vue'
@@ -35,12 +35,14 @@ import { useToast } from '../composables/useToast'
 import { useAsyncResource } from '../composables/useAsyncResource'
 import { useOrderLock } from '../composables/useOrderLock'
 import { formatOrderToast } from './orderFeedbackState'
+import { useQueuedSongIds } from '../composables/useQueuedSongIds'
 
 const user = useUserStore()
 const favorites = useFavoritesStore()
 const { toast } = useToast()
 const controls = makeControls(user.clientToken)
-const { executeOrder } = useOrderLock()
+const { executeOrder, inflightIds } = useOrderLock()
+const { orderedIds, player } = useQueuedSongIds(inflightIds)
 const favoritesResource = useAsyncResource(async () => {
   const result = await api.favorites(user.clientToken)
   await favorites.load(user.clientToken, true)
@@ -49,7 +51,6 @@ const favoritesResource = useAsyncResource(async () => {
 const songs = favoritesResource.data
 const favoritesStatus = favoritesResource.status
 const favoritesError = favoritesResource.error
-const orderedIds = reactive(new Set())
 
 onMounted(load)
 watch(() => favorites.ids.slice(), ids => {
@@ -75,7 +76,7 @@ async function order(song) {
   await executeOrder(song.id, async () => {
     try {
       const res = await controls.order(song.id)
-      orderedIds.add(song.id)
+      player.applyControlResponse(res)
       toast(formatOrderToast(res))
     } catch (error) {
       toast(error.code === 'SONG_IN_QUEUE' ? (error.message || '已在队列中') : (error.message || '点歌失败'))

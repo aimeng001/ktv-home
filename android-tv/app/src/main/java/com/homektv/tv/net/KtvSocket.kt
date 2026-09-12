@@ -3,9 +3,14 @@ package com.homektv.tv.net
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
@@ -30,6 +35,7 @@ import java.util.concurrent.TimeUnit
 class KtvSocket(
     private val config: AppConfig,
     private val listener: Listener,
+    private val role: KtvSocketRole = KtvSocketRole.PLAYER,
 ) {
     interface Listener {
         /** 收到 sync_full 或任一携带完整快照的广播事件（now_playing/queue_updated/…）。 */
@@ -44,47 +50,70 @@ class KtvSocket(
         fun onConnectionChanged(connected: Boolean) {}
         /** 当前终端是否拥有播放租约；false 时必须停止本地投影。 */
         fun onPlayerRole(active: Boolean) {}
+        /** 房主变更广播；控制器据此更新顶歌/删歌权限。 */
+        fun onRoomHostChanged(status: RoomHostStatus) {}
     }
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val main = Handler(Looper.getMainLooper())
+    private val inboundQueue = InboundDispatchQueue()
+    private val inboundDrainLock = Any()
+    private var inboundDrainScheduled = false
+    private val inboundDrain = Runnable { drainInbound() }
 
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS)   // WS 长连接不设读超时
-        .pingInterval(0, TimeUnit.MILLISECONDS)  // 用应用层 ping，不用 OkHttp 帧 ping
-        .build()
+    private var http = newHttpClient()
+    private var httpClosed = false
 
     private var ws: WebSocket? = null
+    @Volatile
     private var closed = false
     private var attempt = 0
     private val reconnectGate = ReconnectGate()
     private var reconnectRunnable: Runnable? = null
     private val leaseGate = ActivePlayerLeaseGate()
     private val syncReadyGate = SyncReadyGate()
+    private val syncChunkAssembler = SyncChunkAssembler()
     private val socketEpoch = SocketEpochGate()
+    private val playbackBridgeEpoch = if (role == KtvSocketRole.PLAYER) {
+        PlaybackSnapshotBridge.beginSession(config.serverHost)
+    } else null
     private val reportServerHost = config.serverHost
     private val finishedOutbox = FinishedReportOutbox(
         config.pendingFinishedQueueIds(reportServerHost),
         { queueIds -> config.savePendingFinishedQueueIds(queueIds, reportServerHost) },
     )
+    private val recoveryPolicy = EndpointRecoveryPolicy()
+    @Volatile
+    private var discoveryInFlight = false
 
     // 15s 应用层心跳
     private val heartbeat = object : Runnable {
         override fun run() {
-            val generation = leaseGate.activeGeneration()
-            if (generation == null) listener.onPlayerRole(false)
-            else flushFinishedReports(generation)
+            val generation = if (role == KtvSocketRole.PLAYER) leaseGate.activeGeneration() else null
+            if (role == KtvSocketRole.PLAYER) {
+                if (generation == null) listener.onPlayerRole(false)
+                else flushFinishedReports(generation)
+            }
             ws?.send("""{"type":"ping","payload":{"generation":${generation ?: "null"}}}""")
             main.postDelayed(this, HEARTBEAT_MS)
         }
     }
 
     fun connect() {
+        main.removeCallbacks(inboundDrain)
+        synchronized(inboundDrainLock) {
+            inboundQueue.reopen()
+            inboundDrainScheduled = false
+        }
+        if (httpClosed) {
+            http = newHttpClient()
+            httpClosed = false
+        }
         closed = false
         cancelReconnect()
         reconnectGate.markRun()
         socketEpoch.invalidate()
+        syncChunkAssembler.reset()
         syncReadyGate.onOpen()
         openSocket()
     }
@@ -94,17 +123,27 @@ class KtvSocket(
         cancelReconnect()
         reconnectGate.markRun()
         socketEpoch.invalidate()
+        syncChunkAssembler.reset()
         main.removeCallbacks(heartbeat)
+        main.removeCallbacks(inboundDrain)
+        synchronized(inboundDrainLock) {
+            inboundQueue.close()
+            inboundDrainScheduled = false
+        }
         finishedOutbox.onDisconnected()
         ws?.close(1000, "client closing")
         ws = null
+        http.closeResources()
+        httpClosed = true
         syncReadyGate.onDisconnect()
         leaseGate.disconnect()
         listener.onPlayerRole(false)
+        publishPlaybackBridgeConnection(false)
     }
 
     /** 上行播放进度（P1.28 播放引擎每 1s 调用）。 */
     fun sendProgress(positionMs: Long, queueId: Long? = null) {
+        if (role != KtvSocketRole.PLAYER) return
         val generation = leaseGate.activeGeneration() ?: return
         val payload = buildJsonObject {
             put("position_ms", positionMs)
@@ -116,6 +155,7 @@ class KtvSocket(
 
     /** 上行播放完成（P1.33 自动连播）。 */
     fun sendFinished(queueId: Long? = null) {
+        if (role != KtvSocketRole.PLAYER) return
         val id = queueId?.takeIf { it > 0 } ?: return
         finishedOutbox.enqueue(id)
         leaseGate.activeGeneration()?.let(::flushFinishedReports)
@@ -123,6 +163,7 @@ class KtvSocket(
 
     /** 播放文件不可读时上报，服务端会标记当前项异常并推进队列。 */
     fun sendPlayError(message: String, fileId: Long? = null, queueId: Long? = null) {
+        if (role != KtvSocketRole.PLAYER) return
         val generation = leaseGate.activeGeneration() ?: return
         ws?.send(buildPlayErrorMessage(message, fileId, queueId, generation))
     }
@@ -130,15 +171,28 @@ class KtvSocket(
     private fun openSocket() {
         if (closed) return
         val epoch = socketEpoch.begin()
+        syncChunkAssembler.reset()
         syncReadyGate.onOpen()
-        val url = config.wsUrl(config.clientToken)
+        val url = when (role) {
+            KtvSocketRole.PLAYER -> config.wsUrl(config.playerToken)
+            KtvSocketRole.CONTROLLER -> config.controllerWsUrl(config.userToken)
+        }
         Log.d(TAG, "connecting ${safeWebSocketLogTarget(config.serverHost)}")
         val req = Request.Builder().url(url).build()
         ws = http.newWebSocket(req, socketListener(epoch))
     }
 
+    private fun newHttpClient(): OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)   // WS 长连接不设读超时
+        .pingInterval(0, TimeUnit.MILLISECONDS)  // 用应用层 ping，不用 OkHttp 帧 ping
+        .build()
+
     private fun scheduleReconnect(epoch: Long) {
         if (closed || !socketEpoch.isCurrent(epoch) || !reconnectGate.trySchedule()) return
+        if (recoveryPolicy.onFailure() && !discoveryInFlight) {
+            triggerBackgroundRecovery()
+        }
         val delay = BACKOFF_MS[attempt.coerceAtMost(BACKOFF_MS.size - 1)]
         attempt++
         Log.d(TAG, "reconnect in ${delay}ms (attempt $attempt)")
@@ -162,6 +216,7 @@ class KtvSocket(
 
         override fun onOpen(webSocket: WebSocket, response: Response) {
             if (!isCurrent(webSocket)) return
+            recoveryPolicy.onSuccess()
             attempt = 0
             main.post {
                 if (!isCurrent(webSocket)) return@post
@@ -172,17 +227,29 @@ class KtvSocket(
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             if (!isCurrent(webSocket)) return
+            val wireBytes = Utf8Budget.countAtMost(text, MAX_MESSAGE_BYTES)
+            if (wireBytes == null) {
+                Log.w(TAG, "ws message too large: UTF-8 bytes exceed $MAX_MESSAGE_BYTES")
+                webSocket.close(1009, "message too large")
+                return
+            }
             val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
             val type = root["type"]?.jsonPrimitive?.contentOrNullSafe() ?: return
             val payload = root["payload"]
 
-            main.post { if (isCurrent(webSocket)) dispatch(type, payload) }
+            if (!enqueueInbound(epoch, webSocket, type, payload, wireBytes)
+                    && isCurrent(webSocket)) {
+                Log.w(TAG, "ws inbound queue full; reconnecting")
+                webSocket.close(1009, "inbound queue full")
+            }
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             if (!isCurrent(webSocket)) return
             Log.w(TAG, "ws failure: ${t.message}")
             ws = null
+            inboundQueue.clearPending()
+            syncChunkAssembler.reset()
             main.post {
                 if (closed || !socketEpoch.isCurrent(epoch) || ws != null) return@post
                 main.removeCallbacks(heartbeat)
@@ -191,6 +258,7 @@ class KtvSocket(
                 leaseGate.disconnect()
                 listener.onPlayerRole(false)
                 listener.onConnectionChanged(false)
+                publishPlaybackBridgeConnection(false)
             }
             scheduleReconnect(epoch)
         }
@@ -198,6 +266,8 @@ class KtvSocket(
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             if (!isCurrent(webSocket)) return
             ws = null
+            inboundQueue.clearPending()
+            syncChunkAssembler.reset()
             main.post {
                 if (closed || !socketEpoch.isCurrent(epoch) || ws != null) return@post
                 main.removeCallbacks(heartbeat)
@@ -206,14 +276,70 @@ class KtvSocket(
                 leaseGate.disconnect()
                 listener.onPlayerRole(false)
                 listener.onConnectionChanged(false)
+                publishPlaybackBridgeConnection(false)
             }
             scheduleReconnect(epoch)
         }
     }
 
-    private fun dispatch(type: String, payload: kotlinx.serialization.json.JsonElement?) {
+    private fun enqueueInbound(
+        epoch: Long,
+        source: WebSocket,
+        type: String,
+        payload: kotlinx.serialization.json.JsonElement?,
+        wireBytes: Int,
+    ): Boolean {
+        var accepted = false
+        var schedule = false
+        synchronized(inboundDrainLock) {
+            if (!closed && socketEpoch.isCurrent(epoch)) {
+                accepted = inboundQueue.offer(InboundEvent(epoch, source, type, payload, wireBytes))
+                if (accepted && !inboundDrainScheduled) {
+                    inboundDrainScheduled = true
+                    schedule = true
+                }
+            }
+        }
+        if (schedule) main.post(inboundDrain)
+        return accepted
+    }
+
+    private fun drainInbound() {
+        var processed = 0
+        while (processed++ < MAX_EVENTS_PER_DRAIN) {
+            val event = inboundQueue.poll() ?: run {
+                finishInboundDrain()
+                return
+            }
+            if (!closed && socketEpoch.isCurrent(event.epoch)
+                && (event.source == null || ws === event.source)
+            ) {
+                dispatch(event.type, event.payload, event.wireBytes)
+            }
+        }
+        finishInboundDrain()
+    }
+
+    private fun finishInboundDrain() {
+        var schedule = false
+        synchronized(inboundDrainLock) {
+            if (closed || inboundQueue.isEmpty()) {
+                inboundDrainScheduled = false
+            } else {
+                schedule = true
+            }
+        }
+        if (schedule) main.post(inboundDrain)
+    }
+
+    private fun dispatch(
+        type: String,
+        payload: kotlinx.serialization.json.JsonElement?,
+        wireBytes: Int,
+    ) {
         when (type) {
             "player_role", "pong" -> {
+                if (role != KtvSocketRole.PLAYER) return
                 val assignment = payload as? JsonObject ?: return
                 val role = assignment["role"]?.jsonPrimitive?.contentOrNullSafe() ?: return
                 val generation = runCatching { assignment["generation"]?.jsonPrimitive?.long }.getOrNull() ?: return
@@ -223,32 +349,54 @@ class KtvSocket(
                 leaseGate.activeGeneration()?.let(::flushFinishedReports)
             }
             "playback_report_ack" -> {
+                if (role != KtvSocketRole.PLAYER) return
                 val ack = payload as? JsonObject ?: return
                 val queueId = runCatching { ack["queue_id"]?.jsonPrimitive?.long }.getOrNull() ?: return
                 val status = ack["status"]?.jsonPrimitive?.contentOrNullSafe() ?: return
                 finishedOutbox.acknowledge(queueId, status)
             }
             "progress" -> {
-                val pos = (payload as? JsonObject)?.get("position_ms")?.jsonPrimitive?.long ?: 0L
-                listener.onProgress(pos)
+                listener.onProgress(parseProgressPosition(payload))
             }
             "effect_play" -> {
-                val id = (payload as? JsonObject)?.get("effect_id")?.jsonPrimitive?.contentOrNullSafe().orEmpty()
-                listener.onEffect(id)
+                listener.onEffect(parseTextPayload(payload, "effect_id"))
             }
             "toast" -> {
-                val txt = (payload as? JsonObject)?.get("text")?.jsonPrimitive?.contentOrNullSafe().orEmpty()
-                listener.onToast(txt)
+                listener.onToast(parseTextPayload(payload, "text"))
+            }
+            "room_host_changed" -> {
+                val status = payload?.let {
+                    runCatching { json.decodeFromJsonElement(RoomHostStatus.serializer(), it) }.getOrNull()
+                } ?: return
+                publishPlaybackBridgeRoomHost(status)
+                listener.onRoomHostChanged(status)
+            }
+            "snapshot_chunk" -> {
+                val chunk = payload?.let {
+                    runCatching {
+                        json.decodeFromJsonElement(QueueSnapshotChunk.serializer(), it)
+                    }.getOrNull()
+                } ?: return
+                val assembled = syncChunkAssembler.accept(chunk, wireBytes) ?: return
+                publishPlaybackBridge(assembled.eventType, assembled.snapshot)
+                listener.onSnapshot(assembled.eventType, assembled.snapshot)
+                if (assembled.eventType == "sync_full" && syncReadyGate.markReady()) {
+                    listener.onConnectionChanged(true)
+                    publishPlaybackBridgeConnection(true)
+                }
             }
             // 以下事件 payload 均为完整快照
             "sync_full", "queue_updated", "now_playing", "player_state", "playback_restarted", "playback_seeked",
             "volume_changed", "vocal_changed" -> {
+                syncChunkAssembler.reset()
                 val snap = payload?.let {
                     runCatching { json.decodeFromJsonElement(QueueSnapshot.serializer(), it) }.getOrNull()
                 } ?: return
+                publishPlaybackBridge(type, snap)
                 listener.onSnapshot(type, snap)
                 if (type == "sync_full" && syncReadyGate.markReady()) {
                     listener.onConnectionChanged(true)
+                    publishPlaybackBridgeConnection(true)
                 }
             }
             else -> Log.d(TAG, "unhandled event: $type")
@@ -265,7 +413,46 @@ class KtvSocket(
         }
     }
 
+    private fun publishPlaybackBridge(event: String, snapshot: QueueSnapshot) {
+        val bridgeEpoch = playbackBridgeEpoch ?: return
+        PlaybackSnapshotBridge.publish(config.serverHost, bridgeEpoch, event, snapshot)
+    }
+
+    private fun publishPlaybackBridgeConnection(connected: Boolean) {
+        val bridgeEpoch = playbackBridgeEpoch ?: return
+        PlaybackSnapshotBridge.publishConnection(config.serverHost, bridgeEpoch, connected)
+    }
+
+    private fun publishPlaybackBridgeRoomHost(status: RoomHostStatus) {
+        val bridgeEpoch = playbackBridgeEpoch ?: return
+        PlaybackSnapshotBridge.publishRoomHost(config.serverHost, bridgeEpoch, status)
+    }
+
+    private fun triggerBackgroundRecovery() {
+        discoveryInFlight = true
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val discovery = LanDiscovery(config.appContext)
+                val servers = discovery.discoverAll()
+                discovery.close()
+                if (!closed && recoveryPolicy.canAutoMigrate(servers.size)) {
+                    val target = servers.first()
+                    if (target.hostPort != config.serverHost) {
+                        Log.i(TAG, "auto-migrating to newly discovered server ${target.hostPort}")
+                        config.rememberServer(SavedServer(target.hostPort, target.name))
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "background discovery failed: ${e.message}")
+            } finally {
+                discoveryInFlight = false
+            }
+        }
+    }
+
     companion object {
+        private const val MAX_MESSAGE_BYTES = 1_048_576
+        private const val MAX_EVENTS_PER_DRAIN = 32
         private const val TAG = "KtvSocket"
         private const val HEARTBEAT_MS = 15_000L   // TV 15s 心跳（详设§4.1）
         private val BACKOFF_MS = longArrayOf(1_000, 2_000, 5_000, 10_000) // 指数退避封顶 10s
@@ -307,3 +494,11 @@ internal fun buildFinishedMessage(queueId: Long, generation: Long): String = bui
 internal fun safeWebSocketLogTarget(serverHost: String?): String =
     serverHost?.trim()?.takeIf { it.isNotEmpty() }?.let { "ws://$it/ws" }
         ?: "ws://<unconfigured>/ws"
+
+internal fun parseProgressPosition(payload: JsonElement?): Long = runCatching {
+    (payload as? JsonObject)?.get("position_ms")?.jsonPrimitive?.long
+}.getOrNull()?.coerceAtLeast(0L) ?: 0L
+
+internal fun parseTextPayload(payload: JsonElement?, field: String): String = runCatching {
+    (payload as? JsonObject)?.get(field)?.jsonPrimitive?.contentOrNull
+}.getOrNull().orEmpty()

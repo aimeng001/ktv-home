@@ -18,7 +18,7 @@ export default defineConfig({
     emptyOutDir: true
   },
   test: {
-    environment: 'jsdom',
+    environment: 'node',
     globals: true
   }
 })

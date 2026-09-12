@@ -37,6 +37,7 @@ final class MediaProcessRunner {
             return new Result(process.exitValue(), readOutput(outputTask), false);
         } catch (InterruptedException interrupted) {
             process.destroyForcibly();
+            waitForExit(process);
             throw interrupted;
         } finally {
             if (process.isAlive()) process.destroyForcibly();

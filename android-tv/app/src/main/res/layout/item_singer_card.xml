@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/singerCardRoot"
+    android:layout_width="148dp"
+    android:layout_height="176dp"
+    android:layout_margin="8dp"
+    android:background="@drawable/bg_singer_card"
+    android:focusable="true"
+    android:clickable="true"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <!-- 头像容器：支持真图与首字符占位 -->
+    <FrameLayout
+        android:layout_width="88dp"
+        android:layout_height="88dp"
+        android:background="@drawable/bg_avatar_circle">
+
+        <TextView
+            android:id="@+id/txtSingerInitial"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:textColor="@color/gold"
+            android:textSize="32sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:id="@+id/imgSingerAvatar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:visibility="gone"
+            android:contentDescription="歌手头像" />
+    </FrameLayout>
+
+    <!-- 歌手名称 -->
+    <TextView
+        android:id="@+id/txtSingerName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="center"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="歌手名称"
+        android:textColor="@android:color/white"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <!-- 歌曲收录数 -->
+    <TextView
+        android:id="@+id/txtSingerSongCount"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:gravity="center"
+        android:text="0 首"
+        android:textColor="@color/dim"
+        android:textSize="12sp" />
+</LinearLayout>

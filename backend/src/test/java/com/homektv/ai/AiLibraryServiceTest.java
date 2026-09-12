@@ -6,6 +6,7 @@ import com.homektv.domain.Song;
 import com.homektv.domain.Playlist;
 import com.homektv.domain.PlaylistSong;
 import com.homektv.library.AssetWriter;
+import com.homektv.library.AssetCleanupService;
 import com.homektv.repo.AiAnalysisTaskRepository;
 import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.PlaylistRepository;
@@ -14,6 +15,7 @@ import com.homektv.repo.SongRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.mock.web.MockMultipartFile;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -27,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -231,6 +234,28 @@ class AiLibraryServiceTest {
     }
 
     @Test
+    void replacingPlaylistCoverSchedulesThePreviousAssetForCleanup() throws Exception {
+        SongRepository songs = mock(SongRepository.class);
+        PlaylistRepository playlists = mock(PlaylistRepository.class);
+        Playlist playlist = new Playlist();
+        playlist.setId(9L);
+        playlist.setCoverPath("playlist-covers/9-old.jpg");
+        when(playlists.findById(9L)).thenReturn(Optional.of(playlist));
+        when(playlists.save(any(Playlist.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        AssetWriter writer = mock(AssetWriter.class);
+        when(writer.writePlaylistCover(eq(9L), any(), eq("png"))).thenReturn("playlist-covers/9-new.png");
+        AssetCleanupService cleanup = mock(AssetCleanupService.class);
+        AiLibraryService service = service(songs, playlists, mock(PlaylistSongRepository.class),
+                mock(OpenAiCompatibleClient.class), new ObjectMapper(), writer);
+        service.setAssetCleanupService(cleanup);
+
+        service.uploadPlaylistCover(9L,
+                new MockMultipartFile("file", "cover.png", "image/png", new byte[]{1, 2, 3}));
+
+        verify(cleanup).afterCommitIfUnreferenced("playlist-covers/9-old.jpg");
+    }
+
+    @Test
     void reorderingPlaylistSongsLocksBeforeReadingTheCurrentOrder() {
         PlaylistRepository playlists = mock(PlaylistRepository.class);
         PlaylistSongRepository playlistSongs = mock(PlaylistSongRepository.class);
@@ -275,12 +300,20 @@ class AiLibraryServiceTest {
     private AiLibraryService service(SongRepository songRepository, PlaylistRepository playlistRepository,
                                      PlaylistSongRepository playlistSongRepository,
                                      OpenAiCompatibleClient aiClient, ObjectMapper objectMapper) {
+        return service(songRepository, playlistRepository, playlistSongRepository, aiClient, objectMapper,
+                mock(AssetWriter.class));
+    }
+
+    private AiLibraryService service(SongRepository songRepository, PlaylistRepository playlistRepository,
+                                     PlaylistSongRepository playlistSongRepository,
+                                     OpenAiCompatibleClient aiClient, ObjectMapper objectMapper,
+                                     AssetWriter assetWriter) {
         AiConfigService configService = mock(AiConfigService.class);
         when(configService.resolve()).thenReturn(new AiConfigService.ResolvedConfig(true, "http://ai.test/v1",
                 "bulk-model", "", 30, 0.97, 0.92, AiConfigService.JsonMode.AUTO, 2, 1, "secret"));
         return new AiLibraryService(mock(AiAnalysisTaskRepository.class), songRepository,
                 playlistRepository, playlistSongRepository, mock(AiAnalysisWorker.class),
-                objectMapper, configService, mock(AssetWriter.class),
+                objectMapper, configService, assetWriter,
                 mock(AiClassificationApplier.class), aiClient, mock(MediaImportRecordRepository.class));
     }
 }

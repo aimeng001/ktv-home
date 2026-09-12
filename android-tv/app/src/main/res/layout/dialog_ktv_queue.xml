@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/queueDrawerRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#88000000">
+
+    <!-- 右侧抽屉主体 -->
+    <LinearLayout
+        android:id="@+id/queueDrawerPanel"
+        android:layout_width="480dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:background="@drawable/player_glass"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <!-- 顶部标题栏 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/txtDrawerTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="已点歌曲 (0)"
+                android:textColor="@color/gold"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnDrawerShuffle"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:background="@drawable/btn_keyboard_key"
+                android:textColor="@color/color_keyboard_key_text"
+                android:text="🔀 智能打散"
+                android:textSize="12sp"
+                android:focusable="true" />
+
+            <Button
+                android:id="@+id/btnDrawerClose"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/btn_gold"
+                android:textColor="#111317"
+                android:text="关闭"
+                android:textStyle="bold"
+                android:textSize="13sp"
+                android:focusable="true" />
+        </LinearLayout>
+
+        <!-- 正在演唱卡片 -->
+        <LinearLayout
+            android:id="@+id/nowPlayingSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/karaoke_label"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="正在演唱"
+                android:textColor="@color/gold2"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/txtDrawerNowPlaying"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="暂无播放"
+                android:textColor="@android:color/white"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:singleLine="true" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="8dp"
+            android:text="待播列表"
+            android:textColor="@color/dim"
+            android:textSize="13sp" />
+
+        <!-- 待播歌曲列表 -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/drawerRecyclerView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:contentDescription="已点歌曲列表" />
+
+            <TextView
+                android:id="@+id/txtDrawerEmpty"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:text="暂无排队歌曲，快去点歌吧~"
+                android:textColor="@color/dim2"
+                android:textSize="15sp"
+                android:visibility="gone" />
+        </FrameLayout>
+    </LinearLayout>
+</FrameLayout>

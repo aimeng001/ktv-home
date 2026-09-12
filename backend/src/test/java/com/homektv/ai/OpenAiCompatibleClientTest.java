@@ -7,6 +7,7 @@ import com.homektv.web.ApiException;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 
@@ -112,6 +113,7 @@ class OpenAiCompatibleClientTest {
                 .path("ok").asBoolean()).isTrue();
     }
 
+    @Tag("extended")
     @Test
     void retriesRateLimitAndListsModels() throws Exception {
         AtomicInteger completions = new AtomicInteger();
@@ -129,6 +131,21 @@ class OpenAiCompatibleClientTest {
         assertThat(client.completeJson("BULK", "system", "user", 100).path("ok").asBoolean()).isTrue();
         assertThat(client.listModels()).containsExactly("a-model", "z-model");
         assertThat(completions.get()).isEqualTo(2);
+    }
+
+    @Test
+    void rejectsAnOversizedValidProviderResponseBeforeParsingIt() throws Exception {
+        start(exchange -> {
+            read(exchange);
+            String response = "{\"choices\":[{\"message\":{\"content\":\"{\\\"ok\\\":true}\"}}],"
+                    + "\"padding\":\"" + "x".repeat(5 * 1024 * 1024) + "\"}";
+            respond(exchange, 200, response);
+        });
+
+        assertThatThrownBy(() -> client(AiConfigService.JsonMode.PROMPT_ONLY)
+                .completeJson("BULK", "system", "user", 100))
+                .isInstanceOf(OpenAiCompatibleClient.AiProviderException.class)
+                .hasFieldOrPropertyWithValue("code", "AI_RESPONSE_TOO_LARGE");
     }
 
     @Test

@@ -19,6 +19,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Objects;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -57,10 +60,20 @@ public class PlaylistPublicService {
     }
 
     public List<Map<String, Object>> list() {
-        return playlistRepository.findAllByOrderByUpdatedAtDesc().stream()
+        List<Playlist> playlists = playlistRepository.findAllByOrderByUpdatedAtDesc().stream()
                 .filter(Playlist::isPublicVisible)
+                .toList();
+        if (playlists.isEmpty()) return List.of();
+        List<Long> playlistIds = playlists.stream().map(Playlist::getId).toList();
+        List<PlaylistSong> rows = safeRows(playlistSongRepository
+                .findByPlaylistIdInOrderByPlaylistIdAscSortOrderAsc(playlistIds));
+        Map<Long, List<PlaylistSong>> rowsByPlaylist = rows.stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        PlaylistSong::getPlaylistId, LinkedHashMap::new, java.util.stream.Collectors.toList()));
+        Map<Long, Song> songs = loadSongs(rows.stream().map(PlaylistSong::getSongId).toList());
+        return playlists.stream()
                 .map(playlist -> {
-                    List<PlaylistSong> items = playlistSongRepository.findByPlaylistIdOrderBySortOrder(playlist.getId());
+                    List<PlaylistSong> items = rowsByPlaylist.getOrDefault(playlist.getId(), List.of());
                     Map<String, Object> value = new LinkedHashMap<>();
                     value.put("id", playlist.getId());
                     value.put("name", playlist.getName());
@@ -69,15 +82,18 @@ public class PlaylistPublicService {
                     value.put("coverUrl", playlist.getCoverPath() == null ? null : "/api/playlists/" + playlist.getId() + "/cover");
                     value.put("aiGenerated", playlist.isAiGenerated());
                     value.put("songCount", items.size());
-                    value.put("preview", items.stream().map(this::songDto).filter(java.util.Objects::nonNull).limit(3).toList());
+                    value.put("preview", items.stream().map(item -> songDto(songs.get(item.getSongId())))
+                            .filter(Objects::nonNull).limit(3).toList());
                     return value;
                 }).toList();
     }
 
     public Map<String, Object> detail(Long playlistId) {
         Playlist playlist = requirePublic(playlistId);
-        List<SongDto> songs = playlistSongRepository.findByPlaylistIdOrderBySortOrder(playlistId).stream()
-                .map(this::songDto).filter(java.util.Objects::nonNull).toList();
+        List<PlaylistSong> rows = safeRows(playlistSongRepository.findByPlaylistIdOrderBySortOrder(playlistId));
+        Map<Long, Song> songById = loadSongs(rows.stream().map(PlaylistSong::getSongId).toList());
+        List<SongDto> songs = rows.stream().map(item -> songDto(songById.get(item.getSongId())))
+                .filter(Objects::nonNull).toList();
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("id", playlist.getId());
         value.put("name", playlist.getName());
@@ -139,8 +155,23 @@ public class PlaylistPublicService {
         return playlist;
     }
 
-    private SongDto songDto(PlaylistSong item) {
-        Song song = songRepository.findById(item.getSongId()).orElse(null);
+    private List<PlaylistSong> safeRows(List<PlaylistSong> rows) {
+        return rows == null ? List.of() : rows;
+    }
+
+    private Map<Long, Song> loadSongs(Collection<Long> ids) {
+        LinkedHashSet<Long> uniqueIds = ids.stream()
+                .filter(Objects::nonNull)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (uniqueIds.isEmpty()) return Map.of();
+        Iterable<Song> found = songRepository.findAllById(uniqueIds);
+        if (found == null) return Map.of();
+        Map<Long, Song> songs = new LinkedHashMap<>();
+        found.forEach(song -> songs.put(song.getId(), song));
+        return songs;
+    }
+
+    private SongDto songDto(Song song) {
         return song == null ? null : SongDto.from(song);
     }
 }

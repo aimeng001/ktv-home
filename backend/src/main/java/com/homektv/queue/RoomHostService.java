@@ -13,6 +13,7 @@ import java.util.Map;
 @Service
 public class RoomHostService {
     private static final String HOST_USER_ID = "room_host_user_id";
+    private static final String HOST_REVISION = "room_host_revision";
 
     private final SettingService settingService;
     private final AppUserRepository userRepository;
@@ -36,6 +37,7 @@ public class RoomHostService {
         result.put("claimed", host != null);
         result.put("hostUserId", host == null ? null : host.getId());
         result.put("hostNickname", host == null ? null : host.getNickname());
+        result.put("revision", revision());
         result.put("isHost", host != null && host.getId().equals(currentUserId));
         return result;
     }
@@ -49,6 +51,7 @@ public class RoomHostService {
             throw new ApiException("HOST_ALREADY_CLAIMED", "房主已由其他用户认领");
         }
         settingService.putInternal(HOST_USER_ID, user.getId());
+        settingService.putInternal(HOST_REVISION, revision() + 1L);
         return status(clientToken);
     }
 
@@ -57,6 +60,7 @@ public class RoomHostService {
         userRepository.lockRoomHost();
         requireHost(clientToken);
         settingService.putInternal(HOST_USER_ID, 0L);
+        settingService.putInternal(HOST_REVISION, revision() + 1L);
         return status(clientToken);
     }
 
@@ -87,5 +91,15 @@ public class RoomHostService {
             catch (NumberFormatException ignored) { return null; }
         }
         return null;
+    }
+
+    private long revision() {
+        Object value = settingService.getAll().get(HOST_REVISION);
+        if (value instanceof Number number) return Math.max(0L, number.longValue());
+        if (value != null) {
+            try { return Math.max(0L, Long.parseLong(value.toString())); }
+            catch (NumberFormatException ignored) { return 0L; }
+        }
+        return 0L;
     }
 }

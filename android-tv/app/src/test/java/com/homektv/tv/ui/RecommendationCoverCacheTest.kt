@@ -41,4 +41,20 @@ class RecommendationCoverCacheTest {
         assertNull(cache.get(1L))
         assertTrue(cache.tryStartLoad(2L))
     }
+
+    @Test
+    fun `weighted cache evicts by bytes even below entry capacity`() {
+        val cache = RecommendationCoverCache<String>(
+            capacity = 10,
+            maxBytes = 5,
+            weight = { it.length.toLong() },
+        )
+
+        cache.complete(1L, "1234")
+        cache.complete(2L, "12")
+
+        assertNull(cache.get(1L))
+        assertEquals("12", cache.get(2L))
+        assertEquals(2L, cache.byteSize())
+    }
 }

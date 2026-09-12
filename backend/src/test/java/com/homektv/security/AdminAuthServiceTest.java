@@ -102,6 +102,48 @@ class AdminAuthServiceTest {
                 .isEqualTo("ADMIN_AUTH_RATE_LIMITED");
     }
 
+    @Test
+    void expiredSessionsArePurgedBeforeNewSessionsAreStored() {
+        properties.setAdminPassword("correct-password");
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-30T00:00:00Z"));
+        service = new AdminAuthService(properties, clock);
+
+        for (int i = 0; i < AdminAuthService.MAX_SESSIONS; i++) {
+            String clientKey = "session-client-" + i;
+            service.login("correct-password", clientKey);
+        }
+
+        clock.advance(Duration.ofHours(12).plusSeconds(1));
+
+        for (int i = 0; i < AdminAuthService.MAX_SESSIONS; i++) {
+            String clientKey = "fresh-client-" + i;
+            assertThat(service.login("correct-password", clientKey)).isNotBlank();
+        }
+
+        assertThatThrownBy(() -> service.login("correct-password", "one-too-many"))
+                .isInstanceOf(ApiException.class)
+                .extracting(exception -> ((ApiException) exception).getCode())
+                .isEqualTo("ADMIN_AUTH_SESSION_LIMIT");
+    }
+
+    @Test
+    void failedLoginTrackingHasAHardClientLimit() {
+        properties.setAdminPassword("correct-password");
+
+        for (int i = 0; i < AdminAuthService.MAX_TRACKED_CLIENTS; i++) {
+            String clientKey = "failed-client-" + i;
+            assertThatThrownBy(() -> service.login("wrong-password", clientKey))
+                    .isInstanceOf(ApiException.class)
+                    .extracting(exception -> ((ApiException) exception).getCode())
+                    .isEqualTo("ADMIN_AUTH_INVALID");
+        }
+
+        assertThatThrownBy(() -> service.login("wrong-password", "one-too-many-failed-clients"))
+                .isInstanceOf(ApiException.class)
+                .extracting(exception -> ((ApiException) exception).getCode())
+                .isEqualTo("ADMIN_AUTH_RATE_LIMITED");
+    }
+
     private static final class MutableClock extends Clock {
         private final AtomicReference<Instant> now;
 

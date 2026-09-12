@@ -1,7 +1,12 @@
 package com.homektv.tv.net
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import androidx.core.content.edit
+import com.homektv.tv.session.DeviceCapabilities
+import com.homektv.tv.session.DeviceMode
+import com.homektv.tv.session.DeviceModeRouter
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
@@ -12,8 +17,10 @@ import kotlinx.serialization.json.Json
  */
 class AppConfig(context: Context) {
 
-    private val prefs = context.applicationContext
+    val appContext = context.applicationContext
+    private val prefs = appContext
         .getSharedPreferences("ktv_tv", Context.MODE_PRIVATE)
+    private val credentialStore = CredentialStore(appContext)
     private val json = Json { ignoreUnknownKeys = true }
 
     init {
@@ -64,8 +71,8 @@ class AppConfig(context: Context) {
 
     /** 与服务端 KTV_PLAYER_CREDENTIAL 对应的可选电视连接密钥。 */
     var playerCredential: String
-        get() = prefs.getString(KEY_PLAYER_CREDENTIAL, "").orEmpty()
-        set(value) = prefs.edit { putString(KEY_PLAYER_CREDENTIAL, value.trim()) }
+        get() = credentialStore.read(serverHost)
+        set(value) = credentialStore.write(value, serverHost)
 
     /** Finished queue reports waiting for a server acknowledgement. */
     fun pendingFinishedQueueIds(serverHost: String? = this.serverHost): List<Long> =
@@ -96,19 +103,108 @@ class AppConfig(context: Context) {
         return buildTvWebSocketUrl(serverHost.orEmpty(), clientToken, playerCredential)
     }
 
+    /** WebSocket 地址 for the controller-compatible V1 session. */
+    fun controllerWsUrl(userToken: String = this.userToken): String =
+        buildControllerWebSocketUrl(
+            serverHost = serverHost.orEmpty(),
+            userToken = userToken,
+            platform = controllerPlatform(),
+            deviceMode = effectiveMode().name,
+        )
+
+    /** Explicit form-factor metadata lets the server count phones without
+     * conflating them with browser H5 sessions. */
+    fun controllerPlatform(): String {
+        val configuration = appContext.resources.configuration
+        val television = appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+            (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
+        if (television) return "ANDROID_TV"
+        return if (configuration.smallestScreenWidthDp >= 600) "ANDROID_TABLET" else "ANDROID_PHONE"
+    }
+
     /** REST/资源基址：http://host:port/api */
     fun apiBase(): String = "http://${serverHost}/api"
 
     /** H5 点歌地址（用于待机页二维码/明文兜底） */
     fun h5Url(): String = "http://${serverHost}/m"
 
-    /** 稳定的设备 token（首次生成后固定），用于 WS client_token。 */
+    /**
+     * Stable player token for the currently selected server. The old global
+     * key is migrated only for the current server so switching servers cannot
+     * accidentally reuse the playback identity.
+     */
+    val playerToken: String
+        get() = tokenForServer(KEY_PLAYER_TOKEN_PREFIX, "tv-", migrateLegacy = true)
+
+    /** Backwards-compatible name used by the existing TV playback code. */
     val clientToken: String
-        get() = prefs.getString(KEY_TOKEN, null) ?: run {
-            val t = "tv-" + java.util.UUID.randomUUID().toString().take(8)
-            prefs.edit { putString(KEY_TOKEN, t) }
-            t
+        get() = playerToken
+
+    /** Stable controller identity scoped to the selected server. */
+    val userToken: String
+        get() = tokenForServer(KEY_USER_TOKEN_PREFIX, "user-")
+
+    fun userTokenFor(hostPort: String?): String =
+        tokenForServer(KEY_USER_TOKEN_PREFIX, "user-", hostPort = hostPort)
+
+    /** Nicknames are server-scoped and never sent as part of the player WS. */
+    fun nicknameFor(hostPort: String? = serverHost): String =
+        prefs.getString(serverScopedPreferenceKey(KEY_NICKNAME_PREFIX, hostPort), "").orEmpty()
+
+    fun saveNickname(nickname: String, hostPort: String? = serverHost) {
+        prefs.edit {
+            putString(
+                serverScopedPreferenceKey(KEY_NICKNAME_PREFIX, hostPort),
+                nickname.trim().take(MAX_NICKNAME_LENGTH),
+            )
         }
+    }
+
+    /** The first-run recommendation; a saved choice always wins per server. */
+    val recommendedMode: DeviceMode
+        get() = DeviceModeRouter.recommend(
+            DeviceCapabilities(
+                isTelevision = appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+                    (appContext.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+                    Configuration.UI_MODE_TYPE_TELEVISION,
+                hasTouchscreen = appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN),
+            ),
+        )
+
+    fun modeFor(hostPort: String? = serverHost): DeviceMode? =
+        prefs.getString(serverScopedPreferenceKey(KEY_MODE_PREFIX, hostPort), null)
+            ?.let { value -> runCatching { DeviceMode.valueOf(value) }.getOrNull() }
+
+    fun effectiveMode(hostPort: String? = serverHost): DeviceMode =
+        DeviceModeRouter.resolve(recommendedMode, modeFor(hostPort))
+
+    fun saveMode(mode: DeviceMode, hostPort: String? = serverHost) {
+        prefs.edit { putString(serverScopedPreferenceKey(KEY_MODE_PREFIX, hostPort), mode.name) }
+    }
+
+    fun getModeMigrationVersion(): Int = prefs.getInt("mode_migration_version", 0)
+
+    fun setModeMigrationVersion(version: Int) {
+        prefs.edit { putInt("mode_migration_version", version) }
+    }
+
+    private fun tokenForServer(
+        prefix: String,
+        label: String,
+        hostPort: String? = serverHost,
+        migrateLegacy: Boolean = false,
+    ): String {
+        val scope = hostPort.orEmpty().trim()
+        val key = serverScopedPreferenceKey(prefix, scope)
+        prefs.getString(key, null)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+
+        val legacy = if (migrateLegacy && scope == serverHost.orEmpty().trim()) {
+            prefs.getString(KEY_TOKEN, null)?.trim()?.takeIf { it.isNotEmpty() }
+        } else null
+        val token = legacy ?: label + java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+        prefs.edit(commit = true) { putString(key, token) }
+        return token
+    }
 
     private fun migrateLegacyServer() {
         if (prefs.contains(KEY_SAVED_SERVERS)) return
@@ -134,15 +230,22 @@ class AppConfig(context: Context) {
     companion object {
         private const val KEY_HOST = "server_host"
         private const val KEY_TOKEN = "client_token"
+        private const val KEY_PLAYER_TOKEN_PREFIX = "player_token_"
+        private const val KEY_USER_TOKEN_PREFIX = "user_token_"
+        private const val KEY_NICKNAME_PREFIX = "nickname_"
+        private const val KEY_MODE_PREFIX = "mode_"
         private const val KEY_MICROPHONE_MONITOR = "microphone_monitor_enabled"
-        private const val KEY_PLAYER_CREDENTIAL = "player_credential"
         private const val KEY_SAVED_SERVERS = "saved_servers"
         private const val KEY_PENDING_FINISHED_PREFIX = "pending_finished_queue_ids_"
         private const val MAX_SAVED_SERVERS = 10
         private const val MAX_PENDING_FINISHED = 100
+        private const val MAX_NICKNAME_LENGTH = 32
 
         private fun pendingFinishedKey(serverHost: String?): String =
-            KEY_PENDING_FINISHED_PREFIX + serverHost.orEmpty().trim()
+            serverScopedPreferenceKey(KEY_PENDING_FINISHED_PREFIX, serverHost)
+
+        internal fun serverScopedPreferenceKey(prefix: String, serverHost: String?): String =
+            prefix + serverHost.orEmpty().trim()
 
         /**
          * 归一化用户输入：去空格、剥离 http(s):// 前缀与尾部斜杠；

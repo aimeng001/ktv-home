@@ -33,6 +33,10 @@ class LanScanner {
         .retryOnConnectionFailure(false)
         .build()
 
+    fun close() {
+        client.closeResources()
+    }
+
     /** 扫描本机所在 /24 网段的所有候选端口，并逐台报告命中。 */
     suspend fun scanAll(
         onProgress: ((scanned: Int, total: Int) -> Unit)? = null,
@@ -61,48 +65,117 @@ class LanScanner {
         (1..254).map { last -> "$prefix$last:$port" }
     }
 
-    /** 单地址探测：GET http://host:port/api/health，body 含 "home-ktv" 即命中。 */
+    /**
+     * 单地址探测：先确认服务身份，再确认数据库 readiness。
+     * 健康端点可在数据库不可用时仍返回 UP，因此两者都必须成功才允许保存地址。
+     */
     suspend fun validate(hostPort: String): Boolean = withContext(Dispatchers.IO) {
         withTimeoutOrNull(PROBE_TIMEOUT_MS + 300) {
             try {
-                val req = Request.Builder()
-                    .url("http://$hostPort/api/health")
-                    .get()
-                    .build()
-                client.newCall(req).execute().use { resp ->
-                    resp.isSuccessful && (resp.body?.string()?.contains("home-ktv") == true)
-                }
+                validationSatisfied(VALIDATION_PATHS.associateWith { path -> probe(hostPort, path) })
             } catch (_: Exception) {
                 false
             }
         } ?: false
     }
 
+    private fun probe(hostPort: String, path: String): Boolean {
+        val req = Request.Builder()
+            .url("http://$hostPort$path")
+            .get()
+            .build()
+        return client.newCall(req).execute().use { resp ->
+            resp.isSuccessful && (ResponseBodyReader.readText(resp.body, 64L * 1024L)
+                ?.contains("home-ktv") == true)
+        }
+    }
+
+    internal fun validationSatisfied(results: Map<String, Boolean>): Boolean =
+        VALIDATION_PATHS.all { path -> results[path] == true }
+
     /**
      * 取本机 IPv4 的 /24 前缀（如 192.168.1.）。
-     * 优先非回环、非虚拟的 site-local 地址（192.168/10/172.16-31）。
+     * 优先物理 Wi-Fi / 以太网接口，排除虚拟 VPN / Docker 接口。
      */
     private fun localSubnetPrefix(): String? {
-        try {
+        return try {
             val ifaces = NetworkInterface.getNetworkInterfaces() ?: return null
+            val candidates = mutableListOf<LanInterfaceCandidate>()
             for (iface in ifaces) {
-                if (!iface.isUp || iface.isLoopback || iface.isVirtual) continue
+                val siteLocalIpv4 = mutableListOf<String>()
                 for (addr in iface.inetAddresses) {
                     if (addr is Inet4Address && addr.isSiteLocalAddress) {
-                        val ip = addr.hostAddress ?: continue
-                        val dot = ip.lastIndexOf('.')
-                        if (dot > 0) return ip.substring(0, dot + 1)
+                        addr.hostAddress?.let { siteLocalIpv4.add(it) }
                     }
                 }
+                candidates.add(
+                    LanInterfaceCandidate(
+                        name = iface.name,
+                        isUp = iface.isUp,
+                        isLoopback = iface.isLoopback,
+                        isVirtual = iface.isVirtual,
+                        siteLocalIpv4 = siteLocalIpv4,
+                    )
+                )
             }
+            selectSubnetPrefix(candidates)
         } catch (_: Exception) {
+            null
         }
-        return null
     }
 
     companion object {
         private const val PROBE_TIMEOUT_MS = 300L
         private const val MAX_CONCURRENT_PROBES = 64
         internal val CANDIDATE_PORTS = listOf(8080, 80, 8000, 8081, 8090, 8888, 9000, 9090)
+        internal val VALIDATION_PATHS = listOf("/api/health", "/api/ready")
+
+        private val VIRTUAL_NAME_PREFIXES = listOf(
+            "tun", "tap", "ppp", "p2p", "docker", "veth", "virbr", "dummy",
+            "wg", "tailscale", "clash", "zt"
+        )
+
+        internal fun selectSubnetPrefix(candidates: List<LanInterfaceCandidate>): String? {
+            val scored = candidates
+                .filter { it.isUp && !it.isLoopback && !it.isVirtual }
+                .filter { candidate ->
+                    val lower = candidate.name.lowercase()
+                    VIRTUAL_NAME_PREFIXES.none { prefix -> lower.startsWith(prefix) }
+                }
+                .mapNotNull { candidate ->
+                    val validIp = candidate.siteLocalIpv4.firstOrNull() ?: return@mapNotNull null
+                    val lower = candidate.name.lowercase()
+                    var score = 0
+                    if (lower.startsWith("wlan") || lower.startsWith("wifi")) {
+                        score += 200
+                    } else if (lower.startsWith("eth") || lower.startsWith("en")) {
+                        score += 150
+                    } else {
+                        score += 50
+                    }
+
+                    if (validIp.startsWith("192.168.")) {
+                        score += 30
+                    } else if (validIp.startsWith("172.")) {
+                        score += 15
+                    } else if (validIp.startsWith("10.")) {
+                        score += 5
+                    }
+                    Pair(validIp, score)
+                }
+                .sortedByDescending { it.second }
+
+            val bestIp = scored.firstOrNull()?.first ?: return null
+            val dot = bestIp.lastIndexOf('.')
+            return if (dot > 0) bestIp.substring(0, dot + 1) else null
+        }
     }
 }
+
+data class LanInterfaceCandidate(
+    val name: String,
+    val isUp: Boolean,
+    val isLoopback: Boolean,
+    val isVirtual: Boolean,
+    val siteLocalIpv4: List<String>,
+)

@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, it, expect, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { usePlayerStore } from './player'
@@ -75,5 +77,45 @@ describe('usePlayerStore', () => {
     expect(p.tvOnline).toBe(false)
     p.handleEvent('sync_full', { ...snapshot })
     expect(p.tvOnline).toBe(false)
+  })
+
+  it('derives ordered song ids from the current server snapshot', () => {
+    const p = usePlayerStore()
+    p.handleEvent('sync_full', snapshot)
+    expect([...p.orderedSongIds]).toEqual([10, 11])
+    p.handleEvent('queue_updated', { ...snapshot, playing: null, list: [] })
+    expect([...p.orderedSongIds]).toEqual([])
+  })
+
+  it('ignores an out-of-order room host event', () => {
+    const p = usePlayerStore()
+    p.handleEvent('room_host_changed', { claimed: true, hostUserId: 9, revision: 3 })
+    p.handleEvent('room_host_changed', { claimed: false, hostUserId: null, revision: 2 })
+    expect(p.roomHost.claimed).toBe(true)
+    expect(p.roomHost.hostUserId).toBe(9)
+    expect(p.roomHost.revision).toBe(3)
+  })
+
+  it('does not let a legacy host event overwrite a revisioned state', () => {
+    const p = usePlayerStore()
+    p.handleEvent('room_host_changed', { claimed: true, hostUserId: 9, revision: 3 })
+    p.handleEvent('room_host_changed', { claimed: false, hostUserId: null })
+    expect(p.roomHost.claimed).toBe(true)
+    expect(p.roomHost.hostUserId).toBe(9)
+    expect(p.roomHost.revision).toBe(3)
+  })
+
+  it('derives isHost locally based on userStore serverUserId', () => {
+    const p = usePlayerStore()
+    const { useUserStore } = require('./user')
+    const u = useUserStore()
+    u.serverUserId = 8
+
+    p.handleEvent('room_host_changed', { claimed: true, hostUserId: 7, isHost: true, revision: 4 })
+    expect(p.roomHost.isHost).toBe(false)
+
+    u.serverUserId = 7
+    p.handleEvent('room_host_changed', { claimed: true, hostUserId: 7, isHost: false, revision: 5 })
+    expect(p.roomHost.isHost).toBe(true)
   })
 })

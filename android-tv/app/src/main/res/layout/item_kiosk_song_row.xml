@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="62dp"
+    android:background="@drawable/btn_keyboard_key"
+    android:layout_marginBottom="6dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="14dp"
+    android:focusable="false"
+    android:clickable="true">
+
+    <!-- 歌曲名称与歌手 -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/txtSongTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="歌曲名称"
+            android:textColor="@android:color/white"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:singleLine="true" />
+
+        <TextView
+            android:id="@+id/txtSongArtist"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="歌手名称"
+            android:textColor="@color/dim"
+            android:textSize="13sp"
+            android:singleLine="true" />
+    </LinearLayout>
+
+    <!-- 伴唱/多轨标签 -->
+    <TextView
+        android:id="@+id/txtSongBadge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/standby_chip"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="3dp"
+        android:text="原/伴"
+        android:textColor="@color/gold"
+        android:textSize="11sp"
+        android:visibility="gone" />
+
+    <!-- 点歌按键 -->
+    <Button
+        android:id="@+id/btnOrder"
+        android:layout_width="64dp"
+        android:layout_height="38dp"
+        android:background="@drawable/btn_gold"
+        android:textColor="#111317"
+        android:text="点歌"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:focusable="true" />
+
+    <!-- 插播置顶按键 -->
+    <Button
+        android:id="@+id/btnOrderTop"
+        android:layout_width="56dp"
+        android:layout_height="38dp"
+        android:layout_marginStart="8dp"
+        android:background="@drawable/btn_ghost"
+        android:textColor="@color/color_keyboard_key_text"
+        android:text="优先"
+        android:textSize="12sp"
+        android:focusable="true" />
+</LinearLayout>

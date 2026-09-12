@@ -48,6 +48,27 @@ class ExternalReadOnlyPathSafetyTest {
     }
 
     @Test
+    void assetWriterRejectsOversizedImageAndLyricBeforeCreatingFiles() {
+        AppProperties props = new AppProperties();
+        props.setDataPath(tempDir.resolve("data").toString());
+        props.setKtvLibraryPath(tempDir.resolve("music").toString());
+        props.setSourceLibraryPath(tempDir.resolve("source").toString());
+        props.setLibraryMode(LibraryMode.MANAGED);
+        AssetWriter writer = new AssetWriter(props);
+
+        assertThatThrownBy(() -> writer.writeCover("too-large", new byte[AssetWriter.MAX_IMAGE_BYTES + 1], "jpg"))
+                .isInstanceOf(ApiException.class)
+                .extracting(error -> ((ApiException) error).getCode())
+                .isEqualTo("IMAGE_TOO_LARGE");
+        assertThatThrownBy(() -> writer.writeLyric("too-large", "字".repeat(AssetWriter.MAX_LYRIC_BYTES)))
+                .isInstanceOf(ApiException.class)
+                .extracting(error -> ((ApiException) error).getCode())
+                .isEqualTo("LYRIC_TOO_LARGE");
+        assertThat(tempDir.resolve("data/covers/too-large.jpg")).doesNotExist();
+        assertThat(tempDir.resolve("data/lyrics/too-large.lrc")).doesNotExist();
+    }
+
+    @Test
     void secretKeySymlinkIntoExternalSourceIsRejected() throws Exception {
         Path source = Files.createDirectory(tempDir.resolve("nas-copy"));
         Path data = Files.createDirectory(tempDir.resolve("data"));

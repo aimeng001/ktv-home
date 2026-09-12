@@ -69,7 +69,12 @@ public class ControlController {
     @PostMapping("/control")
     public QueueSnapshot control(@RequestBody ControlRequest req) {
         String action = req.action() == null ? "" : req.action();
-        Long userId = userService.resolveUserId(req.clientToken());
+        // Do not create/resolve a default user for playback-only controls. This
+        // keeps a failed registration from silently changing queue ownership;
+        // identity is required only for user-owned queue mutations.
+        Long userId = requiresUserIdentity(action) && userService != null
+                ? userService.resolveUserId(req.clientToken())
+                : null;
 
         switch (action) {
             case "order" -> {
@@ -85,6 +90,8 @@ public class ControlController {
                 broadcast(WsEvent.QUEUE_UPDATED);
             }
             case "top" -> {
+                requireOwnerOrHost(req.longParam("queue_id"), userId, req.clientToken(),
+                        "只能置顶自己点的歌曲");
                 queueService.top(req.longParam("queue_id"));
                 broadcast(WsEvent.QUEUE_UPDATED);
             }
@@ -145,6 +152,10 @@ public class ControlController {
         }
     }
 
+    private boolean requiresUserIdentity(String action) {
+        return "order".equals(action) || "top".equals(action) || "cancel".equals(action);
+    }
+
     /**
      * 广播当前快照到所有端（详设§4.1：客户端以广播为准）。
      * Broadcasts the current snapshot to all clients (detailed design §4.1: clients rely on broadcasts).
@@ -158,12 +169,26 @@ public class ControlController {
      * Cancel permission: only the user who ordered a song or the room host may remove it.
      */
     private void cancelWithPermission(Long queueId, Long userId, String clientToken) {
+        requireOwnerOrHost(queueId, userId, clientToken, "只能删除自己点的歌曲");
+        queueService.cancel(queueId);
+    }
+
+    /**
+     * Queue mutations must be authorized from the server-side orderedBy value.
+     * A legacy row without an owner is intentionally fail-closed for non-hosts;
+     * nickname or UI visibility checks are not an authorization boundary.
+     */
+    private void requireOwnerOrHost(Long queueId, Long userId, String clientToken, String deniedMessage) {
+        if (queueRepo == null) {
+            throw new ApiException("FORBIDDEN", deniedMessage);
+        }
         QueueItem item = queueRepo.findById(queueId)
                 .orElseThrow(() -> new ApiException("QUEUE_ITEM_NOT_FOUND", "队列项不存在"));
         boolean isHost = roomHostService != null && roomHostService.isHost(clientToken);
-        if (!isHost && item.getOrderedBy() != null && !item.getOrderedBy().equals(userId)) {
-            throw new ApiException("FORBIDDEN", "只能删除自己点的歌曲");
+        boolean isOwner = userId != null && item.getOrderedBy() != null
+                && item.getOrderedBy().equals(userId);
+        if (!isHost && !isOwner) {
+            throw new ApiException("FORBIDDEN", deniedMessage);
         }
-        queueService.cancel(queueId);
     }
 }

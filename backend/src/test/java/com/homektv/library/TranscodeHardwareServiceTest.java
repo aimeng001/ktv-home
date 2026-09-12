@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -70,6 +71,34 @@ class TranscodeHardwareServiceTest {
         assertThat(status.vendor()).isEqualTo("Rockchip RK MPP");
         assertThat(status.acceleration()).isEqualTo("rkmpp");
         assertThat(status.supportedCodecs()).containsExactly("h264", "hevc");
+    }
+
+    @Test
+    void smokeTestDrainsProcessOutputInsteadOfBlockingOnFullPipe() throws Exception {
+        String executable = Path.of(System.getProperty("java.home"), "bin",
+                "java" + (System.getProperty("os.name").toLowerCase().contains("win") ? ".exe" : ""))
+                .toString();
+        List<String> command = List.of(executable, "-cp", System.getProperty("java.class.path"),
+                OutputFloodProcess.class.getName());
+
+        TranscodeHardwareService service = new TranscodeHardwareService(
+                temp.resolve("missing").toString(), temp.resolve("sys").toString(),
+                temp.resolve("missing-mpp").toString(), "ffmpeg");
+
+        assertThat(service.run(command)).isTrue();
+    }
+
+    public static final class OutputFloodProcess {
+        private OutputFloodProcess() { }
+
+        public static void main(String[] args) throws Exception {
+            byte[] chunk = new byte[8192];
+            Arrays.fill(chunk, (byte) 'x');
+            for (int index = 0; index < 256; index++) {
+                System.out.write(chunk);
+            }
+            System.out.flush();
+        }
     }
 
     private TranscodeHardwareService workingService(Path dri, Path sys) {

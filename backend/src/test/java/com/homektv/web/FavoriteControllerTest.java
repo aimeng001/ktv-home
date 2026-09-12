@@ -14,18 +14,23 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class FavoriteControllerTest {
     private final List<Favorite> favorites = new ArrayList<>();
     private final Map<Long, Song> songs = new LinkedHashMap<>();
+    private final AtomicInteger findByIdCalls = new AtomicInteger();
+    private final AtomicInteger findAllByIdCalls = new AtomicInteger();
     private FavoriteController controller;
 
     @BeforeEach
     void setUp() {
         favorites.clear();
         songs.clear();
+        findByIdCalls.set(0);
+        findAllByIdCalls.set(0);
         controller = new FavoriteController(favoriteRepository(), songRepository(), new UserService(null) {
             @Override public Long resolveUserId(String clientToken) { return 7L; }
         });
@@ -46,6 +51,18 @@ class FavoriteControllerTest {
         favorites.add(favorite(11L));
         favorites.add(favorite(10L));
         assertThat(controller.list("token-1")).extracting("title").containsExactly("后来", "晴天");
+    }
+
+    @Test
+    void listsFavoritesWithOneBatchSongLookup() {
+        songs.put(10L, song(10L, "晴天"));
+        songs.put(11L, song(11L, "后来"));
+        favorites.add(favorite(11L));
+        favorites.add(favorite(10L));
+
+        assertThat(controller.list("token-1")).hasSize(2);
+        assertThat(findAllByIdCalls).hasValue(1);
+        assertThat(findByIdCalls).hasValue(0);
     }
 
     @Test
@@ -75,7 +92,20 @@ class FavoriteControllerTest {
     private SongRepository songRepository() {
         return proxy(SongRepository.class, (method, args) -> switch (method.getName()) {
             case "existsById" -> songs.containsKey(args[0]);
-            case "findById" -> Optional.ofNullable(songs.get(args[0]));
+            case "findById" -> {
+                findByIdCalls.incrementAndGet();
+                yield Optional.ofNullable(songs.get(args[0]));
+            }
+            case "findAllById" -> {
+                findAllByIdCalls.incrementAndGet();
+                Iterable<?> ids = (Iterable<?>) args[0];
+                List<Song> found = new ArrayList<>();
+                for (Object id : ids) {
+                    Song song = songs.get(id);
+                    if (song != null) found.add(song);
+                }
+                yield found;
+            }
             default -> defaultValue(method.getReturnType());
         });
     }

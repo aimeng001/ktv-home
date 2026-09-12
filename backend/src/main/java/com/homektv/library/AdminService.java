@@ -51,6 +51,7 @@ public class AdminService {
     private final QueueItemRepository queueRepo;
     private final PlayerStateRepository playerRepo;
     private final AppProperties props;
+    private AssetCleanupService assetCleanupService;
     private final ArtistCreditService artistCreditService;
     private final SongProjectionService songProjectionService;
     private ManagedLibraryDeleteService managedLibraryDeleteService;
@@ -98,6 +99,11 @@ public class AdminService {
     @Autowired
     void setManagedLibraryDeleteService(ManagedLibraryDeleteService service) {
         this.managedLibraryDeleteService = service;
+    }
+
+    @Autowired
+    void setAssetCleanupService(AssetCleanupService service) {
+        this.assetCleanupService = service;
     }
 
     /** 仪表盘统计（P2.1） */
@@ -373,6 +379,8 @@ public class AdminService {
         LibraryModePolicy.requireManaged(props, "删除曲库歌曲");
         Song song = songRepo.findById(id)
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
+        String oldCoverPath = song.getCoverPath();
+        String oldLyricPath = song.getLyricPath();
         List<SongFile> libraryFiles = fileRepo.findBySongIdOrderByPriorityDesc(id);
         String deleteOperationId = null;
         if (managedLibraryDeleteService == null) {
@@ -406,6 +414,9 @@ public class AdminService {
         queueRepo.deleteAll(queueItems);
         historyRepo.deleteBySongId(id);
         songRepo.delete(song); // song_files 级联删除（ON DELETE CASCADE）
+        if (assetCleanupService != null) {
+            assetCleanupService.afterCommitIfUnreferenced(oldCoverPath, oldLyricPath);
+        }
     }
 
     @Transactional

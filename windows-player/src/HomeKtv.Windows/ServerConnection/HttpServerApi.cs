@@ -27,31 +27,34 @@ public sealed class HttpServerApi : IPlaybackServerApi, IDisposable
 
     public async Task<ServerHealth?> CheckHealthAsync(CancellationToken cancellationToken = default)
     {
-        using var response = await http.GetAsync(new Uri(endpoint.ApiBaseUri, "health"), cancellationToken)
+        using var response = await http.GetAsync(
+                new Uri(endpoint.ApiBaseUri, "health"), HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) return null;
-        var health = await response.Content.ReadFromJsonAsync<ServerHealth>(ProtocolJson.Options, cancellationToken)
-            .ConfigureAwait(false);
+        var health = await ReadJsonAsync<ServerHealth>(response.Content, BoundedHttpContentReader.MaxJsonBytes,
+            cancellationToken).ConfigureAwait(false);
         return health?.Service == "home-ktv" ? health : null;
     }
 
     public async Task<QueueSnapshot?> GetQueueAsync(CancellationToken cancellationToken = default)
     {
-        using var response = await http.GetAsync(new Uri(endpoint.ApiBaseUri, "queue"), cancellationToken)
+        using var response = await http.GetAsync(
+                new Uri(endpoint.ApiBaseUri, "queue"), HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) return null;
-        return await response.Content.ReadFromJsonAsync<QueueSnapshot>(ProtocolJson.Options, cancellationToken)
-            .ConfigureAwait(false);
+        return await ReadJsonAsync<QueueSnapshot>(response.Content, BoundedHttpContentReader.MaxJsonBytes,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<SongDetail?> GetSongDetailAsync(long songId, CancellationToken cancellationToken = default)
     {
         using var response = await http.GetAsync(
-                new Uri(endpoint.ApiBaseUri, $"songs/{songId}"), cancellationToken)
+                new Uri(endpoint.ApiBaseUri, $"songs/{songId}"), HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken)
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) return null;
-        return await response.Content.ReadFromJsonAsync<SongDetail>(ProtocolJson.Options, cancellationToken)
-            .ConfigureAwait(false);
+        return await ReadJsonAsync<SongDetail>(response.Content, BoundedHttpContentReader.MaxJsonBytes,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<QueueSnapshot?> SendControlAsync(
@@ -59,21 +62,24 @@ public sealed class HttpServerApi : IPlaybackServerApi, IDisposable
         IReadOnlyDictionary<string, object?>? parameters = null,
         CancellationToken cancellationToken = default)
     {
-        var request = new
+        var command = new
         {
             action,
             @params = parameters ?? new Dictionary<string, object?>(),
             client_token = clientToken,
         };
-        using var response = await http.PostAsJsonAsync(
-                new Uri(endpoint.ApiBaseUri, "control"), request, ProtocolJson.Options, cancellationToken)
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(endpoint.ApiBaseUri, "control"))
+        {
+            Content = JsonContent.Create(command, options: ProtocolJson.Options),
+        };
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             throw await ReadApiExceptionAsync(response, cancellationToken).ConfigureAwait(false);
         }
-        return await response.Content.ReadFromJsonAsync<QueueSnapshot>(ProtocolJson.Options, cancellationToken)
-            .ConfigureAwait(false);
+        return await ReadJsonAsync<QueueSnapshot>(response.Content, BoundedHttpContentReader.MaxJsonBytes,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public string StreamUrl(long fileId) => new Uri(endpoint.ApiBaseUri, $"stream/{fileId}").ToString();
@@ -83,16 +89,21 @@ public sealed class HttpServerApi : IPlaybackServerApi, IDisposable
     {
         if (string.IsNullOrWhiteSpace(path) || Uri.IsWellFormedUriString(path, UriKind.Absolute)) return null;
         var uri = new Uri(endpoint.BaseUri, path.TrimStart('/'));
-        using var response = await http.GetAsync(uri, cancellationToken).ConfigureAwait(false);
+        using var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+            .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) return null;
-        return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        return await BoundedHttpContentReader.ReadBytesAsync(
+                response.Content, BoundedHttpContentReader.MaxAssetBytes, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static async Task<KtvApiException> ReadApiExceptionAsync(
         HttpResponseMessage response, CancellationToken cancellationToken)
     {
         var fallback = $"HTTP {(int)response.StatusCode}";
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var body = await BoundedHttpContentReader.ReadTextAsync(
+                response.Content, BoundedHttpContentReader.MaxErrorBytes, cancellationToken)
+            .ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(body))
         {
             return new KtvApiException((int)response.StatusCode, null, fallback);
@@ -115,6 +126,16 @@ public sealed class HttpServerApi : IPlaybackServerApi, IDisposable
         {
             return new KtvApiException((int)response.StatusCode, null, fallback);
         }
+    }
+
+    private static async Task<T?> ReadJsonAsync<T>(
+        HttpContent content,
+        long maxBytes,
+        CancellationToken cancellationToken)
+    {
+        var bytes = await BoundedHttpContentReader.ReadBytesAsync(content, maxBytes, cancellationToken)
+            .ConfigureAwait(false);
+        return bytes is null ? default : JsonSerializer.Deserialize<T>(bytes, ProtocolJson.Options);
     }
 
     public void Dispose() => http.Dispose();

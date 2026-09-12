@@ -27,7 +27,7 @@
  * Supports sorting by hotness, title, or newest first, and filtering
  * by artist, language, tag, vocal form, and other modes.
  */
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import api, { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
@@ -37,13 +37,13 @@ import { useOrderLock } from '../composables/useOrderLock'
 import { formatOrderToast } from './orderFeedbackState'
 import TabBar from '../components/TabBar.vue'
 import SongRow from '../components/SongRow.vue'
+import { useQueuedSongIds } from '../composables/useQueuedSongIds'
 
 const route = useRoute(), user = useUserStore(), { toast } = useToast(), controls = makeControls(user.clientToken)
-const { executeOrder } = useOrderLock()
+const { executeOrder, inflightIds } = useOrderLock()
+const { orderedIds, player } = useQueuedSongIds(inflightIds)
 const sort = ref(route.query.sort || 'hot'), artistGender = ref(route.query.artistGender || '')
 const genderOptions = [{ value:'', label:'全部歌手' }, { value:'男歌手', label:'男歌手' }, { value:'女歌手', label:'女歌手' }, { value:'组合', label:'组合' }]
-// 已点歌曲 ID 集合，防止重复点歌 / Set of ordered song IDs to prevent duplicate ordering
-const orderedIds = reactive(new Set())
 
 /**
  * 当前浏览模式。
@@ -128,7 +128,7 @@ async function order(song) {
   await executeOrder(song.id, async () => {
     try {
       const res = await controls.order(song.id)
-      orderedIds.add(song.id)
+      player.applyControlResponse(res)
       toast(formatOrderToast(res))
     } catch (error) {
       toast(error.code === 'SONG_IN_QUEUE' ? (error.message || '已在队列中') : (error.message || '点歌失败'))

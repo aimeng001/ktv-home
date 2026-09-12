@@ -57,6 +57,10 @@ public class SnapshotService {
     @Transactional(readOnly = true)
     public QueueSnapshot snapshot() {
         PlayerState ps = playerRepo.getSingleton();
+        long waitingCount = queueRepo.countByStatus(QueueService.WAITING);
+        if (waitingCount > QueueService.MAX_WAITING_ITEMS) {
+            throw new com.homektv.web.ApiException("QUEUE_TOO_LARGE", "等待队列超过同步上限");
+        }
         List<QueueItem> waiting = queueRepo.findByStatusOrderByOrderIndexAsc(QueueService.WAITING);
 
         QueueItem current = ps.getCurrentQueueId() == null
@@ -103,7 +107,7 @@ public class SnapshotService {
 
         return new QueueSnapshot(nowPlaying, list, ps.getState(), ps.getVolume(),
                 ps.isMuted(), ps.getVocalMode(), audioLayout,
-                broadcaster.isTvOnline(), broadcaster.h5Count(),
+                broadcaster.isTvOnline(), broadcaster.connectedPhonesCount(),
                 ps.getPositionMs(), ps.getSeekSequence());
     }
 

@@ -25,6 +25,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
 import com.homektv.tv.net.AudioLayout
+import com.homektv.tv.net.closeResources
 import com.homektv.tv.net.PlaybackErrorContext
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -396,6 +397,7 @@ class PlaybackEngine(
         retryGate.invalidate()
         appContext.contentResolver.unregisterContentObserver(systemVolumeObserver)
         player.release()
+        httpClient.closeResources()
     }
 
     // ---- 高频本地进度采样 ----

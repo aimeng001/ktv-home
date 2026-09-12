@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, makeControls } from './client'
 
@@ -25,6 +27,15 @@ describe('api client admin authentication', () => {
 
     await api.searchSongs('周杰伦')
     expect(fetchMock.mock.calls[1][1].headers['X-Admin-Token']).toBeUndefined()
+  })
+
+  it('passes the same AbortSignal from searchSongs to fetch', async () => {
+    const signal = new AbortController().signal
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([]))
+
+    await api.searchSongs('晴天', '', 0, { signal })
+
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ signal }))
   })
 
   it('clears the token and notifies the app when the server requires login', async () => {

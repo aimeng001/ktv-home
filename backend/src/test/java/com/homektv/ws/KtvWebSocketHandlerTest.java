@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -20,6 +21,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class KtvWebSocketHandlerTest {
@@ -77,6 +79,19 @@ class KtvWebSocketHandlerTest {
     }
 
     @Test
+    void rejectsAnOversizedMessageBeforeJsonParsingOrPlaybackDispatch() throws Exception {
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.getId()).thenReturn("oversized");
+        when(session.getAttributes()).thenReturn(Map.of("client_type", "h5"));
+        when(session.isOpen()).thenReturn(true);
+
+        handler.handleTextMessage(session, new TextMessage("x".repeat(1_048_577)));
+
+        verify(session).close(org.springframework.web.socket.CloseStatus.POLICY_VIOLATION);
+        verifyNoInteractions(playbackService);
+    }
+
+    @Test
     void staleProgressIsNotBroadcastAfterServiceRejectsIt() throws Exception {
         when(playbackService.updatePosition(21L, 500L))
                 .thenReturn(PositionUpdateResult.rejected(new com.homektv.domain.PlayerState()));
@@ -114,10 +129,16 @@ class KtvWebSocketHandlerTest {
         when(playbackService.onPlayError(7L, 8L))
                 .thenReturn(PlaybackTransitionResult.accepted(new com.homektv.domain.PlayerState()));
 
-        handler.handleTextMessage(activeLegacySession(), new TextMessage(
+        WebSocketSession active = activeLegacySession();
+        handler.handleTextMessage(active, new TextMessage(
                 "{\"type\":\"play_error\",\"payload\":{\"file_id\":7,\"queue_id\":8,\"message\":\"读取失败\"}}"));
 
         verify(playbackService).onPlayError(7L, 8L);
+        var ack = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster).sendTo(eq(active), ack.capture());
+        assertThat(ack.getValue().type()).isEqualTo(WsEvent.PLAYBACK_REPORT_ACK);
+        assertThat(((Map<?, ?>) ack.getValue().payload()).get("queue_id")).isEqualTo(8L);
+        assertThat(((Map<?, ?>) ack.getValue().payload()).get("status")).isEqualTo("APPLIED");
         var toast = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
         verify(broadcaster).broadcast(toast.capture());
         var playback = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
@@ -129,14 +150,36 @@ class KtvWebSocketHandlerTest {
     }
 
     @Test
+    void playErrorToastBoundsUntrustedReasonBeforeBroadcast() throws Exception {
+        when(playbackService.onPlayError(7L, 8L))
+                .thenReturn(PlaybackTransitionResult.accepted(new com.homektv.domain.PlayerState()));
+
+        String reason = "异常原因".repeat(20_000);
+        handler.handleTextMessage(activeLegacySession(), new TextMessage(
+                new ObjectMapper().writeValueAsString(Map.of(
+                        "type", "play_error",
+                        "payload", Map.of("file_id", 7, "queue_id", 8, "message", reason)))));
+
+        var toast = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster).broadcast(toast.capture());
+        String text = (String) ((Map<?, ?>) toast.getValue().payload()).get("text");
+        assertThat(text.getBytes(StandardCharsets.UTF_8).length).isLessThan(16 * 1024);
+    }
+
+    @Test
     void stalePlayErrorDoesNotBroadcastFeedback() throws Exception {
         when(playbackService.onPlayError(10L, 100L))
                 .thenReturn(PlaybackTransitionResult.rejected(new com.homektv.domain.PlayerState()));
 
-        handler.handleTextMessage(activeLegacySession(), new TextMessage(
+        WebSocketSession active = activeLegacySession();
+        handler.handleTextMessage(active, new TextMessage(
                 "{\"type\":\"play_error\",\"payload\":{\"file_id\":10,\"queue_id\":100,\"message\":\"旧歌曲读取失败\"}}"));
 
         verify(broadcaster, org.mockito.Mockito.never()).broadcast(any(WsEvent.class));
+        var ack = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster).sendTo(eq(active), ack.capture());
+        assertThat(((Map<?, ?>) ack.getValue().payload()).get("queue_id")).isEqualTo(100L);
+        assertThat(((Map<?, ?>) ack.getValue().payload()).get("status")).isEqualTo("STALE");
     }
 
     @Test

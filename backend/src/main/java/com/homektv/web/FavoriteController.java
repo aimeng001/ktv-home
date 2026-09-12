@@ -9,7 +9,11 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * 收藏控制器，提供收藏列表查询、添加收藏和移除收藏的 REST API。
@@ -39,11 +43,13 @@ public class FavoriteController {
     @GetMapping
     public List<SongDto> list(@RequestParam String clientToken) {
         Long userId = requireUser(clientToken);
-        return favoriteRepo.findByUserIdOrderByCreatedAtDesc(userId).stream()
-                .map(Favorite::getSongId)
-                .map(songRepo::findById)
-                .flatMap(java.util.Optional::stream)
-                .map(SongDto::from)
+        List<Long> orderedIds = favoriteRepo.findByUserIdOrderByCreatedAtDesc(userId).stream()
+                .map(Favorite::getSongId).filter(Objects::nonNull).toList();
+        if (orderedIds.isEmpty()) return List.of();
+        Iterable<com.homektv.domain.Song> found = songRepo.findAllById(new LinkedHashSet<>(orderedIds));
+        Map<Long, com.homektv.domain.Song> byId = new LinkedHashMap<>();
+        if (found != null) found.forEach(song -> byId.put(song.getId(), song));
+        return orderedIds.stream().map(byId::get).filter(Objects::nonNull).map(SongDto::from)
                 .toList();
     }
 

@@ -31,6 +31,8 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 public class KtvWebSocketHandler extends TextWebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(KtvWebSocketHandler.class);
+    static final int MAX_MESSAGE_BYTES = WsProtocolLimits.MAX_MESSAGE_BYTES;
+    private static final int MAX_PLAYBACK_REASON_BYTES = 8 * 1024;
 
     private final WsBroadcaster broadcaster;
     private final SnapshotService snapshotService;
@@ -86,6 +88,12 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
      */
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+        Integer wireBytes = WebSocketUtf8Budget.countAtMost(message.getPayload(), MAX_MESSAGE_BYTES);
+        if (wireBytes == null) {
+            log.warn("拒绝超大 WebSocket 消息: session={}, utf8Bytes>{}", session.getId(), MAX_MESSAGE_BYTES);
+            if (session.isOpen()) session.close(CloseStatus.POLICY_VIOLATION);
+            return;
+        }
         JsonNode node = mapper.readTree(message.getPayload());
         String type = node.path("type").asText("");
 
@@ -130,12 +138,18 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
             }
             case "play_error" -> {
                 // TV 无法读取当前媒体时按异常切歌，避免队列卡死；将原因同步给手机端。
-                String reason = node.path("payload").path("message").asText("媒体读取失败");
+                String reason = WebSocketUtf8Budget.truncateToByteLimit(
+                        node.path("payload").path("message").asText("媒体读取失败"),
+                        MAX_PLAYBACK_REASON_BYTES);
                 Long fileId = node.path("payload").path("file_id").isNumber()
                         ? node.path("payload").path("file_id").asLong() : null;
                 Long queueId = node.path("payload").path("queue_id").isNumber()
                         ? node.path("payload").path("queue_id").asLong() : null;
                 PlaybackTransitionResult result = playbackService.onPlayError(fileId, queueId);
+                broadcaster.sendTo(session, WsEvent.of(WsEvent.PLAYBACK_REPORT_ACK,
+                        java.util.Map.of(
+                                "queue_id", queueId == null ? 0L : queueId,
+                                "status", result.accepted() ? "APPLIED" : "STALE")));
                 if (!result.accepted()) return;
                 broadcaster.broadcast(WsEvent.of(WsEvent.TOAST,
                         java.util.Map.of("text", "当前歌曲播放失败，已自动切换下一首：" + reason)));

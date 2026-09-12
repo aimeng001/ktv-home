@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="@drawable/player_glass">
+
+    <!-- 检索关键词预览与快捷清除栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:background="@drawable/bg_input"
+        android:paddingHorizontal="14dp">
+
+        <TextView
+            android:id="@+id/txtKeywordLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="拼音首字母: "
+            android:textColor="@color/gold"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/txtKeywordDisplay"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="按右侧或下方字母搜索"
+            android:textColor="@android:color/white"
+            android:textColorHint="@color/dim2"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:singleLine="true" />
+
+        <Button
+            android:id="@+id/btnBackspace"
+            android:layout_width="68dp"
+            android:layout_height="38dp"
+            android:background="@drawable/btn_keyboard_key"
+            android:textColor="@color/color_keyboard_key_text"
+            android:text="退格"
+            android:textSize="13sp"
+            android:focusable="true" />
+
+        <Button
+            android:id="@+id/btnClear"
+            android:layout_width="68dp"
+            android:layout_height="38dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_keyboard_key"
+            android:textColor="@color/color_keyboard_key_text"
+            android:text="清空"
+            android:textSize="13sp"
+            android:focusable="true" />
+    </LinearLayout>
+
+    <!-- 字母按键网格：6 列布局 -->
+    <GridLayout
+        android:id="@+id/keyboardGrid"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:columnCount="6"
+        android:useDefaultMargins="false" />
+
+    <!-- 底部功能切换栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnSwitchIme"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:background="@drawable/btn_keyboard_key"
+            android:textColor="@color/color_keyboard_key_text"
+            android:text="切换系统输入法"
+            android:textSize="14sp"
+            android:focusable="true" />
+    </LinearLayout>
+</LinearLayout>

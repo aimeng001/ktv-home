@@ -34,6 +34,11 @@ public class ArtistCreditService {
         if (same(existing, normalized)) return;
 
         repository.deleteBySongId(songId);
+        // deleteBySongId is a repository bulk operation. Flush it before
+        // inserting replacement credits, otherwise PostgreSQL can evaluate
+        // the unique (song_id, artist_key) constraint before the old rows are
+        // physically deleted in the same transaction.
+        repository.flush();
         if (normalized.isEmpty()) return;
 
         List<SongArtist> next = new java.util.ArrayList<>(normalized.size());

@@ -56,7 +56,7 @@
  * Features 300ms input debounce, search result display, song queuing,
  * and wish-song submission.
  */
-import { computed, ref, onMounted, onBeforeUnmount, reactive } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import api, { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
@@ -66,12 +66,14 @@ import SongRow from '../components/SongRow.vue'
 import { searchViewState } from './searchState'
 import { createSearchController } from './searchController'
 import { formatOrderToast } from './orderFeedbackState'
+import { useQueuedSongIds } from '../composables/useQueuedSongIds'
 import { ChevronLeft, Search, X } from 'lucide-vue-next'
 
 const user = useUserStore()
 const { toast } = useToast()
 const controls = makeControls(user.clientToken)
-const { executeOrder } = useOrderLock()
+const { executeOrder, inflightIds } = useOrderLock()
+const { orderedIds, player } = useQueuedSongIds(inflightIds)
 
 /** @type {import('vue').Ref<string>} 当前搜索关键词 / Current search keyword */
 const kw = ref('')
@@ -89,7 +91,6 @@ const filters = [
 ]
 const hasMore = ref(false)
 const loadingMore = ref(false)
-const orderedIds = reactive(new Set())
 const inp = ref(null)
 const searchState = computed(() => searchViewState(kw.value, loading.value, searchError.value, results.value))
 const searchController = createSearchController(api, {
@@ -141,7 +142,7 @@ async function order(song) {
   await executeOrder(song.id, async () => {
     try {
       const res = await controls.order(song.id)
-      orderedIds.add(song.id)
+      player.applyControlResponse(res)
       toast(formatOrderToast(res))
     } catch (e) {
       toast(e.code === 'SONG_IN_QUEUE' ? (e.message || '已在队列中') : (e.message || '点歌失败'))

@@ -2,22 +2,22 @@
 
 **中文** | [English](README_EN.md)
 
-> 文档同步状态：2026-08-31。本文按当前源码和发布结构更新；尚未完成的内部整改不会写成已实现能力。
+> 文档同步状态：2026-09-11。本文按当前源码和发布结构更新；尚未完成的设备、NAS 和长时验收不会写成已实现能力。
 
 ## 界面预览
 
 | 手机点歌首页 | Android TV 待机页 | 曲库与服务仪表盘 |
 | --- | --- | --- |
 | ![手机点歌首页](docs/images/mobile-songbook.png) | ![Android TV 待机页](docs/images/tv-player.png) | ![管理仪表盘](docs/images/admin-dashboard.png) |
-| 搜索、分类、收藏、点歌和遥控都在手机浏览器完成。 | 实机待机界面展示点歌二维码、服务状态与推荐歌曲。 | 统一查看曲库、转码任务和播放服务状态。 |
+| H5 仍可使用；安装 Android APK 后也能直接搜索、点歌、看队列和遥控。 | 实机待机界面展示点歌二维码、服务状态与推荐歌曲。 | 统一查看曲库、转码任务和播放服务状态。 |
 
-Home KTV 是一套运行在家庭 NAS 或 Linux 主机上的局域网点歌系统。电视负责播放，手机通过微信扫码进入点歌页，服务端管理曲库、队列、歌词、播放记录和系统设置。
+Home KTV 是一套运行在家庭 NAS 或 Linux 主机上的局域网点歌系统。电视负责播放，手机可通过微信扫码进入 H5，也可使用 Android APK 原生点歌；服务端统一管理曲库、队列、歌词、播放记录和系统设置。
 
 系统由一个服务端和三个使用入口组成：
 
 - **服务端**：Spring Boot、PostgreSQL、FFmpeg/FFprobe、WebSocket
-- **手机端**：Vue 3 H5 点歌页和管理后台，无需安装 App
-- **Android TV**：基于 Media3/ExoPlayer 的电视播放端
+- **手机端**：Vue 3 H5 点歌页和管理后台；Android APK 提供原生控制器/组合模式
+- **Android TV**：基于 Media3/ExoPlayer 的电视播放端，同一 APK 可选控制器或组合模式
 - **Windows 11 Player**：基于 .NET 10/WPF + mpv 的播放端，可通过 HDMI/扩展屏输出到电视
 
 > 项目面向可信家庭局域网；管理后台支持独立密码，但普通点歌和遥控仍按局域网信任模型工作，请勿直接暴露到互联网。
@@ -26,8 +26,8 @@ Home KTV 是一套运行在家庭 NAS 或 Linux 主机上的局域网点歌系�
 
 1. 在 NAS、Linux 主机或 Docker Desktop 启动 Home KTV，通过管理后台扫描并维护曲库。
 2. 选择 Android TV 或 Windows Player 作为播放端；Android TV 可自动发现服务，Windows Player 可发现或手工填写服务地址。
-3. 家人用微信或手机浏览器进入 H5，各自搜歌、收藏和点歌，无需安装手机 App。
-4. 点歌队列、播放进度、歌词、音量与原唱/伴唱状态通过 Server 在手机和当前播放端之间同步。
+3. 家人可用微信/手机浏览器进入 H5，也可在 Android APK 中输入同一 Server 地址；两者都能搜歌、收藏和点歌。
+4. 点歌队列、播放进度、歌词、音量与原唱/伴唱状态通过 Server 在 H5、Android 和当前播放端之间同步。
 5. 演唱结束后可查看最近演唱，管理员可维护歌曲、歌手、歌单、元数据和转码任务。
 
 ## 本版本更新
@@ -46,7 +46,7 @@ Home KTV 是一套运行在家庭 NAS 或 Linux 主机上的局域网点歌系�
 
 ## 主要功能
 
-### 手机点歌与遥控
+### 手机点歌与遥控（H5 或 Android APK）
 
 - 微信或浏览器扫码进入，无需注册
 - 支持歌名、歌手、中文、全拼和拼音首字母搜索
@@ -267,17 +267,18 @@ cd android-tv
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
-APK 输出位置：
+APK 输出位置（按 ABI 分包）：
 
 ```text
-android-tv/app/build/outputs/apk/debug/app-debug.apk
+android-tv/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+android-tv/app/build/outputs/apk/debug/app-armeabi-v7a-debug.apk
 ```
 
-通过 ADB 安装：
+通过 ADB 安装（示例）：
 
 ```bash
 adb connect <TV_IP>:5555
-adb install -r android-tv/app/build/outputs/apk/debug/app-debug.apk
+adb install -r android-tv/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
 ```
 
 也可以通过 U 盘或电视文件管理器安装。首次启动会尝试自动发现服务端；发现失败时填写 `<主机IP>:8080`。部分电视盒子需要额外允许未知来源、自启动和后台运行。
@@ -296,7 +297,7 @@ Windows Player 是 self-contained .NET 发布包，但当前 **不包含 `mpv.ex
 
 ### 6. 开始点歌
 
-TV 连接成功后会显示二维码。手机使用微信扫码进入点歌页，选择歌曲后电视自动播放；队列、播放状态、歌词和遥控操作通过 WebSocket 实时同步。
+TV 连接成功后会显示二维码。手机既可使用微信扫码进入 H5，也可直接打开同一 Android APK 的控制器模式；两者都能搜索、点歌、查看队列和遥控，电视继续负责播放。队列、播放状态、歌词和遥控操作通过 Server/WebSocket 实时同步。
 
 ## 媒体与歌词
 
@@ -435,7 +436,7 @@ KTV_AI_ALLOW_PRIVATE_NETWORK=false
 
 模型 ID 不做固定枚举限制；增强模型留空时复用批量模型。后台可以尝试获取模型列表并检测鉴权、Chat Completions 和 JSON 输出能力，不支持模型列表或 JSON Mode 的服务仍可手工配置和自动回退。
 
-**当前版本的 AI 调用链仍要求 API Key 非空。** 因此完全无鉴权的 Ollama/LM Studio/OpenAI-compatible 服务尚未完整兼容；该问题已进入开发整改计划。Docker 部署时也不要把 `localhost` 当成宿主机本地模型地址：`localhost` 指向 Home KTV 容器自身，应填写服务端实际能够访问的局域网地址。
+AI 配置现在明确区分“可调用”和“仅保存配置”：没有 API Key 时不会发送请求；具备本地规则的解析任务仍可降级，必须调用模型的操作会提示管理员先配置密钥。Docker 部署时也不要把 `localhost` 当成宿主机本地模型地址：`localhost` 指向 Home KTV 容器自身，应填写服务端实际能够访问的局域网地址。
 
 管理后台保存的 API Key 使用 AES-256-GCM 加密，接口只返回配置状态和尾号。主密钥优先读取 `KTV_CONFIG_MASTER_KEY`，否则生成到数据目录的 `secrets/config.key`。不要删除或丢失该文件，否则已保存的 API Key 无法解密。
 
@@ -533,6 +534,18 @@ cd h5 && npm test
 cd android-tv && ./gradlew testDebugUnitTest
 cd windows-player && dotnet test HomeKtv.Windows.sln -c Release
 ```
+
+本地需要反复跑全部可执行门禁时，可从仓库根目录并行启动各模块：
+
+```bash
+# 默认包含后端 Testcontainers；需要 Docker daemon
+python scripts/full_test_runner.py --backend all --backend-parallelism 8
+
+# 当前没有 Docker 时的快速本地门禁（明确排除 13 个 Testcontainers 类）
+python scripts/full_test_runner.py --backend local --backend-parallelism 8
+```
+
+执行器为每个模块保留独立日志，并在最后报告总墙钟时间；Android 默认复用 Gradle daemon，CI 或需要隔离时再加 `--no-daemon`。`--backend local` 不是完整发布 Gate，Docker 集成测试仍须在有 Docker 的环境单独执行。
 
 目录结构：
 

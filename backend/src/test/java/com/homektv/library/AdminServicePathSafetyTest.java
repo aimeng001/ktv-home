@@ -100,4 +100,34 @@ class AdminServicePathSafetyTest {
         verify(songs).delete(song);
         verify(deleteService, never()).complete("op-7");
     }
+
+    @Test
+    void deletingSongSchedulesUnreferencedAssetsAfterDatabaseDelete() {
+        SongRepository songs = mock(SongRepository.class);
+        SongFileRepository files = mock(SongFileRepository.class);
+        QueueItemRepository queue = mock(QueueItemRepository.class);
+        PlayerStateRepository playerRepository = mock(PlayerStateRepository.class);
+        PlayHistoryRepository history = mock(PlayHistoryRepository.class);
+        AssetCleanupService cleanup = mock(AssetCleanupService.class);
+        Song song = new Song();
+        song.setId(7L);
+        song.setCoverPath("covers/song.jpg");
+        song.setLyricPath("lyrics/song.lrc");
+        when(songs.findById(7L)).thenReturn(Optional.of(song));
+        when(files.findBySongIdOrderByPriorityDesc(7L)).thenReturn(List.of());
+        when(playerRepository.getSingleton()).thenReturn(new com.homektv.domain.PlayerState());
+        when(queue.findBySongId(7L)).thenReturn(List.of());
+
+        AppProperties props = new AppProperties();
+        props.setLibraryMode(LibraryMode.MANAGED);
+        props.setKtvLibraryPath(tempDir.resolve("managed").toString());
+        AdminService service = new AdminService(songs, files, history, mock(WsBroadcaster.class),
+                mock(AssetWriter.class), queue, playerRepository, props);
+        service.setAssetCleanupService(cleanup);
+
+        service.deleteSong(7L);
+
+        verify(songs).delete(song);
+        verify(cleanup).afterCommitIfUnreferenced("covers/song.jpg", "lyrics/song.lrc");
+    }
 }

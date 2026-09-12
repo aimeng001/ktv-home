@@ -2,6 +2,8 @@ package com.homektv.web;
 
 import com.homektv.queue.RoomHostService;
 import org.springframework.web.bind.annotation.*;
+import com.homektv.ws.WsBroadcaster;
+import com.homektv.ws.WsEvent;
 
 import java.util.Map;
 
@@ -15,9 +17,15 @@ import java.util.Map;
 @RequestMapping("/api/room/host")
 public class RoomHostController {
     private final RoomHostService service;
+    private final WsBroadcaster broadcaster;
 
     public RoomHostController(RoomHostService service) {
+        this(service, null);
+    }
+
+    public RoomHostController(RoomHostService service, WsBroadcaster broadcaster) {
         this.service = service;
+        this.broadcaster = broadcaster;
     }
 
     /**
@@ -41,7 +49,9 @@ public class RoomHostController {
      */
     @PostMapping("/claim")
     public Map<String, Object> claim(@RequestBody HostRequest request) {
-        return service.claim(request.clientToken());
+        Map<String, Object> result = service.claim(request.clientToken());
+        broadcastHostChange(result);
+        return result;
     }
 
     /**
@@ -53,7 +63,17 @@ public class RoomHostController {
      */
     @PostMapping("/release")
     public Map<String, Object> release(@RequestBody HostRequest request) {
-        return service.release(request.clientToken());
+        Map<String, Object> result = service.release(request.clientToken());
+        broadcastHostChange(result);
+        return result;
+    }
+
+    private void broadcastHostChange(Map<String, Object> status) {
+        if (broadcaster != null && status != null) {
+            Map<String, Object> broadcastPayload = new java.util.LinkedHashMap<>(status);
+            broadcastPayload.remove("isHost");
+            broadcaster.broadcast(WsEvent.of(WsEvent.ROOM_HOST_CHANGED, broadcastPayload));
+        }
     }
 
     /**

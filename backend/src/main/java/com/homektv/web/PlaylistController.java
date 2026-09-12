@@ -79,7 +79,7 @@ public class PlaylistController {
 
     @PostMapping("/{id}/songs")
     public Map<String, Object> addSong(@PathVariable Long id, @RequestBody AddSongRequest request) {
-        return service.addSong(id, request.songId());
+        throw new ApiException("PUBLIC_PLAYLIST_READ_ONLY", "公开歌单只能由管理员编辑");
     }
 
     /**

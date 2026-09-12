@@ -30,13 +30,14 @@
  * Playlist detail page — displays playlist cover, song list,
  * and supports single-song order, bulk order, and sharing.
  */
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import api, { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
 import { useOrderLock } from '../composables/useOrderLock'
 import { formatOrderToast } from './orderFeedbackState'
+import { useQueuedSongIds } from '../composables/useQueuedSongIds'
 import SongRow from '../components/SongRow.vue'
 import TabBar from '../components/TabBar.vue'
 
@@ -44,7 +45,8 @@ const route = useRoute()
 const user = useUserStore()
 const controls = makeControls(user.clientToken)
 const { toast } = useToast()
-const { executeOrder } = useOrderLock()
+const { executeOrder, inflightIds } = useOrderLock()
+const { orderedIds, player } = useQueuedSongIds(inflightIds)
 
 /** 当前歌单数据 / Current playlist data */
 const playlist = ref(null)
@@ -53,7 +55,6 @@ const loading = ref(true)
 /** 是否正在整单点歌 / Whether bulk ordering is in progress */
 const ordering = ref(false)
 /** 已点歌曲 ID 集合 / Set of already-ordered song IDs */
-const orderedIds = reactive(new Set())
 
 onMounted(async () => { try { playlist.value = await api.playlistDetail(route.params.id) } catch { playlist.value = null } finally { loading.value = false } })
 
@@ -69,7 +70,7 @@ async function orderSong(song) {
   await executeOrder(song.id, async () => {
     try {
       const res = await controls.order(song.id)
-      orderedIds.add(song.id)
+      player.applyControlResponse(res)
       toast(formatOrderToast(res))
     } catch (error) {
       toast(error.code === 'SONG_IN_QUEUE' ? (error.message || '已在队列中') : (error.message || '点歌失败'))
@@ -85,8 +86,7 @@ async function orderAll() {
   ordering.value = true
   try {
     const result = await api.orderPlaylist(playlist.value.id, user.clientToken)
-    const queuedSongs = [result.snapshot?.playing?.song, ...(result.snapshot?.list || []).map(item => item.song)].filter(Boolean)
-    queuedSongs.forEach(song => orderedIds.add(song.id))
+    if (result.snapshot) player.applySnapshot(result.snapshot)
     toast(result.skipped ? `已加入 ${result.ordered} 首，跳过 ${result.skipped} 首` : `已加入 ${result.ordered} 首歌曲`)
   } catch (error) { toast(error.message || '整单点歌失败') }
   finally { ordering.value = false }

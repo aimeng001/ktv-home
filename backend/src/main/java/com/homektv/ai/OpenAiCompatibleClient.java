@@ -8,13 +8,14 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.homektv.domain.Song;
 import com.homektv.domain.MediaImportRecord;
 import com.homektv.repo.SongFileRepository;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClient;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -24,6 +25,8 @@ import java.util.Map;
 
 @Component
 public class OpenAiCompatibleClient {
+    static final int MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+
     private final AiConfigService configService;
     private final ObjectMapper mapper;
     private final ObjectMapper tolerantMapper = JsonMapper.builder()
@@ -34,6 +37,7 @@ public class OpenAiCompatibleClient {
             .build();
     private final RestClient.Builder restClientBuilder;
     private final SongFileRepository fileRepository;
+    private final HttpClient httpClient;
 
     public OpenAiCompatibleClient(AiConfigService configService, ObjectMapper mapper, RestClient.Builder restClientBuilder,
                                  SongFileRepository fileRepository) {
@@ -41,6 +45,10 @@ public class OpenAiCompatibleClient {
         this.mapper = mapper;
         this.restClientBuilder = restClientBuilder;
         this.fileRepository = fileRepository;
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(30))
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
     }
 
     public AiSongClassification classify(Song song, String role) {
@@ -185,31 +193,29 @@ public class OpenAiCompatibleClient {
 
     private JsonNode request(AiConfigService.ResolvedConfig config, String method, String path, Object body) {
         configService.validateOutboundBaseUrl(config.baseUrl());
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(Math.min(30, config.timeoutSeconds())))
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(Duration.ofSeconds(config.timeoutSeconds()));
         RestClient client = restClientBuilder.baseUrl(config.baseUrl()).requestFactory(requestFactory).build();
         RuntimeException last = null;
         for (int attempt = 0; attempt < 4; attempt++) {
             try {
+                RestClient.RequestHeadersSpec<?> request;
                 if ("GET".equals(method)) {
                     var req = client.get().uri(path);
-                    if (config.apiKey() != null && !config.apiKey().isBlank()) {
-                        req.header(HttpHeaders.AUTHORIZATION, "Bearer " + config.apiKey());
-                    }
-                    return req.retrieve().body(JsonNode.class);
+                    addAuthorization(req, config);
+                    request = req;
+                } else {
+                    var req = client.post().uri(path).contentType(MediaType.APPLICATION_JSON).body(body);
+                    addAuthorization(req, config);
+                    request = req;
                 }
-                var req = client.post().uri(path).contentType(MediaType.APPLICATION_JSON).body(body);
-                if (config.apiKey() != null && !config.apiKey().isBlank()) {
-                    req.header(HttpHeaders.AUTHORIZATION, "Bearer " + config.apiKey());
-                }
-                return req.retrieve().body(JsonNode.class);
-            } catch (HttpStatusCodeException e) {
+                return request.exchange((ignoredRequest, response) -> readProviderResponse(response));
+            } catch (ResponseTooLargeException e) {
+                throw new AiProviderException("AI_RESPONSE_TOO_LARGE",
+                        "AI 服务响应超过 " + MAX_RESPONSE_BYTES + " 字节上限", e);
+            } catch (ProviderStatusException e) {
                 last = e;
-                int status = e.getStatusCode().value();
+                int status = e.status;
                 if (!((status == 429 || status >= 500) && attempt < 3)) {
                     String code = status == 401 || status == 403 ? "AI_AUTH_FAILED" : status == 404 ? "AI_ENDPOINT_NOT_FOUND" : "AI_PROVIDER_ERROR";
                     throw new AiProviderException(code, "AI 服务请求失败（HTTP " + status + "）", e, status);
@@ -222,6 +228,68 @@ public class OpenAiCompatibleClient {
             }
         }
         throw new AiProviderException("AI_PROVIDER_UNAVAILABLE", "AI 服务连接失败或请求超时", last);
+    }
+
+    private void addAuthorization(RestClient.RequestHeadersSpec<?> request,
+                                  AiConfigService.ResolvedConfig config) {
+        if (config.apiKey() != null && !config.apiKey().isBlank()) {
+            request.header("Authorization", "Bearer " + config.apiKey());
+        }
+    }
+
+    private JsonNode readProviderResponse(org.springframework.http.client.ClientHttpResponse response) {
+        try {
+            long declaredLength = response.getHeaders().getContentLength();
+            if (declaredLength > MAX_RESPONSE_BYTES) throw new ResponseTooLargeException();
+            try (InputStream input = response.getBody()) {
+                byte[] bytes = readAtMost(input, MAX_RESPONSE_BYTES);
+                int status = response.getStatusCode().value();
+                if (status < 200 || status >= 300) throw new ProviderStatusException(status);
+                return mapper.readTree(bytes);
+            }
+        } catch (ResponseTooLargeException | ProviderStatusException e) {
+            throw e;
+        } catch (JsonProcessingException e) {
+            throw new ResponseParseException(e);
+        } catch (IOException e) {
+            throw new ResponseReadException(e);
+        }
+    }
+
+    private static byte[] readAtMost(InputStream input, int maxBytes) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(maxBytes, 8192));
+        byte[] buffer = new byte[8192];
+        int total = 0;
+        int read;
+        while ((read = input.read(buffer)) != -1) {
+            if (read > maxBytes - total) throw new ResponseTooLargeException();
+            output.write(buffer, 0, read);
+            total += read;
+        }
+        return output.toByteArray();
+    }
+
+    private static final class ResponseTooLargeException extends RuntimeException {
+    }
+
+    private static final class ProviderStatusException extends RuntimeException {
+        private final int status;
+
+        private ProviderStatusException(int status) {
+            this.status = status;
+        }
+    }
+
+    private static final class ResponseParseException extends RuntimeException {
+        private ResponseParseException(Throwable cause) {
+            super(cause);
+        }
+    }
+
+    private static final class ResponseReadException extends RuntimeException {
+        private ResponseReadException(Throwable cause) {
+            super(cause);
+        }
     }
 
     private void sleep(int attempt) {

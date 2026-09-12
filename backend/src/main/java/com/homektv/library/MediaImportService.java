@@ -47,6 +47,7 @@ import java.util.stream.Stream;
 public class MediaImportService {
 
     private static final int RECORD_BATCH_SIZE = 200;
+    static final int MAX_TRANSCODE_QUEUE = 10_000;
 
     private static final Logger log = LoggerFactory.getLogger(MediaImportService.class);
 
@@ -155,44 +156,44 @@ public class MediaImportService {
         int copied = 0, pending = 0, sourceDup = 0, outputDup = 0, unrecognized = 0, failed = 0;
         int total = 0;
         int completed = 0;
-        List<Path> candidateFiles;
         try (Stream<Path> files = Files.walk(sourceRoot)) {
-            candidateFiles = files.filter(Files::isRegularFile)
+            Iterator<Path> candidates = files
+                    .filter(Files::isRegularFile)
                     .filter(LibraryScanService::isMediaFile)
-                    .toList();
+                    .iterator();
+            while (candidates.hasNext()) {
+                Path source = candidates.next();
+                if (!Files.exists(source)) {
+                    continue;
+                }
+                total++;
+                scanProgress.set(new SourceScanProgress(true, total, completed,
+                        source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
+                        startedAt, null));
+                try {
+                    ScanOutcome outcome = analyzeAndMaybeCopy(source, targetRoot);
+                    switch (outcome) {
+                        case COPIED -> copied++;
+                        case PENDING -> pending++;
+                        case SOURCE_DUPLICATE -> sourceDup++;
+                        case OUTPUT_DUPLICATE -> outputDup++;
+                        case UNRECOGNIZED -> unrecognized++;
+                        case UNCHANGED -> { }
+                    }
+                } catch (Exception e) {
+                    failed++;
+                    upsertRecord(source, null, null, null, null, FAILED, messageOf(e), false,
+                            false, false, null, null);
+                }
+                completed++;
+                scanProgress.set(new SourceScanProgress(true, total, completed,
+                        source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
+                        startedAt, null));
+            }
         } catch (IOException | UncheckedIOException e) {
             scanProgress.set(new SourceScanProgress(false, total, completed, null, copied, pending,
                     sourceDup, outputDup, unrecognized, failed + 1, startedAt, OffsetDateTime.now()));
             throw new ApiException("SOURCE_SCAN_FAILED", "遍历扫描源目录失败：" + e.getMessage());
-        }
-
-        for (Path source : candidateFiles) {
-            if (!Files.exists(source)) {
-                continue;
-            }
-            total++;
-            scanProgress.set(new SourceScanProgress(true, total, completed,
-                    source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
-                    startedAt, null));
-            try {
-                ScanOutcome outcome = analyzeAndMaybeCopy(source, targetRoot);
-                switch (outcome) {
-                    case COPIED -> copied++;
-                    case PENDING -> pending++;
-                    case SOURCE_DUPLICATE -> sourceDup++;
-                    case OUTPUT_DUPLICATE -> outputDup++;
-                    case UNRECOGNIZED -> unrecognized++;
-                    case UNCHANGED -> { }
-                }
-            } catch (Exception e) {
-                failed++;
-                upsertRecord(source, null, null, null, null, FAILED, messageOf(e), false,
-                        false, false, null, null);
-            }
-            completed++;
-            scanProgress.set(new SourceScanProgress(true, total, completed,
-                    source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
-                    startedAt, null));
         }
         SourceScanResult result = new SourceScanResult(total, copied, pending, sourceDup, outputDup,
                 unrecognized, failed);
@@ -271,14 +272,19 @@ public class MediaImportService {
     }
 
     private int enqueueAllTranscodable(boolean deleteSources) {
-        int count = 0;
+        List<MediaImportRecord> candidates = new ArrayList<>(Math.min(RECORD_BATCH_SIZE, MAX_TRANSCODE_QUEUE));
         long afterId = 0;
         while (true) {
             Page<MediaImportRecord> page = importRepo.findByIdGreaterThanOrderByIdAsc(
                     afterId, PageRequest.of(0, RECORD_BATCH_SIZE));
             if (page == null || page.isEmpty()) break;
             for (MediaImportRecord record : page.getContent()) {
-                count += enqueueTranscodable(record, deleteSources);
+                if (!isTranscodable(record)) continue;
+                candidates.add(record);
+                if (candidates.size() > MAX_TRANSCODE_QUEUE) {
+                    throw new ApiException("TRANSCODE_QUEUE_LIMIT",
+                            "单次转码任务最多排队 " + MAX_TRANSCODE_QUEUE + " 个源文件");
+                }
             }
             long nextId = page.getContent().stream()
                     .map(MediaImportRecord::getId).filter(Objects::nonNull)
@@ -286,11 +292,25 @@ public class MediaImportService {
             if (nextId <= afterId || !page.hasNext()) break;
             afterId = nextId;
         }
+        int count = 0;
+        for (MediaImportRecord record : candidates) {
+            count += enqueueTranscodable(record, deleteSources);
+        }
         return count;
     }
 
     private int enqueueSelectedTranscodable(Collection<Long> recordIds, boolean deleteSources) {
-        List<MediaImportRecord> records = importRepo.findByIdIn(recordIds);
+        LinkedHashSet<Long> boundedIds = new LinkedHashSet<>();
+        for (Long recordId : recordIds) {
+            if (recordId == null) continue;
+            boundedIds.add(recordId);
+            if (boundedIds.size() > MAX_TRANSCODE_QUEUE) {
+                throw new ApiException("TRANSCODE_QUEUE_LIMIT",
+                        "单次转码任务最多排队 " + MAX_TRANSCODE_QUEUE + " 个源文件");
+            }
+        }
+        if (boundedIds.isEmpty()) return 0;
+        List<MediaImportRecord> records = importRepo.findByIdIn(new ArrayList<>(boundedIds));
         if (records == null) return 0;
         int count = 0;
         for (MediaImportRecord record : records) {
@@ -301,6 +321,10 @@ public class MediaImportService {
 
     private int enqueueTranscodable(MediaImportRecord record, boolean deleteSources) {
         if (record == null || record.getId() == null || !isTranscodable(record)) return 0;
+        if (transcodeQueue.size() >= MAX_TRANSCODE_QUEUE) {
+            throw new ApiException("TRANSCODE_QUEUE_LIMIT",
+                    "单次转码任务最多排队 " + MAX_TRANSCODE_QUEUE + " 个源文件");
+        }
         record.setDeleteSourceRequested(deleteSources);
         record.setCleanupStatus(deleteSources ? "PENDING" : "NOT_REQUESTED");
         importRepo.save(record);
@@ -328,6 +352,10 @@ public class MediaImportService {
                 return new PriorityResult("ALREADY_PRIORITY", recordId, current);
             }
             boolean moved = transcodeQueue.remove(recordId);
+            if (!moved && transcodeQueue.size() >= MAX_TRANSCODE_QUEUE) {
+                throw new ApiException("TRANSCODE_QUEUE_LIMIT",
+                        "单次转码任务最多排队 " + MAX_TRANSCODE_QUEUE + " 个源文件");
+            }
             transcodeQueue.addFirst(recordId);
             priorityRecordIds.add(recordId);
             TranscodeProgress updated = copyProgress(current, current.total() + (moved ? 0 : 1),

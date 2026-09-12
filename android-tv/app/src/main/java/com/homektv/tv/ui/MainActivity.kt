@@ -28,10 +28,19 @@ import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.ViewModelProvider
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.core.content.FileProvider
 import com.homektv.tv.BuildConfig
+import com.homektv.tv.controller.ControllerViewModel
+import com.homektv.tv.controller.ControllerViewModelFactory
+import com.homektv.tv.session.DeviceMode
+import com.homektv.tv.session.DeviceModeCapabilities
+import com.homektv.tv.session.DeviceModeMigrationPolicy
+import com.homektv.tv.session.DeviceSessionChangePolicy
+import com.homektv.tv.session.DeviceSessionFingerprint
+import com.homektv.tv.ui.controller.ControllerFragment
 import com.homektv.tv.R
 import com.homektv.tv.databinding.ActivityMainBinding
 import com.homektv.tv.net.AppConfig
@@ -85,10 +94,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var effectOverlay: EffectOverlayView? = null
     private var microphoneMonitor: MicrophoneMonitor? = null
     private var microphoneActive = false
-    private var releaseCheckInFlight = false
-    private var checkedReleaseVersion: String? = null
-    private var promptedReleaseVersion: String? = null
-    private var pendingUpdateApk: File? = null
+    private lateinit var updateManager: AndroidUpdateManager
     private val microphonePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { grants ->
@@ -96,13 +102,6 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         if (recordGranted) startMicrophoneMonitor()
         else onToast("未授予麦克风权限")
-    }
-    private val unknownSourcesLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) {
-        val apk = pendingUpdateApk ?: return@registerForActivityResult
-        if (packageManager.canRequestPackageInstalls()) installDownloadedApk(apk)
-        else onToast("未允许安装此来源的应用")
     }
 
     /** 当前请求中的 queueId，用于判断快照是否切了歌；播放器回调使用其已加载身份。 */
@@ -172,9 +171,35 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         }
     }
 
+    private val modeCapabilities by lazy { DeviceModeCapabilities.forMode(config.effectiveMode()) }
+    private lateinit var kioskController: KtvKioskOverlayController
+    private val kioskCoordinator = KioskModeCoordinator()
+    private val focusController = KtvFocusController()
+    private val kioskViewModel: ControllerViewModel by lazy {
+        ViewModelProvider(
+            this,
+            ControllerViewModelFactory(application, realtimeEnabled = false),
+        )[ControllerViewModel::class.java]
+    }
+
+    private var sessionFingerprint: DeviceSessionFingerprint? = null
+
+    private val settingsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            checkSessionRestart()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = AppConfig(this)
+        sessionFingerprint = DeviceSessionFingerprint(
+            serverHost = config.serverHost,
+            mode = config.effectiveMode(),
+            nickname = config.nicknameFor(),
+        )
         val audioPreview = intent.action == "com.homektv.tv.action.AUDIO_PREVIEW" ||
             intent.getBooleanExtra("audio_preview", false)
 
@@ -194,6 +219,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.txtAddress.text = config.h5Url()
 
         mediaApi = MediaApi(config)
+        updateManager = AndroidUpdateManager(this, mediaApi) { onToast(it) }
+        if (config.isConfigured) {
+            updateManager.checkForUpdate(lifecycleScope)
+        }
         loadQr()
         loadStandbyContent()
         startStandbyMotion()
@@ -235,6 +264,22 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
             )
         }
+        if (modeCapabilities.canOpenKiosk) {
+            kioskController = KtvKioskOverlayController(
+                activity = this,
+                binding = binding,
+                coordinator = kioskCoordinator,
+                focusController = focusController,
+                effectPlayer = effectPlayer,
+                controllerActions = kioskViewModel,
+                catalogActions = kioskViewModel,
+                personalActions = kioskViewModel,
+                onTogglePlayback = { togglePlayback() },
+                onNext = { sendControl("next") },
+                onRestart = { sendControl("restart") },
+                onToggleVocal = { toggleVocal() },
+            )
+        }
 
         setupRemoteMenu()
         if (audioPreview) {
@@ -261,6 +306,60 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.txtAudioDuration.text = "04:03"
     }
 
+    override fun onResume() {
+        super.onResume()
+        checkSessionRestart()
+        if (config.isConfigured) {
+            checkModeMigration()
+        }
+    }
+
+    private fun checkSessionRestart() {
+        val previous = sessionFingerprint ?: return
+        val currentConfig = AppConfig(this)
+        val current = DeviceSessionFingerprint(
+            serverHost = currentConfig.serverHost,
+            mode = currentConfig.effectiveMode(),
+            nickname = currentConfig.nicknameFor(),
+        )
+        if (DeviceSessionChangePolicy.requiresRestart(previous, current)) {
+            if (current.mode == DeviceMode.CONTROLLER) {
+                startActivity(Intent(this, ControllerActivity::class.java))
+                finish()
+                return
+            }
+            recreate()
+        }
+    }
+
+    private fun checkModeMigration() {
+        val savedMode = config.modeFor()
+        val action = DeviceModeMigrationPolicy.evaluate(
+            savedMode = savedMode,
+            recommendedMode = config.recommendedMode,
+            migrationVersion = config.getModeMigrationVersion(),
+        )
+        if (action == DeviceModeMigrationPolicy.Action.PROMPT_COMBINED &&
+            AndroidUpdatePolicy.isHostActivityAlive(isFinishing, isDestroyed)
+        ) {
+            AlertDialog.Builder(this)
+                .setTitle("新功能提示")
+                .setMessage("新版本已支持电视大屏直接点歌（播放+点歌台合一）。\n推荐切换为“播放+点歌”模式，您也可以随时在遥控菜单“服务器/模式”中更改。")
+                .setPositiveButton("切换为播放+点歌") { _, _ ->
+                    config.setModeMigrationVersion(DeviceModeMigrationPolicy.CURRENT_VERSION)
+                    config.saveMode(DeviceMode.COMBINED)
+                    recreate()
+                }
+                .setNegativeButton("保持仅播放") { _, _ ->
+                    config.setModeMigrationVersion(DeviceModeMigrationPolicy.CURRENT_VERSION)
+                }
+                .setOnCancelListener {
+                    config.setModeMigrationVersion(DeviceModeMigrationPolicy.CURRENT_VERSION)
+                }
+                .show()
+        }
+    }
+
     override fun onDestroy() {
         standbyMotionAnimators.forEach(ObjectAnimator::cancel)
         standbyMotionAnimators.clear()
@@ -281,6 +380,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         effectOverlay = null
         microphoneMonitor?.release()
         microphoneMonitor = null
+        if (::kioskController.isInitialized) {
+            kioskController.destroy()
+        }
         super.onDestroy()
     }
 
@@ -288,10 +390,16 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var lastBackAt = 0L
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (::kioskController.isInitialized && kioskController.dispatchKeyEvent(event)) {
+            return true
+        }
         if (event.action == KeyEvent.ACTION_DOWN && binding.playerView.visibility == View.VISIBLE) {
             showPlaybackProgress()
         }
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_MENU) {
+            if (::kioskController.isInitialized && focusController.shouldInterceptMenu()) {
+                return true
+            }
             hideVocalPanel()
             binding.remoteMenu.visibility = if (binding.remoteMenu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
             if (binding.remoteMenu.visibility == View.VISIBLE) binding.remotePlay.requestFocus()
@@ -331,10 +439,16 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                     return true
                 }
             }
-            if (binding.remoteMenu.visibility != View.VISIBLE && binding.queueOverlay.visibility != View.VISIBLE) {
+            if (binding.remoteMenu.visibility != View.VISIBLE && binding.queueOverlay.visibility != View.VISIBLE && !kioskCoordinator.isKioskActive.value) {
                 when (event.keyCode) {
                     // 确认键：屏幕下方弹出原唱/伴唱选择栏（参考主流 KTV 交互）
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                        if (currentPlaybackState == "idle" || binding.standbyPanel.visibility == View.VISIBLE) {
+                            if (modeCapabilities.canOpenKiosk && ::kioskController.isInitialized) {
+                                kioskController.toggleKiosk(true)
+                                return true
+                            }
+                        }
                         showVocalPanel()
                         return true
                     }
@@ -415,9 +529,34 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.remoteVolUp.setOnClickListener { changeVolume(10) }
         binding.remoteVolDown.setOnClickListener { changeVolume(-10) }
         binding.remoteMute.setOnClickListener { sendControl("mute", "{\"muted\":${!currentMuted}}") }
-        binding.remoteQueue.setOnClickListener { showQueueOverlay() }
+        binding.remoteQueue.setOnClickListener {
+            if (LegacyQueuePolicy.shouldOpenKioskDrawer(modeCapabilities.canOpenKiosk, ::kioskController.isInitialized)) {
+                binding.remoteMenu.visibility = View.GONE
+                kioskController.openQueueDrawer()
+            } else {
+                showQueueOverlay()
+            }
+        }
+        binding.remoteOrder.setOnClickListener {
+            binding.remoteMenu.visibility = View.GONE
+            if (modeCapabilities.canOpenKiosk && ::kioskController.isInitialized) {
+                kioskController.toggleKiosk(true)
+            } else {
+                startActivity(Intent(this, ControllerActivity::class.java).apply {
+                    putExtra(ControllerFragment.EXTRA_REALTIME, false)
+                })
+            }
+        }
+        binding.remoteOrder.visibility = if (modeCapabilities.canOpenKiosk) View.VISIBLE else View.GONE
         binding.remoteMicrophone.setOnClickListener { toggleMicrophoneMonitor() }
         updateMicrophoneButton()
+        binding.remoteSettings.setOnClickListener {
+            binding.remoteMenu.visibility = View.GONE
+            settingsLauncher.launch(Intent(this, SetupActivity::class.java).apply {
+                putExtra(SetupActivity.EXTRA_FORCE_SETUP, true)
+                putExtra(SetupActivity.EXTRA_RETURN_TO_CALLER, true)
+            })
+        }
         binding.queueClose.setOnClickListener { binding.queueOverlay.visibility = View.GONE }
         binding.btnVocalOriginal.setOnClickListener {
             sendControl("set_vocal", "{\"mode\":\"original\"}")
@@ -531,7 +670,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.txtStatus.setText(
             if (connected) R.string.status_connected else R.string.status_connecting
         )
-        if (connected) checkForTvUpdate()
+        if (connected && ::updateManager.isInitialized) updateManager.checkForUpdate(lifecycleScope)
     }
 
     override fun onPlayerRole(active: Boolean) {
@@ -542,93 +681,6 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         currentFileId = null
         engine?.stop()
         showStandby()
-    }
-
-    private fun checkForTvUpdate() {
-        if (releaseCheckInFlight) return
-        releaseCheckInFlight = true
-        lifecycleScope.launch {
-            val release = mediaApi.fetchReleaseInfo()
-            releaseCheckInFlight = false
-            if (release == null || release.version.isBlank() || release.versionCode <= 0) return@launch
-            val releaseKey = "${release.versionCode}:${release.version}"
-            if (checkedReleaseVersion == releaseKey) return@launch
-            checkedReleaseVersion = releaseKey
-            if (!isServerUpdateAvailable(BuildConfig.VERSION_CODE.toLong(), release.versionCode)
-                || promptedReleaseVersion == releaseKey) return@launch
-
-            val apk = when {
-                Build.SUPPORTED_ABIS.contains("arm64-v8a") -> release.tv.arm64V8a
-                Build.SUPPORTED_ABIS.contains("armeabi-v7a") -> release.tv.armeabiV7a
-                else -> null
-            }
-            if (apk == null || !apk.available || apk.url.isBlank()) {
-                onToast("服务端版本为 ${release.version}，但没有适配本机架构的安装包")
-                return@launch
-            }
-            promptedReleaseVersion = releaseKey
-            showUpdateDialog(release.version, apk)
-        }
-    }
-
-    private fun showUpdateDialog(version: String, apk: ApkPackageInfo) {
-        val size = if (apk.size > 0) " · %.1f MB".format(Locale.US, apk.size / 1024.0 / 1024.0) else ""
-        AlertDialog.Builder(this)
-            .setTitle("发现 Android TV 新版本")
-            .setMessage("当前版本 ${BuildConfig.VERSION_NAME}\n服务端版本 $version\n安装包 ${apk.abi}$size")
-            .setNegativeButton("暂不更新", null)
-            .setPositiveButton("去下载") { _, _ -> downloadAndInstallUpdate(version, apk) }
-            .show()
-    }
-
-    private fun downloadAndInstallUpdate(version: String, apk: ApkPackageInfo) {
-        val progress = AlertDialog.Builder(this)
-            .setTitle("正在下载 $version")
-            .setMessage("安装包下载完成后将打开系统安装界面。")
-            .setCancelable(false)
-            .create()
-        progress.show()
-        lifecycleScope.launch {
-            val destination = File(cacheDir, "updates/home-ktv-tv-${apk.abi}.apk")
-            val downloaded = mediaApi.downloadApk(apk.url, destination, apk.size)
-            progress.dismiss()
-            if (!downloaded) {
-                checkedReleaseVersion = null
-                promptedReleaseVersion = null
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle("安装包下载失败")
-                    .setMessage("请检查服务端连接后重试。")
-                    .setNegativeButton("取消", null)
-                    .setPositiveButton("重试") { _, _ -> downloadAndInstallUpdate(version, apk) }
-                    .show()
-                return@launch
-            }
-            pendingUpdateApk = destination
-            requestInstallOrOpen(destination)
-        }
-    }
-
-    private fun requestInstallOrOpen(apk: File) {
-        if (packageManager.canRequestPackageInstalls()) {
-            installDownloadedApk(apk)
-            return
-        }
-        val intent = Intent(
-            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-            Uri.parse("package:$packageName"),
-        )
-        runCatching { unknownSourcesLauncher.launch(intent) }
-            .onFailure { onToast("当前电视无法打开未知来源安装设置") }
-    }
-
-    private fun installDownloadedApk(apk: File) {
-        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        runCatching { startActivity(intent) }
-            .onFailure { onToast("无法打开系统安装程序") }
     }
 
     private var snapshotReceived = false
@@ -644,6 +696,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         snapshotReceived = true
         currentVolume = snapshot.volume
         currentMuted = snapshot.muted
+        if (::kioskController.isInitialized) {
+            kioskController.updateSnapshot(snapshot)
+        }
         currentVocalMode = snapshot.vocalMode
         currentAudioLayout = snapshot.audioLayout
         if (binding.vocalPanel.visibility == View.VISIBLE) updateVocalPanelSelection()
@@ -672,19 +727,21 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 setPadding(18, 20, 18, 20)
                 isFocusable = true
                 setBackgroundResource(android.R.drawable.list_selector_background)
-                setOnClickListener {
-                    item.queueId?.let { sendControl("top", "{\"queue_id\":$it}") }
-                }
-                setOnLongClickListener {
-                    item.queueId?.let {
-                        confirmControl(
-                            "删除待播歌曲",
-                            "确定从队列删除《${song.title}》吗？",
-                            "cancel",
-                            "{\"queue_id\":$it}",
-                        )
+                if (LegacyQueuePolicy.shouldAllowMutations(modeCapabilities.canOpenKiosk)) {
+                    setOnClickListener {
+                        item.queueId?.let { sendControl("top", "{\"queue_id\":$it}") }
                     }
-                    true
+                    setOnLongClickListener {
+                        item.queueId?.let {
+                            confirmControl(
+                                "删除待播歌曲",
+                                "确定从队列删除《${song.title}》吗？",
+                                "cancel",
+                                "{\"queue_id\":$it}",
+                            )
+                        }
+                        true
+                    }
                 }
             }
             binding.queueList.addView(row)

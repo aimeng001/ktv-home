@@ -56,7 +56,7 @@ const router = createRouter({
 
 /**
  * 全局前置导航守卫。
- * 未注册（无昵称）用户强制跳转至进入页。
+ * 未完成服务端身份注册的用户强制跳转至进入页。
  * 详设 H5-01。
  *
  * Global beforeEach navigation guard.
@@ -70,7 +70,7 @@ router.beforeEach((to) => {
     return { name: 'admin-login', query: { redirect: to.fullPath } }
   }
   const user = useUserStore()
-  if (!to.meta.public && !user.isRegistered) {
+  if (!to.meta.public && !user.isReady) {
     return { name: 'entry' }
   }
 })

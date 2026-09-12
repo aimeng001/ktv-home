@@ -32,6 +32,10 @@ class LanDiscovery(context: Context) {
     private val appContext = context.applicationContext
     private val scanner = LanScanner()
 
+    fun close() {
+        scanner.close()
+    }
+
     /**
      * 执行全部发现策略并合并去重结果。
      *

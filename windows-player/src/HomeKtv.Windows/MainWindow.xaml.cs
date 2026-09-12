@@ -22,8 +22,12 @@ public partial class MainWindow : Window
     private string? artistAvatarUrl;
     private long artistAvatarRequestId;
     private DateTimeOffset artistAvatarAttemptAt = DateTimeOffset.MinValue;
-    private readonly Dictionary<string, BitmapImage?> artistAvatarCache = new(StringComparer.Ordinal);
+    private readonly WeightedLruCache<string, BitmapImage> artistAvatarCache = new(
+        capacity: ArtistAvatarCacheLimit,
+        maxWeight: ArtistAvatarCacheBytesLimit,
+        weight: image => Math.Max(1L, (long)image.PixelWidth * image.PixelHeight * 4));
     private const int ArtistAvatarCacheLimit = 128;
+    private const long ArtistAvatarCacheBytesLimit = 16L * 1024L * 1024L;
     private static readonly TimeSpan ArtistAvatarRetryDelay = TimeSpan.FromSeconds(30);
 
     public MainWindow()
@@ -210,12 +214,7 @@ public partial class MainWindow : Window
             if (requestId != artistAvatarRequestId || !string.Equals(url, artistAvatarUrl, StringComparison.Ordinal)) return;
             var image = ToBitmap(bytes);
             if (image is null) return;
-            artistAvatarCache[url] = image;
-            if (artistAvatarCache.Count > ArtistAvatarCacheLimit)
-            {
-                var oldest = artistAvatarCache.Keys.FirstOrDefault();
-                if (oldest is not null) artistAvatarCache.Remove(oldest);
-            }
+            artistAvatarCache.Set(url, image);
             CurrentArtistAvatarImage.Source = image;
             CurrentArtistAvatarImage.Visibility = Visibility.Visible;
         }
@@ -228,11 +227,14 @@ public partial class MainWindow : Window
 
     private static BitmapImage? ToBitmap(byte[]? bytes)
     {
-        if (bytes is null || bytes.Length == 0) return null;
+        if (bytes is null || bytes.Length == 0
+            || bytes.LongLength > BoundedHttpContentReader.MaxAssetBytes) return null;
         using var stream = new MemoryStream(bytes, writable: false);
         var image = new BitmapImage();
         image.BeginInit();
         image.CacheOption = BitmapCacheOption.OnLoad;
+        image.DecodePixelWidth = 512;
+        image.DecodePixelHeight = 512;
         image.StreamSource = stream;
         image.EndInit();
         image.Freeze();

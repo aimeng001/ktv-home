@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
+import java.util.Collection;
 
 /**
  * 播放列表歌曲仓库接口，操作 playlist_songs 数据表。
@@ -15,6 +16,7 @@ import java.util.List;
  */
 public interface PlaylistSongRepository extends JpaRepository<PlaylistSong, PlaylistSongId> {
     List<PlaylistSong> findByPlaylistIdOrderBySortOrder(Long playlistId);
+    List<PlaylistSong> findByPlaylistIdInOrderByPlaylistIdAscSortOrderAsc(Collection<Long> playlistIds);
     void deleteByPlaylistIdAndManualFalse(Long playlistId);
     void deleteByPlaylistIdAndSongId(Long playlistId, Long songId);
 

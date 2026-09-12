@@ -8,6 +8,7 @@ import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
+import com.homektv.ws.WsProtocolLimits;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +33,7 @@ public class QueueService {
     public static final String PLAYING = "playing";
     public static final String DONE = "done";
     public static final String SKIPPED = "skipped";
+    public static final int MAX_WAITING_ITEMS = WsProtocolLimits.MAX_QUEUE_ITEMS;
 
     private static final double STEP = 1000.0;
     static final double MIN_ORDER_GAP = 1e-6;
@@ -57,6 +59,9 @@ public class QueueService {
     @Transactional
     public QueueItem order(Long songId, Long userId, boolean force) {
         queueRepo.lockQueueMutation();
+        if (queueRepo.countByStatus(WAITING) >= MAX_WAITING_ITEMS) {
+            throw new ApiException("QUEUE_FULL", "等待队列已满");
+        }
         Song song = songRepo.findById(songId)
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         if ("file_missing".equals(song.getStatus())) {

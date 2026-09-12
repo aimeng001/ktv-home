@@ -13,6 +13,7 @@ data class SongDto(
     val id: Long = 0,
     val title: String = "",
     val artist: String = "",
+    val artistGender: String = "",
     val mediaType: String = "AUDIO",   // KTV_VIDEO / MV / AUDIO
     val hasVocalTrack: Boolean = false,
     val durationMs: Int = 0,
@@ -103,6 +104,45 @@ data class QueueSnapshot(
     val seekSequence: Long = 0,
 )
 
+@Serializable
+data class QueueSnapshotHeader(
+    val playing: NowPlaying? = null,
+    val state: String = "idle",
+    val volume: Int = 60,
+    val muted: Boolean = false,
+    val vocalMode: String = "accompaniment",
+    val audioLayout: AudioLayout = AudioLayout.normalStereo(),
+    val tvOnline: Boolean = false,
+    val connectedPhones: Long = 0,
+    val positionMs: Long = 0,
+    val seekSequence: Long = 0,
+) {
+    fun toSnapshot(entries: List<QueueEntry>): QueueSnapshot = QueueSnapshot(
+        playing = playing,
+        list = entries,
+        state = state,
+        volume = volume,
+        muted = muted,
+        vocalMode = vocalMode,
+        audioLayout = audioLayout,
+        tvOnline = tvOnline,
+        connectedPhones = connectedPhones,
+        positionMs = positionMs,
+        seekSequence = seekSequence,
+    )
+}
+
+@Serializable
+data class QueueSnapshotChunk(
+    val eventType: String = "",
+    val syncId: String = "",
+    val index: Int = 0,
+    val total: Int = 0,
+    val last: Boolean = false,
+    val header: QueueSnapshotHeader? = null,
+    val entries: List<QueueEntry> = emptyList(),
+)
+
 /** Platform-neutral audio semantics; PCM/Media3 implementation stays client-local. */
 @Serializable
 data class AudioLayout(
@@ -130,12 +170,15 @@ data class SongDetail(
     val id: Long = 0,
     val title: String = "",
     val artist: String = "",
+    val language: String = "",
+    val tags: List<String> = emptyList(),
     val mediaType: String = "AUDIO",
     val hasVocalTrack: Boolean = false,
     val durationMs: Int = 0,
     val lyricType: String = "none",
     val coverUrl: String? = null,
     val lyricUrl: String? = null,
+    val playCount: Int = 0,
     val files: List<FileSource> = emptyList(),
     val artistAvatarUrl: String? = null,
 )
@@ -146,7 +189,89 @@ data class FileSource(
     val format: String = "",
     val audioTracks: Int = 1,
     val vocalTrackIndex: Int? = null,   // 伴唱轨 index（P1.29 切轨用）
+    val vocalConfidence: String? = null,
     val resolution: String? = null,
     val priority: Int = 0,
     val audioLayout: AudioLayout = AudioLayout(),
+)
+
+@Serializable
+data class NamedCount(
+    val name: String = "",
+    val songCount: Long = 0,
+)
+
+@Serializable
+data class ArtistItem(
+    val artistKey: String = "",
+    val name: String = "",
+    val initial: String = "#",
+    val gender: String = "未知",
+    val songCount: Int = 0,
+    val artistKind: String = "PERSON",
+    val avatarUrl: String? = null,
+)
+
+@Serializable
+data class ArtistPage(
+    val items: List<ArtistItem> = emptyList(),
+    val total: Long = 0,
+    val page: Int = 0,
+    val size: Int = 30,
+)
+
+@Serializable
+data class SongPage(
+    val items: List<SongDto> = emptyList(),
+    val total: Long = 0,
+    val page: Int = 0,
+    val size: Int = 50,
+)
+
+@Serializable
+data class PlaylistSummary(
+    val id: Long = 0,
+    val name: String = "",
+    val description: String = "",
+    val theme: String = "",
+    val coverUrl: String? = null,
+    val aiGenerated: Boolean = false,
+    val songCount: Int = 0,
+    val preview: List<SongDto> = emptyList(),
+)
+
+@Serializable
+data class PlaylistDetail(
+    val id: Long = 0,
+    val name: String = "",
+    val description: String = "",
+    val theme: String = "",
+    val coverUrl: String? = null,
+    val aiGenerated: Boolean = false,
+    val songs: List<SongDto> = emptyList(),
+)
+
+@Serializable
+data class RecentHistoryItem(
+    val historyId: Long = 0,
+    val song: SongDto? = null,
+    val playedBy: Long? = null,
+    val playedByNick: String = "家人",
+    val mine: Boolean = false,
+    val playedAt: String = "",
+)
+
+@Serializable
+data class UserProfile(
+    val id: Long = 0,
+    val nickname: String = "",
+)
+
+@Serializable
+data class RoomHostStatus(
+    val claimed: Boolean = false,
+    val hostUserId: Long? = null,
+    val hostNickname: String? = null,
+    val revision: Long = 0,
+    val isHost: Boolean = false,
 )

@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { KtvSocket } from './ws'
 
@@ -101,6 +103,51 @@ describe('KtvSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(2)
     vi.advanceTimersByTime(1000)
     expect(FakeWebSocket.instances).toHaveLength(2)
+  })
+
+  it('applies a snapshot chunk only after all chunks arrive', () => {
+    const onEvent = vi.fn()
+    const socket = new KtvSocket({ onEvent })
+    socket.connect()
+    const ws = FakeWebSocket.instances[0]
+    ws.open()
+    const header = {
+      playing: null,
+      state: 'idle',
+      volume: 60,
+      muted: false,
+      vocalMode: 'accompaniment',
+      audioLayout: { layout: 'NORMAL_STEREO' },
+      tvOnline: false,
+      connectedPhones: 0,
+      positionMs: 0,
+      seekSequence: 0,
+    }
+
+    ws.receive(JSON.stringify({
+      type: 'snapshot_chunk',
+      payload: {
+        eventType: 'sync_full', syncId: 'sync-1', index: 1, total: 2, last: true,
+        header, entries: [{ queueId: 2, song: null, orderedBy: null, orderedByNick: null, status: 'waiting' }],
+      },
+    }))
+    expect(onEvent).not.toHaveBeenCalled()
+
+    ws.receive(JSON.stringify({
+      type: 'snapshot_chunk',
+      payload: {
+        eventType: 'sync_full', syncId: 'sync-1', index: 0, total: 2, last: false,
+        header, entries: [{ queueId: 1, song: null, orderedBy: null, orderedByNick: null, status: 'waiting' }],
+      },
+    }))
+
+    expect(onEvent).toHaveBeenCalledTimes(1)
+    expect(onEvent).toHaveBeenCalledWith('sync_full', expect.objectContaining({
+      list: expect.arrayContaining([
+        expect.objectContaining({ queueId: 1 }),
+        expect.objectContaining({ queueId: 2 }),
+      ]),
+    }))
   })
 
   it('only sends while the WebSocket is open and stops reconnecting after close', () => {

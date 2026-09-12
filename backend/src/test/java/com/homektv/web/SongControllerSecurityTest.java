@@ -12,6 +12,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.web.servlet.MockMvc;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,6 +21,10 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup;
 
 class SongControllerSecurityTest {
 
@@ -27,6 +32,7 @@ class SongControllerSecurityTest {
     Path dataRoot;
 
     private SongRepository songRepo;
+    private SongSearchService searchService;
     private AssetWriter assetWriter;
     private SongController controller;
 
@@ -40,7 +46,7 @@ class SongControllerSecurityTest {
 
         songRepo = mock(SongRepository.class);
         SongFileRepository fileRepo = mock(SongFileRepository.class);
-        SongSearchService searchService = mock(SongSearchService.class);
+        searchService = mock(SongSearchService.class);
         assetWriter = new AssetWriter(props);
         controller = new SongController(searchService, songRepo, fileRepo, assetWriter);
     }
@@ -89,5 +95,18 @@ class SongControllerSecurityTest {
 
         ResponseEntity<Resource> res = controller.lyric(3L);
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void searchPropagatesPageValidationThroughHttp() throws Exception {
+        when(searchService.search("x", "", 4001))
+                .thenThrow(new ApiException("INVALID_PAGE", "搜索页码超出允许范围"));
+        MockMvc mvc = standaloneSetup(controller)
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .build();
+
+        mvc.perform(get("/api/songs").param("keyword", "x").param("page", "4001"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PAGE"));
     }
 }

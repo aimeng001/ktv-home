@@ -17,6 +17,105 @@
 // 指数退避间隔，10 秒封顶
 // Exponential backoff intervals, capped at 10 seconds
 const BACKOFF = [1000, 2000, 5000, 10000]
+const MAX_MESSAGE_BYTES = 1_048_576
+const MAX_QUEUE_ENTRIES = 1000
+const MAX_SYNC_CHUNKS = 64
+const SNAPSHOT_EVENTS = new Set([
+  'sync_full',
+  'queue_updated',
+  'now_playing',
+  'player_state',
+  'playback_restarted',
+  'playback_seeked',
+  'volume_changed',
+  'vocal_changed',
+])
+
+function utf8ByteCountAtMost(value, limit) {
+  let bytes = 0
+  for (let index = 0; index < value.length;) {
+    const code = value.codePointAt(index)
+    bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4
+    if (bytes > limit) return null
+    index += code > 0xffff ? 2 : 1
+  }
+  return bytes
+}
+
+export class SnapshotChunkAssembler {
+  constructor({ maxChunks = MAX_SYNC_CHUNKS, maxEntries = MAX_QUEUE_ENTRIES } = {}) {
+    this.maxChunks = maxChunks
+    this.maxEntries = maxEntries
+    this.reset()
+  }
+
+  accept(chunk, wireBytes = 0) {
+    if (!chunk || typeof chunk !== 'object'
+      || wireBytes > MAX_MESSAGE_BYTES
+      || !SNAPSHOT_EVENTS.has(chunk.eventType)
+      || typeof chunk.syncId !== 'string' || !chunk.syncId
+      || !Number.isInteger(chunk.total) || chunk.total < 1 || chunk.total > this.maxChunks
+      || !Number.isInteger(chunk.index) || chunk.index < 0 || chunk.index >= chunk.total
+      || chunk.last !== (chunk.index === chunk.total - 1)
+      || !Array.isArray(chunk.entries) || chunk.entries.length > this.maxEntries
+      || !chunk.header || typeof chunk.header !== 'object') {
+      this.reset()
+      return null
+    }
+
+    if (this.syncId === null) {
+      this.syncId = chunk.syncId
+      this.eventType = chunk.eventType
+      this.total = chunk.total
+      this.header = chunk.header
+    } else if (this.syncId !== chunk.syncId) {
+      this.reset()
+      this.syncId = chunk.syncId
+      this.eventType = chunk.eventType
+      this.total = chunk.total
+      this.header = chunk.header
+    } else if (this.eventType !== chunk.eventType
+      || this.total !== chunk.total
+      || JSON.stringify(this.header) !== JSON.stringify(chunk.header)) {
+      this.reset()
+      return null
+    }
+
+    if (this.chunks.has(chunk.index)) {
+      this.reset()
+      return null
+    }
+    this.entryCount += chunk.entries.length
+    if (this.entryCount > this.maxEntries) {
+      this.reset()
+      return null
+    }
+    this.chunks.set(chunk.index, chunk.entries)
+    if (this.chunks.size !== this.total) return null
+
+    const entries = []
+    for (let index = 0; index < this.total; index++) {
+      if (!this.chunks.has(index)) {
+        this.reset()
+        return null
+      }
+      entries.push(...this.chunks.get(index))
+    }
+    const snapshot = { ...this.header, list: entries }
+    const result = { eventType: this.eventType, snapshot }
+    this.reset()
+    return result
+  }
+
+  reset() {
+    this.syncId = null
+    this.eventType = null
+    this.total = 0
+    this.header = null
+    this.chunks = new Map()
+    this.entryCount = 0
+  }
+}
 
 /**
  * KTV 点歌台 WebSocket 客户端。
@@ -50,6 +149,7 @@ export class KtvSocket {
     this.reconnectTimer = null
     this.closed = false
     this.generation = 0
+    this.snapshotChunks = new SnapshotChunkAssembler()
   }
 
   /**
@@ -67,6 +167,7 @@ export class KtvSocket {
    */
   connect() {
     this.closed = false
+    this.snapshotChunks.reset()
     this._clearReconnect()
     const generation = ++this.generation
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -84,9 +185,20 @@ export class KtvSocket {
     }
     socket.onmessage = (e) => {
       if (generation !== this.generation) return
+      const wireBytes = utf8ByteCountAtMost(e.data, MAX_MESSAGE_BYTES)
+      if (wireBytes === null) {
+        socket.close()
+        return
+      }
       let msg
       try { msg = JSON.parse(e.data) } catch { return }
       if (msg.type === 'pong') return
+      if (msg.type === 'snapshot_chunk') {
+        const assembled = this.snapshotChunks.accept(msg.payload, wireBytes)
+        if (assembled) this.onEvent(assembled.eventType, assembled.snapshot)
+        return
+      }
+      if (SNAPSHOT_EVENTS.has(msg.type)) this.snapshotChunks.reset()
       this.onEvent(msg.type, msg.payload)
     }
     socket.onclose = () => {
@@ -130,6 +242,7 @@ export class KtvSocket {
     this.generation++
     this._clearReconnect()
     this._stopPing()
+    this.snapshotChunks.reset()
     const socket = this.ws
     this.ws = null
     socket && socket.close()

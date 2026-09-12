@@ -3,6 +3,9 @@ package com.homektv.tv.ui
 import android.animation.ObjectAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -21,6 +24,7 @@ import com.homektv.tv.net.DiscoveredServer
 import com.homektv.tv.net.LanDiscovery
 import com.homektv.tv.net.LanScanner
 import com.homektv.tv.net.SavedServer
+import com.homektv.tv.session.DeviceMode
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -38,15 +42,41 @@ class SetupActivity : AppCompatActivity() {
     private val scanner = LanScanner()
     private val discovered = linkedMapOf<String, DiscoveredServer>()
     private var scanJob: Job? = null
+    private var credentialHost: String? = null
+    private var initialCredential = ""
     private val rhythmAnimators = mutableListOf<ObjectAnimator>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = AppConfig(this)
+        if (config.isConfigured && !intent.getBooleanExtra(EXTRA_FORCE_SETUP, false)) {
+            val target = if (config.effectiveMode() == DeviceMode.CONTROLLER) {
+                ControllerActivity::class.java
+            } else {
+                MainActivity::class.java
+            }
+            startActivity(Intent(this, target))
+            finish()
+            return
+        }
         discovery = LanDiscovery(this)
+        applyRecommendedOrientation()
         binding = ActivitySetupBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        binding.inputCredential.setText(config.playerCredential)
+        credentialHost = config.serverHost
+        initialCredential = config.playerCredential
+        binding.inputCredential.setText(initialCredential)
+        binding.inputNickname.setText(config.nicknameFor())
+        renderMode(config.modeFor() ?: config.recommendedMode)
+        binding.modeGroup.setOnCheckedChangeListener { _, checkedId ->
+            val mode = when (checkedId) {
+                binding.modePlayer.id -> DeviceMode.PLAYER
+                binding.modeController.id -> DeviceMode.CONTROLLER
+                binding.modeCombined.id -> DeviceMode.COMBINED
+                else -> return@setOnCheckedChangeListener
+            }
+            applyOrientationForMode(mode)
+        }
 
         binding.btnRefresh.setOnClickListener { startScan() }
         binding.btnConnect.setOnClickListener { submitManual() }
@@ -56,6 +86,9 @@ class SetupActivity : AppCompatActivity() {
         }
 
         renderHistory()
+        if (SetupAutoScanPolicy.shouldAutoScan(config.savedServers.isEmpty())) {
+            startScan()
+        }
         startRhythm()
         rebuildFocusChain()
         binding.root.post { firstFocusableView()?.requestFocus() }
@@ -80,6 +113,9 @@ class SetupActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        scanJob?.cancel()
+        if (::discovery.isInitialized) discovery.close()
+        scanner.close()
         rhythmAnimators.forEach(ObjectAnimator::cancel)
         rhythmAnimators.clear()
         super.onDestroy()
@@ -190,9 +226,21 @@ class SetupActivity : AppCompatActivity() {
         binding.txtScanStatus.text = getString(R.string.setup_verifying, server.hostPort)
         lifecycleScope.launch {
             if (scanner.validate(server.hostPort)) {
-                config.playerCredential = binding.inputCredential.text.toString()
                 config.rememberServer(server)
-                startActivity(Intent(this@SetupActivity, MainActivity::class.java))
+                val enteredCredential = binding.inputCredential.text.toString()
+                config.playerCredential = if (server.hostPort == credentialHost ||
+                    enteredCredential != initialCredential
+                ) enteredCredential else ""
+                config.saveNickname(binding.inputNickname.text.toString(), server.hostPort)
+                val mode = selectedMode()
+                config.saveMode(mode, server.hostPort)
+                if (intent.getBooleanExtra(EXTRA_RETURN_TO_CALLER, false)) {
+                    setResult(RESULT_OK)
+                } else {
+                    val target = if (mode == DeviceMode.CONTROLLER) ControllerActivity::class.java
+                    else MainActivity::class.java
+                    startActivity(Intent(this@SetupActivity, target))
+                }
                 finish()
             } else {
                 button.isEnabled = true
@@ -213,6 +261,8 @@ class SetupActivity : AppCompatActivity() {
             focusables += (row as ViewGroup).descendants.filterIsInstance<Button>().toList()
         }
         focusables += binding.inputHost
+        focusables += binding.inputNickname
+        focusables += binding.modeGroup.children.toList()
         focusables += binding.btnConnect
 
         focusables.forEachIndexed { index, view ->
@@ -235,4 +285,45 @@ class SetupActivity : AppCompatActivity() {
             view.requestRectangleOnScreen(rect, true)
         }
     }
+
+    private fun selectedMode(): DeviceMode = when {
+        binding.modePlayer.isChecked -> DeviceMode.PLAYER
+        binding.modeController.isChecked -> DeviceMode.CONTROLLER
+        else -> DeviceMode.COMBINED
+    }
+
+    private fun renderMode(mode: DeviceMode) {
+        when (mode) {
+            DeviceMode.PLAYER -> binding.modePlayer.isChecked = true
+            DeviceMode.CONTROLLER -> binding.modeController.isChecked = true
+            DeviceMode.COMBINED -> binding.modeCombined.isChecked = true
+        }
+        applyOrientationForMode(mode)
+    }
+
+    private fun applyRecommendedOrientation() {
+        applyOrientationForMode(config.modeFor() ?: config.recommendedMode)
+    }
+
+    private fun applyOrientationForMode(mode: DeviceMode) {
+        val isTelevision = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+            (resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+            Configuration.UI_MODE_TYPE_TELEVISION
+        val hasTouchscreen = packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+        requestedOrientation = when {
+            isTelevision || !hasTouchscreen -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            mode == DeviceMode.CONTROLLER && resources.configuration.smallestScreenWidthDp < 600 ->
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    companion object {
+        const val EXTRA_FORCE_SETUP = "force_setup"
+        const val EXTRA_RETURN_TO_CALLER = "return_to_caller"
+    }
+}
+
+object SetupAutoScanPolicy {
+    fun shouldAutoScan(isFreshInstall: Boolean): Boolean = isFreshInstall
 }

@@ -49,6 +49,13 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         };
         socket.PlayerAssignmentReceived += assignment => _ = ApplyAssignmentAsync(assignment);
         socket.ConnectionError += exception => Error?.Invoke(exception);
+        socket.ReliableMessageRejected += (key, reason) =>
+        {
+            if (lifetime.IsCancellationRequested) return;
+            Error?.Invoke(new InvalidOperationException(
+                $"Reliable playback report rejected: {reason}"));
+            _ = FenceOutputAsync();
+        };
         socket.ProgressReceived += position =>
         {
             CurrentPositionMs = position;
@@ -197,8 +204,14 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         var fileId = exception is PlaybackAttemptException attempt ? attempt.FileId : null;
         try
         {
-            await socket.SendPlayErrorAsync(queueId, fileId, exception.Message, generation, lifetime.Token)
+            var result = await socket.SendPlayErrorAsync(
+                    queueId, fileId, Utf8ByteBudget.TruncateToByteLimit(exception.Message, 8 * 1024),
+                    generation, lifetime.Token)
                 .ConfigureAwait(false);
+            if (result == ReliableSendResult.Rejected)
+            {
+                await FenceOutputAsync().ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception sendException) when (sendException is IOException or InvalidOperationException)

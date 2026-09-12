@@ -60,6 +60,32 @@ public sealed record QueueSnapshot(
     [property: JsonPropertyName("positionMs")] long PositionMs = 0,
     [property: JsonPropertyName("seekSequence")] long SeekSequence = 0);
 
+public sealed record QueueSnapshotHeader(
+    [property: JsonPropertyName("playing")] NowPlaying? Playing,
+    [property: JsonPropertyName("state")] string State,
+    [property: JsonPropertyName("volume")] int Volume,
+    [property: JsonPropertyName("muted")] bool Muted,
+    [property: JsonPropertyName("vocalMode")] string VocalMode,
+    [property: JsonPropertyName("audioLayout")] AudioLayoutDto AudioLayout,
+    [property: JsonPropertyName("tvOnline")] bool TvOnline,
+    [property: JsonPropertyName("connectedPhones")] long ConnectedPhones,
+    [property: JsonPropertyName("positionMs")] long PositionMs,
+    [property: JsonPropertyName("seekSequence")] long SeekSequence)
+{
+    public QueueSnapshot ToSnapshot(IReadOnlyList<QueueEntry> entries) => new(
+        Playing, entries, State, Volume, Muted, VocalMode, AudioLayout,
+        TvOnline, ConnectedPhones, PositionMs, SeekSequence);
+}
+
+public sealed record QueueSnapshotChunk(
+    [property: JsonPropertyName("eventType")] string EventType,
+    [property: JsonPropertyName("syncId")] string SyncId,
+    [property: JsonPropertyName("index")] int Index,
+    [property: JsonPropertyName("total")] int Total,
+    [property: JsonPropertyName("last")] bool Last,
+    [property: JsonPropertyName("header")] QueueSnapshotHeader? Header,
+    [property: JsonPropertyName("entries")] IReadOnlyList<QueueEntry> Entries);
+
 public sealed record FileSource(
     [property: JsonPropertyName("id")] long Id,
     [property: JsonPropertyName("format")] string Format,

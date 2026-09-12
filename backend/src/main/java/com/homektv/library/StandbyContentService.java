@@ -1,10 +1,12 @@
 package com.homektv.library;
 
 import com.homektv.domain.Song;
+import com.homektv.musicsource.CoverImageNormalizer;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
 import com.homektv.web.dto.SongDto;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -21,6 +23,8 @@ public class StandbyContentService {
     private final SongRepository songRepository;
     private final PlayHistoryRepository historyRepository;
     private final AssetWriter assetWriter;
+    private AssetCleanupService assetCleanupService;
+    private CoverImageNormalizer coverImageNormalizer;
 
     public StandbyContentService(SettingService settingService, SongRepository songRepository,
                                  PlayHistoryRepository historyRepository, AssetWriter assetWriter) {
@@ -28,6 +32,16 @@ public class StandbyContentService {
         this.songRepository = songRepository;
         this.historyRepository = historyRepository;
         this.assetWriter = assetWriter;
+    }
+
+    @Autowired
+    void setAssetCleanupService(AssetCleanupService assetCleanupService) {
+        this.assetCleanupService = assetCleanupService;
+    }
+
+    @Autowired
+    void setCoverImageNormalizer(CoverImageNormalizer coverImageNormalizer) {
+        this.coverImageNormalizer = coverImageNormalizer;
     }
 
     public Map<String, Object> content() {
@@ -67,11 +81,31 @@ public class StandbyContentService {
             default -> throw new ApiException("INVALID_IMAGE", "仅支持 JPG、PNG 或 WebP 图片");
         };
         try {
-            String path = assetWriter.writeStandbyLogo(file.getBytes(), ext);
+            Object oldValue = settingService.getAll().get("standby_logo_path");
+            String oldPath = oldValue == null ? "" : oldValue.toString();
+            byte[] image = file.getBytes();
+            String outputExt = ext;
+            if (coverImageNormalizer != null) {
+                image = normalizeUploadedImage(image);
+                outputExt = "jpg";
+            }
+            String path = assetWriter.writeStandbyLogo(image, outputExt);
             settingService.putInternal("standby_logo_path", path);
+            if (assetCleanupService != null) {
+                assetCleanupService.afterCommitIfUnreferenced(oldPath);
+            }
             return path;
         } catch (IOException e) {
             throw new ApiException("IMAGE_WRITE_FAILED", "Logo 保存失败");
+        }
+    }
+
+    private byte[] normalizeUploadedImage(byte[] source) {
+        if (coverImageNormalizer == null) return source;
+        try {
+            return coverImageNormalizer.normalize(source);
+        } catch (ApiException failure) {
+            throw new ApiException("INVALID_IMAGE", "Logo 图片无法识别或尺寸过大");
         }
     }
 

@@ -10,6 +10,7 @@ import com.homektv.queue.SnapshotService;
 import com.homektv.queue.UserService;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.AppUser;
+import com.homektv.domain.Song;
 import com.homektv.web.dto.RecentHistoryDto;
 import com.homektv.web.dto.SongDto;
 import com.homektv.ws.WsBroadcaster;
@@ -24,11 +25,15 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * 已播历史（P3.2，详设§7 H5-05）：今晚已唱列表，供「再唱一遍」（前端用 song id 再点歌）。
@@ -88,9 +93,12 @@ public class HistoryController {
      */
     @GetMapping("/history")
     public List<SongDto> history() {
+        List<PlayHistory> histories = historyRepo.findTop50ByOrderByPlayedAtDesc();
+        Map<Long, Song> songs = loadSongs(histories);
         List<SongDto> out = new ArrayList<>();
-        for (PlayHistory h : historyRepo.findTop50ByOrderByPlayedAtDesc()) {
-            songRepo.findById(h.getSongId()).ifPresent(s -> out.add(SongDto.from(s)));
+        for (PlayHistory h : histories) {
+            Song song = songs.get(h.getSongId());
+            if (song != null) out.add(SongDto.from(song));
         }
         return out;
     }
@@ -117,17 +125,40 @@ public class HistoryController {
                         ? List.of()
                         : historyRepo.findTop50ByPlayedByAndPlayedAtGreaterThanEqualOrderByPlayedAtDesc(
                                 currentUserId, since)
-                : historyRepo.findTop50ByPlayedAtGreaterThanEqualOrderByPlayedAtDesc(since);
+                        : historyRepo.findTop50ByPlayedAtGreaterThanEqualOrderByPlayedAtDesc(since);
+        Map<Long, Song> songs = loadSongs(histories);
+        Set<Long> userIds = histories.stream().map(PlayHistory::getPlayedBy)
+                .filter(Objects::nonNull).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        Map<Long, AppUser> users = loadUsers(userIds);
         List<RecentHistoryDto> result = new ArrayList<>();
         for (PlayHistory history : histories) {
-            songRepo.findById(history.getSongId()).ifPresent(song -> {
-                String nickname = history.getPlayedBy() == null ? "家人" : userRepo.findById(history.getPlayedBy())
-                        .map(AppUser::getNickname).orElse("家人");
+            Song song = songs.get(history.getSongId());
+            if (song != null) {
+                AppUser playedBy = users.get(history.getPlayedBy());
+                String nickname = history.getPlayedBy() == null ? "家人" : playedBy == null ? "家人" : playedBy.getNickname();
                 result.add(new RecentHistoryDto(history.getId(), SongDto.from(song), history.getPlayedBy(), nickname,
                         currentUserId != null && currentUserId.equals(history.getPlayedBy()), history.getPlayedAt()));
-            });
+            }
         }
         return result;
+    }
+
+    private Map<Long, Song> loadSongs(List<PlayHistory> histories) {
+        Set<Long> songIds = histories.stream().map(PlayHistory::getSongId)
+                .filter(Objects::nonNull).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (songIds.isEmpty()) return Map.of();
+        Iterable<Song> found = songRepo.findAllById(songIds);
+        Map<Long, Song> songs = new LinkedHashMap<>();
+        if (found != null) found.forEach(song -> songs.put(song.getId(), song));
+        return songs;
+    }
+
+    private Map<Long, AppUser> loadUsers(Set<Long> userIds) {
+        if (userIds.isEmpty()) return Map.of();
+        Iterable<AppUser> found = userRepo.findAllById(userIds);
+        Map<Long, AppUser> users = new LinkedHashMap<>();
+        if (found != null) found.forEach(user -> users.put(user.getId(), user));
+        return users;
     }
 
     /**

@@ -19,6 +19,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import com.homektv.library.AssetWriter;
+import com.homektv.library.AssetCleanupService;
+import com.homektv.musicsource.CoverImageNormalizer;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -48,6 +50,8 @@ public class AiLibraryService {
     private final ObjectMapper objectMapper;
     private final AiConfigService configService;
     private final AssetWriter assetWriter;
+    private AssetCleanupService assetCleanupService;
+    private CoverImageNormalizer coverImageNormalizer;
     private final AiClassificationApplier classificationApplier;
     private final OpenAiCompatibleClient aiClient;
     private final MediaImportRecordRepository importRecordRepository;
@@ -68,6 +72,16 @@ public class AiLibraryService {
         this.classificationApplier = classificationApplier;
         this.aiClient = aiClient;
         this.importRecordRepository = importRecordRepository;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAssetCleanupService(AssetCleanupService assetCleanupService) {
+        this.assetCleanupService = assetCleanupService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCoverImageNormalizer(CoverImageNormalizer coverImageNormalizer) {
+        this.coverImageNormalizer = coverImageNormalizer;
     }
 
     /**
@@ -584,7 +598,12 @@ public class AiLibraryService {
      */
     @Transactional
     public void deletePlaylist(Long playlistId) {
-        playlistRepository.delete(requirePlaylist(playlistId));
+        Playlist playlist = requirePlaylist(playlistId);
+        String oldCoverPath = playlist.getCoverPath();
+        playlistRepository.delete(playlist);
+        if (assetCleanupService != null) {
+            assetCleanupService.afterCommitIfUnreferenced(oldCoverPath);
+        }
     }
 
     /**
@@ -648,10 +667,30 @@ public class AiLibraryService {
             default -> throw new ApiException("INVALID_IMAGE", "仅支持 JPG、PNG 或 WebP 图片");
         };
         try {
-            playlist.setCoverPath(assetWriter.writePlaylistCover(playlistId, file.getBytes(), extension));
-            return playlistRepository.save(playlist);
+            String oldCoverPath = playlist.getCoverPath();
+            byte[] image = file.getBytes();
+            String outputExtension = extension;
+            if (coverImageNormalizer != null) {
+                image = normalizeUploadedImage(image);
+                outputExtension = "jpg";
+            }
+            playlist.setCoverPath(assetWriter.writePlaylistCover(playlistId, image, outputExtension));
+            Playlist saved = playlistRepository.save(playlist);
+            if (assetCleanupService != null) {
+                assetCleanupService.afterCommitIfUnreferenced(oldCoverPath);
+            }
+            return saved;
         } catch (IOException e) {
             throw new ApiException("IMAGE_WRITE_FAILED", "封面保存失败");
+        }
+    }
+
+    private byte[] normalizeUploadedImage(byte[] source) {
+        if (coverImageNormalizer == null) return source;
+        try {
+            return coverImageNormalizer.normalize(source);
+        } catch (ApiException failure) {
+            throw new ApiException("INVALID_IMAGE", "封面图片无法识别或尺寸过大");
         }
     }
 

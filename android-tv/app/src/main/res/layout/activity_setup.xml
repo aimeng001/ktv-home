@@ -98,8 +98,21 @@
                     <LinearLayout android:id="@+id/lanContainer" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
                     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="或输入服务器地址，例如 192.168.1.88:8080" android:textColor="@color/dim" android:textSize="13sp" />
                     <EditText android:id="@+id/inputHost" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="8dp" android:background="@drawable/bg_input" android:hint="@string/setup_host_example" android:imeOptions="actionDone" android:inputType="textUri" android:paddingHorizontal="14dp" android:singleLine="true" android:textColor="@color/text" android:textColorHint="@color/dim2" android:textSize="17sp" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="点歌昵称（可选）" android:textColor="@color/dim" android:textSize="13sp" />
+                    <EditText android:id="@+id/inputNickname" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="6dp" android:background="@drawable/bg_input" android:hint="例如：小明" android:imeOptions="actionNext" android:inputType="textPersonName" android:maxLength="32" android:paddingHorizontal="14dp" android:singleLine="true" android:textColor="@color/text" android:textColorHint="@color/dim2" android:textSize="17sp" />
                     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="电视连接密钥（可选）" android:textColor="@color/dim" android:textSize="13sp" />
                     <EditText android:id="@+id/inputCredential" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="6dp" android:background="@drawable/bg_input" android:hint="服务器启用 KTV_PLAYER_CREDENTIAL 时填写" android:inputType="textPassword|textNoSuggestions" android:paddingHorizontal="14dp" android:singleLine="true" android:textColor="@color/text" android:textColorHint="@color/dim2" android:textSize="17sp" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="设备使用模式" android:textColor="@color/dim" android:textSize="13sp" />
+                    <RadioGroup
+                        android:id="@+id/modeGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:orientation="horizontal">
+                        <RadioButton android:id="@+id/modePlayer" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="播放器" android:textColor="@color/text" />
+                        <RadioButton android:id="@+id/modeController" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="控制器" android:textColor="@color/text" />
+                        <RadioButton android:id="@+id/modeCombined" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="组合" android:textColor="@color/text" />
+                    </RadioGroup>
                     <Button android:id="@+id/btnConnect" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="10dp" android:background="@drawable/btn_gold" android:backgroundTint="@null" android:text="@string/setup_connect" android:textColor="@color/bg" android:textSize="16sp" android:textStyle="bold" />
                 </LinearLayout>
             </ScrollView>

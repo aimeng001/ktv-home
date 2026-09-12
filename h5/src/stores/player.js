@@ -28,12 +28,17 @@ export const usePlayerStore = defineStore('player', {
     queue: [],             // 点歌队列 | [{queueId, song, orderedBy, orderedByNick, status}]
     tvOnline: null,        // TV 状态在首次服务端快照前未知 | Unknown until the first server snapshot
     connectedPhones: 0,
+    roomHost: { claimed: false, hostUserId: null, hostNickname: null, revision: 0, isHost: false },
     lastEffect: null,
     historyRevision: 0
   }),
   getters: {
     queueCount: (s) => s.queue.length,
-    isPlaying: (s) => s.state === 'playing'
+    isPlaying: (s) => s.state === 'playing',
+    orderedSongIds: (s) => new Set([
+      ...(s.nowPlaying?.song?.id != null ? [Number(s.nowPlaying.song.id)] : []),
+      ...(s.queue || []).map(item => Number(item?.song?.id)).filter(Number.isFinite)
+    ])
   },
   actions: {
     /**
@@ -93,6 +98,22 @@ export const usePlayerStore = defineStore('player', {
         case 'history_updated':
           this.historyRevision += 1
           break
+        case 'room_host_changed':
+          if (payload && typeof payload === 'object') {
+            const incomingRevision = Number(payload.revision)
+            const currentRevision = Number(this.roomHost.revision) || 0
+            if (Number.isFinite(incomingRevision) ? incomingRevision >= currentRevision : currentRevision === 0) {
+              const user = useUserStore()
+              const isHost = Boolean(payload?.claimed && Number(payload?.hostUserId) > 0 && Number(payload.hostUserId) === Number(user?.serverUserId))
+              this.roomHost = {
+                ...this.roomHost,
+                ...payload,
+                isHost,
+                revision: Number.isFinite(incomingRevision) ? incomingRevision : currentRevision
+              }
+            }
+          }
+          break
         default:
           break
       }
@@ -122,6 +143,12 @@ export const usePlayerStore = defineStore('player', {
       this.queue = snap.list ?? []
       if (typeof snap.tvOnline === 'boolean') this.tvOnline = snap.tvOnline
       this.connectedPhones = snap.connectedPhones ?? 0
+    },
+
+    /** Accept both the current direct QueueSnapshot response and legacy {snapshot} wrappers. */
+    applyControlResponse(response) {
+      const snapshot = response?.snapshot ?? response
+      if (snapshot && Array.isArray(snapshot.list)) this.applySnapshot(snapshot)
     }
   }
 })

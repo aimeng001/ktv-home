@@ -1,15 +1,28 @@
 pluginManagement {
     repositories {
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://maven.aliyun.com/repository/central")
-        maven("https://maven.aliyun.com/repository/gradle-plugin")
+        // Optional build-environment override; separate multiple mirrors with commas.
+        val configuredMirrors = System.getenv("KTV_ANDROID_REPO_MIRROR")
+            ?.split(',')
+            ?.map(String::trim)
+            ?.filter(String::isNotEmpty)
+            .orEmpty()
+        configuredMirrors.forEach(::maven)
+        google()
+        mavenCentral()
+        gradlePluginPortal()
     }
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://maven.aliyun.com/repository/central")
+        val configuredMirrors = System.getenv("KTV_ANDROID_REPO_MIRROR")
+            ?.split(',')
+            ?.map(String::trim)
+            ?.filter(String::isNotEmpty)
+            .orEmpty()
+        configuredMirrors.forEach(::maven)
+        google()
+        mavenCentral()
     }
 }
 

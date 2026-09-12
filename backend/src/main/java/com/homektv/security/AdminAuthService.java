@@ -3,6 +3,7 @@ package com.homektv.security;
 import com.homektv.config.AppProperties;
 import com.homektv.web.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -24,16 +25,18 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class AdminAuthService {
     private static final Duration SESSION_LIFETIME = Duration.ofHours(12);
+    static final int MAX_SESSIONS = 256;
     static final int MAX_FAILED_ATTEMPTS = 5;
     private static final Duration FAILURE_WINDOW = Duration.ofMinutes(10);
     private static final Duration LOGIN_COOLDOWN = Duration.ofMinutes(1);
-    private static final int MAX_TRACKED_CLIENTS = 4096;
+    static final int MAX_TRACKED_CLIENTS = 4096;
 
     private final AppProperties properties;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
     private final Map<String, Instant> sessions = new ConcurrentHashMap<>();
     private final Map<String, FailedLoginState> failedLogins = new ConcurrentHashMap<>();
+    private final Object authStateGate = new Object();
 
     @Autowired
     public AdminAuthService(AppProperties properties) {
@@ -60,21 +63,29 @@ public class AdminAuthService {
         }
         String key = normalizeClientKey(clientKey);
         Instant now = Instant.now(clock);
-        enforceCooldown(key, now);
-
         byte[] expected = properties.getAdminPassword().getBytes(StandardCharsets.UTF_8);
         byte[] supplied = (password == null ? "" : password).getBytes(StandardCharsets.UTF_8);
-        if (!MessageDigest.isEqual(expected, supplied)) {
-            recordFailedLogin(key, now);
-            throw new ApiException("ADMIN_AUTH_INVALID", "管理员密码错误");
-        }
 
-        failedLogins.remove(key);
-        byte[] tokenBytes = new byte[32];
-        random.nextBytes(tokenBytes);
-        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
-        sessions.put(token, now.plus(SESSION_LIFETIME));
-        return token;
+        synchronized (authStateGate) {
+            purgeExpired(now);
+            enforceCooldown(key, now);
+
+            if (!MessageDigest.isEqual(expected, supplied)) {
+                recordFailedLogin(key, now);
+                throw new ApiException("ADMIN_AUTH_INVALID", "管理员密码错误");
+            }
+
+            failedLogins.remove(key);
+            if (sessions.size() >= MAX_SESSIONS) {
+                throw new ApiException("ADMIN_AUTH_SESSION_LIMIT", "管理员会话过多，请先退出其他会话");
+            }
+
+            byte[] tokenBytes = new byte[32];
+            random.nextBytes(tokenBytes);
+            String token = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
+            sessions.put(token, now.plus(SESSION_LIFETIME));
+            return token;
+        }
     }
 
     private void enforceCooldown(String key, Instant now) {
@@ -89,7 +100,9 @@ public class AdminAuthService {
     }
 
     private void recordFailedLogin(String key, Instant now) {
-        evictExpiredClients(now);
+        if (!failedLogins.containsKey(key) && failedLogins.size() >= MAX_TRACKED_CLIENTS) {
+            throw new ApiException("ADMIN_AUTH_RATE_LIMITED", "登录尝试过多，请稍后再试");
+        }
         failedLogins.compute(key, (ignored, current) -> {
             if (current == null
                     || current.blockedUntil() != null
@@ -103,13 +116,20 @@ public class AdminAuthService {
         });
     }
 
-    private void evictExpiredClients(Instant now) {
-        if (failedLogins.size() < MAX_TRACKED_CLIENTS) return;
+    private void purgeExpired(Instant now) {
+        sessions.entrySet().removeIf(entry -> !now.isBefore(entry.getValue()));
         failedLogins.entrySet().removeIf(entry -> {
             FailedLoginState state = entry.getValue();
             return state.blockedUntil() != null && !now.isBefore(state.blockedUntil())
                     || !now.isBefore(state.windowStartedAt().plus(FAILURE_WINDOW));
         });
+    }
+
+    @Scheduled(fixedDelay = 300_000)
+    void purgeExpiredState() {
+        synchronized (authStateGate) {
+            purgeExpired(Instant.now(clock));
+        }
     }
 
     private static String normalizeClientKey(String clientKey) {
@@ -119,17 +139,20 @@ public class AdminAuthService {
 
     public boolean isAuthenticated(String token) {
         if (!isConfigured() || token == null || token.isBlank()) return false;
-        Instant expiresAt = sessions.get(token);
-        if (expiresAt == null) return false;
-        if (!Instant.now(clock).isBefore(expiresAt)) {
-            sessions.remove(token, expiresAt);
-            return false;
+        synchronized (authStateGate) {
+            Instant now = Instant.now(clock);
+            purgeExpired(now);
+            Instant expiresAt = sessions.get(token);
+            return expiresAt != null && now.isBefore(expiresAt);
         }
-        return true;
     }
 
     public void logout(String token) {
-        if (token != null && !token.isBlank()) sessions.remove(token);
+        if (token != null && !token.isBlank()) {
+            synchronized (authStateGate) {
+                sessions.remove(token);
+            }
+        }
     }
 
     public long sessionLifetimeSeconds() {

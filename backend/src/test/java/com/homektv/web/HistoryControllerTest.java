@@ -25,6 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class HistoryControllerTest {
@@ -52,10 +54,10 @@ class HistoryControllerTest {
         history.setPlayedBy(user.getId());
 
         when(userRepository.findByClientToken("client-7")).thenReturn(Optional.of(user));
-        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(userRepository.findAllById(any())).thenReturn(List.of(user));
         when(historyRepository.findTop50ByPlayedByAndPlayedAtGreaterThanEqualOrderByPlayedAtDesc(
                 eq(user.getId()), any())).thenReturn(List.of(history));
-        when(songRepository.findById(song.getId())).thenReturn(Optional.of(song));
+        when(songRepository.findAllById(any())).thenReturn(List.of(song));
 
         HistoryController controller = new HistoryController(
                 historyRepository, songRepository, userRepository,
@@ -70,5 +72,9 @@ class HistoryControllerTest {
                     assertThat(item.mine()).isTrue();
                     assertThat(item.song().title()).isEqualTo("晴天");
                 });
+        verify(songRepository).findAllById(any());
+        verify(songRepository, never()).findById(any());
+        verify(userRepository).findAllById(any());
+        verify(userRepository, never()).findById(any());
     }
 }

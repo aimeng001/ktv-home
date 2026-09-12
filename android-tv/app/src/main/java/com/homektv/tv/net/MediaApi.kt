@@ -6,8 +6,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -30,6 +30,10 @@ class MediaApi(private val config: AppConfig) {
         .readTimeout(8, TimeUnit.SECONDS)
         .build()
 
+    fun close() {
+        http.closeResources()
+    }
+
     /**
      * 拉歌曲详情，返回 priority 最高的文件源；失败或无文件返回 null。
      *
@@ -43,7 +47,7 @@ class MediaApi(private val config: AppConfig) {
                     Log.w(TAG, "detail $songId http ${resp.code}")
                     return@withContext null
                 }
-                val body = resp.body?.string() ?: return@withContext null
+                val body = ResponseBodyReader.readText(resp.body) ?: return@withContext null
                 val detail = json.decodeFromString(SongDetail.serializer(), body)
                 detail.files.maxByOrNull { it.priority }
             }
@@ -56,7 +60,7 @@ class MediaApi(private val config: AppConfig) {
     suspend fun fetchLyric(songId: Long): String? = withContext(Dispatchers.IO) {
         try {
             http.newCall(Request.Builder().url("${config.apiBase()}/lyric/$songId").build()).execute().use { resp ->
-                if (resp.isSuccessful) resp.body?.string() else null
+                if (resp.isSuccessful) ResponseBodyReader.readText(resp.body) else null
             }
         } catch (_: Exception) { null }
     }
@@ -64,15 +68,27 @@ class MediaApi(private val config: AppConfig) {
     suspend fun fetchCover(songId: Long): ByteArray? = withContext(Dispatchers.IO) {
         try {
             http.newCall(Request.Builder().url("${config.apiBase()}/cover/$songId").build()).execute().use { resp ->
-                if (resp.isSuccessful) resp.body?.bytes() else null
+                if (resp.isSuccessful) ResponseBodyReader.readBytes(resp.body) else null
             }
         } catch (_: Exception) { null }
     }
 
     suspend fun control(action: String, params: String = "{}"): Boolean = withContext(Dispatchers.IO) {
         try {
-            val body = "{\"action\":\"$action\",\"params\":$params}".toRequestBody("application/json".toMediaType())
-            http.newCall(Request.Builder().url("${config.apiBase()}/control").post(body).build()).execute().use { it.isSuccessful }
+            val body = buildControlRequest(action, params, config.userToken) ?: return@withContext false
+            val requestBody = body.toString().toRequestBody("application/json".toMediaType())
+            http.newCall(Request.Builder().url("${config.apiBase()}/control").post(requestBody).build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    false
+                } else {
+                    // The server can return a 200 response containing a
+                    // business error envelope (for example TV_OFFLINE).
+                    isSuccessfulKtvControlResponse(
+                        response.code,
+                        ResponseBodyReader.readText(response.body),
+                    )
+                }
+            }
         } catch (_: Exception) { false }
     }
 
@@ -86,7 +102,7 @@ class MediaApi(private val config: AppConfig) {
                     }
                     json.decodeFromString(
                         kotlinx.serialization.builtins.ListSerializer(SongDto.serializer()),
-                        resp.body?.string().orEmpty(),
+                        ResponseBodyReader.readText(resp.body).orEmpty(),
                     )
                 }
             } catch (e: Exception) {
@@ -95,9 +111,9 @@ class MediaApi(private val config: AppConfig) {
             }
         }
 
-        val ranked = fetch("/ranking?days=3650")
-        val newest = fetch("/songs/new")
-        (ranked + newest).distinctBy { it.id }
+        val ranked = fetch("/ranking?days=3650").take(MAX_RECOMMENDATIONS)
+        val newest = fetch("/songs/new").take(MAX_RECOMMENDATIONS)
+        (ranked + newest).distinctBy { it.id }.take(MAX_RECOMMENDATIONS)
     }
 
     suspend fun fetchLibraryCount(): Long? = withContext(Dispatchers.IO) {
@@ -107,7 +123,7 @@ class MediaApi(private val config: AppConfig) {
                     Log.w(TAG, "library status http ${resp.code}")
                     return@withContext null
                 }
-                json.decodeFromString(LibraryStatus.serializer(), resp.body?.string().orEmpty()).totalSongs
+                json.decodeFromString(LibraryStatus.serializer(), ResponseBodyReader.readText(resp.body).orEmpty()).totalSongs
             }
         } catch (e: Exception) {
             Log.w(TAG, "library status failed: ${e.message}")
@@ -119,7 +135,7 @@ class MediaApi(private val config: AppConfig) {
         try {
             http.newCall(Request.Builder().url("${config.apiBase()}/standby/content").build()).execute().use { resp ->
                 if (!resp.isSuccessful) return@withContext StandbyContent()
-                json.decodeFromString(StandbyContent.serializer(), resp.body?.string().orEmpty())
+                json.decodeFromString(StandbyContent.serializer(), ResponseBodyReader.readText(resp.body).orEmpty())
             }
         } catch (e: Exception) {
             Log.w(TAG, "standby content failed: ${e.message}")
@@ -134,7 +150,7 @@ class MediaApi(private val config: AppConfig) {
                     Log.w(TAG, "release info http ${resp.code}")
                     return@withContext null
                 }
-                json.decodeFromString(ReleaseInfo.serializer(), resp.body?.string().orEmpty())
+                json.decodeFromString(ReleaseInfo.serializer(), ResponseBodyReader.readText(resp.body).orEmpty())
             }
         } catch (e: Exception) {
             Log.w(TAG, "release info failed: ${e.message}")
@@ -159,7 +175,11 @@ class MediaApi(private val config: AppConfig) {
                     return@withContext false
                 }
                 val body = response.body ?: return@withContext false
-                temporary.outputStream().buffered().use { output -> body.byteStream().use { it.copyTo(output) } }
+                temporary.outputStream().buffered().use { output ->
+                    if (expectedSize > ResponseBodyReader.MAX_APK_BYTES ||
+                        ResponseBodyReader.copyTo(body, output, ResponseBodyReader.MAX_APK_BYTES) == null
+                    ) return@withContext false
+                }
             }
             if (temporary.length() <= 0 || (expectedSize > 0 && temporary.length() != expectedSize)) {
                 Log.w(TAG, "APK size mismatch: expected=$expectedSize actual=${temporary.length()}")
@@ -178,7 +198,9 @@ class MediaApi(private val config: AppConfig) {
     suspend fun fetchUrl(path: String): ByteArray? = withContext(Dispatchers.IO) {
         try {
             val url = if (path.startsWith("http")) path else "${config.apiBase().removeSuffix("/api")}$path"
-            http.newCall(Request.Builder().url(url).build()).execute().use { response -> if (response.isSuccessful) response.body?.bytes() else null }
+            http.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                if (response.isSuccessful) ResponseBodyReader.readBytes(response.body) else null
+            }
         } catch (_: Exception) { null }
     }
 
@@ -196,7 +218,7 @@ class MediaApi(private val config: AppConfig) {
                     Log.w(TAG, "qr http ${resp.code}")
                     return@withContext null
                 }
-                resp.body?.bytes()
+                ResponseBodyReader.readBytes(resp.body)
             }
         } catch (e: Exception) {
             Log.w(TAG, "qr fetch failed: ${e.message}")
@@ -206,5 +228,6 @@ class MediaApi(private val config: AppConfig) {
 
     companion object {
         private const val TAG = "MediaApi"
+        private const val MAX_RECOMMENDATIONS = 100
     }
 }

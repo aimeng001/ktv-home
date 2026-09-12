@@ -8,6 +8,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.SequenceInputStream;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -52,6 +53,41 @@ class FFprobeServiceTest {
                 Duration.ofSeconds(2), () -> service.probe(Path.of("hung.ts"))));
 
         assertThat(failure).isNotNull();
+        assertThat(process.get().destroyed.get()).isTrue();
+        assertThat(process.get().waitedAfterDestroy.get()).isTrue();
+    }
+
+    @Test
+    void oversizedStdoutIsRejectedAndProcessIsDestroyed() {
+        AtomicReference<OutputProcess> process = new AtomicReference<>();
+        FFprobeService service = new FFprobeService(new AppProperties(), args -> {
+            OutputProcess outputProcess = new OutputProcess(true);
+            process.set(outputProcess);
+            return outputProcess;
+        }, Duration.ofSeconds(1));
+
+        Throwable failure = catchThrowable(() -> service.probe(Path.of("large-stdout.ts")));
+
+        assertThat(failure)
+                .isInstanceOf(MediaProbeException.class)
+                .hasMessageContaining("ffprobe 输出超过上限");
+        assertThat(process.get().destroyed.get()).isTrue();
+    }
+
+    @Test
+    void oversizedStderrIsRejectedAndProcessIsDestroyed() {
+        AtomicReference<OutputProcess> process = new AtomicReference<>();
+        FFprobeService service = new FFprobeService(new AppProperties(), args -> {
+            OutputProcess outputProcess = new OutputProcess(false);
+            process.set(outputProcess);
+            return outputProcess;
+        }, Duration.ofSeconds(1));
+
+        Throwable failure = catchThrowable(() -> service.probe(Path.of("large-stderr.ts")));
+
+        assertThat(failure)
+                .isInstanceOf(MediaProbeException.class)
+                .hasMessageContaining("ffprobe 输出超过上限");
         assertThat(process.get().destroyed.get()).isTrue();
     }
 
@@ -167,6 +203,7 @@ class FFprobeServiceTest {
         private final BlockingInputStream stdout = new BlockingInputStream();
         private final BlockingInputStream stderr = new BlockingInputStream();
         private final AtomicBoolean destroyed = new AtomicBoolean();
+        private final AtomicBoolean waitedAfterDestroy = new AtomicBoolean();
 
         @Override public OutputStream getOutputStream() { return new ByteArrayOutputStream(); }
         @Override public InputStream getInputStream() { return stdout; }
@@ -176,6 +213,10 @@ class FFprobeServiceTest {
             return 1;
         }
         @Override public boolean waitFor(long timeout, TimeUnit unit) throws InterruptedException {
+            if (destroyed.get()) {
+                waitedAfterDestroy.set(true);
+                return true;
+            }
             unit.sleep(timeout);
             return destroyed.get();
         }
@@ -214,6 +255,68 @@ class FFprobeServiceTest {
 
         private void closeQuietly() {
             close();
+        }
+    }
+
+    private static final class OutputProcess extends Process {
+        private final InputStream stdout;
+        private final InputStream stderr;
+        private final AtomicBoolean destroyed = new AtomicBoolean();
+
+        private OutputProcess(boolean largeStdout) {
+            InputStream large = largeStdout ? largeJson() : new RepeatingInputStream(FFprobeService.MAX_OUTPUT_BYTES + 1L);
+            InputStream small = new ByteArrayInputStream("{\"streams\":[],\"format\":{}}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            stdout = largeStdout ? large : small;
+            stderr = largeStdout ? small : large;
+        }
+
+        @Override public OutputStream getOutputStream() { return new ByteArrayOutputStream(); }
+        @Override public InputStream getInputStream() { return stdout; }
+        @Override public InputStream getErrorStream() { return stderr; }
+        @Override public int waitFor() { return 0; }
+        @Override public boolean waitFor(long timeout, TimeUnit unit) { return true; }
+        @Override public int exitValue() { return 0; }
+        @Override public void destroy() { destroyForcibly(); }
+        @Override public Process destroyForcibly() {
+            destroyed.set(true);
+            try { stdout.close(); } catch (IOException ignored) { }
+            try { stderr.close(); } catch (IOException ignored) { }
+            return this;
+        }
+        @Override public boolean isAlive() { return !destroyed.get(); }
+
+        private static InputStream largeJson() {
+            byte[] prefix = "{\"streams\":[],\"format\":{\"padding\":\""
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] suffix = "\"}}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            return new SequenceInputStream(
+                    new ByteArrayInputStream(prefix),
+                    new SequenceInputStream(
+                            new RepeatingInputStream(FFprobeService.MAX_OUTPUT_BYTES + 1L),
+                            new ByteArrayInputStream(suffix)));
+        }
+    }
+
+    private static final class RepeatingInputStream extends InputStream {
+        private long remaining;
+
+        private RepeatingInputStream(long remaining) {
+            this.remaining = remaining;
+        }
+
+        @Override public int read() {
+            if (remaining == 0) return -1;
+            remaining--;
+            return 'x';
+        }
+
+        @Override public int read(byte[] buffer, int offset, int length) {
+            if (remaining == 0) return -1;
+            int count = (int) Math.min(remaining, length);
+            java.util.Arrays.fill(buffer, offset, offset + count, (byte) 'x');
+            remaining -= count;
+            return count;
         }
     }
 }
