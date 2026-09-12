@@ -30,7 +30,7 @@ jobs:
         working-directory: .
         run: python scripts/repo_portability_test.py
       - name: Run server tests
-        run: ./mvnw --batch-mode test
+        run: ./mvnw --batch-mode -T 1C test
 
   large-library-scan:
     name: Large library scan memory test
@@ -46,9 +46,11 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+      - name: Pre-pull postgres container image
+        run: docker pull postgres:16-alpine
       - name: Run 20000-file scanAll test with constrained heap
         run: >-
-          ./mvnw --batch-mode
+          ./mvnw --batch-mode -T 1C
           -DrunLargeLibraryScanTest=true
           -DscanRows=20000
           -DargLine="-Xms128m -Xmx512m"
@@ -91,13 +93,22 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
+      - name: Cache Android SDK components
+        id: cache-android-sdk
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/platforms/android-35
+            ${{ env.ANDROID_HOME }}/build-tools/35.0.0
+          key: ${{ runner.os }}-android-35-build-tools-35.0.0
       - name: Install Android SDK
+        if: steps.cache-android-sdk.outputs.cache-hit != 'true'
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
       - name: Verify FFmpeg extension
         run: echo "9feed2a29f7717955f579eff0373503ef3f8681734b053797fbda3cf62b3a5ab  app/libs/media3-decoder-ffmpeg.aar" | sha256sum -c -
       - name: Run release-variant tests and lint
-        run: ./gradlew --no-daemon testReleaseUnitTest lintRelease
+        run: ./gradlew --build-cache testReleaseUnitTest lintRelease
 
   windows-player:
     name: Windows Player tests and build
@@ -107,12 +118,17 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - name: Restore Windows Player
-        run: dotnet restore windows-player/HomeKtv.Windows.sln
-      - name: Run Windows Player tests
-        run: dotnet test windows-player/HomeKtv.Windows.sln --no-restore -c Release
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('windows-player/**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
       - name: Build Windows Player
-        run: dotnet build windows-player/HomeKtv.Windows.sln --no-restore -c Release
+        run: dotnet build windows-player/HomeKtv.Windows.sln -c Release
+      - name: Run Windows Player tests
+        run: dotnet test windows-player/HomeKtv.Windows.sln -c Release --no-build
 
   compose-config:
     name: Compose configuration checks

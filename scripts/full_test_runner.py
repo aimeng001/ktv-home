@@ -218,7 +218,6 @@ def build_task_specs(
                         _executable("dotnet"),
                         "test",
                         str(windows_solution),
-                        "--no-restore",
                         "--nologo",
                     ),
                     "Windows Player tests",
