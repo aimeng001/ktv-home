@@ -93,6 +93,8 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Cache Android SDK components
         id: cache-android-sdk
         uses: actions/cache@v4
@@ -104,6 +106,8 @@ jobs:
       - name: Install Android SDK
         if: steps.cache-android-sdk.outputs.cache-hit != 'true'
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Add Android build tools to PATH
+        run: echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
       - uses: gradle/actions/setup-gradle@v4
       - name: Verify FFmpeg extension
         run: echo "9feed2a29f7717955f579eff0373503ef3f8681734b053797fbda3cf62b3a5ab  app/libs/media3-decoder-ffmpeg.aar" | sha256sum -c -

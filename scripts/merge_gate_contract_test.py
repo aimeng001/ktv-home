@@ -269,6 +269,13 @@ class MergeGateContractTests(unittest.TestCase):
         self.assertIn("scanRows=10000", workflow)
         self.assertIn("-Xmx512m", workflow)
 
+    def test_ci_pins_supported_android_sdk_packages_and_build_tools(self) -> None:
+        workflow = (REPOSITORY / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("packages: platform-tools", workflow)
+        self.assertIn('echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"', workflow)
+
     def test_standalone_nas_source_path_is_configurable_and_read_only(self) -> None:
         compose = (REPOSITORY / "docker-compose.nas.yml").read_text(encoding="utf-8")
         source_target = compose.index("        target: /source-music")
