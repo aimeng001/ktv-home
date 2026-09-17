@@ -6,6 +6,8 @@ import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.Executors
 
 /**
  * 音效播放器，使用 AudioTrack 在 TV 端异步播放预生成音效。
@@ -14,7 +16,11 @@ import android.util.Log
  */
 class EffectPlayer {
     private val main = Handler(Looper.getMainLooper())
+    private val io = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "ktv-effect-player").apply { isDaemon = true }
+    }
     private val activeTracks = mutableSetOf<AudioTrack>()
+    @Volatile
     private var released = false
 
     /**
@@ -28,26 +34,54 @@ class EffectPlayer {
             Log.w(TAG, "unknown effect id=$effectId")
             return
         }
-        val track = runCatching { createTrack(sound) }.getOrElse {
-            Log.w(TAG, "create effect track failed: ${it.message}")
-            return
-        }
         val volume = (playerVolume.coerceIn(0, 100) / 100f * MAX_EFFECT_VOLUME)
-        track.setVolume(volume)
-        synchronized(activeTracks) { activeTracks += track }
-        val written = track.write(sound.samples, 0, sound.samples.size, AudioTrack.WRITE_BLOCKING)
-        if (written <= 0) {
-            releaseTrack(track)
-            return
+        try {
+            io.execute {
+                var track: AudioTrack? = null
+                var registered = false
+                try {
+                    if (released) return@execute
+                    track = createTrack(sound)
+                    val created = track ?: return@execute
+                    if (released) {
+                        created.release()
+                        return@execute
+                    }
+                    created.setVolume(volume)
+                    val accepted = synchronized(activeTracks) {
+                        if (released) false else activeTracks.add(created)
+                    }
+                    if (!accepted) {
+                        created.release()
+                        return@execute
+                    }
+                    registered = true
+                    val written = created.write(sound.samples, 0, sound.samples.size, AudioTrack.WRITE_BLOCKING)
+                    if (written <= 0) {
+                        releaseTrack(created)
+                        return@execute
+                    }
+                    created.play()
+                    val durationMs = sound.samples.size * 1_000L / sound.sampleRate
+                    main.postDelayed({ releaseTrack(created) }, durationMs + RELEASE_PADDING_MS)
+                } catch (error: Exception) {
+                    Log.w(TAG, "play effect failed: ${error.message}")
+                    if (registered) {
+                        track?.let(::releaseTrack)
+                    } else {
+                        track?.runCatching { release() }
+                    }
+                }
+            }
+        } catch (_: RejectedExecutionException) {
+            // release() won the race with executor submission.
         }
-        track.play()
-        val durationMs = sound.samples.size * 1_000L / sound.sampleRate
-        main.postDelayed({ releaseTrack(track) }, durationMs + RELEASE_PADDING_MS)
     }
 
     fun release() {
         released = true
         main.removeCallbacksAndMessages(null)
+        io.shutdownNow()
         val tracks = synchronized(activeTracks) {
             activeTracks.toList().also { activeTracks.clear() }
         }

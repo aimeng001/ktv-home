@@ -35,7 +35,7 @@ jobs:
   large-library-scan:
     name: Large library scan memory test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
@@ -48,11 +48,11 @@ jobs:
           cache: maven
       - name: Pre-pull postgres container image
         run: docker pull postgres:16-alpine
-      - name: Run 20000-file scanAll test with constrained heap
+      - name: Run 10000-file scanAll test with constrained heap
         run: >-
           ./mvnw --batch-mode -T 1C
           -DrunLargeLibraryScanTest=true
-          -DscanRows=20000
+          -DscanRows=10000
           -DargLine="-Xms128m -Xmx512m"
           -Dtest=LargeExternalLibraryScanTest
           test

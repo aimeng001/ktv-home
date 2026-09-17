@@ -75,14 +75,26 @@
         android:orientation="horizontal">
 
         <Button
-            android:id="@+id/btnSwitchIme"
+            android:id="@+id/btnToggleT9"
             android:layout_width="0dp"
             android:layout_height="44dp"
             android:layout_weight="1"
             android:background="@drawable/btn_keyboard_key"
             android:textColor="@color/color_keyboard_key_text"
-            android:text="切换系统输入法"
-            android:textSize="14sp"
+            android:text="切换全键盘(26键)"
+            android:textSize="13sp"
+            android:focusable="true" />
+
+        <Button
+            android:id="@+id/btnSwitchIme"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_keyboard_key"
+            android:textColor="@color/color_keyboard_key_text"
+            android:text="系统输入法"
+            android:textSize="13sp"
             android:focusable="true" />
     </LinearLayout>
 </LinearLayout>

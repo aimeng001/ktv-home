@@ -35,6 +35,43 @@ class ControllerStateReducerTest {
     }
 
     @Test
+    fun olderRevisionedSnapshotCannotReplaceNewerQueueState() {
+        val current = ControllerUiState(
+            queue = QueueSnapshot(
+                stateRevision = 12L,
+                playing = NowPlaying(queueId = 12L),
+            ),
+        )
+        val stale = QueueSnapshot(
+            stateRevision = 11L,
+            playing = NowPlaying(queueId = 11L),
+        )
+
+        val updated = ControllerStateReducer.withSnapshot(current, stale)
+
+        assertEquals(12L, updated.queue.stateRevision)
+        assertEquals(12L, updated.queue.playing?.queueId)
+    }
+
+    @Test
+    fun legacySnapshotCannotReplaceRevisionedQueueState() {
+        val current = ControllerUiState(
+            queue = QueueSnapshot(
+                stateRevision = 12L,
+                playing = NowPlaying(queueId = 12L),
+            ),
+        )
+
+        val updated = ControllerStateReducer.withSnapshot(current, QueueSnapshot(
+            stateRevision = 0L,
+            playing = NowPlaying(queueId = 1L),
+        ))
+
+        assertEquals(12L, updated.queue.stateRevision)
+        assertEquals(12L, updated.queue.playing?.queueId)
+    }
+
+    @Test
     fun unrelatedFailureDoesNotCancelSearchOrWriteOperation() {
         val state = ControllerUiState(
             loading = true,

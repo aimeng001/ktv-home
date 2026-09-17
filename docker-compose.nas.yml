@@ -13,7 +13,7 @@ x-timezone: &timezone "${TZ:-Asia/Shanghai}"
 
 services:
   db:
-    image: docker.m.daocloud.io/library/postgres:16-alpine
+    image: "${KTV_IMAGE_REGISTRY:-docker.m.daocloud.io}/library/postgres:16-alpine"
     container_name: ${KTV_DB_CONTAINER_NAME:-ktv-db}
     environment:
       POSTGRES_DB: *db-name

@@ -5,6 +5,7 @@ package com.homektv.tv.ui
  */
 enum class BackAction {
     DISMISS_DRAWER,
+    CLEAR_INPUT_TEXT,
     INNER_DETAIL_BACK,
     EXIT_KIOSK,
     EXIT_APP,
@@ -15,23 +16,26 @@ enum class BackAction {
  *
  * Dispatches Back key by strict priority:
  * 1. Dismiss secondary modal/drawer if open;
- * 2. Return to parent category/artist grid if inside sub-detail list;
- * 3. Exit kiosk ordering console back to fullscreen MV;
- * 4. Double-back / system confirm exit app.
+ * 2. Clear on-screen keyboard search query if non-empty;
+ * 3. Return to parent category/artist grid if inside sub-detail list;
+ * 4. Exit kiosk ordering console back to fullscreen MV;
+ * 5. Double-back / system confirm exit app.
  */
 class KtvFocusController {
     var isDrawerOpen: Boolean = false
     var isKioskActive: Boolean = false
+    var hasInputText: Boolean = false
     var hasInnerDetailBack: Boolean = false
 
     fun shouldInterceptBack(action: Int): Boolean {
-        return isDrawerOpen || (isKioskActive && hasInnerDetailBack) || isKioskActive
+        return isDrawerOpen || hasInputText || (isKioskActive && hasInnerDetailBack) || isKioskActive
     }
 
     fun shouldInterceptMenu(): Boolean = isKioskActive || isDrawerOpen
 
     fun handleBackPress(
         onDismissDrawer: () -> Unit,
+        onClearInputText: () -> Unit = {},
         onInnerDetailBack: () -> Unit = {},
         onExitKiosk: () -> Unit,
         onExitApp: () -> Unit,
@@ -40,6 +44,10 @@ class KtvFocusController {
             isDrawerOpen -> {
                 onDismissDrawer()
                 BackAction.DISMISS_DRAWER
+            }
+            hasInputText -> {
+                onClearInputText()
+                BackAction.CLEAR_INPUT_TEXT
             }
             hasInnerDetailBack -> {
                 onInnerDetailBack()

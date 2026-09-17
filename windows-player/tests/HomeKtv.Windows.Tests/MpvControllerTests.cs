@@ -114,6 +114,33 @@ public sealed class MpvControllerTests
     }
 
     [Fact]
+    public async Task A_nonresponsive_command_is_bounded_and_cancellation_reaches_the_session()
+    {
+        var session = new CancellationAwareHungMpvSession();
+        var controller = new MpvProcessController(
+            new SingleMpvSessionFactory(session), TimeSpan.FromMilliseconds(25));
+
+        await Assert.ThrowsAnyAsync<Exception>(() => controller.PlayAsync().WaitAsync(TimeSpan.FromSeconds(1)));
+        Assert.True(session.CancellationObserved);
+    }
+
+    [Fact]
+    public async Task Stop_if_running_stops_without_starting_a_replacement_session()
+    {
+        var session = new FakeMpvSession();
+        var factory = new FakeMpvSessionFactory(session);
+        var controller = new MpvProcessController(factory);
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.Commands.Clear();
+        await controller.StopIfRunningAsync();
+
+        Assert.Equal(1, factory.StartCount);
+        Assert.Contains(session.Commands, command => command.SequenceEqual(MpvCommands.Stop()));
+        Assert.Null(controller.CurrentFileId);
+    }
+
+    [Fact]
     public async Task Last_observed_position_is_restored_after_mpv_replacement()
     {
         var first = new FakeMpvSession { GetPropertyResponse = Json("123.4") };
@@ -212,6 +239,71 @@ public sealed class MpvControllerTests
         Assert.Equal(new long[] { 20 }, finished);
     }
 
+    /// <summary>
+    /// mpv 在 <c>loadfile</c> 命令成功之后才发现流拉不下来，此时发出的是
+    /// <c>end-file</c> + <c>reason="error"</c>。原先只处理 <c>reason="eof"</c>，
+    /// 于是这类失败被静默丢弃：不上报 finished、不触发 SessionFaulted、
+    /// PlaybackTerminal 的唯一 play_error 出口永远不会被走到 —— 画面黑屏卡死、
+    /// 不跳歌、不报错、不重连，队列永久停在这一首。
+    ///
+    /// <p>mpv 的 reason 取值只有 eof / stop / quit / error / redirect / unknown
+    /// （见 DOCS/man/input.rst 的 end-file 一节），load-fail 并不是一个 reason。
+    /// </summary>
+    [Fact]
+    public async Task End_file_with_error_reason_reports_playback_failure()
+    {
+        var session = new FakeMpvSession();
+        var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+        var failed = new List<long>();
+        controller.PlaybackFailed += fileId => failed.Add(fileId);
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.Notify("start-file", "{\"playlist_entry_id\":1}");
+        session.Notify("end-file",
+            "{\"reason\":\"error\",\"playlist_entry_id\":1,\"file_error\":\"loading failed\"}");
+
+        Assert.Equal(new long[] { 10 }, failed);
+    }
+
+    /// <summary>stop / quit / redirect 都是预期内的正常终止，不得被当成播放失败上报。</summary>
+    [Fact]
+    public async Task End_file_with_normal_reasons_never_reports_failure()
+    {
+        var session = new FakeMpvSession();
+        var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+        var failed = new List<long>();
+        controller.PlaybackFailed += fileId => failed.Add(fileId);
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.Notify("start-file", "{\"playlist_entry_id\":1}");
+        session.Notify("end-file", "{\"reason\":\"stop\",\"playlist_entry_id\":1}");
+        session.Notify("end-file", "{\"reason\":\"quit\",\"playlist_entry_id\":1}");
+        session.Notify("end-file", "{\"reason\":\"redirect\",\"playlist_entry_id\":1}");
+
+        Assert.Empty(failed);
+    }
+
+    /// <summary>上一次装载迟到的失败事件不能算到当前媒体头上。</summary>
+    [Fact]
+    public async Task Failure_for_an_old_playlist_entry_is_ignored_after_a_replacement_load()
+    {
+        var session = new FakeMpvSession();
+        var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+        var failed = new List<long>();
+        controller.PlaybackFailed += fileId => failed.Add(fileId);
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.Notify("start-file", "{\"playlist_entry_id\":1}");
+
+        await controller.LoadAsync("http://server/stream/20", 20);
+        session.Notify("start-file", "{\"playlist_entry_id\":2}");
+
+        session.Notify("end-file", "{\"reason\":\"error\",\"playlist_entry_id\":1}");
+        session.Notify("end-file", "{\"reason\":\"error\",\"playlist_entry_id\":2}");
+
+        Assert.Equal(new long[] { 20 }, failed);
+    }
+
     private static JsonElement Json(string value)
     {
         using var document = JsonDocument.Parse(value);
@@ -236,6 +328,38 @@ public sealed class MpvControllerTests
 
             return Task.FromResult<IMpvSession>(sessions[next++]);
         }
+    }
+
+    private sealed class SingleMpvSessionFactory(IMpvSession session) : IMpvSessionFactory
+    {
+        public Task<IMpvSession> StartAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(session);
+    }
+
+    private sealed class CancellationAwareHungMpvSession : IMpvSession
+    {
+        public bool CancellationObserved { get; private set; }
+        public bool IsAlive => true;
+        public event Action<MpvNotification>? NotificationReceived;
+        public event Action<Exception>? Disconnected;
+
+        public async Task<JsonElement?> ExecuteAsync(
+            IReadOnlyList<object?> command, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                CancellationObserved = true;
+                throw;
+            }
+
+            return null;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class GatedMpvSession : IMpvSession

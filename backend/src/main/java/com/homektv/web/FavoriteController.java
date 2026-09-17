@@ -6,6 +6,8 @@ import com.homektv.repo.FavoriteRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.dto.SongDto;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -41,9 +43,16 @@ public class FavoriteController {
      * @return 收藏的歌曲 DTO 列表 / list of favorite song DTOs
      */
     @GetMapping
-    public List<SongDto> list(@RequestParam String clientToken) {
+    public List<SongDto> list(@RequestParam String clientToken,
+                              @RequestParam(defaultValue = "0") int page,
+                              @RequestParam(defaultValue = "100") int size) {
         Long userId = requireUser(clientToken);
-        List<Long> orderedIds = favoriteRepo.findByUserIdOrderByCreatedAtDesc(userId).stream()
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size <= 0 ? 100 : size, 200));
+        List<Long> orderedIds = favoriteRepo.findByUserIdOrderByCreatedAtDesc(
+                        userId,
+                        PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt")))
+                .getContent().stream()
                 .map(Favorite::getSongId).filter(Objects::nonNull).toList();
         if (orderedIds.isEmpty()) return List.of();
         Iterable<com.homektv.domain.Song> found = songRepo.findAllById(new LinkedHashSet<>(orderedIds));
@@ -51,6 +60,14 @@ public class FavoriteController {
         if (found != null) found.forEach(song -> byId.put(song.getId(), song));
         return orderedIds.stream().map(byId::get).filter(Objects::nonNull).map(SongDto::from)
                 .toList();
+    }
+
+    /** Compatibility helper for direct callers; HTTP requests use the bounded endpoint above. */
+    public List<SongDto> list(String clientToken) {
+        Long userId = requireUser(clientToken);
+        List<Long> orderedIds = favoriteRepo.findByUserIdOrderByCreatedAtDesc(userId).stream()
+                .map(Favorite::getSongId).filter(Objects::nonNull).toList();
+        return loadSongsInOrder(orderedIds);
     }
 
     /**
@@ -61,11 +78,26 @@ public class FavoriteController {
      * @return 收藏的歌曲 ID 列表 / list of favorite song IDs
      */
     @GetMapping("/ids")
-    public List<Long> ids(@RequestParam String clientToken) {
+    public List<Long> ids(@RequestParam String clientToken,
+                          @RequestParam(defaultValue = "0") int page,
+                          @RequestParam(defaultValue = "100") int size) {
         Long userId = requireUser(clientToken);
-        return favoriteRepo.findByUserIdOrderByCreatedAtDesc(userId).stream()
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size <= 0 ? 100 : size, 200));
+        return favoriteRepo.findByUserIdOrderByCreatedAtDesc(
+                        userId,
+                        PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt")))
+                .getContent().stream()
                 .map(Favorite::getSongId)
                 .toList();
+    }
+
+    private List<SongDto> loadSongsInOrder(List<Long> orderedIds) {
+        if (orderedIds.isEmpty()) return List.of();
+        Iterable<com.homektv.domain.Song> found = songRepo.findAllById(new LinkedHashSet<>(orderedIds));
+        Map<Long, com.homektv.domain.Song> byId = new LinkedHashMap<>();
+        if (found != null) found.forEach(song -> byId.put(song.getId(), song));
+        return orderedIds.stream().map(byId::get).filter(Objects::nonNull).map(SongDto::from).toList();
     }
 
     /**

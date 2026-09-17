@@ -19,6 +19,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.List;
 
 /**
@@ -359,9 +363,19 @@ public class PlaybackService {
             ps.setPositionMs(0);
             return;
         }
+
+        Set<Long> songIds = waiting.stream()
+                .map(QueueItem::getSongId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        Map<Long, Song> songs = new HashMap<>();
+        songRepo.findAllById(songIds).forEach(song -> {
+            if (song != null && song.getId() != null) songs.put(song.getId(), song);
+        });
+        Set<Long> playableSongIds = availabilityPolicy.playableSongIds(songs.values());
+
         for (QueueItem nextItem : waiting) {
-            Song song = songRepo.findById(nextItem.getSongId()).orElse(null);
-            if (!availabilityPolicy.isPlayable(song)) {
+            if (!playableSongIds.contains(nextItem.getSongId())) {
                 nextItem.setStatus(QueueService.SKIPPED);
                 nextItem.setPlayedAt(OffsetDateTime.now());
                 queueRepo.save(nextItem);

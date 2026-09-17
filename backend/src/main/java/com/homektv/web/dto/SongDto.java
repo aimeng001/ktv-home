@@ -10,6 +10,7 @@ import com.homektv.library.ArtistAvatarUrl;
  */
 public record SongDto(
         Long id,
+        String catalogNumber,
         String title,
         String artist,
         String artistGender,
@@ -25,8 +26,16 @@ public record SongDto(
     public SongDto(Long id, String title, String artist, String artistGender, String mediaType,
                    boolean hasVocalTrack, int durationMs, String lyricType, String coverUrl,
                    int playCount) {
-        this(id, title, artist, artistGender, mediaType, hasVocalTrack, durationMs, lyricType,
+        this(id, "", title, artist, artistGender, mediaType, hasVocalTrack, durationMs, lyricType,
                 coverUrl, playCount, ArtistAvatarUrl.forCredit(artist));
+    }
+
+    /** Source-compatible constructor for callers that also supplied an avatar URL. */
+    public SongDto(Long id, String title, String artist, String artistGender, String mediaType,
+                   boolean hasVocalTrack, int durationMs, String lyricType, String coverUrl,
+                   int playCount, String artistAvatarUrl) {
+        this(id, "", title, artist, artistGender, mediaType, hasVocalTrack, durationMs, lyricType,
+                coverUrl, playCount, artistAvatarUrl);
     }
     /**
      * 将 {@link Song} 领域对象转换为 SongDto，封面路径组装为 API 访问地址，无封面时返回 {@code null}。
@@ -40,6 +49,7 @@ public record SongDto(
     public static SongDto from(Song s) {
         return new SongDto(
                 s.getId(),
+                s.getCatalogNumber(),
                 s.getTitle(),
                 s.getArtist(),
                 s.getArtistGender(),

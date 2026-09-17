@@ -1,6 +1,8 @@
 package com.homektv.discovery;
 
 import com.homektv.config.AppProperties;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import javax.jmdns.JmDNS;
 import javax.jmdns.ServiceInfo;
@@ -29,11 +31,14 @@ public class LanDiscoveryService {
     public static final String DISCOVERY_REQUEST = "HOME_KTV_DISCOVER_V1";
 
     private static final Logger log = LoggerFactory.getLogger(LanDiscoveryService.class);
+    private static final ObjectMapper JSON = new ObjectMapper();
     private final AppProperties properties;
+    private final ServerInstanceIdentityService identityService;
     private final List<JmDNS> registrations = new ArrayList<>();
     private ExecutorService udpExecutor;
     private DatagramSocket udpSocket;
     private int httpPort;
+    private volatile String instanceId;
 
     /**
      * 构造局域网发现服务。
@@ -42,8 +47,9 @@ public class LanDiscoveryService {
      *
      * @param properties 应用配置属性 / application configuration properties
      */
-    public LanDiscoveryService(AppProperties properties) {
+    public LanDiscoveryService(AppProperties properties, ServerInstanceIdentityService identityService) {
         this.properties = properties;
+        this.identityService = identityService;
     }
 
     /**
@@ -57,6 +63,7 @@ public class LanDiscoveryService {
     public synchronized void onWebServerReady(WebServerInitializedEvent event) {
         if (!properties.getDiscovery().isEnabled() || httpPort != 0) return;
         httpPort = event.getWebServer().getPort();
+        instanceId = identityService.getOrCreate();
         registerMdns();
         startUdpResponder();
     }
@@ -70,6 +77,7 @@ public class LanDiscoveryService {
                 Map<String, String> txt = Map.of(
                         "service", "home-ktv",
                         "protocol", "1",
+                        "instanceId", instanceId,
                         "api", "/api"
                 );
                 ServiceInfo info = ServiceInfo.create(
@@ -111,7 +119,8 @@ public class LanDiscoveryService {
                     socket.receive(request);
                     String message = new String(request.getData(), request.getOffset(), request.getLength(), StandardCharsets.UTF_8);
                     if (!DISCOVERY_REQUEST.equals(message.trim())) continue;
-                    byte[] response = responsePayload(httpPort, properties.getDiscovery().getInstanceName());
+                    byte[] response = responsePayload(
+                            httpPort, properties.getDiscovery().getInstanceName(), instanceId);
                     socket.send(new DatagramPacket(response, response.length, request.getAddress(), request.getPort()));
                 }
             } catch (SocketException e) {
@@ -131,10 +140,18 @@ public class LanDiscoveryService {
      * @param name 实例名称 / instance name
      * @return JSON 格式的响应字节数组 / JSON response as byte array
      */
-    static byte[] responsePayload(int port, String name) {
-        String safeName = name.replace("\\", "\\\\").replace("\"", "\\\"");
-        return ("{\"service\":\"home-ktv\",\"protocolVersion\":1,\"name\":\"" +
-                safeName + "\",\"port\":" + port + "}").getBytes(StandardCharsets.UTF_8);
+    static byte[] responsePayload(int port, String name, String instanceId) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("service", "home-ktv");
+        payload.put("protocolVersion", 1);
+        payload.put("name", name == null ? "" : name);
+        payload.put("port", port);
+        payload.put("instanceId", instanceId == null ? "" : instanceId);
+        try {
+            return JSON.writeValueAsBytes(payload);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("无法构建发现响应", e);
+        }
     }
 
     // 枚举所有网络接口，收集站点本地 IPv4 地址

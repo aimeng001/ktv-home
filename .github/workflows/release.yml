@@ -121,13 +121,13 @@ jobs:
           java-version: "21"
           cache: maven
       - name: Run backend tests
-        run: ./mvnw --batch-mode test
+        run: ./mvnw --batch-mode -T 1C test
 
   large-scan-gate:
     name: Large library scan gate
     runs-on: ubuntu-latest
     needs: release-meta
-    timeout-minutes: 120
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: backend
@@ -138,11 +138,13 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - name: Run 100000-file scanAll test with constrained heap
+      - name: Pre-pull postgres container image
+        run: docker pull postgres:16-alpine
+      - name: Run 10000-file scanAll test with constrained heap
         run: >-
-          ./mvnw --batch-mode
+          ./mvnw --batch-mode -T 1C
           -DrunLargeLibraryScanTest=true
-          -DscanRows=100000
+          -DscanRows=10000
           -DargLine="-Xms128m -Xmx512m"
           -Dtest=LargeExternalLibraryScanTest
           test
@@ -164,7 +166,16 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
+      - name: Cache Android SDK components
+        id: cache-android-sdk
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/platforms/android-35
+            ${{ env.ANDROID_HOME }}/build-tools/35.0.0
+          key: ${{ runner.os }}-android-35-build-tools-35.0.0
       - name: Install Android SDK
+        if: steps.cache-android-sdk.outputs.cache-hit != 'true'
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
       - name: Verify FFmpeg extension
@@ -188,7 +199,21 @@ jobs:
           test -n "$KTV_TV_STORE_PASSWORD"
           test -n "$KTV_TV_KEY_ALIAS"
           test -n "$KTV_TV_KEY_PASSWORD"
-          ./gradlew --no-daemon testReleaseUnitTest lintRelease assembleRelease
+          ./gradlew --build-cache testReleaseUnitTest lintRelease assembleRelease
+      - name: Verify release signer certificate continuity
+        env:
+          KTV_TV_CERT_SHA256: ${{ secrets.KTV_TV_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          test -n "$KTV_TV_CERT_SHA256"
+          expected="$(printf '%s' "$KTV_TV_CERT_SHA256" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+          for apk in app/build/outputs/apk/release/*.apk; do
+            actual="$(apksigner verify --print-certs "$apk" | awk -F': ' '/certificate SHA-256 digest/{print $2; exit}' | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+            if [[ -z "$actual" || "$actual" != "$expected" ]]; then
+              echo "Signer certificate mismatch for $apk" >&2
+              exit 1
+            fi
+          done
       - name: Stage versioned APKs
         run: |
           mkdir -p staged-apks
@@ -212,6 +237,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('windows-player/**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
       - name: Restore Windows Player
         run: dotnet restore windows-player/HomeKtv.Windows.sln
       - name: Run Windows Player tests

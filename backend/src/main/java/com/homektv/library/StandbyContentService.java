@@ -110,11 +110,19 @@ public class StandbyContentService {
     }
 
     private List<Song> hotSongs() {
-        List<Song> songs = new ArrayList<>();
-        for (Object[] row : historyRepository.ranking(OffsetDateTime.now().minusDays(3650), 20)) {
-            songRepository.findById(((Number) row[0]).longValue()).filter(this::valid).ifPresent(songs::add);
-        }
-        return songs;
+        List<Long> rankedIds = historyRepository.ranking(OffsetDateTime.now().minusDays(3650), 20).stream()
+                .map(row -> row == null || row.length == 0 || !(row[0] instanceof Number number)
+                        ? null : number.longValue())
+                .filter(Objects::nonNull)
+                .filter(id -> id > 0)
+                .distinct()
+                .toList();
+        if (rankedIds.isEmpty()) return List.of();
+
+        Map<Long, Song> byId = songRepository.findAllById(rankedIds).stream()
+                .filter(this::valid)
+                .collect(Collectors.toMap(Song::getId, Function.identity(), (a, b) -> a));
+        return rankedIds.stream().map(byId::get).filter(Objects::nonNull).toList();
     }
 
     private List<Song> newSongs() {
@@ -136,6 +144,7 @@ public class StandbyContentService {
                 .map(Number::longValue)
                 .filter(id -> id > 0)
                 .distinct()
+                .limit(SettingService.MAX_STANDBY_SONGS)
                 .toList();
         if (longIds.isEmpty()) return List.of();
 

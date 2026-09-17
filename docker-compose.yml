@@ -65,10 +65,14 @@ services:
       # TV discovery protocol port / 电视端发现协议端口
       - "18888:18888/udp"
     volumes:
+      # 源曲库默认只读，保护外部 NAS 曲库；MANAGED 模式需要清理源文件时才显式设为 false。
+      # The source library is read-only by default so an external NAS can never be
+      # written through an unconfigured deployment. MANAGED deployments that clean
+      # their source files must opt out with KTV_SOURCE_MUSIC_READ_ONLY=false.
       - type: bind
         source: ${KTV_SOURCE_MUSIC_DIR:-./source-music}
         target: /source-music
-        read_only: ${KTV_SOURCE_MUSIC_READ_ONLY:-false}
+        read_only: ${KTV_SOURCE_MUSIC_READ_ONLY:-true}
         bind:
           create_host_path: true
       - type: bind

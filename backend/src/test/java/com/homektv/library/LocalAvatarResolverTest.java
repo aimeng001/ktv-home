@@ -1,9 +1,11 @@
 package com.homektv.library;
 
 import com.homektv.config.AppProperties;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -12,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -121,6 +124,38 @@ class LocalAvatarResolverTest {
         Files.write(image, new byte[(int) LocalAvatarResolver.MAX_FILE_SIZE + 1]);
 
         assertThat(LocalAvatarResolver.readBounded(image)).isNull();
+    }
+
+    @Test
+    void rejectsAvatarFileSymlinkPointingOutsideCandidateDirectory(@TempDir Path tempDir) throws Exception {
+        Path candidateDir = tempDir.resolve("avatars");
+        Path outsideDir = tempDir.resolve("outside");
+        Files.createDirectories(candidateDir);
+        Files.createDirectories(outsideDir);
+        Path outsideImage = outsideDir.resolve("张学友.jpg");
+        Files.write(outsideImage, new byte[]{1, 2, 3});
+
+        Path linkedImage = candidateDir.resolve("张学友.jpg");
+        try {
+            Files.createSymbolicLink(linkedImage, outsideImage);
+        } catch (IOException | UnsupportedOperationException | SecurityException ex) {
+            Assumptions.assumeTrue(false, "symbolic links are unavailable in this test environment");
+        }
+
+        AppProperties props = new AppProperties();
+        props.setDataPath(candidateDir.toString());
+
+        AssetWriter assetWriter = mock(AssetWriter.class);
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+        when(profileService.unresolvedProfiles(50_000)).thenReturn(List.of(
+                new ArtistProfileService.Profile("zhangxueyou", "张学友", "PERSON", null, null, null, "PENDING")
+        ));
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, assetWriter, profileService);
+
+        assertThat(resolver.resolveAllCandidates()).isZero();
+        verify(assetWriter, never()).writeArtistCover(any(), any(), any());
+        verify(profileService, never()).setAvatarReady(any(), any(), any());
     }
 
     @Test

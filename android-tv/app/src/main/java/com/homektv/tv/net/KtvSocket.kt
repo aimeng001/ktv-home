@@ -2,9 +2,13 @@ package com.homektv.tv.net
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -21,6 +25,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
+import com.homektv.tv.session.ServerRecoveryCoordinator
 
 /**
  * TV 端 WebSocket 客户端（P1.27 + P1.16 TV 侧）。
@@ -47,11 +52,14 @@ class KtvSocket(
         /** toast 提示。 */
         fun onToast(text: String) {}
         /** 连接状态变化：true=已连上并完成一次同步，false=断开/重连中。 */
+        /** 连接状态变化：true=已连上并收到有效协议事件，false=断开/重连中。 */
         fun onConnectionChanged(connected: Boolean) {}
         /** 当前终端是否拥有播放租约；false 时必须停止本地投影。 */
         fun onPlayerRole(active: Boolean) {}
         /** 房主变更广播；控制器据此更新顶歌/删歌权限。 */
         fun onRoomHostChanged(status: RoomHostStatus) {}
+        /** 发现不同 endpoint；仅通知会话所有者，不自动改写当前配置。 */
+        fun onRecoveryCandidate(candidate: DiscoveredServer) {}
     }
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -74,17 +82,35 @@ class KtvSocket(
     private val syncReadyGate = SyncReadyGate()
     private val syncChunkAssembler = SyncChunkAssembler()
     private val socketEpoch = SocketEpochGate()
+    /** The transport and its durable state belong to this immutable session. */
+    private val sessionServer = config.serverForHost(config.serverHost)
+    private val sessionHost = sessionServer?.hostPort ?: config.serverHost
+    private val sessionPlayerToken = config.playerTokenFor(sessionServer)
+    private val sessionUserToken = config.userTokenFor(sessionServer)
     private val playbackBridgeEpoch = if (role == KtvSocketRole.PLAYER) {
-        PlaybackSnapshotBridge.beginSession(config.serverHost)
+        PlaybackSnapshotBridge.beginSession(sessionHost)
     } else null
-    private val reportServerHost = config.serverHost
     private val finishedOutbox = FinishedReportOutbox(
-        config.pendingFinishedQueueIds(reportServerHost),
-        { queueIds -> config.savePendingFinishedQueueIds(queueIds, reportServerHost) },
+        config.pendingFinishedQueueIds(sessionServer),
+        { queueIds -> config.savePendingFinishedQueueIds(queueIds, sessionServer) },
+    )
+    private val playErrorOutbox = PlaybackErrorOutbox(
+        config.pendingPlaybackErrors(sessionServer),
+        { errors -> config.savePendingPlaybackErrors(errors, sessionServer) },
     )
     private val recoveryPolicy = EndpointRecoveryPolicy()
+    private val recoveryCoordinator = ServerRecoveryCoordinator(
+        currentServer = sessionServer,
+        onCandidate = { candidate ->
+            main.post {
+                if (!closed) listener.onRecoveryCandidate(candidate)
+            }
+        },
+    )
     @Volatile
     private var discoveryInFlight = false
+    private val recoverySupervisor = SupervisorJob()
+    private val recoveryScope = CoroutineScope(recoverySupervisor + Dispatchers.IO)
 
     // 15s 应用层心跳
     private val heartbeat = object : Runnable {
@@ -92,7 +118,10 @@ class KtvSocket(
             val generation = if (role == KtvSocketRole.PLAYER) leaseGate.activeGeneration() else null
             if (role == KtvSocketRole.PLAYER) {
                 if (generation == null) listener.onPlayerRole(false)
-                else flushFinishedReports(generation)
+                else {
+                    flushFinishedReports(generation)
+                    flushPlaybackErrors(generation)
+                }
             }
             ws?.send("""{"type":"ping","payload":{"generation":${generation ?: "null"}}}""")
             main.postDelayed(this, HEARTBEAT_MS)
@@ -120,6 +149,8 @@ class KtvSocket(
 
     fun close() {
         closed = true
+        recoverySupervisor.cancel()
+        discoveryInFlight = false
         cancelReconnect()
         reconnectGate.markRun()
         socketEpoch.invalidate()
@@ -157,15 +188,34 @@ class KtvSocket(
     fun sendFinished(queueId: Long? = null) {
         if (role != KtvSocketRole.PLAYER) return
         val id = queueId?.takeIf { it > 0 } ?: return
-        finishedOutbox.enqueue(id)
+        when (finishedOutbox.enqueue(id)) {
+            FinishedReportOutbox.EnqueueResult.ADDED,
+            FinishedReportOutbox.EnqueueResult.DUPLICATE -> Unit
+            FinishedReportOutbox.EnqueueResult.INVALID ->
+                Log.w(TAG, "finishedOutbox rejected invalid queueId=$id")
+            FinishedReportOutbox.EnqueueResult.FULL -> {
+                Log.e(TAG, "finishedOutbox is full; preserving existing reports, queueId=$id")
+                listener.onToast("播放完成待上报队列已满，已暂停新增记录")
+            }
+        }
         leaseGate.activeGeneration()?.let(::flushFinishedReports)
+        leaseGate.activeGeneration()?.let(::flushPlaybackErrors)
     }
 
     /** 播放文件不可读时上报，服务端会标记当前项异常并推进队列。 */
     fun sendPlayError(message: String, fileId: Long? = null, queueId: Long? = null) {
         if (role != KtvSocketRole.PLAYER) return
-        val generation = leaseGate.activeGeneration() ?: return
-        ws?.send(buildPlayErrorMessage(message, fileId, queueId, generation))
+        val id = queueId?.takeIf { it > 0 } ?: return
+        when (playErrorOutbox.enqueue(PendingPlaybackError(id, fileId, message))) {
+            PlaybackErrorOutbox.EnqueueResult.ADDED,
+            PlaybackErrorOutbox.EnqueueResult.DUPLICATE -> Unit
+            PlaybackErrorOutbox.EnqueueResult.INVALID -> Log.w(TAG, "playErrorOutbox rejected invalid queueId=$id")
+            PlaybackErrorOutbox.EnqueueResult.FULL -> {
+                Log.e(TAG, "playErrorOutbox is full; preserving existing reports, queueId=$id")
+                listener.onToast("播放失败待上报队列已满，已暂停新增记录")
+            }
+        }
+        leaseGate.activeGeneration()?.let(::flushPlaybackErrors)
     }
 
     private fun openSocket() {
@@ -174,10 +224,10 @@ class KtvSocket(
         syncChunkAssembler.reset()
         syncReadyGate.onOpen()
         val url = when (role) {
-            KtvSocketRole.PLAYER -> config.wsUrl(config.playerToken)
-            KtvSocketRole.CONTROLLER -> config.controllerWsUrl(config.userToken)
+            KtvSocketRole.PLAYER -> config.wsUrlFor(sessionServer, sessionPlayerToken)
+            KtvSocketRole.CONTROLLER -> config.controllerWsUrlFor(sessionServer, sessionUserToken)
         }
-        Log.d(TAG, "connecting ${safeWebSocketLogTarget(config.serverHost)}")
+        Log.d(TAG, "connecting ${safeWebSocketLogTarget(sessionHost)}")
         val req = Request.Builder().url(url).build()
         ws = http.newWebSocket(req, socketListener(epoch))
     }
@@ -190,7 +240,7 @@ class KtvSocket(
 
     private fun scheduleReconnect(epoch: Long) {
         if (closed || !socketEpoch.isCurrent(epoch) || !reconnectGate.trySchedule()) return
-        if (recoveryPolicy.onFailure() && !discoveryInFlight) {
+        if (recoveryPolicy.onFailure(SystemClock.elapsedRealtime()) && !discoveryInFlight) {
             triggerBackgroundRecovery()
         }
         val delay = BACKOFF_MS[attempt.coerceAtMost(BACKOFF_MS.size - 1)]
@@ -216,8 +266,6 @@ class KtvSocket(
 
         override fun onOpen(webSocket: WebSocket, response: Response) {
             if (!isCurrent(webSocket)) return
-            recoveryPolicy.onSuccess()
-            attempt = 0
             main.post {
                 if (!isCurrent(webSocket)) return@post
                 main.removeCallbacks(heartbeat)
@@ -345,15 +393,29 @@ class KtvSocket(
                 val generation = runCatching { assignment["generation"]?.jsonPrimitive?.long }.getOrNull() ?: return
                 val leaseMs = runCatching { assignment["lease_ms"]?.jsonPrimitive?.long }.getOrNull() ?: return
                 leaseGate.apply(role, generation, leaseMs)
+                markProtocolAccepted()
                 listener.onPlayerRole(leaseGate.activeGeneration() != null)
+                if (ConnectionEventPolicy.establishesConnection(type)) {
+                    listener.onConnectionChanged(true)
+                }
                 leaseGate.activeGeneration()?.let(::flushFinishedReports)
+        leaseGate.activeGeneration()?.let(::flushPlaybackErrors)
             }
             "playback_report_ack" -> {
                 if (role != KtvSocketRole.PLAYER) return
                 val ack = payload as? JsonObject ?: return
                 val queueId = runCatching { ack["queue_id"]?.jsonPrimitive?.long }.getOrNull() ?: return
                 val status = ack["status"]?.jsonPrimitive?.contentOrNullSafe() ?: return
-                finishedOutbox.acknowledge(queueId, status)
+                val reportType = ack["report_type"]?.jsonPrimitive?.contentOrNullSafe()
+                when (reportType) {
+                    "play_error" -> playErrorOutbox.acknowledge(queueId, status)
+                    "finished" -> finishedOutbox.acknowledge(queueId, status)
+                    else -> {
+                        // Legacy servers did not identify the report type.
+                        finishedOutbox.acknowledge(queueId, status)
+                        playErrorOutbox.acknowledge(queueId, status)
+                    }
+                }
             }
             "progress" -> {
                 listener.onProgress(parseProgressPosition(payload))
@@ -380,7 +442,8 @@ class KtvSocket(
                 val assembled = syncChunkAssembler.accept(chunk, wireBytes) ?: return
                 publishPlaybackBridge(assembled.eventType, assembled.snapshot)
                 listener.onSnapshot(assembled.eventType, assembled.snapshot)
-                if (assembled.eventType == "sync_full" && syncReadyGate.markReady()) {
+                markProtocolAccepted()
+                if (SnapshotEventPolicy.isCompleteSnapshot(assembled.eventType) && syncReadyGate.markReady()) {
                     listener.onConnectionChanged(true)
                     publishPlaybackBridgeConnection(true)
                 }
@@ -394,13 +457,19 @@ class KtvSocket(
                 } ?: return
                 publishPlaybackBridge(type, snap)
                 listener.onSnapshot(type, snap)
-                if (type == "sync_full" && syncReadyGate.markReady()) {
+                markProtocolAccepted()
+                if (SnapshotEventPolicy.isCompleteSnapshot(type) && syncReadyGate.markReady()) {
                     listener.onConnectionChanged(true)
                     publishPlaybackBridgeConnection(true)
                 }
             }
             else -> Log.d(TAG, "unhandled event: $type")
         }
+    }
+
+    private fun markProtocolAccepted() {
+        recoveryPolicy.onSuccess()
+        attempt = 0
     }
 
     private fun kotlinx.serialization.json.JsonPrimitive.contentOrNullSafe(): String? =
@@ -413,35 +482,43 @@ class KtvSocket(
         }
     }
 
+    private fun flushPlaybackErrors(generation: Long) {
+        val socket = ws ?: return
+        playErrorOutbox.flush(generation) { error, currentGeneration ->
+            socket.send(buildPlayErrorMessage(error.message, error.fileId, error.queueId, currentGeneration))
+        }
+    }
+
     private fun publishPlaybackBridge(event: String, snapshot: QueueSnapshot) {
         val bridgeEpoch = playbackBridgeEpoch ?: return
-        PlaybackSnapshotBridge.publish(config.serverHost, bridgeEpoch, event, snapshot)
+        PlaybackSnapshotBridge.publish(sessionHost, bridgeEpoch, event, snapshot)
     }
 
     private fun publishPlaybackBridgeConnection(connected: Boolean) {
         val bridgeEpoch = playbackBridgeEpoch ?: return
-        PlaybackSnapshotBridge.publishConnection(config.serverHost, bridgeEpoch, connected)
+        PlaybackSnapshotBridge.publishConnection(sessionHost, bridgeEpoch, connected)
     }
 
     private fun publishPlaybackBridgeRoomHost(status: RoomHostStatus) {
         val bridgeEpoch = playbackBridgeEpoch ?: return
-        PlaybackSnapshotBridge.publishRoomHost(config.serverHost, bridgeEpoch, status)
+        PlaybackSnapshotBridge.publishRoomHost(sessionHost, bridgeEpoch, status)
     }
 
     private fun triggerBackgroundRecovery() {
+        val expectedInstanceId = sessionServer?.instanceId
+            ?.let(DiscoveryProtocol::normalizeInstanceId)
+            ?: return
         discoveryInFlight = true
-        CoroutineScope(Dispatchers.IO).launch {
+        recoveryScope.launch {
             try {
-                val discovery = LanDiscovery(config.appContext)
-                val servers = discovery.discoverAll()
-                discovery.close()
-                if (!closed && recoveryPolicy.canAutoMigrate(servers.size)) {
-                    val target = servers.first()
-                    if (target.hostPort != config.serverHost) {
-                        Log.i(TAG, "auto-migrating to newly discovered server ${target.hostPort}")
-                        config.rememberServer(SavedServer(target.hostPort, target.name))
+                LanDiscovery(config.appContext).use { discovery ->
+                    val targets = discovery.discoverPreferred(expectedInstanceId)
+                    if (!closed) {
+                        recoveryCoordinator.reportDiscovered(targets)
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                // Socket close owns cancellation; no late candidate is delivered.
             } catch (e: Exception) {
                 Log.w(TAG, "background discovery failed: ${e.message}")
             } finally {

@@ -44,6 +44,24 @@ public sealed class SyncChunkAssemblerTests
         Assert.Null(assembler.Accept(invalid));
     }
 
+    [Fact]
+    public void Interleaved_sync_ids_are_assembled_independently()
+    {
+        var assembler = new SyncChunkAssembler(maxChunks: 4, maxEntries: 8, maxConcurrentSyncs: 2);
+        var header = new QueueSnapshotHeader(null, "idle", 60, false, "accompaniment",
+            new AudioLayoutDto(), false, 0, 0, 0);
+
+        Assert.Null(assembler.Accept(Chunk("a", 0, 2, false, header, 1)));
+        Assert.Null(assembler.Accept(Chunk("b", 0, 2, false, header, 3)));
+        var aResult = assembler.Accept(Chunk("a", 1, 2, true, header, 2));
+        var bResult = assembler.Accept(Chunk("b", 1, 2, true, header, 4));
+
+        Assert.NotNull(aResult);
+        Assert.NotNull(bResult);
+        Assert.Equal(2, aResult!.Snapshot.List.Count);
+        Assert.Equal(4, bResult!.Snapshot.List[^1].QueueId);
+    }
+
     private static QueueSnapshotChunk Chunk(string id, int index, int total, bool last,
         QueueSnapshotHeader? header, long queueId) => new(
         "sync_full", id, index, total, last, header,

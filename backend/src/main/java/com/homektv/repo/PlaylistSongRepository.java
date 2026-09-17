@@ -5,6 +5,7 @@ import com.homektv.domain.PlaylistSongId;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Collection;
@@ -17,6 +18,28 @@ import java.util.Collection;
 public interface PlaylistSongRepository extends JpaRepository<PlaylistSong, PlaylistSongId> {
     List<PlaylistSong> findByPlaylistIdOrderBySortOrder(Long playlistId);
     List<PlaylistSong> findByPlaylistIdInOrderByPlaylistIdAscSortOrderAsc(Collection<Long> playlistIds);
+
+    /**
+     * Returns playlist counts in one grouped query instead of loading every
+     * association row once per playlist.
+     */
+    @Query("""
+            SELECT item.playlistId AS playlistId,
+                   COUNT(item.songId) AS songCount,
+                   SUM(CASE WHEN item.manual = true THEN 1 ELSE 0 END) AS manualCount
+            FROM PlaylistSong item
+            WHERE item.playlistId IN :playlistIds
+            GROUP BY item.playlistId
+            """)
+    List<PlaylistSummaryProjection> summarizeByPlaylistIdIn(
+            @Param("playlistIds") Collection<Long> playlistIds);
+
+    interface PlaylistSummaryProjection {
+        Long getPlaylistId();
+        Long getSongCount();
+        Long getManualCount();
+    }
+
     void deleteByPlaylistIdAndManualFalse(Long playlistId);
     void deleteByPlaylistIdAndSongId(Long playlistId, Long songId);
 

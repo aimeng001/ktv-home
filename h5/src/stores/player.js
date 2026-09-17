@@ -28,6 +28,7 @@ export const usePlayerStore = defineStore('player', {
     queue: [],             // 点歌队列 | [{queueId, song, orderedBy, orderedByNick, status}]
     tvOnline: null,        // TV 状态在首次服务端快照前未知 | Unknown until the first server snapshot
     connectedPhones: 0,
+    stateRevision: 0,
     roomHost: { claimed: false, hostUserId: null, hostNickname: null, revision: 0, isHost: false },
     lastEffect: null,
     historyRevision: 0
@@ -128,6 +129,18 @@ export const usePlayerStore = defineStore('player', {
      */
     applySnapshot(snap) {
       if (!snap) return
+      const incomingRevision = Number(snap.stateRevision)
+      const currentRevision = Number(this.stateRevision) || 0
+      const hasRevision = Number.isSafeInteger(incomingRevision) && incomingRevision > 0
+      // Once the server sends revisioned snapshots, a legacy/older HTTP
+      // response must not roll the WebSocket projection back. Revision 0 is
+      // retained only for compatibility with older servers during startup.
+      if (hasRevision) {
+        if (currentRevision > 0 && incomingRevision < currentRevision) return false
+        this.stateRevision = incomingRevision
+      } else if (currentRevision > 0) {
+        return false
+      }
       // now_playing / player_state 等事件 payload 也是完整 snapshot
       // Events like now_playing / player_state also carry a full snapshot payload
       const playing = snap.playing ?? null
@@ -143,6 +156,7 @@ export const usePlayerStore = defineStore('player', {
       this.queue = snap.list ?? []
       if (typeof snap.tvOnline === 'boolean') this.tvOnline = snap.tvOnline
       this.connectedPhones = snap.connectedPhones ?? 0
+      return true
     },
 
     /** Accept both the current direct QueueSnapshot response and legacy {snapshot} wrappers. */

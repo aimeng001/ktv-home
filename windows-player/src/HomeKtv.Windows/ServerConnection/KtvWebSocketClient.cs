@@ -103,12 +103,20 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         CancellationToken cancellationToken = default) =>
         SendTextAsync(ServerMessageFactory.Progress(positionMs, queueId, activeGeneration), cancellationToken);
 
-    public Task<bool> SendFinishedAsync(long queueId, long? activeGeneration = null,
+    public async Task<PendingPlaybackReportEnqueueResult> SendFinishedAsync(long queueId, long? activeGeneration = null,
         CancellationToken cancellationToken = default)
     {
         _ = activeGeneration; // The queue is serialized with the current lease generation at flush time.
-        pendingFinishedReports.Enqueue(queueId);
-        return FlushFinishedReportsAsync(cancellationToken);
+        var result = pendingFinishedReports.Enqueue(queueId);
+        if (result is PendingPlaybackReportEnqueueResult.Invalid
+            or PendingPlaybackReportEnqueueResult.Full
+            or PendingPlaybackReportEnqueueResult.PersistenceFailed)
+        {
+            return result;
+        }
+
+        await FlushFinishedReportsAsync(cancellationToken).ConfigureAwait(false);
+        return result;
     }
 
     public Task<ReliableSendResult> SendPlayErrorAsync(
@@ -120,7 +128,8 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
     {
         var text = ServerMessageFactory.PlayError(queueId, fileId, message, activeGeneration);
         return SendReliableAsync(
-            new ReliableMessage($"play_error:{queueId}", text, 0), cancellationToken);
+            new ReliableMessage($"play_error:{queueId}", text, 0,
+                new ReliablePlayError(queueId, fileId, message)), cancellationToken);
     }
 
     private async Task ConnectAndReceiveAsync(CancellationToken cancellationToken)
@@ -188,12 +197,12 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
                 messageBytes += result.Count;
             } while (!result.EndOfMessage);
 
-            await DispatchAsync(Encoding.UTF8.GetString(message.ToArray()), messageBytes, cancellationToken)
+            await DispatchAsync(connectedSocket, Encoding.UTF8.GetString(message.ToArray()), messageBytes, cancellationToken)
                 .ConfigureAwait(false);
         }
     }
 
-    private async Task DispatchAsync(string json, int wireBytes,
+    private async Task DispatchAsync(ClientWebSocket connectedSocket, string json, int wireBytes,
         CancellationToken cancellationToken)
     {
         WsMessage? message;
@@ -216,8 +225,13 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
             && acknowledgementStatus.ValueKind == JsonValueKind.String)
         {
             var status = acknowledgementStatus.GetString();
-            pendingFinishedReports.Acknowledge(queueId, status);
-            reliableMessages.Acknowledge($"play_error:{queueId}", status);
+            var reportType = acknowledgement.TryGetProperty("report_type", out var reportTypeValue)
+                && reportTypeValue.ValueKind == JsonValueKind.String
+                ? reportTypeValue.GetString()
+                : null;
+            var targets = PlaybackReportAckTargets.For(reportType);
+            if (targets.Finished) pendingFinishedReports.Acknowledge(queueId, status);
+            if (targets.PlayError) reliableMessages.Acknowledge($"play_error:{queueId}", status);
             return;
         }
         if ((message.Type == "player_role" || message.Type == "pong")
@@ -233,6 +247,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
                     ? assignment.Generation : 0);
             PlayerAssignmentReceived?.Invoke(assignment);
             await FlushFinishedReportsAsync(cancellationToken).ConfigureAwait(false);
+            await FlushReliableMessagesAsync(connectedSocket, cancellationToken).ConfigureAwait(false);
             return;
         }
         if (message.Type == "snapshot_chunk")
@@ -293,14 +308,16 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         ReliableMessage message,
         CancellationToken cancellationToken)
     {
-        var byteCount = Utf8ByteBudget.GetByteCountAtMost(message.Text, MaxWebSocketMessageBytes);
+        var currentGeneration = Volatile.Read(ref generation);
+        var text = currentGeneration > 0 ? message.Serialize(currentGeneration) : message.Text;
+        var byteCount = Utf8ByteBudget.GetByteCountAtMost(text, MaxWebSocketMessageBytes);
         if (byteCount is null)
         {
             NotifyReliableRejected(message.Key, "message exceeds websocket byte budget");
             return ReliableSendResult.Rejected;
         }
 
-        message = message with { Utf8Bytes = byteCount.Value };
+        message = message with { Text = text, Utf8Bytes = byteCount.Value };
         var queued = reliableMessages.Enqueue(message);
         if (queued == ReliableEnqueueResult.Rejected)
         {
@@ -309,7 +326,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         }
 
         var active = socket;
-        if (active?.State != WebSocketState.Open)
+        if (active?.State != WebSocketState.Open || currentGeneration <= 0)
         {
             return queued == ReliableEnqueueResult.AlreadyQueued
                 ? ReliableSendResult.AlreadyQueued
@@ -369,9 +386,13 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         ClientWebSocket active,
         CancellationToken cancellationToken)
     {
+        var currentGeneration = Volatile.Read(ref generation);
+        if (currentGeneration <= 0) return;
+
         foreach (var message in reliableMessages.Snapshot())
         {
-            if (Utf8ByteBudget.GetByteCountAtMost(message.Text, MaxWebSocketMessageBytes) is null)
+            var text = message.Serialize(currentGeneration);
+            if (Utf8ByteBudget.GetByteCountAtMost(text, MaxWebSocketMessageBytes) is null)
             {
                 if (reliableMessages.Remove(message.Key))
                 {
@@ -380,7 +401,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
                 continue;
             }
 
-            var bytes = Utf8ByteBudget.EncodeBounded(message.Text, MaxWebSocketMessageBytes)
+            var bytes = Utf8ByteBudget.EncodeBounded(text, MaxWebSocketMessageBytes)
                 ?? throw new WebSocketException("WebSocket message exceeded the size limit.");
             await SendOnSocketAsync(active, bytes, cancellationToken).ConfigureAwait(false);
         }

@@ -87,6 +87,26 @@ describe('usePlayerStore', () => {
     expect([...p.orderedSongIds]).toEqual([])
   })
 
+  it('rejects a stale control response after a newer websocket snapshot', () => {
+    const p = usePlayerStore()
+    p.handleEvent('queue_updated', { ...snapshot, stateRevision: 20, list: [] })
+
+    p.applyControlResponse({ ...snapshot, stateRevision: 19, list: snapshot.list })
+
+    expect(p.stateRevision).toBe(20)
+    expect(p.queue).toEqual([])
+  })
+
+  it('rejects legacy snapshots after the first revisioned snapshot', () => {
+    const p = usePlayerStore()
+    p.handleEvent('sync_full', { ...snapshot, stateRevision: 20, list: [] })
+
+    p.applySnapshot({ ...snapshot, list: snapshot.list })
+
+    expect(p.stateRevision).toBe(20)
+    expect(p.queue).toEqual([])
+  })
+
   it('ignores an out-of-order room host event', () => {
     const p = usePlayerStore()
     p.handleEvent('room_host_changed', { claimed: true, hostUserId: 9, revision: 3 })

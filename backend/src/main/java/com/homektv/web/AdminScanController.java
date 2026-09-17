@@ -206,6 +206,10 @@ public class AdminScanController {
         if (!request.ids().isEmpty()) {
             return mediaImportService.deleteSources(request.ids());
         }
+        if (!request.all()) {
+            throw new ApiException("DELETE_FILTER_REQUIRED",
+                    "按条件删除源文件必须显式传 all=true 或提供 ids");
+        }
         return mediaImportService.deleteSourcesByFilter(
                 request.keyword(), request.status(), request.formatAnalysis(), request.sourceDeleted());
     }
@@ -381,7 +385,22 @@ public class AdminScanController {
     @PutMapping("/files/{fileId}/vocal-track")
     public Map<String, Object> confirmVocalTrack(@PathVariable Long fileId,
                                                  @RequestBody Map<String, Object> body) {
-        int index = ((Number) body.getOrDefault("accompanimentIndex", 1)).intValue();
+        Object rawIndex = body.getOrDefault("accompanimentIndex", 1);
+        int index;
+        if (rawIndex instanceof Number num) {
+            index = num.intValue();
+        } else if (rawIndex instanceof String str) {
+            try {
+                index = Integer.parseInt(str.trim());
+            } catch (NumberFormatException e) {
+                throw new ApiException("INVALID_ARGUMENT", "伴奏轨索引必须为非负整数");
+            }
+        } else {
+            throw new ApiException("INVALID_ARGUMENT", "伴奏轨索引类型无效");
+        }
+        if (index < 0) {
+            throw new ApiException("INVALID_ARGUMENT", "伴奏轨索引不能为负数");
+        }
         adminService.confirmVocalTrack(fileId, index);
         return Map.of("status", "confirmed", "fileId", fileId, "accompanimentIndex", index);
     }

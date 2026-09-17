@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.*;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 发现类 API（P3.4）：点唱排行 / 最新入库。供 H5 首页热榜与分类使用。
@@ -41,12 +43,22 @@ public class DiscoveryController {
     public List<SongDto> ranking(@RequestParam(defaultValue = "30") int days) {
         OffsetDateTime since = OffsetDateTime.now().minusDays(days);
         List<Object[]> rows = historyRepo.ranking(since, 20);
+        List<Long> songIds = rows.stream()
+                .map(row -> ((Number) row[0]).longValue())
+                .distinct()
+                .toList();
+        if (songIds.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, Song> songMap = songRepo.findAllById(songIds).stream()
+                .filter(s -> "ok".equals(s.getStatus()))
+                .collect(Collectors.toMap(Song::getId, s -> s));
         List<SongDto> out = new ArrayList<>();
-        for (Object[] row : rows) {
-            Long songId = ((Number) row[0]).longValue();
-            songRepo.findById(songId)
-                    .filter(s -> "ok".equals(s.getStatus()))
-                    .ifPresent(s -> out.add(SongDto.from(s)));
+        for (Long id : songIds) {
+            Song s = songMap.get(id);
+            if (s != null) {
+                out.add(SongDto.from(s));
+            }
         }
         return out;
     }

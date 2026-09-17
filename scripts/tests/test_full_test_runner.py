@@ -84,6 +84,11 @@ class FullTestRunnerPlanTest(unittest.TestCase):
         self.assertIn("$mavenM2Target", source)
         self.assertIn("$null -eq $mavenM2Target", source)
 
+    def test_nas_compose_uses_configurable_image_registry(self):
+        compose = (ROOT / "docker-compose.nas.yml").read_text(encoding="utf-8")
+        self.assertIn('${KTV_IMAGE_REGISTRY:-docker.m.daocloud.io}/library/postgres:16-alpine', compose)
+        self.assertNotIn("image: docker.m.daocloud.io/library/postgres:16-alpine", compose)
+
 
 if __name__ == "__main__":
     unittest.main()

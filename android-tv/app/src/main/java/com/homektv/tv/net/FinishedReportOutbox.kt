@@ -11,24 +11,28 @@ internal class FinishedReportOutbox(
     initialQueueIds: List<Long> = emptyList(),
     private val persist: (List<Long>) -> Unit = {},
 ) {
+    enum class EnqueueResult {
+        ADDED,
+        DUPLICATE,
+        INVALID,
+        FULL,
+    }
+
     private val pending = linkedMapOf<Long, Unit>()
 
     init {
-        initialQueueIds.asSequence()
-            .filter { it > 0 }
-            .distinct()
-            .take(MAX_PENDING)
+        PendingFinishedPolicy.sanitize(initialQueueIds)
             .forEach { pending[it] = Unit }
     }
 
     @Synchronized
-    fun enqueue(queueId: Long): Boolean {
-        if (queueId <= 0 || pending.containsKey(queueId) || pending.size >= MAX_PENDING) {
-            return false
-        }
+    fun enqueue(queueId: Long): EnqueueResult {
+        if (queueId <= 0) return EnqueueResult.INVALID
+        if (pending.containsKey(queueId)) return EnqueueResult.DUPLICATE
+        if (pending.size >= MAX_PENDING) return EnqueueResult.FULL
         pending[queueId] = Unit
         persist(pending.keys.toList())
-        return true
+        return EnqueueResult.ADDED
     }
 
     /**
@@ -61,8 +65,8 @@ internal class FinishedReportOutbox(
     @Synchronized
     fun pendingQueueIds(): List<Long> = pending.keys.toList()
 
-    private companion object {
-        const val MAX_PENDING = 100
+    companion object {
+        const val MAX_PENDING = PendingFinishedPolicy.MAX_PENDING
         val TERMINAL_STATUSES = setOf("APPLIED", "ALREADY_APPLIED", "STALE")
     }
 }

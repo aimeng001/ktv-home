@@ -8,6 +8,7 @@
 
 import { defineStore } from 'pinia'
 import api from '../api/client'
+import { loadAllFavoritePages } from '../views/favoritesState'
 
 export const useFavoritesStore = defineStore('favorites', {
   /**
@@ -41,7 +42,7 @@ export const useFavoritesStore = defineStore('favorites', {
       if (!clientToken || this.loading || (!force && this.loadedFor === clientToken)) return
       this.loading = true
       try {
-        this.ids = await api.favoriteIds(clientToken)
+        this.ids = await loadAllFavoritePages((page, size) => api.favoriteIds(clientToken, page, size))
         this.loadedFor = clientToken
       } finally {
         this.loading = false

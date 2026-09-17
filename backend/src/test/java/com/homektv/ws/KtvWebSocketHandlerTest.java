@@ -117,6 +117,7 @@ class KtvWebSocketHandlerTest {
         var ack = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
         verify(broadcaster).sendTo(eq(active), ack.capture());
         assertThat(ack.getValue().type()).isEqualTo(WsEvent.PLAYBACK_REPORT_ACK);
+        assertThat(((Map<?, ?>) ack.getValue().payload()).get("report_type")).isEqualTo("finished");
         assertThat(((Map<?, ?>) ack.getValue().payload()).get("status")).isEqualTo("APPLIED");
         var broadcasts = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
         verify(broadcaster, org.mockito.Mockito.times(2)).broadcastPlayback(broadcasts.capture());
@@ -138,6 +139,7 @@ class KtvWebSocketHandlerTest {
         verify(broadcaster).sendTo(eq(active), ack.capture());
         assertThat(ack.getValue().type()).isEqualTo(WsEvent.PLAYBACK_REPORT_ACK);
         assertThat(((Map<?, ?>) ack.getValue().payload()).get("queue_id")).isEqualTo(8L);
+        assertThat(((Map<?, ?>) ack.getValue().payload()).get("report_type")).isEqualTo("play_error");
         assertThat(((Map<?, ?>) ack.getValue().payload()).get("status")).isEqualTo("APPLIED");
         var toast = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
         verify(broadcaster).broadcast(toast.capture());

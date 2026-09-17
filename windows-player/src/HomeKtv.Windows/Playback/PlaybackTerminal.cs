@@ -18,10 +18,14 @@ public sealed class PlaybackTerminal : IAsyncDisposable
     private readonly PlaybackCoordinator coordinator;
     private readonly PlaybackSnapshotPump snapshotPump;
     private readonly ActivePlayerLeaseGate leaseGate = new();
+    private readonly PlaybackRecoveryPolicy recoveryPolicy = new();
+    private readonly SemaphoreSlim recoveryLock = new(1, 1);
     private readonly CancellationTokenSource lifetime = new();
     private Task? socketTask;
     private Task? progressTask;
     private QueueSnapshot? snapshot;
+    private long snapshotRevision;
+    private readonly object snapshotRevisionLock = new();
     private int disposed;
 
     public PlaybackTerminal(
@@ -63,6 +67,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         };
         socket.SnapshotReceived += ApplySnapshotFromSocketAsync;
         output.PlaybackFinished += fileId => _ = ReportFinishedAsync(fileId);
+        output.PlaybackFailed += fileId => _ = ReportOutputFailureAsync(fileId);
         output.SessionFaulted += exception => _ = RecoverOutputAsync(exception);
     }
 
@@ -154,7 +159,17 @@ public sealed class PlaybackTerminal : IAsyncDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!leaseGate.TryGetGeneration(out _)) return Task.CompletedTask;
-        Interlocked.Exchange(ref snapshot, incoming);
+        lock (snapshotRevisionLock)
+        {
+            var currentRevision = snapshotRevision;
+            if (!SnapshotRevisionPolicy.ShouldApply(currentRevision, incoming.StateRevision))
+            {
+                return Task.CompletedTask;
+            }
+
+            if (incoming.StateRevision > 0) snapshotRevision = incoming.StateRevision;
+            Interlocked.Exchange(ref snapshot, incoming);
+        }
         if (eventType is "sync_full" or "playback_seeked" or "playback_restarted")
         {
             CurrentPositionMs = Math.Max(0, incoming.PositionMs);
@@ -201,11 +216,52 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         Error?.Invoke(exception);
         if (work.Snapshot.Playing?.QueueId is not { } queueId) return;
 
-        var fileId = exception is PlaybackAttemptException attempt ? attempt.FileId : null;
+        if (!PlaybackFailurePolicy.ShouldReportPlayError(exception, out var fileId))
+        {
+            return;
+        }
+
+        await SendPlayErrorAsync(queueId, fileId, exception.Message, generation).ConfigureAwait(false);
+    }
+
+    /**
+     * mpv 在 loadfile 成功之后才发现流拉不下来（end-file + reason="error"）。
+     * 这个事件没有 HTTP 404 证据，不能把鉴权、服务端错误、网络超时或
+     * 解码失败误报成 play_error，否则后端会错误跳过当前队列项。
+     */
+    private async Task ReportOutputFailureAsync(long fileId)
+    {
+        // 与 ReportFinishedAsync 相同的身份校验：只上报仍属于当前投影的媒体。
+        var identity = coordinator.ActiveOutput;
+        if (identity is null || identity.FileId != fileId
+            || !coordinator.TryGetActiveQueueId(identity, out var queueId))
+        {
+            return;
+        }
+
+        if (lifetime.IsCancellationRequested || !leaseGate.TryGetGeneration(out _)) return;
+
+        var exception = new PlaybackAttemptException(
+            queueId, fileId, $"mpv reported a playback failure for file {fileId}.",
+            PlaybackFailureKind.OutputFailure);
+        Error?.Invoke(exception);
+        try
+        {
+            await coordinator.InvalidateOutputProjectionAsync(lifetime.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (Exception recoveryException)
+        {
+            Error?.Invoke(recoveryException);
+        }
+    }
+
+    private async Task SendPlayErrorAsync(long queueId, long? fileId, string message, long generation)
+    {
         try
         {
             var result = await socket.SendPlayErrorAsync(
-                    queueId, fileId, Utf8ByteBudget.TruncateToByteLimit(exception.Message, 8 * 1024),
+                    queueId, fileId, Utf8ByteBudget.TruncateToByteLimit(message, 8 * 1024),
                     generation, lifetime.Token)
                 .ConfigureAwait(false);
             if (result == ReliableSendResult.Rejected)
@@ -234,7 +290,16 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         {
             // The socket owns the durable outbox and will attach the generation
             // that is valid when the report is actually sent.
-            await socket.SendFinishedAsync(queueId, cancellationToken: lifetime.Token).ConfigureAwait(false);
+            var result = await socket.SendFinishedAsync(queueId, cancellationToken: lifetime.Token)
+                .ConfigureAwait(false);
+            if (result is PendingPlaybackReportEnqueueResult.Full
+                or PendingPlaybackReportEnqueueResult.PersistenceFailed
+                or PendingPlaybackReportEnqueueResult.Invalid)
+            {
+                Error?.Invoke(new InvalidOperationException(
+                    $"Finished playback report rejected: {result}."));
+                await FenceOutputAsync().ConfigureAwait(false);
+            }
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException)
         {
@@ -244,12 +309,26 @@ public sealed class PlaybackTerminal : IAsyncDisposable
 
     private async Task RecoverOutputAsync(Exception exception)
     {
-        Error?.Invoke(exception);
-        var current = Volatile.Read(ref snapshot);
-        if (current is null || lifetime.IsCancellationRequested) return;
+        if (!await recoveryLock.WaitAsync(0).ConfigureAwait(false)) return;
 
         try
         {
+            Error?.Invoke(exception);
+            if (!recoveryPolicy.TryBegin(out var backoff))
+            {
+                Error?.Invoke(new InvalidOperationException(
+                    "Automatic mpv recovery stopped after repeated failures."));
+                return;
+            }
+
+            if (backoff > TimeSpan.Zero)
+            {
+                await Task.Delay(backoff, lifetime.Token).ConfigureAwait(false);
+            }
+
+            var current = Volatile.Read(ref snapshot);
+            if (current is null || lifetime.IsCancellationRequested) return;
+
             await coordinator.InvalidateOutputProjectionAsync(lifetime.Token).ConfigureAwait(false);
             var latest = Volatile.Read(ref snapshot);
             if (latest is not null)
@@ -257,6 +336,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
                 snapshotPump.Submit("sync_full", latest);
                 await snapshotPump.WaitForIdleAsync(lifetime.Token).ConfigureAwait(false);
             }
+            if (output.IsMpvRunning) recoveryPolicy.MarkSuccess();
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception recoveryException) when (recoveryException is IOException or InvalidOperationException)
@@ -266,6 +346,10 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         catch (Exception recoveryException)
         {
             Error?.Invoke(recoveryException);
+        }
+        finally
+        {
+            recoveryLock.Release();
         }
     }
 
@@ -310,6 +394,7 @@ public sealed class PlaybackTerminal : IAsyncDisposable
     {
         try
         {
+            snapshotPump.Fence();
             await coordinator.InvalidateOutputProjectionAsync(lifetime.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }

@@ -42,6 +42,21 @@ public interface SongFileRepository extends JpaRepository<SongFile, Long> {
             """)
     boolean existsReadyFile(@Param("songId") Long songId);
 
+    /**
+     * Batch equivalent of existsReadyFile for queue advancement. Keeping the
+     * readiness predicate in SQL avoids one file query per waiting item.
+     */
+    @Query("""
+            SELECT DISTINCT file.songId
+            FROM SongFile file
+            WHERE file.songId IN :songIds
+              AND file.valid = true
+              AND file.probePending = false
+              AND file.mediaType IS NOT NULL
+              AND TRIM(file.mediaType) <> ''
+              AND LOWER(TRIM(file.mediaType)) <> 'pending_probe'
+            """)
+    java.util.Set<Long> findSongIdsWithReadyFile(@Param("songIds") java.util.Collection<Long> songIds);
     boolean existsBySourceMd5(String sourceMd5);
     boolean existsByOutputMd5(String outputMd5);
     List<SongFile> findByFileRoleOrderByImportedAtDesc(String fileRole);

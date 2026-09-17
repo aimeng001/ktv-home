@@ -112,6 +112,35 @@ public sealed class HttpServerApiTests
     }
 
     [Fact]
+    public async Task Song_detail_404_is_the_only_http_failure_treated_as_missing_media()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        var detail = await api.GetSongDetailAsync(42);
+
+        Assert.Null(detail);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    public async Task Song_detail_auth_and_server_failures_retain_http_status(
+        HttpStatusCode status)
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(status));
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        var error = await Assert.ThrowsAsync<KtvApiException>(() => api.GetSongDetailAsync(42));
+
+        Assert.Equal((int)status, error.StatusCode);
+    }
+
+    [Fact]
     public async Task Oversized_json_is_bounded_before_httpclient_buffers_the_response()
     {
         var content = new CountingContent((int)(BoundedHttpContentReader.MaxJsonBytes * 2));

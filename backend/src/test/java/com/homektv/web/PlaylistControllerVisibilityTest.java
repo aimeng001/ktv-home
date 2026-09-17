@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class PlaylistControllerVisibilityTest {
@@ -51,6 +52,6 @@ class PlaylistControllerVisibilityTest {
         assertThatThrownBy(() -> controller.addSong(7L, new PlaylistController.AddSongRequest(42L)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("公开歌单只能由管理员编辑");
-        verify(service, never()).addSong(7L, 42L);
+        verifyNoInteractions(service);
     }
 }

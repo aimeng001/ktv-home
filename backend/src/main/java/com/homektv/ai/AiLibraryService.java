@@ -17,6 +17,8 @@ import com.homektv.web.ApiException;
 import org.springframework.stereotype.Service;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 import com.homektv.library.AssetWriter;
 import com.homektv.library.AssetCleanupService;
@@ -112,7 +114,7 @@ public class AiLibraryService {
             }
             throw conflict;
         }
-        worker.analyze(task.getId());
+        dispatchAfterCommit(task.getId());
         return task;
     }
 
@@ -128,8 +130,15 @@ public class AiLibraryService {
         task.setSongId(null);
         task.setModel(configService.isConfigured() ? config.bulkModel() : "LOCAL");
         task.setModelRole(configService.isConfigured() ? "BULK" : "LOCAL");
-        task = taskRepository.saveAndFlush(task);
-        worker.analyze(task.getId());
+        try {
+            task = taskRepository.saveAndFlush(task);
+        } catch (DataIntegrityViolationException conflict) {
+            if (taskRepository.existsByTargetTypeAndTargetIdAndStatusIn("IMPORT_RECORD", recordId, ACTIVE_STATUSES)) {
+                throw new ApiException("AI_TASK_EXISTS", "该导入记录已有待处理的 AI 任务");
+            }
+            throw conflict;
+        }
+        dispatchAfterCommit(task.getId());
         return task;
     }
 
@@ -164,10 +173,15 @@ public class AiLibraryService {
         String batchId = UUID.randomUUID().toString();
         AiConfigService.ResolvedConfig config = configService.resolve();
         int created = 0;
+        int skippedExisting = 0;
         for (int pageNumber = 0; ; pageNumber++) {
             Page<Song> page = songPage(pageNumber);
             if (page == null || page.isEmpty()) break;
             for (Song song : page.getContent()) {
+                if (taskRepository.existsBySongIdAndStatusIn(song.getId(), ACTIVE_STATUSES)) {
+                    skippedExisting++;
+                    continue;
+                }
                 AiAnalysisTask task = new AiAnalysisTask();
                 task.setSongId(song.getId());
                 task.setTargetId(song.getId());
@@ -175,15 +189,42 @@ public class AiLibraryService {
                 task.setBatchId(batchId);
                 task.setModel(configService.isConfigured() ? config.bulkModel() : "LOCAL");
                 task.setModelRole(configService.isConfigured() ? "BULK" : "LOCAL");
-                taskRepository.saveAndFlush(task);
-                worker.analyze(task.getId());
+                try {
+                    taskRepository.saveAndFlush(task);
+                } catch (DataIntegrityViolationException conflict) {
+                    // The pre-check closes the common case. The partial unique index
+                    // remains the concurrency authority when two batches race.
+                    if (taskRepository.existsBySongIdAndStatusIn(song.getId(), ACTIVE_STATUSES)) {
+                        skippedExisting++;
+                        continue;
+                    }
+                    throw conflict;
+                }
+                dispatchAfterCommit(task.getId());
                 created++;
             }
             if (!page.hasNext()) break;
         }
-        return Map.of("batchId", batchId, "created", created);
+        return Map.of("batchId", batchId, "created", created, "skippedExisting", skippedExisting);
     }
 
+    /**
+     * Async workers must not observe a status change that is only flushed but
+     * later rolled back. Calls made outside a transaction retain the legacy
+     * immediate dispatch behavior.
+     */
+    private void dispatchAfterCommit(Long taskId) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            worker.analyze(taskId);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                worker.analyze(taskId);
+            }
+        });
+    }
     @Transactional
     public Map<String, Object> pauseRepairBatch(String batchId) {
         List<AiAnalysisTask> tasks = taskRepository.findByBatchIdOrderByCreatedAtAsc(batchId);
@@ -208,7 +249,7 @@ public class AiLibraryService {
             if ("paused".equals(task.getStatus())) {
                 task.setStatus("pending");
                 taskRepository.saveAndFlush(task);
-                worker.analyze(task.getId());
+                dispatchAfterCommit(task.getId());
                 resumed++;
             }
         }
@@ -224,7 +265,7 @@ public class AiLibraryService {
             if ("failed".equals(task.getStatus())) {
                 task.setStatus("pending");
                 taskRepository.saveAndFlush(task);
-                worker.analyze(task.getId());
+                dispatchAfterCommit(task.getId());
                 retried++;
             }
         }
@@ -457,8 +498,26 @@ public class AiLibraryService {
      * @return 歌单摘要列表 / list of playlist summaries
      */
     public List<Map<String, Object>> listPlaylists() {
-        return playlistRepository.findAllByOrderByUpdatedAtDesc().stream().map(playlist -> {
-            List<PlaylistSong> items = playlistSongRepository.findByPlaylistIdOrderBySortOrder(playlist.getId());
+        List<Playlist> playlists = playlistRepository.findAllByOrderByUpdatedAtDesc();
+        if (playlists == null || playlists.isEmpty()) return List.of();
+
+        Map<Long, PlaylistCounts> counts = new HashMap<>();
+        List<Long> ids = playlists.stream().map(Playlist::getId).filter(Objects::nonNull).toList();
+        for (int offset = 0; offset < ids.size(); offset += 500) {
+            List<Long> batch = ids.subList(offset, Math.min(offset + 500, ids.size()));
+            List<PlaylistSongRepository.PlaylistSummaryProjection> rows =
+                    playlistSongRepository.summarizeByPlaylistIdIn(batch);
+            if (rows == null) continue;
+            for (PlaylistSongRepository.PlaylistSummaryProjection row : rows) {
+                if (row != null && row.getPlaylistId() != null) {
+                    counts.put(row.getPlaylistId(), new PlaylistCounts(
+                            valueOrZero(row.getSongCount()), valueOrZero(row.getManualCount())));
+                }
+            }
+        }
+
+        return playlists.stream().map(playlist -> {
+            PlaylistCounts summary = counts.getOrDefault(playlist.getId(), PlaylistCounts.EMPTY);
             Map<String, Object> value = new LinkedHashMap<>();
             value.put("id", playlist.getId());
             value.put("name", playlist.getName());
@@ -467,11 +526,19 @@ public class AiLibraryService {
             value.put("coverUrl", playlist.getCoverPath() == null ? null : "/api/playlists/" + playlist.getId() + "/cover");
             value.put("publicVisible", playlist.isPublicVisible());
             value.put("aiGenerated", playlist.isAiGenerated());
-            value.put("songCount", items.size());
-            value.put("manualCount", items.stream().filter(PlaylistSong::isManual).count());
+            value.put("songCount", summary.songCount());
+            value.put("manualCount", summary.manualCount());
             value.put("updatedAt", playlist.getUpdatedAt());
             return value;
         }).toList();
+    }
+
+    private static long valueOrZero(Long value) {
+        return value == null ? 0L : value;
+    }
+
+    private record PlaylistCounts(long songCount, long manualCount) {
+        private static final PlaylistCounts EMPTY = new PlaylistCounts(0, 0);
     }
 
     /**
@@ -738,7 +805,7 @@ public class AiLibraryService {
         task.setStatus("pending");
         task.setErrorMessage(null);
         taskRepository.save(task);
-        worker.analyze(task.getId());
+        dispatchAfterCommit(task.getId());
         return task;
     }
 

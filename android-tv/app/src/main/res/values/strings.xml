@@ -5,7 +5,10 @@
     <!-- 配置页 -->
     <string name="setup_title">连接点歌服务</string>
     <string name="setup_connect">连接</string>
-    <string name="setup_delete">删除</string>
+    <string name="setup_delete">移出</string>
+    <string name="setup_forget_server_title">忘记该设备</string>
+    <string name="setup_forget_server_msg">确定从本机彻底清除“%1$s”的连接凭据、点歌昵称及偏好设置吗？</string>
+    <string name="setup_forget_confirm">彻底忘记</string>
     <string name="setup_empty">请先输入 NAS 地址</string>
     <string name="setup_history_title">历史设备</string>
     <string name="setup_history_empty">暂无历史设备</string>
@@ -24,17 +27,23 @@
     <string name="setup_manual_hint">输入服务地址和端口（支持任意端口）</string>
     <string name="setup_verifying">正在验证 %1$s …</string>
     <string name="setup_invalid">无法连接到点歌服务，请确认地址正确且服务已启动</string>
+    <string name="setup_identity_migration_title">服务器身份已升级</string>
+    <string name="setup_identity_migration_message">检测到该服务器新增了设备身份。是否保留本机的登录凭据、点歌昵称、模式和用户身份？</string>
+    <string name="setup_identity_migration_keep">保留并升级</string>
+    <string name="setup_identity_migration_new">作为新服务器</string>
+    <string name="setup_identity_migration_failed">身份迁移未完成，原连接设置仍保留，请重试或重新输入凭据</string>
 
     <!-- 待机/状态 -->
     <string name="standby_scan_title">扫码点歌</string>
     <string name="standby_scan_sub">微信 / 相机 扫一扫，或浏览器访问下方地址</string>
     <string name="status_connecting">服务连接中…</string>
     <string name="status_connected">服务端在线</string>
+    <string name="status_standby">已连接 · 备用播放机</string>
     <string name="status_phones">已有 %1$d 台手机加入</string>
 
     <!-- 播放 -->
     <string name="play_error">当前歌曲无法播放，已跳过</string>
-
+    <string name="play_waiting_network">点歌服务暂时不可用，正在重试</string>
     <!-- 二维码 -->
     <string name="qr_loading">二维码加载中…</string>
     <string name="qr_desc">扫码点歌二维码</string>

@@ -383,10 +383,7 @@ public class MediaImportService {
                 continue;
             }
             try {
-                Path source = Path.of(record.getSourcePath()).toAbsolutePath().normalize();
-                if (!source.startsWith(sourceRoot())) {
-                    throw new IOException("拒绝删除扫描源目录以外的文件：" + source);
-                }
+                Path source = LibraryModePolicy.requirePathInsideSource(props, Path.of(record.getSourcePath()));
                 Files.deleteIfExists(source);
                 removeSourceRecord(record);
                 deleted++;
@@ -452,13 +449,25 @@ public class MediaImportService {
     private boolean isSafelyImported(MediaImportRecord record) {
         if (!record.isImportedFlag() || record.isSourceDeleted()
                 || record.getSongFileId() == null || record.getOutputPath() == null) return false;
-        Path source = Path.of(record.getSourcePath()).toAbsolutePath().normalize();
-        Path output = Path.of(record.getOutputPath()).toAbsolutePath().normalize();
-        if (!source.startsWith(sourceRoot()) || !output.startsWith(targetRoot()) || source.equals(output)
-                || !Files.isRegularFile(source) || !Files.isRegularFile(output)) return false;
+        Path source;
+        Path output;
+        try {
+            source = LibraryModePolicy.requireReadablePathInsideSource(props, Path.of(record.getSourcePath()));
+            output = LibraryModePolicy.requireReadablePathInsideActiveLibrary(props, Path.of(record.getOutputPath()));
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (source.equals(output)) return false;
         return songFileRepo.findById(record.getSongFileId())
                 .filter(SongFile::isValid)
-                .filter(file -> Path.of(file.getFilePath()).toAbsolutePath().normalize().equals(output))
+                .filter(file -> {
+                    try {
+                        return LibraryModePolicy.requireReadablePathInsideActiveLibrary(
+                                props, Path.of(file.getFilePath())).equals(output);
+                    } catch (RuntimeException e) {
+                        return false;
+                    }
+                })
                 .map(file -> {
                     try {
                         if (Files.size(output) <= 0) return false;
@@ -656,10 +665,10 @@ public class MediaImportService {
         boolean ingested = false;
         try {
             LibraryModePolicy.requireManaged(props, "转码源文件");
-            if (record.isSourceDeleted() || !Files.isRegularFile(Path.of(record.getSourcePath()))) {
+            if (record.isSourceDeleted()) {
                 throw new ApiException("SOURCE_FILE_MISSING", "源文件不存在或已删除");
             }
-            source = Path.of(record.getSourcePath());
+            source = LibraryModePolicy.requireReadablePathInsideSource(props, Path.of(record.getSourcePath()));
             String sourceMd5 = hashService.md5(source);
             if (!Objects.equals(sourceMd5, record.getSourceMd5()) || isSourceDuplicate(source, sourceMd5)) {
                 record.setAction(SOURCE_DUPLICATE);
@@ -1006,6 +1015,7 @@ public class MediaImportService {
         SettingService.TranscodePolicy policy = settingService.transcodePolicy();
         String baseName = stripExtension(source.getFileName().toString());
         Path output = targetRoot.resolve(baseName + "." + policy.outputContainer());
+        output = LibraryModePolicy.requirePathInsideActiveLibrary(props, output);
         return mediaTranscoder.transcode(source, output, policy, probe.hasVideo());
     }
 
@@ -1065,11 +1075,10 @@ public class MediaImportService {
 
     private void deleteSourceAndCompanions(MediaImportRecord record) throws IOException {
         LibraryModePolicy.requireManaged(props, "删除源文件");
-        Path source = Path.of(record.getSourcePath()).toAbsolutePath().normalize();
-        if (!source.startsWith(sourceRoot())) throw new IOException("拒绝删除扫描源目录以外的文件");
+        Path source = LibraryModePolicy.requirePathInsideSource(props, Path.of(record.getSourcePath()));
         Files.deleteIfExists(source);
         if (record.getOutputPath() != null) {
-            Path output = Path.of(record.getOutputPath()).toAbsolutePath().normalize();
+            Path output = LibraryModePolicy.requirePathInsideActiveLibrary(props, Path.of(record.getOutputPath()));
             for (String ext : new String[]{"lrc", "jpg", "jpeg", "png", "webp"}) {
                 Path companion = source.resolveSibling(stripExtension(source.getFileName().toString()) + "." + ext);
                 Path target = output.resolveSibling(stripExtension(output.getFileName().toString()) + "." + ext);
@@ -1109,17 +1118,18 @@ public class MediaImportService {
     }
 
     private void deleteGeneratedFiles(Path output, List<Path> companionFiles) {
-        Path root = targetRoot().toAbsolutePath().normalize();
         List<Path> generated = new ArrayList<>();
         if (output != null) generated.add(output);
         if (companionFiles != null) generated.addAll(companionFiles);
         for (Path file : generated) {
-            Path normalized = file.toAbsolutePath().normalize();
-            if (!normalized.startsWith(root) || Files.isSymbolicLink(normalized)) continue;
             try {
-                Files.deleteIfExists(normalized);
+                Path safePath = LibraryModePolicy.requirePathInsideActiveLibrary(props, file);
+                if (Files.isSymbolicLink(safePath)) continue;
+                Files.deleteIfExists(safePath);
             } catch (IOException cleanupFailure) {
-                log.warn("清理失败转码输出：{}", normalized, cleanupFailure);
+                log.warn("清理失败转码输出：{}", file, cleanupFailure);
+            } catch (RuntimeException unsafePath) {
+                log.warn("拒绝清理曲库外转码输出：{}", file, unsafePath);
             }
         }
     }

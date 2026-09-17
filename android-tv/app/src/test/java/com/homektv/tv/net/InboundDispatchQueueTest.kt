@@ -35,6 +35,45 @@ class InboundDispatchQueueTest {
         assertFalse(queue.offer(event("toast", 10)))
     }
 
+    @Test
+    fun newSyncIdChunkDropsStaleChunksFromPreviousSyncId() {
+        val queue = InboundDispatchQueue(maxItems = 5, maxBytes = 100)
+        queue.offer(chunkEvent("sync-1", 10))
+        queue.offer(chunkEvent("sync-1", 10))
+        assertEquals(2, queue.size())
+
+        // Incoming chunk from new syncId drops old chunks
+        queue.offer(chunkEvent("sync-2", 10))
+        assertEquals(1, queue.size())
+        val polled = queue.poll()
+        assertEquals("snapshot_chunk", polled?.type)
+        assertEquals("sync-2", (polled?.payload as? kotlinx.serialization.json.JsonObject)?.get("syncId")?.let {
+            (it as? kotlinx.serialization.json.JsonPrimitive)?.content
+        })
+    }
+
+    @Test
+    fun completeSnapshotDropsObsoletePendingChunks() {
+        val queue = InboundDispatchQueue(maxItems = 5, maxBytes = 100)
+        queue.offer(chunkEvent("sync-1", 10))
+        queue.offer(chunkEvent("sync-1", 10))
+        assertEquals(2, queue.size())
+
+        // Complete snapshot arrives
+        queue.offer(event("sync_full", 20))
+        assertEquals(1, queue.size())
+        assertEquals("sync_full", queue.poll()?.type)
+    }
+
+    private fun chunkEvent(syncId: String, wireBytes: Int) = InboundEvent(
+        epoch = 1L,
+        type = "snapshot_chunk",
+        payload = kotlinx.serialization.json.buildJsonObject {
+            put("syncId", kotlinx.serialization.json.JsonPrimitive(syncId))
+        },
+        wireBytes = wireBytes,
+    )
+
     private fun event(type: String, wireBytes: Int) = InboundEvent(
         epoch = 1L,
         type = type,

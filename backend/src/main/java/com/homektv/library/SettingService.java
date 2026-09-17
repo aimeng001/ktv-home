@@ -62,6 +62,18 @@ public class SettingService {
             "transcode_video_codec",
             "transcode_audio_codec"
     );
+    private static final Map<String, Set<String>> DIRECT_COPY_OPTIONS = Map.of(
+            "direct_copy_containers", Set.of(
+                    "mp4", "m4v", "mkv", "mov", "ts", "m2ts", "mts", "mpg", "mpeg", "vob",
+                    "avi", "webm", "wmv", "asf", "flv", "f4v", "3gp", "3g2", "rm", "rmvb"),
+            "direct_copy_video_codecs", Set.of(
+                    "h264", "hevc", "mpeg2video", "mpeg4", "vp8", "vp9", "av1", "vc1", "wmv3",
+                    "wmv2", "theora", "prores", "dnxhd", "mjpeg", "dvvideo", "h263", "rawvideo"),
+            "direct_copy_audio_codecs", Set.of(
+                    "aac", "mp3", "mp2", "ac3", "eac3", "dts", "truehd", "flac", "alac", "opus",
+                    "vorbis", "ape", "wmav1", "wmav2", "pcm_s16le", "pcm_s24le", "pcm_s32le",
+                    "pcm_f32le")
+    );
     public static final Set<String> EDITABLE_KEYS;
     public static final int MAX_STANDBY_SONGS = 100;
 
@@ -104,9 +116,28 @@ public class SettingService {
                 out.put(key, all.get(key));
             }
         }
+        // 读路径必须与写路径使用同一套约束。库里若有历史遗留或手工 SQL 写入的越界/重复
+        // standby_song_ids，原样返回会让整包回写必然 400 —— 管理员即使只改「轮播间隔」
+        // 这类无关设置也无法保存，且提示只指向「基础设置」，无法自助恢复。
+        Object standbySongs = out.get("standby_song_ids");
+        if (standbySongs instanceof List<?> ids) {
+            out.put("standby_song_ids", normalizeStandbySongIds(ids));
+        }
         Object logo = all.get("standby_logo_path");
         out.put("standby_logo_configured", logo != null && !logo.toString().isBlank());
         return out;
+    }
+
+    /** 过滤非正整数 → 去重（保留原顺序）→ 截断到上限，与 putEditable 的写校验保持一致。 */
+    static List<Long> normalizeStandbySongIds(List<?> ids) {
+        Set<Long> normalized = new java.util.LinkedHashSet<>();
+        for (Object item : ids) {
+            if (normalized.size() >= MAX_STANDBY_SONGS) break;
+            if (item instanceof Number n && n.longValue() > 0 && n.doubleValue() == n.longValue()) {
+                normalized.add(n.longValue());
+            }
+        }
+        return List.copyOf(normalized);
     }
 
     public boolean isLibraryWatchEnabled() {
@@ -177,7 +208,10 @@ public class SettingService {
             if (!(value instanceof Boolean)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是布尔值");
         }
         if (key.endsWith("_interval_sec")) {
-            if (!(value instanceof Number number) || number.intValue() < 3 || number.intValue() > 60)
+            if (!(value instanceof Number number)
+                    || number.doubleValue() != number.longValue()
+                    || number.longValue() < 3
+                    || number.longValue() > 60)
                 throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 必须在 3 到 60 之间");
         }
         if ("standby_song_ids".equals(key)) {
@@ -193,11 +227,16 @@ public class SettingService {
                 }
             }
         }
-        if (key.startsWith("direct_copy_") && (key.contains("codec") || key.contains("container"))) {
-            if (!(value instanceof List<?>)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是数组或选项值");
+        Set<String> allowedDirectCopyOptions = DIRECT_COPY_OPTIONS.get(key);
+        if (allowedDirectCopyOptions != null) {
+            validateDirectCopyOptions(key, value, allowedDirectCopyOptions);
         }
         if ("transcode_output_container".equals(key) && !Set.of("mkv", "mp4").contains(String.valueOf(value)))
             throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "输出容器无效");
+        if ("transcode_video_codec".equals(key) && !Set.of("h264", "hevc").contains(String.valueOf(value)))
+            throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "转码视频编码无效");
+        if ("transcode_audio_codec".equals(key) && !Set.of("aac", "mp3", "opus").contains(String.valueOf(value)))
+            throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "转码音频编码无效");
         if ("tv_video_scale_mode".equals(key) && !Set.of("zoom", "fit", "fill").contains(String.valueOf(value)))
             throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "视频画面模式无效");
         if ("standby_source".equals(key) && !Set.of("mixed", "hot", "new", "custom").contains(String.valueOf(value)))
@@ -214,15 +253,15 @@ public class SettingService {
     @Transactional
     public Map<String, Object> resetTranscodeDefaults() {
         repo.deleteAllById(TRANSCODE_KEYS);
-        return getAll();
+        return getEditable();
     }
 
     public TranscodePolicy transcodePolicy() {
         Map<String, Object> settings = getAll();
         return new TranscodePolicy(
-                strings(settings.get("direct_copy_containers"), List.of("mp4", "m4v", "mkv")),
-                strings(settings.get("direct_copy_video_codecs"), List.of("h264", "hevc")),
-                strings(settings.get("direct_copy_audio_codecs"), List.of("aac", "mp3")),
+                strings(settings.get("direct_copy_containers"), List.of("mp4", "m4v", "mkv"), DIRECT_COPY_OPTIONS.get("direct_copy_containers")),
+                strings(settings.get("direct_copy_video_codecs"), List.of("h264", "hevc"), DIRECT_COPY_OPTIONS.get("direct_copy_video_codecs")),
+                strings(settings.get("direct_copy_audio_codecs"), List.of("aac", "mp3"), DIRECT_COPY_OPTIONS.get("direct_copy_audio_codecs")),
                 Boolean.TRUE.equals(settings.get("transcode_audio_only")),
                 option(settings, "transcode_output_container", Set.of("mkv", "mp4"), "mkv"),
                 option(settings, "transcode_video_codec", Set.of("h264", "hevc"), "h264"),
@@ -236,10 +275,34 @@ public class SettingService {
                                   String outputContainer, String videoCodec, String audioCodec,
                                   boolean hardwareAcceleration) {}
 
-    private static List<String> strings(Object value, List<String> fallback) {
+    private static List<String> strings(Object value, List<String> fallback, Set<String> allowed) {
         if (!(value instanceof List<?> list)) return fallback;
-        List<String> result = list.stream().map(String::valueOf).map(String::toLowerCase).distinct().toList();
+        List<String> result = list.stream()
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .map(valueItem -> valueItem.trim().toLowerCase(java.util.Locale.ROOT))
+                .filter(allowed::contains)
+                .distinct()
+                .toList();
         return result.isEmpty() ? fallback : result;
+    }
+
+    private static void validateDirectCopyOptions(String key, Object value, Set<String> allowed) {
+        if (!(value instanceof List<?> list)) {
+            throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是数组");
+        }
+        for (Object item : list) {
+            if (!(item instanceof String text)) {
+                throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 的每个选项必须是字符串");
+            }
+            String normalized = text.trim().toLowerCase(java.util.Locale.ROOT);
+            if (normalized.isEmpty() || normalized.length() > 32) {
+                throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 的选项长度无效");
+            }
+            if (!allowed.contains(normalized)) {
+                throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", key + " 包含不支持的选项：" + text);
+            }
+        }
     }
 
     private static String option(Map<String, Object> settings, String key, Set<String> allowed, String fallback) {

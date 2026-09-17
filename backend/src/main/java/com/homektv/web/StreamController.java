@@ -20,6 +20,7 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 
 import java.io.File;
 import java.io.RandomAccessFile;
+import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -96,12 +97,17 @@ public class StreamController {
             return ResponseEntity.notFound().build();
         }
 
-        File file = new File(sf.getFilePath());
+        if (sf.getFilePath() == null || sf.getFilePath().isBlank()) {
+            return ResponseEntity.notFound().build();
+        }
+        Path safePath;
         try {
-            LibraryModePolicy.requireExternalPathInsideSource(props, file.toPath());
+            safePath = LibraryModePolicy.requireReadablePathInsideActiveLibrary(
+                    props, Path.of(sf.getFilePath()));
         } catch (ApiException e) {
             return ResponseEntity.notFound().build();
         }
+        File file = safePath.toFile();
         if (!file.exists() || !file.isFile()) {
             // 文件丢失：交由上层标记 file_missing（P2.5），这里返回 404
             return ResponseEntity.notFound().build();

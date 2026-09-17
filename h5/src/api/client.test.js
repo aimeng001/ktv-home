@@ -88,6 +88,17 @@ describe('api client admin authentication', () => {
     expect(options.body.get('file').name).toBe('logo.png')
   })
 
+  it('publishes a control response to the caller-owned player projection', async () => {
+    const response = { list: [{ queueId: 7 }], state: 'paused', stateRevision: 3 }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(response))
+    const onResponse = vi.fn()
+    const controls = makeControls('client-123', { onResponse })
+
+    await controls.pause()
+
+    expect(onResponse).toHaveBeenCalledWith(response)
+  })
+
   it('saves an AI playlist preview with one atomic request', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ id: 9 }))
 

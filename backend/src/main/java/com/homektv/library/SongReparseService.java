@@ -42,14 +42,15 @@ public class SongReparseService {
             SongFile file = fileRepository.findBySongIdAndValidTrueOrderByPriorityDesc(songId).stream().findFirst()
                     .orElseGet(() -> fileRepository.findBySongIdOrderByPriorityDesc(songId).stream().findFirst().orElse(null));
             if (file == null) {
-                result.add(new Preview(songId, song.getTitle(), song.getArtist(), null, null, null, false, "没有文件源"));
+                result.add(new Preview(songId, song.getTitle(), song.getArtist(), null, null, null, "", false, "没有文件源"));
                 continue;
             }
             String filename = Path.of(file.getFilePath()).getFileName().toString();
             ParsedMeta parsed = FilenameParser.parse(filename, rule, knownArtists);
             String artist = parsed.artist().isBlank() ? "未知歌手" : parsed.artist();
             result.add(new Preview(songId, song.getTitle(), song.getArtist(), filename,
-                    parsed.title(), artist, parsed.recognized(), parsed.recognized() ? null : "文件名无法识别"));
+                    parsed.title(), artist, parsed.catalogNumber(), parsed.recognized(),
+                    parsed.recognized() ? null : "文件名无法识别"));
         }
         return result;
     }
@@ -74,6 +75,11 @@ public class SongReparseService {
             song.setTitleInit(PinyinUtil.initials(preview.proposedTitle()));
             song.setArtistPy(PinyinUtil.fullPinyin(preview.proposedArtist()));
             song.setArtistInit(PinyinUtil.initials(preview.proposedArtist()));
+            // Reparse is authoritative for filename-derived metadata.  A file
+            // that no longer has the commercial prefix must clear the old
+            // number; retaining it would make a rename look like the old
+            // catalogue identity on every subsequent export/search.
+            song.setCatalogNumber(preview.catalogNumber());
             String fingerprint = MediaClassifier.fingerprint(preview.proposedArtist(), preview.proposedTitle(), song.getDurationMs());
             songRepository.findByFingerprint(fingerprint).filter(other -> !other.getId().equals(song.getId()))
                     .ifPresent(other -> { throw new ApiException("FINGERPRINT_CONFLICT", "重解析结果与歌曲 #" + other.getId() + " 重复"); });
@@ -106,6 +112,14 @@ public class SongReparseService {
     }
 
     public record Preview(Long songId, String currentTitle, String currentArtist, String filename,
-                          String proposedTitle, String proposedArtist, boolean recognized, String error) {}
+                          String proposedTitle, String proposedArtist, String catalogNumber,
+                          boolean recognized, String error) {
+        /** Compatibility constructor for clients that do not expose catalog numbers yet. */
+        public Preview(Long songId, String currentTitle, String currentArtist, String filename,
+                       String proposedTitle, String proposedArtist, boolean recognized, String error) {
+            this(songId, currentTitle, currentArtist, filename, proposedTitle, proposedArtist,
+                    "", recognized, error);
+        }
+    }
     public record ApplyResult(int updated, int skipped, List<Preview> items) {}
 }

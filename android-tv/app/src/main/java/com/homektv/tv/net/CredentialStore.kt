@@ -20,11 +20,15 @@ internal class CredentialStore(context: Context) {
     private val legacyPrefs = context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
 
     @Synchronized
-    fun read(serverHost: String?): String {
-        val scope = serverHost.orEmpty().trim()
-        val scopedKey = scopedKey(scope)
+    fun read(server: SavedServer?): String {
+        val scope = server?.hostPort.orEmpty().trim()
+        val scopedKey = server?.instanceId?.let { identityKey(it) } ?: scopedKey(scope)
         val stored = securePrefs.getString(scopedKey, null)
         if (!stored.isNullOrBlank()) return decrypt(stored).orEmpty()
+
+        // Once an instance id is known, do not fall back to another instance's
+        // host namespace. A newly identified server starts with an empty scope.
+        if (server?.instanceId != null) return ""
 
         val legacyHost = legacyPrefs.getString(LEGACY_HOST_KEY, null)
         val legacy = if (shouldMigrateLegacyCredential(legacyHost, scope)) {
@@ -38,8 +42,9 @@ internal class CredentialStore(context: Context) {
     }
 
     @Synchronized
-    fun write(value: String, serverHost: String?) {
-        val scopedKey = scopedKey(serverHost.orEmpty().trim())
+    fun write(value: String, server: SavedServer?) {
+        val scope = server?.hostPort.orEmpty().trim()
+        val scopedKey = server?.instanceId?.let { identityKey(it) } ?: scopedKey(scope)
         val trimmed = value.trim()
         if (trimmed.isBlank()) {
             securePrefs.edit().remove(scopedKey).apply()
@@ -49,9 +54,44 @@ internal class CredentialStore(context: Context) {
         // Fail closed: never introduce a new plaintext fallback if Keystore is
         // unavailable or the key has been invalidated.
         if (writeEncrypted(scopedKey, trimmed) &&
-            shouldMigrateLegacyCredential(legacyPrefs.getString(LEGACY_HOST_KEY, null), serverHost)) {
+            shouldMigrateLegacyCredential(legacyPrefs.getString(LEGACY_HOST_KEY, null), scope)) {
             legacyPrefs.edit().remove(LEGACY_KEY).apply()
         }
+    }
+
+    @Synchronized
+    fun clear(server: SavedServer?) {
+        val scope = server?.hostPort.orEmpty().trim()
+        val scopedKey = server?.instanceId?.let { identityKey(it) } ?: scopedKey(scope)
+        securePrefs.edit().remove(scopedKey).apply()
+        legacyPrefs.edit().remove(LEGACY_KEY).apply()
+    }
+
+    /**
+     * Forgetting a server must remove both the identity namespace and the
+     * legacy host namespace. Otherwise selecting the same host again can
+     * resurrect a credential that belonged to the forgotten instance.
+     */
+    @Synchronized
+    fun clearAllScopes(server: SavedServer?) {
+        val hostKey = scopedKey(server?.hostPort.orEmpty().trim())
+        val identityKey = server?.instanceId?.let { identityKey(it) }
+        val editor = securePrefs.edit()
+        editor.remove(hostKey)
+        identityKey?.let(editor::remove)
+        editor.apply()
+        legacyPrefs.edit().remove(LEGACY_KEY).apply()
+    }
+
+    @Synchronized
+    fun migrate(from: SavedServer?, to: SavedServer): Boolean {
+        if (from == null) return true
+        val oldCred = read(from)
+        if (oldCred.isBlank()) return true
+        if (read(to).isBlank()) {
+            write(oldCred, to)
+        }
+        return read(to) == oldCred
     }
 
     private fun writeEncrypted(scopedKey: String, value: String): Boolean {
@@ -104,6 +144,9 @@ internal class CredentialStore(context: Context) {
             .replace('+', '-').replace('/', '_').trimEnd('=')
         return KEY_CIPHERTEXT_PREFIX + suffix
     }
+
+    private fun identityKey(instanceId: String): String =
+        scopedKey("instance:${instanceId.trim()}")
 
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"

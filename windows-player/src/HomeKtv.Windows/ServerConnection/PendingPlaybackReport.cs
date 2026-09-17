@@ -15,6 +15,15 @@ public sealed record PendingPlaybackReport(long QueueId)
     }
 }
 
+public enum PendingPlaybackReportEnqueueResult
+{
+    Added,
+    Duplicate,
+    Invalid,
+    Full,
+    PersistenceFailed,
+}
+
 /**
  * In-memory completion outbox with an optional best-effort persistence hook.
  * Queue IDs are the idempotency keys, so an unacknowledged report may be sent
@@ -22,7 +31,7 @@ public sealed record PendingPlaybackReport(long QueueId)
  */
 public sealed class PendingPlaybackReportQueue
 {
-    public const int MaxPending = 100;
+    public const int MaxPending = 1_000;
     private static readonly HashSet<string> TerminalStatuses = new(StringComparer.Ordinal)
     {
         "APPLIED",
@@ -56,15 +65,20 @@ public sealed class PendingPlaybackReportQueue
         }
     }
 
-    public bool Enqueue(long queueId)
+    public PendingPlaybackReportEnqueueResult Enqueue(long queueId)
     {
-        if (queueId <= 0) return false;
+        if (queueId <= 0) return PendingPlaybackReportEnqueueResult.Invalid;
         lock (gate)
         {
-            if (pending.Contains(queueId) || pending.Count >= MaxPending) return false;
+            if (pending.Contains(queueId)) return PendingPlaybackReportEnqueueResult.Duplicate;
+            if (pending.Count >= MaxPending) return PendingPlaybackReportEnqueueResult.Full;
             pending.Add(queueId);
-            PersistUnsafe();
-            return true;
+            if (!PersistUnsafe())
+            {
+                pending.RemoveAt(pending.Count - 1);
+                return PendingPlaybackReportEnqueueResult.PersistenceFailed;
+            }
+            return PendingPlaybackReportEnqueueResult.Added;
         }
     }
 
@@ -78,22 +92,25 @@ public sealed class PendingPlaybackReportQueue
         if (queueId <= 0 || status is null || !TerminalStatuses.Contains(status)) return;
         lock (gate)
         {
-            if (!pending.Remove(queueId)) return;
-            PersistUnsafe();
+            var index = pending.IndexOf(queueId);
+            if (index < 0) return;
+            pending.RemoveAt(index);
+            if (!PersistUnsafe()) pending.Insert(index, queueId);
         }
     }
 
     /** Reconnects do not invalidate a report; it is re-encoded with the next generation. */
     public void OnDisconnected() { }
 
-    private void PersistUnsafe()
+    private bool PersistUnsafe()
     {
         try
         {
             persist?.Invoke(pending.ToArray());
+            return true;
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 }
 

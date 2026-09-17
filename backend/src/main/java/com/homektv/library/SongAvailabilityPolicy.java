@@ -5,6 +5,9 @@ import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.web.ApiException;
 import org.springframework.stereotype.Service;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /**
  * Single source of truth for the boundary between an indexed song and a
@@ -34,6 +37,23 @@ public class SongAvailabilityPolicy {
                 && fileRepository.existsReadyFile(song.getId());
     }
 
+    /**
+     * Returns the playable subset of a batch of songs with one readiness query.
+     * The song status check remains here so callers cannot accidentally bypass
+     * the shared availability policy.
+     */
+    public Set<Long> playableSongIds(Collection<Song> songs) {
+        if (songs == null || songs.isEmpty()) return Set.of();
+        Set<Long> candidates = new LinkedHashSet<>();
+        for (Song song : songs) {
+            if (song != null && song.getId() != null && "ok".equalsIgnoreCase(song.getStatus())) {
+                candidates.add(song.getId());
+            }
+        }
+        if (candidates.isEmpty()) return Set.of();
+        Set<Long> ready = fileRepository.findSongIdsWithReadyFile(candidates);
+        return ready == null ? Set.of() : Set.copyOf(ready);
+    }
     /** Rejects a Fast Index or otherwise unavailable song at a play boundary. */
     public void requirePlayable(Song song) {
         if (!isPlayable(song)) {
@@ -43,6 +63,16 @@ public class SongAvailabilityPolicy {
 
     /** File-level check used by the stream endpoint after it loads a file row. */
     public boolean isReadyFile(SongFile file) {
+        return isReadyMediaFile(file);
+    }
+
+    /**
+     * 就绪判定唯一实现，供播放边界与只读 DTO 共用，避免两处判定漂移。
+     *
+     * Single implementation of the readiness rule, shared by the playback boundary
+     * and by read-side DTOs so the two can never drift apart.
+     */
+    public static boolean isReadyMediaFile(SongFile file) {
         return file != null
                 && file.isValid()
                 && !file.isProbePending()

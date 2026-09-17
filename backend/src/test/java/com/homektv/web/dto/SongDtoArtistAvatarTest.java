@@ -23,4 +23,14 @@ class SongDtoArtistAvatarTest {
 
         assertThat(SongDto.from(song).artistAvatarUrl()).isNull();
     }
+
+    @Test
+    void exposesOnlyAValidEightDigitCatalogNumber() {
+        Song song = new Song();
+        song.setCatalogNumber("00123456");
+        assertThat(SongDto.from(song).catalogNumber()).isEqualTo("00123456");
+
+        song.setCatalogNumber("123");
+        assertThat(SongDto.from(song).catalogNumber()).isEmpty();
+    }
 }

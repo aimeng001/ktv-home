@@ -85,6 +85,20 @@ class PlaylistPublicServiceTest {
     }
 
     @Test
+    void orderAllReportsQueueFullAfterKeepingEarlierSuccessfulOrders() {
+        PlaylistSong first = new PlaylistSong(); first.setSongId(101L);
+        PlaylistSong second = new PlaylistSong(); second.setSongId(102L);
+        when(playlistSongRepo.findByPlaylistIdOrderBySortOrder(1L)).thenReturn(List.of(first, second));
+        doThrow(new ApiException("QUEUE_FULL", "等待队列已满"))
+                .when(queueService).order(102L, 10L, false);
+
+        Map<String, Object> result = service.orderAll(1L, "tok");
+
+        assertThat(result).containsEntry("ordered", 1).containsEntry("queueFull", true);
+        verify(queueService).order(101L, 10L, false);
+    }
+
+    @Test
     void list_filtersNullPreviewSongsAndPreservesThreeValidSongs() {
         Playlist pl = new Playlist();
         pl.setId(1L);

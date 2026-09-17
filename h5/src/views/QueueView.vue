@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <!-- 电视离线提示 / TV offline warning -->
-    <div v-if="!player.tvOnline" class="offline">电视未连接，歌曲会先排队，电视上线后自动播放</div>
+    <div v-if="player.tvOnline === false" class="offline">电视未连接，歌曲会先排队，电视上线后自动播放</div>
     <div class="sec hd"><b>已点歌曲</b><span>{{ player.queueCount }} 首待唱</span></div>
 
     <!-- 房主与队列管理区 / Host & queue management -->
@@ -56,6 +56,7 @@
       </div>
     </section>
 
+    <div v-if="historyStatus === 'error'" class="history-error" role="alert">已播历史读取失败：{{ historyError?.message || '网络错误' }} <button class="chip" @click="loadHistory">重试</button></div>
     <TabBar active="queue" />
   </div>
 </template>
@@ -79,9 +80,12 @@ import { ChevronDown, ChevronUp, History, RotateCcw } from 'lucide-vue-next'
 const player = usePlayerStore()
 const user = useUserStore()
 const { toast } = useToast()
-const controls = makeControls(user.clientToken)
+const controls = makeControls(user.clientToken, { onResponse: response => player.applyControlResponse(response) })
 
 const history = ref([])
+const historyStatus = ref('idle')
+const historyError = ref(null)
+let historySerial = 0
 const showHist = ref(false)
 const host = ref({ claimed: false, isHost: false, hostNickname: null, revision: 0 })
 const nowPlayingCover = computed(() => player.nowPlaying?.song?.coverUrl || '')
@@ -112,9 +116,22 @@ function mergeHost(value) {
 }
 
 async function loadHistory() {
-  const loadedHistory = await api.history().catch(() => [])
-  history.value = loadedHistory
-  return loadedHistory
+  const serial = ++historySerial
+  historyStatus.value = 'loading'
+  historyError.value = null
+  try {
+    const loadedHistory = await api.history()
+    if (serial !== historySerial) return loadedHistory
+    history.value = Array.isArray(loadedHistory) ? loadedHistory : []
+    historyStatus.value = 'ready'
+    return history.value
+  } catch (error) {
+    if (serial === historySerial) {
+      historyStatus.value = 'error'
+      historyError.value = error
+    }
+    return []
+  }
 }
 
 /**

@@ -110,7 +110,7 @@
             <SettingRow id="delete_source_after_transcode" label="转码成功后删除源文件" hint="默认关闭；完成入库与校验后才会逐首删除"><Toggle v-model="form.delete_source_after_transcode" /></SettingRow>
           </div>
           <div class="setting-group">
-            <div class="group-head"><div><strong>视频直拷条件</strong><span>同时满足容器、视频和音频编码时无需转码</span></div><button class="text-btn" :disabled="restoring" @click="restoreTranscodeDefaults">{{ restoring ? '恢复中…' : '恢复默认' }}</button></div>
+            <div class="group-head"><div><strong>视频直拷条件</strong><span>同时满足容器、视频和音频编码时无需转码</span></div><button class="text-btn" :disabled="restoring || saving" @click="restoreTranscodeDefaults">{{ restoring ? '恢复中…' : '恢复默认' }}</button></div>
             <SettingRow label="容器白名单"><Checks v-model="form.direct_copy_containers" :options="containerOptions" /></SettingRow>
             <SettingRow label="视频编码白名单"><Checks v-model="form.direct_copy_video_codecs" :options="videoOptions" /></SettingRow>
             <SettingRow label="音频编码白名单"><Checks v-model="form.direct_copy_audio_codecs" :options="audioOptions" /></SettingRow>
@@ -137,7 +137,7 @@
             <div class="group-head"><strong>待机轮播</strong><span>设置无人播放时的歌曲内容和轮播节奏</span></div>
             <SettingRow label="待机热门轮播"><Toggle v-model="form.standby_carousel" /></SettingRow>
             <SettingRow id="standby_source" label="待机内容来源"><select v-model="form.standby_source" class="input"><option value="mixed">热门与新歌混合</option><option value="hot">热门歌曲</option><option value="new">最近入库</option><option value="custom">指定歌曲</option></select></SettingRow>
-            <SettingRow v-if="form.standby_source === 'custom'" id="standby_song_ids" label="指定歌曲 ID" hint="用逗号分隔多个歌曲 ID"><input :value="(form.standby_song_ids || []).join(',')" class="input wide" @input="setStandbySongIds($event.target.value)" /></SettingRow>
+            <SettingRow v-if="form.standby_source === 'custom'" id="standby_song_ids" label="指定歌曲 ID" :hint="standbySongsHint"><input :value="(form.standby_song_ids || []).join(',')" class="input wide" @input="setStandbySongIds($event.target.value)" /></SettingRow>
             <SettingRow label="防烧屏微移"><Toggle v-model="form.anti_burn" /></SettingRow>
             <SettingRow label="轮播间隔"><div class="unit-input"><input v-model.number="form.standby_interval_sec" class="input short" type="number" min="3" max="60" /><span>秒</span></div></SettingRow>
           </div>
@@ -170,7 +170,7 @@
         </section>
         </main>
       </div>
-      <div v-if="dirty" class="save-bar"><span><AlertCircle :size="16" />有未保存的修改</span><button class="btn ghost" @click="resetChanges"><RotateCcw :size="14" />放弃修改</button><button class="btn" @click="saveAll"><Save :size="14" />保存设置</button></div>
+      <div v-if="dirty" class="save-bar"><span><AlertCircle :size="16" />有未保存的修改</span><button class="btn ghost" :disabled="saving || restoring" @click="resetChanges"><RotateCcw :size="14" />放弃修改</button><button class="btn" :disabled="saving || restoring" @click="saveAll"><Save :size="14" />{{ saving ? '保存中…' : '保存设置' }}</button></div>
     </div>
     <div v-if="wishesModalOpen" class="mask" @click.self="wishesModalOpen = false"><div class="modal wish-modal">
       <div class="match-head">
@@ -204,7 +204,7 @@ import {
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
-import { canonicalizeSettings, loadSettingsSections, releaseLabel, runSettingsAction, saveDirtySections, editableSettingsPayload, isAiConfigured } from './settingsState'
+import { canonicalizeSettings, loadSettingsSections, releaseLabel, runSettingsAction, saveDirtySections, editableSettingsPayload, isAiConfigured, normalizeStandbySongIds, exceedsStandbySongLimit, describeSaveFailures, MAX_STANDBY_SONGS, TRANSCODE_SETTING_KEYS, mergeSettingsSection, canStartSettingsSave } from './settingsState'
 
 const route = useRoute(); const router = useRouter()
 const categories = [
@@ -221,7 +221,7 @@ const ai = reactive({ enabled:false, apiKeyConfigured:false, apiKeySuffix:null, 
 const aiForm = reactive({ enabled:false, baseUrl:'', apiKey:'', bulkModel:'', reasoningModel:'', timeoutSeconds:60, identityThreshold:.97, classificationThreshold:.92, jsonMode:'AUTO', bulkConcurrency:2, reasoningConcurrency:1 })
 const musicForm = reactive({enabled:false,providers:[],resultLimit:20,timeoutSeconds:5,searchCacheHours:6,concurrencyLimit:1,requestIntervalMs:1500,autoApplyThreshold:.95})
 const musicStatus = ref([]); const musicProviderOptions=[{value:'NETEASE',label:'网易云音乐'},{value:'QQ',label:'QQ 音乐'},{value:'KUGOU',label:'酷狗音乐'}]
-const original = ref(''); const aiOriginal = ref(''); const musicOriginal = ref(''); const dirty = ref(false); const loading = ref(true); const testing = ref(false); const testingMusic=ref(false); const restoring=ref(false); const testMessage = ref(''); const musicTestMessage=ref(''); const models = ref([]); const modelTarget = ref('bulk'); const wishes = ref([]); const clearKey = ref(false)
+const original = ref(''); const aiOriginal = ref(''); const musicOriginal = ref(''); const dirty = ref(false); const loading = ref(true); const saving=ref(false); const testing = ref(false); const testingMusic=ref(false); const restoring=ref(false); const testMessage = ref(''); const musicTestMessage=ref(''); const models = ref([]); const modelTarget = ref('bulk'); const wishes = ref([]); const clearKey = ref(false)
 const hardware = reactive({ available:false, reason:'尚未检测' })
 const releaseInfo = reactive({ version:'' })
 const libraryMode = ref(null)
@@ -324,22 +324,66 @@ async function load(){
   loading.value=false
 }
 watch([form,aiForm,musicForm],()=>{ if(!loading.value) dirty.value=snapshot(form)!==original.value||snapshot(aiForm)!==aiOriginal.value||snapshot(musicForm)!==musicOriginal.value },{deep:true})
-async function saveAll(){ const {successes,failures}=await saveDirtySections([{name:'基础设置',dirty:generalDirty.value,state:sectionState.general,save:async()=>{const updated=await api.adminPutSettings(editableSettingsPayload(form));Object.assign(form,canonicalizeSettings(updated));return updated}},{name:'AI 设置',dirty:aiDirty.value,state:sectionState.ai,save:async()=>{const config=await api.adminAiPutConfig({...aiForm,apiKey:aiForm.apiKey||null,clearApiKey:clearKey.value});Object.assign(ai,config);aiForm.apiKey='';clearKey.value=false;return config}},{name:'音乐元数据设置',dirty:musicDirty.value,state:sectionState.music,save:async()=>{const music=await api.adminPutMusicSourceConfig({...musicForm});Object.assign(musicForm,{enabled:music.enabled,providers:music.providers,resultLimit:music.resultLimit,timeoutSeconds:music.timeoutSeconds,searchCacheHours:music.searchCacheHours,concurrencyLimit:music.concurrencyLimit,requestIntervalMs:music.requestIntervalMs,autoApplyThreshold:music.autoApplyThreshold});musicStatus.value=music.providerStatus||[];return music}}]); for(const item of successes){if(item.name==='基础设置')original.value=snapshot(form);if(item.name==='AI 设置')aiOriginal.value=snapshot(aiForm);if(item.name==='音乐元数据设置')musicOriginal.value=snapshot(musicForm)} dirty.value=generalDirty.value||aiDirty.value||musicDirty.value; if(failures.length){const saved=successes.map(item=>item.name).join('、')||'无';const failed=failures.map(item=>item.name).join('、');await alertDialog(`已保存：${saved}。保存失败：${failed}。失败部分仍保留为未保存状态。`,{title:'设置保存不完整',tone:'warning'})} }
+async function saveAll(){
+  if(!canStartSettingsSave(saving.value) || restoring.value)return
+  if(standbySongsTruncated.value){await alertDialog(standbySongsHint.value,{title:'待机歌曲数量超限',tone:'warning'});return}
+  saving.value=true
+  const initial={general:snapshot(form),ai:snapshot(aiForm),music:snapshot(musicForm)}
+  const initialClearKey=clearKey.value
+  let result
+  try{
+    result=await saveDirtySections([
+      {name:'基础设置',dirty:generalDirty.value,state:sectionState.general,save:async()=>{
+        const updated=await api.adminPutSettings(editableSettingsPayload(JSON.parse(initial.general)))
+        if(snapshot(form)===initial.general)Object.assign(form,canonicalizeSettings(updated))
+        return updated
+      }},
+      {name:'AI 设置',dirty:aiDirty.value,state:sectionState.ai,save:async()=>{
+        const initialForm=JSON.parse(initial.ai)
+        const config=await api.adminAiPutConfig({...initialForm,apiKey:initialForm.apiKey||null,clearApiKey:initialClearKey})
+        if(snapshot(aiForm)===initial.ai && clearKey.value===initialClearKey){Object.assign(ai,config);aiForm.apiKey='';clearKey.value=false}
+        return config
+      }},
+      {name:'音乐元数据设置',dirty:musicDirty.value,state:sectionState.music,save:async()=>{
+        const music=await api.adminPutMusicSourceConfig({...JSON.parse(initial.music)})
+        if(snapshot(musicForm)===initial.music){Object.assign(musicForm,{enabled:music.enabled,providers:music.providers,resultLimit:music.resultLimit,timeoutSeconds:music.timeoutSeconds,searchCacheHours:music.searchCacheHours,concurrencyLimit:music.concurrencyLimit,requestIntervalMs:music.requestIntervalMs,autoApplyThreshold:music.autoApplyThreshold});musicStatus.value=music.providerStatus||[]}
+        return music
+      }}
+    ])
+    for(const item of result.successes){
+      if(item.name==='基础设置' && snapshot(form)===initial.general)original.value=snapshot(form)
+      if(item.name==='AI 设置' && snapshot(aiForm)===initial.ai)aiOriginal.value=snapshot(aiForm)
+      if(item.name==='音乐元数据设置' && snapshot(musicForm)===initial.music)musicOriginal.value=snapshot(musicForm)
+    }
+    dirty.value=generalDirty.value||aiDirty.value||musicDirty.value
+    if(result.failures.length){const saved=result.successes.map(item=>item.name).join('、')||'无';const failed=describeSaveFailures(result.failures);await alertDialog(`已保存：${saved}。保存失败：${failed}。失败部分仍保留为未保存状态。`,{title:'设置保存不完整',tone:'warning'})}
+  }finally{saving.value=false}
+}
 function resetChanges(){ Object.assign(form,JSON.parse(original.value)); Object.assign(aiForm,JSON.parse(aiOriginal.value)); Object.assign(musicForm,JSON.parse(musicOriginal.value)); dirty.value=false }
 function chooseModel(model){ if(modelTarget.value==='reasoning') aiForm.reasoningModel=model; else aiForm.bulkModel=model }
 async function loadModels(target='bulk'){ modelTarget.value=target; try { models.value=(await api.adminAiModels()).models||[] } catch(e){ await alertDialog(e.message||'模型列表获取失败') } }
 async function testAi(){ testing.value=true; try { const result=await api.adminAiTestConfig(); testMessage.value=`连接成功，已检测 ${Object.keys(result.testedModels||{}).length} 个模型`; Object.assign(ai,await api.adminAiConfig()) } catch(e){ testMessage.value=e.message||'连接测试失败' } finally { testing.value=false } }
 async function testMusic(providers){testingMusic.value=true;try{const result=await api.adminTestMusicSources(providers);musicStatus.value=result.providerStatus||musicStatus.value;const success=(result.results||[]).filter(item=>item.healthy).length;musicTestMessage.value=`${success}/${(result.results||[]).length} 个平台连接成功`}catch(e){musicTestMessage.value=e.message||'平台连接测试失败'}finally{testingMusic.value=false}}
 async function restoreTranscodeDefaults(){
+  if(saving.value)return
   if(!await confirmDialog('恢复转码默认规则？',{title:'恢复默认'}))return
   restoring.value=true
   try{
     const result=await runSettingsAction(()=>api.adminResetTranscodeDefaults())
-    if(result.ok)Object.assign(form,result.value)
+    if(result.ok) {
+      const settings=canonicalizeSettings(result.value)
+      Object.assign(form, mergeSettingsSection(form, settings, TRANSCODE_SETTING_KEYS))
+      const baseline=original.value ? JSON.parse(original.value) : {}
+      original.value=JSON.stringify(mergeSettingsSection(baseline, form, TRANSCODE_SETTING_KEYS))
+    }
     else await alertDialog(result.error?.message||'恢复默认设置失败')
   }finally{restoring.value=false}
 }
-function setStandbySongIds(value){ form.standby_song_ids=[...new Set(value.split(/[,，\s]+/).map(Number).filter(id=>Number.isInteger(id)&&id>0))] }
+const standbySongsTruncated = ref(false)
+const standbySongsHint = computed(() => standbySongsTruncated.value
+  ? `已超过上限，仅保留前 ${MAX_STANDBY_SONGS} 首（后端最多接受 ${MAX_STANDBY_SONGS} 首）`
+  : `用逗号分隔多个歌曲 ID，最多 ${MAX_STANDBY_SONGS} 首`)
+function setStandbySongIds(value){ standbySongsTruncated.value=exceedsStandbySongLimit(value); form.standby_song_ids=normalizeStandbySongIds(value) }
 async function uploadStandbyLogo(event){ const file=event.target.files?.[0]; if(!file)return; try{await api.adminUploadStandbyLogo(file); Object.assign(form,canonicalizeSettings(await api.adminGetSettings())); original.value=snapshot(form)}catch(e){await alertDialog(e.message||'Logo 上传失败')}finally{event.target.value=''} }
 
 const wishesModalOpen = ref(false)

@@ -60,4 +60,35 @@ class StandbyContentBatchTest {
         verify(songRepository, times(1)).findAllById(List.of(3L, 1L, 2L));
         verify(songRepository, never()).findById(anyLong());
     }
+
+    @Test
+    void hotSongs_usesSingleBatchQueryAndPreservesRankingOrder() {
+        doReturn(Map.of("standby_source", "hot")).when(settingService).getAll();
+        when(historyRepository.ranking(any(), eq(20))).thenReturn(List.of(
+                new Object[]{3L, 12L}, new Object[]{1L, 10L}, new Object[]{2L, 8L}));
+
+        Song s1 = new Song(); s1.setId(1L); s1.setStatus("ok"); s1.setTitle("Song 1");
+        Song s2 = new Song(); s2.setId(2L); s2.setStatus("ok"); s2.setTitle("Song 2");
+        Song s3 = new Song(); s3.setId(3L); s3.setStatus("ok"); s3.setTitle("Song 3");
+        when(songRepository.findAllById(List.of(3L, 1L, 2L))).thenReturn(List.of(s1, s2, s3));
+
+        List<?> songs = (List<?>) standbyContentService.content().get("songs");
+
+        assertThat(songs).extracting("id").containsExactly(3L, 1L, 2L);
+        verify(songRepository).findAllById(List.of(3L, 1L, 2L));
+        verify(songRepository, never()).findById(anyLong());
+    }
+
+    @Test
+    void customSongs_capsPersistedIdsBeforeBatchQuery() {
+        List<Long> persistedIds = LongStream.rangeClosed(1, 250).boxed().toList();
+        doReturn(Map.of("standby_source", "custom", "standby_song_ids", persistedIds))
+                .when(settingService).getAll();
+        when(songRepository.findAllById(LongStream.rangeClosed(1, 100).boxed().toList()))
+                .thenReturn(List.of());
+
+        standbyContentService.content();
+
+        verify(songRepository).findAllById(LongStream.rangeClosed(1, 100).boxed().toList());
+    }
 }

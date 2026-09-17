@@ -33,16 +33,19 @@ public static class AudioLayoutMapper
         };
     }
 
-    public static int AudioTrackIndexFor(string? vocalMode, FileSource file)
+    public static int AudioTrackIndexFor(string? vocalMode, AudioLayoutDto layout, int audioTracks, int? vocalTrackIndex = null)
     {
         if (string.Equals(vocalMode, "accompaniment", StringComparison.OrdinalIgnoreCase))
         {
-            return file.AudioLayout.AccompanimentTrackIndex
-                ?? file.VocalTrackIndex
-                ?? (file.AudioTracks > 1 ? 1 : 0);
+            return layout.AccompanimentTrackIndex
+                ?? vocalTrackIndex
+                ?? (audioTracks > 1 ? 1 : 0);
         }
 
-        return file.AudioLayout.OriginalTrackIndex
-            ?? (file.AudioLayout.AccompanimentTrackIndex == 0 && file.AudioTracks > 1 ? 1 : 0);
+        return layout.OriginalTrackIndex
+            ?? (layout.AccompanimentTrackIndex == 0 && audioTracks > 1 ? 1 : 0);
     }
+
+    public static int AudioTrackIndexFor(string? vocalMode, FileSource file) =>
+        AudioTrackIndexFor(vocalMode, file.AudioLayout, file.AudioTracks, file.VocalTrackIndex);
 }

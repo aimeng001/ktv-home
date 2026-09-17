@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 enum class KioskTab {
+    DASHBOARD,
     PINYIN,
     SINGERS,
     RANKINGS,
@@ -19,9 +20,9 @@ enum class KioskTab {
 /**
  * 点歌台视图状态机，解耦 UI 渲染与网络/数据源。
  */
-class KioskPresentationState {
+class KioskPresentationState(initialTab: KioskTab = KioskTab.PINYIN) {
 
-    private val _currentTab = MutableStateFlow(KioskTab.PINYIN)
+    private val _currentTab = MutableStateFlow(initialTab)
     val currentTab: StateFlow<KioskTab> = _currentTab.asStateFlow()
 
     private val _selectedArtist = MutableStateFlow<String?>(null)

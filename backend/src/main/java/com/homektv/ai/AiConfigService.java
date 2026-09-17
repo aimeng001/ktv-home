@@ -107,6 +107,9 @@ public class AiConfigService {
         if (config.baseUrl().isBlank()) throw new ApiException("AI_BASE_URL_MISSING", "AI API Base URL 未配置，请先配置 AI 模型");
         if (config.bulkModel().isBlank()) throw new ApiException("AI_MODEL_MISSING", "批量模型 ID 未配置，请先配置 AI 模型");
         validateOutboundBaseUrl(config.baseUrl());
+        if (config.apiKey().isBlank() && !AiBaseUrlPolicy.isPrivateNetwork(config.baseUrl())) {
+            throw new ApiException("AI_API_KEY_MISSING", "公网 AI 服务必须配置 API Key；无 Key 仅允许明确开启的本地私网模型");
+        }
     }
 
     /** Validates the destination immediately before a request can carry the API key. */
@@ -122,6 +125,7 @@ public class AiConfigService {
         }
         try {
             validateOutboundBaseUrl(config.baseUrl());
+            if (config.apiKey().isBlank() && !AiBaseUrlPolicy.isPrivateNetwork(config.baseUrl())) return false;
             return true;
         } catch (Exception ignored) {
             return false;

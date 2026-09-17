@@ -79,7 +79,7 @@ import { GlassWater, Hand, Lightbulb, Megaphone, Minus, Music2, PartyPopper, Pau
 const player = usePlayerStore()
 const user = useUserStore()
 const { toast } = useToast()
-const controls = makeControls(user.clientToken)
+const controls = makeControls(user.clientToken, { onResponse: response => player.applyControlResponse(response) })
 
 const song = computed(() => player.nowPlaying?.song)
 const coverUrl = computed(() => song.value?.coverUrl || '')

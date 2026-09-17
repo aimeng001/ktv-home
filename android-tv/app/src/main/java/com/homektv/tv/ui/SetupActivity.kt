@@ -1,7 +1,6 @@
 package com.homektv.tv.ui
 
 import android.animation.ObjectAnimator
-import android.view.animation.AccelerateDecelerateInterpolator
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -10,9 +9,11 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.children
 import androidx.core.view.descendants
@@ -42,8 +43,11 @@ class SetupActivity : AppCompatActivity() {
     private val scanner = LanScanner()
     private val discovered = linkedMapOf<String, DiscoveredServer>()
     private var scanJob: Job? = null
-    private var credentialHost: String? = null
     private var initialCredential = ""
+    private var initialNickname = ""
+    private var initialMode = DeviceMode.COMBINED
+    private var initialServer: SavedServer? = null
+    private var recoveryCandidate: DiscoveredServer? = null
     private val rhythmAnimators = mutableListOf<ObjectAnimator>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,11 +67,21 @@ class SetupActivity : AppCompatActivity() {
         applyRecommendedOrientation()
         binding = ActivitySetupBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        credentialHost = config.serverHost
-        initialCredential = config.playerCredential
+        recoveryCandidate = intent.getStringExtra(EXTRA_CANDIDATE_HOST)?.let { host ->
+            DiscoveredServer(
+                hostPort = host,
+                name = intent.getStringExtra(EXTRA_CANDIDATE_NAME).orEmpty().ifBlank { host },
+                instanceId = intent.getStringExtra(EXTRA_CANDIDATE_INSTANCE_ID),
+            )
+        }
+        recoveryCandidate?.let { binding.inputHost.setText(it.hostPort) }
+        initialServer = config.serverForHost(config.serverHost)
+        initialCredential = initialServer?.let(config::playerCredentialFor).orEmpty()
+        initialNickname = config.nicknameFor()
+        initialMode = config.modeFor() ?: config.recommendedMode
         binding.inputCredential.setText(initialCredential)
-        binding.inputNickname.setText(config.nicknameFor())
-        renderMode(config.modeFor() ?: config.recommendedMode)
+        binding.inputNickname.setText(initialNickname)
+        renderMode(initialMode)
         binding.modeGroup.setOnCheckedChangeListener { _, checkedId ->
             val mode = when (checkedId) {
                 binding.modePlayer.id -> DeviceMode.PLAYER
@@ -187,6 +201,20 @@ class SetupActivity : AppCompatActivity() {
                 rebuildFocusChain()
                 binding.btnRefresh.requestFocus()
             }
+            setOnLongClickListener {
+                AlertDialog.Builder(this@SetupActivity)
+                    .setTitle(R.string.setup_forget_server_title)
+                    .setMessage(getString(R.string.setup_forget_server_msg, server.name))
+                    .setPositiveButton(R.string.setup_forget_confirm) { _, _ ->
+                        config.forgetServer(server)
+                        renderHistory()
+                        rebuildFocusChain()
+                        binding.btnRefresh.requestFocus()
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+                true
+            }
         }
         binding.historyContainer.addView(row)
     }
@@ -201,7 +229,7 @@ class SetupActivity : AppCompatActivity() {
         row.findViewById<TextView>(R.id.txtLanAddress).text = server.hostPort
         row.findViewById<Button>(R.id.btnLanConnect).apply {
             id = View.generateViewId()
-            setOnClickListener { connect(SavedServer(server.hostPort, server.name)) }
+            setOnClickListener { connect(SavedServer(server.hostPort, server.name, server.instanceId)) }
         }
         binding.lanContainer.addView(row)
         rebuildFocusChain()
@@ -213,7 +241,11 @@ class SetupActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.setup_empty, Toast.LENGTH_SHORT).show()
             return
         }
-        verifyAndConnect(SavedServer(host, host), binding.btnConnect)
+        val knownServer = config.savedServers.firstOrNull { it.hostPort == host }
+        verifyAndConnect(
+            SetupCandidatePolicy.resolve(host, recoveryCandidate, knownServer),
+            binding.btnConnect,
+        )
     }
 
     private fun connect(server: SavedServer) {
@@ -225,30 +257,86 @@ class SetupActivity : AppCompatActivity() {
         button.isEnabled = false
         binding.txtScanStatus.text = getString(R.string.setup_verifying, server.hostPort)
         lifecycleScope.launch {
-            if (scanner.validate(server.hostPort)) {
-                config.rememberServer(server)
-                val enteredCredential = binding.inputCredential.text.toString()
-                config.playerCredential = if (server.hostPort == credentialHost ||
-                    enteredCredential != initialCredential
-                ) enteredCredential else ""
-                config.saveNickname(binding.inputNickname.text.toString(), server.hostPort)
-                val mode = selectedMode()
-                config.saveMode(mode, server.hostPort)
-                if (intent.getBooleanExtra(EXTRA_RETURN_TO_CALLER, false)) {
-                    setResult(RESULT_OK)
+            val confirmed = scanner.discover(server.hostPort)
+                ?.let { discovered -> SetupVerificationPolicy.confirm(server, discovered) }
+            if (confirmed != null) {
+                if (LegacyIdentityMigrationPolicy.requiresConfirmation(initialServer, confirmed)) {
+                    AlertDialog.Builder(this@SetupActivity)
+                        .setTitle(R.string.setup_identity_migration_title)
+                        .setMessage(R.string.setup_identity_migration_message)
+                        .setPositiveButton(R.string.setup_identity_migration_keep) { _, _ ->
+                            commitConfirmedServer(confirmed, button, legacyMigrationAccepted = true)
+                        }
+                        .setNegativeButton(R.string.setup_identity_migration_new) { _, _ ->
+                            commitConfirmedServer(confirmed, button, legacyMigrationAccepted = false)
+                        }
+                        .setOnCancelListener { restoreSetupButton(button) }
+                        .show()
                 } else {
-                    val target = if (mode == DeviceMode.CONTROLLER) ControllerActivity::class.java
-                    else MainActivity::class.java
-                    startActivity(Intent(this@SetupActivity, target))
+                    commitConfirmedServer(confirmed, button, legacyMigrationAccepted = false)
                 }
-                finish()
             } else {
-                button.isEnabled = true
+                restoreSetupButton(button)
                 Toast.makeText(this@SetupActivity, R.string.setup_invalid, Toast.LENGTH_LONG).show()
-                binding.txtScanStatus.setText(R.string.setup_scan_idle)
-                button.requestFocus()
             }
         }
+    }
+
+    private fun commitConfirmedServer(
+        confirmed: SavedServer,
+        button: Button,
+        legacyMigrationAccepted: Boolean,
+    ) {
+        val enteredCredential = binding.inputCredential.text.toString()
+        val credentialChanged = enteredCredential != initialCredential
+        if (legacyMigrationAccepted && initialServer != null &&
+            !runCatching { config.migrateLegacyScope(initialServer!!, confirmed) }.getOrDefault(false)
+        ) {
+            restoreSetupButton(button)
+            Toast.makeText(this, R.string.setup_identity_migration_failed, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        config.rememberServer(confirmed)
+        if (!legacyMigrationAccepted || credentialChanged) {
+            config.playerCredential = if (SetupCandidatePolicy.shouldReuseInitialCredential(
+                    initialServer = initialServer,
+                    targetServer = confirmed,
+                    credentialChanged = credentialChanged,
+                    legacyMigrationAccepted = legacyMigrationAccepted,
+                )
+            ) enteredCredential else ""
+        }
+        val enteredNickname = binding.inputNickname.text.toString()
+        config.saveNickname(
+            SetupCommitPolicy.nickname(
+                initialServer, confirmed, initialNickname, enteredNickname, legacyMigrationAccepted,
+            ),
+            confirmed.hostPort,
+        )
+        val mode = SetupCommitPolicy.mode(
+            initialServer = initialServer,
+            targetServer = confirmed,
+            initialValue = initialMode,
+            selectedValue = selectedMode(),
+            recommendedValue = config.recommendedMode,
+            legacyMigrationAccepted = legacyMigrationAccepted,
+        )
+        config.saveMode(mode, confirmed.hostPort)
+        if (intent.getBooleanExtra(EXTRA_RETURN_TO_CALLER, false)) {
+            setResult(RESULT_OK)
+        } else {
+            val target = if (mode == DeviceMode.CONTROLLER) ControllerActivity::class.java
+            else MainActivity::class.java
+            startActivity(Intent(this@SetupActivity, target))
+        }
+        finish()
+    }
+
+    private fun restoreSetupButton(button: Button) {
+        button.isEnabled = true
+        binding.txtScanStatus.setText(R.string.setup_scan_idle)
+        button.requestFocus()
     }
 
     private fun rebuildFocusChain() {
@@ -321,6 +409,9 @@ class SetupActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_FORCE_SETUP = "force_setup"
         const val EXTRA_RETURN_TO_CALLER = "return_to_caller"
+        const val EXTRA_CANDIDATE_HOST = "candidate_host"
+        const val EXTRA_CANDIDATE_NAME = "candidate_name"
+        const val EXTRA_CANDIDATE_INSTANCE_ID = "candidate_instance_id"
     }
 }
 

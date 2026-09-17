@@ -17,4 +17,13 @@ class PlaybackSeekGateTest {
         assertFalse(gate.shouldApply(0))
         assertFalse(gate.shouldApply(1))
     }
+
+    @Test
+    fun vocal_mode_change_with_same_seek_sequence_does_not_trigger_seek() {
+        val gate = PlaybackSeekGate()
+        gate.markApplied(3L)
+
+        // On vocal mode toggle, server does not bump seekSequence
+        assertFalse(gate.shouldApply(3L))
+    }
 }

@@ -7,4 +7,5 @@ import kotlinx.serialization.Serializable
 data class SavedServer(
     val hostPort: String,
     val name: String,
+    val instanceId: String? = null,
 )

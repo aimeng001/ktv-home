@@ -62,7 +62,7 @@ import NowPlayingBar from '../components/NowPlayingBar.vue'
 import { useAsyncResource } from '../composables/useAsyncResource'
 import { useOrderLock } from '../composables/useOrderLock'
 import { formatOrderToast } from './orderFeedbackState'
-import { Search, UserRound, Sparkles, UsersRound, ListMusic, Heart, Languages, LayoutGrid } from 'lucide-vue-next'
+import { Search, UserRound, Sparkles, UsersRound, ListMusic, Heart, Languages, LayoutGrid, History } from 'lucide-vue-next'
 
 const router = useRouter()
 const user = useUserStore()
@@ -84,6 +84,7 @@ const cats = [
   { icon: Sparkles, label: '新歌' },
   { icon: UsersRound, label: '对唱' },
   { icon: ListMusic, label: '歌单' },
+  { icon: History, label: '最近唱' },
   { icon: Heart, label: '我的收藏' }
 ]
 

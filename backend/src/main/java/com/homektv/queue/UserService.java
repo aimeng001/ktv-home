@@ -11,6 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class UserService {
 
+    public static final int MAX_CLIENT_TOKEN_LENGTH = 256;
+    public static final int MAX_NICKNAME_LENGTH = 40;
+
     private final AppUserRepository userRepo;
 
     public UserService(AppUserRepository userRepo) {
@@ -21,6 +24,7 @@ public class UserService {
     @Transactional
     public Long resolveUserId(String clientToken) {
         if (clientToken == null || clientToken.isBlank()) return null;
+        validateClientToken(clientToken);
         userRepo.insertIfAbsent(clientToken, defaultNickname());
         return userRepo.findByClientToken(clientToken)
                 .orElseThrow(() -> new IllegalStateException("用户创建后无法读取"))
@@ -29,6 +33,8 @@ public class UserService {
 
     @Transactional
     public AppUser upsert(String clientToken, String nickname) {
+        validateClientToken(clientToken);
+        if (nickname != null && !nickname.isBlank()) validateNickname(nickname);
         userRepo.insertIfAbsent(clientToken, defaultNickname());
         AppUser u = userRepo.findByClientToken(clientToken)
                 .orElseThrow(() -> new IllegalStateException("用户创建后无法读取"));
@@ -52,5 +58,24 @@ public class UserService {
 
     private String defaultNickname() {
         return "家人" + (int) (Math.random() * 9000 + 1000);
+    }
+
+    private void validateClientToken(String clientToken) {
+        if (clientToken == null || clientToken.isBlank()) {
+            throw new IllegalArgumentException("client_token 不能为空");
+        }
+        if (clientToken.length() > MAX_CLIENT_TOKEN_LENGTH || containsControlCharacter(clientToken)) {
+            throw new IllegalArgumentException("client_token 长度或字符无效");
+        }
+    }
+
+    private void validateNickname(String nickname) {
+        if (nickname.trim().length() > MAX_NICKNAME_LENGTH || containsControlCharacter(nickname)) {
+            throw new IllegalArgumentException("nickname 长度或字符无效");
+        }
+    }
+
+    private boolean containsControlCharacter(String value) {
+        return value.chars().anyMatch(Character::isISOControl);
     }
 }

@@ -19,6 +19,7 @@ class ControllerActivity : AppCompatActivity() {
 
     private var sessionFingerprint: DeviceSessionFingerprint? = null
     private var updateManager: AndroidUpdateManager? = null
+    private var updateMediaApi: MediaApi? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,6 +28,7 @@ class ControllerActivity : AppCompatActivity() {
             serverHost = initialConfig.serverHost,
             mode = initialConfig.effectiveMode(),
             nickname = initialConfig.nicknameFor(),
+            instanceId = initialConfig.serverForHost(initialConfig.serverHost)?.instanceId,
         )
         applyOrientation()
         setContentView(R.layout.activity_controller)
@@ -38,9 +40,7 @@ class ControllerActivity : AppCompatActivity() {
                 .commit()
         }
         if (initialConfig.isConfigured) {
-            val manager = AndroidUpdateManager(this, MediaApi(initialConfig))
-            updateManager = manager
-            manager.checkForUpdate(lifecycleScope)
+            startUpdateCheck(initialConfig)
         }
     }
 
@@ -52,10 +52,16 @@ class ControllerActivity : AppCompatActivity() {
             serverHost = currentConfig.serverHost,
             mode = currentConfig.effectiveMode(),
             nickname = currentConfig.nicknameFor(),
+            instanceId = currentConfig.serverForHost(currentConfig.serverHost)?.instanceId,
         )
         if (DeviceSessionChangePolicy.requiresRestart(previous, current)) {
             if (current.mode == previous.mode && current.mode == DeviceMode.CONTROLLER) {
-                recreate()
+                startActivity(Intent(this, ControllerActivity::class.java).apply {
+                    putExtra(ControllerFragment.EXTRA_REALTIME, intent.getBooleanExtra(
+                        ControllerFragment.EXTRA_REALTIME, true,
+                    ))
+                })
+                finish()
                 return
             }
             val target = if (current.mode == DeviceMode.CONTROLLER) {
@@ -74,10 +80,24 @@ class ControllerActivity : AppCompatActivity() {
             return
         }
         if (updateManager == null && currentConfig.isConfigured) {
-            val manager = AndroidUpdateManager(this, MediaApi(currentConfig))
-            updateManager = manager
-            manager.checkForUpdate(lifecycleScope)
+            startUpdateCheck(currentConfig)
         }
+    }
+
+    private fun startUpdateCheck(config: AppConfig) {
+        val api = MediaApi(config)
+        updateMediaApi = api
+        updateManager = AndroidUpdateManager(this, api) { message ->
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
+        }
+        updateManager?.checkForUpdate(lifecycleScope)
+    }
+
+    override fun onDestroy() {
+        updateManager = null
+        updateMediaApi?.close()
+        updateMediaApi = null
+        super.onDestroy()
     }
 
     private fun applyOrientation() {

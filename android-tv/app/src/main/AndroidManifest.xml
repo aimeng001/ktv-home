@@ -33,6 +33,8 @@
 
     <application
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/full_backup_content"
         android:banner="@drawable/tv_banner"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -47,6 +49,12 @@
             android:configChanges="orientation|screenSize|keyboardHidden|navigation|uiMode"
             android:screenOrientation="landscape"
             android:launchMode="singleTop"
+            android:theme="@style/Theme.HomeKtvTv" />
+
+        <activity
+            android:name=".ui.ControllerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|navigation|uiMode"
             android:theme="@style/Theme.HomeKtvTv" />
 
         <activity

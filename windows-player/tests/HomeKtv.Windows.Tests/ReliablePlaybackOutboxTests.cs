@@ -1,9 +1,25 @@
+using System.Text.Json;
 using HomeKtv.Windows.ServerConnection;
 
 namespace HomeKtv.Windows.Tests;
 
 public sealed class ReliablePlaybackOutboxTests
 {
+    [Fact]
+    public void Structured_play_error_is_reencoded_with_the_current_generation()
+    {
+        var message = new ReliableMessage(
+            "play_error:42",
+            "legacy",
+            0,
+            new ReliablePlayError(42, 7, "bad media"));
+
+        using var document = JsonDocument.Parse(message.Serialize(9));
+
+        Assert.Equal(9, document.RootElement.GetProperty("payload").GetProperty("generation").GetInt64());
+        Assert.Equal(7, document.RootElement.GetProperty("payload").GetProperty("file_id").GetInt64());
+    }
+
     [Fact]
     public void Same_key_is_deduplicated_and_item_survives_until_terminal_ack()
     {

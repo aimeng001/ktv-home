@@ -40,4 +40,14 @@ class FinishedReportOutboxTest {
         outbox.acknowledge(42L, "ALREADY_APPLIED")
         assertTrue(outbox.pendingQueueIds().isEmpty())
     }
+
+    @Test
+    fun fullQueueIsReportedWithoutPretendingTheReportWasQueued() {
+        val outbox = FinishedReportOutbox((1L..FinishedReportOutbox.MAX_PENDING).toList())
+
+        assertEquals(
+            FinishedReportOutbox.EnqueueResult.FULL,
+            outbox.enqueue(FinishedReportOutbox.MAX_PENDING + 1L),
+        )
+    }
 }

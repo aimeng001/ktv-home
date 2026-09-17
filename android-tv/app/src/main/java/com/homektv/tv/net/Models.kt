@@ -21,6 +21,8 @@ data class SongDto(
     val coverUrl: String? = null,      // 形如 /api/cover/{id}
     val playCount: Int = 0,
     val artistAvatarUrl: String? = null,
+    /** Optional eight-digit commercial catalog number parsed from the filename. */
+    val catalogNumber: String = "",
 )
 
 @Serializable
@@ -102,6 +104,8 @@ data class QueueSnapshot(
     val connectedPhones: Long = 0,
     val positionMs: Long = 0,
     val seekSequence: Long = 0,
+    /** Monotonic server snapshot revision; zero is the legacy/unversioned value. */
+    val stateRevision: Long = 0,
 )
 
 @Serializable
@@ -116,6 +120,7 @@ data class QueueSnapshotHeader(
     val connectedPhones: Long = 0,
     val positionMs: Long = 0,
     val seekSequence: Long = 0,
+    val stateRevision: Long = 0,
 ) {
     fun toSnapshot(entries: List<QueueEntry>): QueueSnapshot = QueueSnapshot(
         playing = playing,
@@ -129,6 +134,7 @@ data class QueueSnapshotHeader(
         connectedPhones = connectedPhones,
         positionMs = positionMs,
         seekSequence = seekSequence,
+        stateRevision = stateRevision,
     )
 }
 
@@ -181,6 +187,8 @@ data class SongDetail(
     val playCount: Int = 0,
     val files: List<FileSource> = emptyList(),
     val artistAvatarUrl: String? = null,
+    /** Optional eight-digit commercial catalog number parsed from the filename. */
+    val catalogNumber: String = "",
 )
 
 @Serializable
@@ -192,6 +200,8 @@ data class FileSource(
     val vocalConfidence: String? = null,
     val resolution: String? = null,
     val priority: Int = 0,
+    /** 服务端派生：该文件是否已完成媒体探测；null 表示旧服务端未下发该字段。 */
+    val ready: Boolean? = null,
     val audioLayout: AudioLayout = AudioLayout(),
 )
 

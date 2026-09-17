@@ -110,6 +110,7 @@ public class PlaylistPublicService {
         Long userId = userService.resolveUserId(clientToken);
         int ordered = 0;
         int skipped = 0;
+        boolean queueFull = false;
         for (PlaylistSong item : playlistSongRepository.findByPlaylistIdOrderBySortOrder(playlistId)) {
             try {
                 queueService.order(item.getSongId(), userId, false);
@@ -117,6 +118,9 @@ public class PlaylistPublicService {
             } catch (ApiException exception) {
                 if (SKIPPABLE_ORDER_ERRORS.contains(exception.getCode())) {
                     skipped++;
+                } else if ("QUEUE_FULL".equals(exception.getCode())) {
+                    queueFull = true;
+                    break;
                 } else {
                     throw exception;
                 }
@@ -128,24 +132,7 @@ public class PlaylistPublicService {
             broadcaster.broadcastPlayback(WsEvent.of(WsEvent.QUEUE_UPDATED, snapshot));
             if (started) broadcaster.broadcastPlayback(WsEvent.of(WsEvent.NOW_PLAYING, snapshot));
         }
-        return Map.of("ordered", ordered, "skipped", skipped, "snapshot", snapshot);
-    }
-
-    @Transactional
-    public Map<String, Object> addSong(Long playlistId, Long songId) {
-        requirePublic(playlistId);
-        if (!songRepository.existsById(songId)) throw new ApiException("SONG_NOT_FOUND", "歌曲不存在");
-        playlistSongRepository.lockPlaylist(playlistId);
-        List<PlaylistSong> current = playlistSongRepository.findByPlaylistIdOrderBySortOrder(playlistId);
-        if (current.stream().anyMatch(item -> item.getSongId().equals(songId))) {
-            return Map.of("added", false, "songCount", current.size());
-        }
-        if (current.size() >= MAX_PLAYLIST_SONGS) {
-            throw new ApiException("PLAYLIST_SONG_LIMIT", "每个歌单最多包含 " + MAX_PLAYLIST_SONGS + " 首歌曲");
-        }
-        int sortOrder = current.stream().mapToInt(PlaylistSong::getSortOrder).max().orElse(-1) + 1;
-        playlistSongRepository.insertManualIfAbsent(playlistId, songId, sortOrder);
-        return Map.of("added", true, "songCount", current.size() + 1);
+        return Map.of("ordered", ordered, "skipped", skipped, "queueFull", queueFull, "snapshot", snapshot);
     }
 
     private Playlist requirePublic(Long id) {

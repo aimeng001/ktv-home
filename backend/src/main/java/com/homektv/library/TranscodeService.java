@@ -73,9 +73,10 @@ public class TranscodeService {
             throw new ApiException(LibraryModePolicy.EXTERNAL_READ_ONLY_CODE,
                     "EXTERNAL_READ_ONLY：禁止转码外部曲库源文件");
         }
-        Path input = Path.of(source.getFilePath());
-        if (!Files.isReadable(input)) throw new ApiException("FILE_NOT_FOUND", "源文件不可读：" + input);
+        Path input = LibraryModePolicy.requireReadablePathInsideActiveLibrary(
+                props, Path.of(source.getFilePath()));
         Path desired = input.resolveSibling(stripExtension(input.getFileName().toString()) + ".mkv");
+        desired = LibraryModePolicy.requirePathInsideActiveLibrary(props, desired);
         SongFile existing = files.findByFilePath(desired.toString()).orElse(null);
         try {
             if (existing != null && Files.isReadable(desired) && Files.size(desired) > 0) {
@@ -120,6 +121,11 @@ public class TranscodeService {
             derivative.setFileSize(Files.size(output));
             derivative.setFileMtime(java.time.OffsetDateTime.now());
             derivative.setPriority(source.getPriority() + 100);
+            // 转码产物尚未 FFprobe：标记为待探测，避免探测完成前被判为可播放行并下发。
+            // The derivative has not been probed yet: keep it out of the playable set
+            // until FFprobe persists a concrete media type.
+            derivative.setMediaType(MediaClassifier.PENDING_PROBE);
+            derivative.setProbePending(true);
             derivative.setValid(true);
             derivative = files.save(derivative);
             completed = true;

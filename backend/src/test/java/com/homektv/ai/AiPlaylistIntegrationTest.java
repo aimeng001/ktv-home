@@ -3,6 +3,8 @@ package com.homektv.ai;
 import com.homektv.domain.Playlist;
 import com.homektv.domain.PlaylistSong;
 import com.homektv.domain.Song;
+import com.homektv.domain.AiAnalysisTask;
+import com.homektv.repo.AiAnalysisTaskRepository;
 import com.homektv.repo.PlaylistRepository;
 import com.homektv.repo.PlaylistSongRepository;
 import com.homektv.repo.SongRepository;
@@ -16,6 +18,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -40,6 +43,7 @@ class AiPlaylistIntegrationTest {
     @Autowired PlaylistRepository playlistRepository;
     @Autowired PlaylistSongRepository playlistSongRepository;
     @Autowired SongRepository songRepository;
+    @Autowired AiAnalysisTaskRepository aiAnalysisTaskRepository;
 
     @Test
     void invalidPreviewDoesNotLeavePlaylistOrAssociations() {
@@ -70,6 +74,59 @@ class AiPlaylistIntegrationTest {
         assertThat(playlistSongRepository.findByPlaylistIdOrderBySortOrder(playlist.getId()))
                 .extracting(PlaylistSong::getSongId)
                 .containsExactly(second.getId(), first.getId());
+    }
+
+    @Test
+    void playlistListReturnsGroupedSongAndManualCounts() {
+        String suffix = String.valueOf(System.nanoTime());
+        Playlist playlist = new Playlist();
+        playlist.setName("摘要歌单-" + suffix);
+        playlist.setDescription("摘要测试");
+        playlist = playlistRepository.saveAndFlush(playlist);
+        Song first = saveSong("摘要一-" + suffix, "artist-" + suffix, "summary-first-" + suffix);
+        Song second = saveSong("摘要二-" + suffix, "artist-" + suffix, "summary-second-" + suffix);
+
+        PlaylistSong automatic = new PlaylistSong();
+        automatic.setPlaylistId(playlist.getId());
+        automatic.setSongId(first.getId());
+        automatic.setSortOrder(0);
+        automatic.setManual(false);
+        PlaylistSong manual = new PlaylistSong();
+        manual.setPlaylistId(playlist.getId());
+        manual.setSongId(second.getId());
+        manual.setSortOrder(1);
+        manual.setManual(true);
+        playlistSongRepository.saveAll(List.of(automatic, manual));
+        playlistSongRepository.flush();
+
+        Long playlistId = playlist.getId();
+        Map<String, Object> summary = service.listPlaylists().stream()
+                .filter(value -> playlistId.equals(value.get("id")))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(summary).containsEntry("songCount", 2L)
+                .containsEntry("manualCount", 1L);
+    }
+    @Test
+    void activeSongAnalysisTasksAreUniqueAtTheDatabaseBoundary() {
+        String suffix = String.valueOf(System.nanoTime());
+        Song song = saveSong("任务幂等-" + suffix, "artist-" + suffix, "task-idempotency-" + suffix);
+
+        aiAnalysisTaskRepository.saveAndFlush(taskFor(song.getId()));
+
+        assertThatThrownBy(() -> aiAnalysisTaskRepository.saveAndFlush(taskFor(song.getId())))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    private AiAnalysisTask taskFor(Long songId) {
+        AiAnalysisTask task = new AiAnalysisTask();
+        task.setSongId(songId);
+        task.setTargetType("SONG");
+        task.setTargetId(songId);
+        task.setModelRole("LOCAL");
+        task.setModel("LOCAL");
+        return task;
     }
 
     private Song saveSong(String title, String artist, String fingerprint) {

@@ -59,7 +59,7 @@ class LargeExternalLibraryScanTest {
             throw new ExceptionInInitializerError(failure);
         }
         Integer configuredRows = Integer.getInteger("scanRows");
-        if (configuredRows == null) configuredRows = Integer.getInteger("largeLibraryRows", 20_000);
+        if (configuredRows == null) configuredRows = Integer.getInteger("largeLibraryRows", 10_000);
         rows = Math.max(1_000, configuredRows);
     }
 

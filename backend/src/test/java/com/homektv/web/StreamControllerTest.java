@@ -41,8 +41,10 @@ class StreamControllerTest {
             songFile.setMediaType("KTV_VIDEO");
             SongFileRepository repository = mock(SongFileRepository.class);
             when(repository.findById(1L)).thenReturn(Optional.of(songFile));
+            AppProperties props = new AppProperties();
+            props.setKtvLibraryPath(media.getParent().toString());
 
-            var response = new StreamController(repository).stream(1L, "bytes=0-");
+            var response = new StreamController(repository, props).stream(1L, "bytes=0-");
             ByteArrayOutputStream output = new ByteArrayOutputStream();
             StreamingResponseBody body = response.getBody();
             assertThat(body).isNotNull();
@@ -78,6 +80,27 @@ class StreamControllerTest {
         } finally {
             Files.deleteIfExists(media);
         }
+    }
+
+    @Test
+    void managedModeDoesNotStreamAReadyFileOutsideTheKtvLibraryRoot() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("music"));
+        Path outside = tempDir.resolve("outside.mkv");
+        Files.write(outside, new byte[]{0x01, 0x02});
+
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(outside.toString());
+        songFile.setFormat("mkv");
+        songFile.setMediaType("KTV_VIDEO");
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(5L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+
+        var response = new StreamController(repository, props).stream(5L, null);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).isNull();
     }
 
     @Test

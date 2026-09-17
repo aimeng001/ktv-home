@@ -36,12 +36,78 @@ export function isAiConfigured(config) {
   return Boolean(config?.enabled && config?.baseUrl && config?.bulkModel)
 }
 
+/** 与后端 SettingService.MAX_STANDBY_SONGS 保持一致。 */
+export const MAX_STANDBY_SONGS = 100
+
+export const TRANSCODE_SETTING_KEYS = [
+  'direct_copy_containers',
+  'direct_copy_video_codecs',
+  'direct_copy_audio_codecs',
+  'transcode_audio_only',
+  'transcode_output_container',
+  'transcode_video_codec',
+  'transcode_audio_codec',
+  'transcode_hardware_acceleration'
+]
+
+export function mergeSettingsSection(current = {}, server = {}, keys = []) {
+  const merged = { ...current }
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(server, key)) merged[key] = server[key]
+  }
+  return merged
+}
+
+export function canStartSettingsSave(saving) {
+  return !saving
+}
+
+/** 解析逗号/空白分隔的文本或数组，产出合法待机歌曲 ID（正整数、保序、去重）。 */
+function collectStandbySongIds(value) {
+  const raw = Array.isArray(value) ? value : String(value ?? '').split(/[,，\s]+/)
+  const ids = []
+  const seen = new Set()
+  for (const item of raw) {
+    const id = Number(item)
+    if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue
+    seen.add(id)
+    ids.push(id)
+  }
+  return ids
+}
+
+/**
+ * 服务端 putEditable 会在 standby_song_ids 超过上限或含重复时整包 400。
+ * 前端在提交与加载时都用同一套约束，避免"库里陈旧脏值导致任何基础设置都保存不了"。
+ */
+export function normalizeStandbySongIds(value) {
+  return collectStandbySongIds(value).slice(0, MAX_STANDBY_SONGS)
+}
+
+/** 归一化过程中是否发生了截断，用于给管理员明确提示。 */
+export function exceedsStandbySongLimit(value) {
+  return collectStandbySongIds(value).length > MAX_STANDBY_SONGS
+}
+
+/**
+ * 批量保存失败时的提示文案。必须带上每个分区的具体失败原因，
+ * 否则任何字段级校验错误都只会显示成"基础设置 保存失败"，管理员无法定位。
+ */
+export function describeSaveFailures(failures = []) {
+  return failures
+    .map(item => (item?.error?.message ? `${item.name}（${item.error.message}）` : item?.name))
+    .join('、')
+}
+
 export function canonicalizeSettings(settings = {}) {
   const result = { ...settings }
   if (!String(result.display_address ?? '').trim()) {
     result.display_address = result.qr_address ?? ''
   }
   delete result.qr_address
+  if (Object.prototype.hasOwnProperty.call(result, 'standby_song_ids')) {
+    result.standby_song_ids = normalizeStandbySongIds(result.standby_song_ids)
+  }
   return result
 }
 

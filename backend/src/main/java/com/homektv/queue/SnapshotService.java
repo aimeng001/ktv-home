@@ -21,6 +21,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 组装队列+播放状态快照（详设§11.1 / §4.2 sync_full）。
@@ -34,6 +35,12 @@ public class SnapshotService {
     private final AppUserRepository userRepo;
     private final com.homektv.ws.WsBroadcaster broadcaster;
     private final SongFileRepository songFileRepo;
+    /**
+     * Monotonic wire revision used to reject an older HTTP response arriving
+     * after a newer WebSocket snapshot.  The millisecond seed remains within
+     * JavaScript's exact integer range and avoids a zero value for new clients.
+     */
+    private final AtomicLong snapshotRevision = new AtomicLong(System.currentTimeMillis());
 
     @Autowired
     public SnapshotService(PlayerStateRepository playerRepo, QueueItemRepository queueRepo,
@@ -56,6 +63,7 @@ public class SnapshotService {
 
     @Transactional(readOnly = true)
     public QueueSnapshot snapshot() {
+        long stateRevision = snapshotRevision.incrementAndGet();
         PlayerState ps = playerRepo.getSingleton();
         long waitingCount = queueRepo.countByStatus(QueueService.WAITING);
         if (waitingCount > QueueService.MAX_WAITING_ITEMS) {
@@ -108,7 +116,7 @@ public class SnapshotService {
         return new QueueSnapshot(nowPlaying, list, ps.getState(), ps.getVolume(),
                 ps.isMuted(), ps.getVocalMode(), audioLayout,
                 broadcaster.isTvOnline(), broadcaster.connectedPhonesCount(),
-                ps.getPositionMs(), ps.getSeekSequence());
+                ps.getPositionMs(), ps.getSeekSequence(), stateRevision);
     }
 
     private void addIds(QueueItem item, Set<Long> songIds, Set<Long> userIds) {

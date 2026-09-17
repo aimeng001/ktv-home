@@ -6,13 +6,15 @@
     </div>
 
     <div class="batch-tools">
-      <button class="button" :disabled="busy || !configured || !selectedIds.length" @click="createSelected"><Sparkles :size="15" />为选中歌曲生成（{{ selectedIds.length }}）</button>
+      <button v-if="selectedIds.length" class="button" :disabled="busy || !configured" @click="createSelected"><Sparkles :size="15" />为选中歌曲生成（{{ selectedIds.length }}）</button>
+      <span v-else class="selection-hint">请在 KTV 曲库选择歌曲后批量生成</span>
       <label><span>未分类数量</span><input v-model.number="batchLimit" type="number" min="1" max="500" /></label>
       <button class="button ghost" :disabled="busy || !configured" @click="createUnclassified">分析未分类歌曲</button>
       <button class="button ghost" :disabled="busy || !configured" @click="repairLibrary"><WandSparkles :size="15" />修复现有曲库</button>
     </div>
 
     <div v-if="!configured" class="notice warning">AI 尚未配置，当前仍使用本地解析。<router-link :to="{name:'admin-settings',query:{section:'ai'}}">前往配置</router-link></div>
+    <div v-if="loadError" class="notice error-notice" role="alert">AI 任务读取失败：{{ loadError }} <button class="button ghost small" @click="refresh">重试</button></div>
     <div v-if="message" class="notice">{{ message }}</div>
     <div v-if="repairBatchId" class="repair-status">
       <div><strong>修复批次</strong><span>{{ repairProgress.completed }} / {{ repairProgress.total }}</span><span>待审核 {{ repairProgress.review }}</span><span>失败 {{ repairProgress.failed }}</span></div>
@@ -50,14 +52,26 @@ import { onMounted, reactive, ref } from 'vue'
 import { CheckCircle2, Pause, Play, RefreshCw, Settings2, Sparkles, WandSparkles, X } from 'lucide-vue-next'
 import api from '../../api/client'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
+import { loadAiTaskData } from '../../views/admin/aiTaskState'
 
 const props=defineProps({selectedIds:{type:Array,default:()=>[]}})
 const emit=defineEmits(['close','applied'])
-const loading=ref(false),busy=ref(false),configured=ref(false),message=ref(''),tasks=ref([]),batchLimit=ref(50),repairBatchId=ref('')
+const loading=ref(false),busy=ref(false),configured=ref(false),message=ref(''),loadError=ref(''),tasks=ref([]),batchLimit=ref(50),repairBatchId=ref('')
 const drafts=reactive({}),mergeTargets=reactive({}),repairProgress=reactive({total:0,completed:0,review:0,failed:0,paused:0,running:false})
 
 onMounted(refresh)
-async function refresh(){loading.value=true;try{const [values,config]=await Promise.all([api.adminAiTasks().catch(()=>[]),api.adminAiConfig().catch(()=>({}))]);tasks.value=values;configured.value=!!(config.enabled&&config.baseUrl&&config.bulkModel)}finally{loading.value=false}}
+async function refresh(){
+  loading.value=true
+  loadError.value=''
+  try{
+    const result=await loadAiTaskData(()=>api.adminAiTasks(),()=>api.adminAiConfig())
+    tasks.value=result.tasks
+    const config=result.config
+    configured.value=!!(config.enabled&&config.baseUrl&&config.bulkModel)
+    const errors=Object.values(result.errors).filter(Boolean)
+    if(errors.length)loadError.value=errors.map(error=>error.message||'读取失败').join('；')
+  }finally{loading.value=false}
+}
 function parseResult(task){try{return JSON.parse(task.resultJson||'{}')}catch{return{}}}
 function draft(task){if(!drafts[task.id]){const value=parseResult(task);drafts[task.id]={title:value.title||task.targetTitle||'',artist:value.artist||task.targetArtist||'',artistGender:value.artistGender||'未知',language:value.language||'未知',era:value.era||'未知',ageRange:value.ageRange||'未知',vocalForm:value.vocalForm||'未知',confidence:Number(value.confidence||0),genresText:(value.genres||[]).join(', '),themesText:(value.themes||[]).join(', '),reason:value.reason||''}}return drafts[task.id]}
 function splitTags(value){return String(value||'').split(/[,，]/).map(item=>item.trim()).filter(Boolean)}

@@ -39,13 +39,25 @@
                 android:orientation="horizontal">
 
                 <Button
-                    android:id="@+id/tabPinyin"
+                    android:id="@+id/tabDashboard"
                     android:layout_width="wrap_content"
                     android:layout_height="42dp"
                     android:background="@drawable/btn_gold"
                     android:textColor="#111317"
-                    android:text="拼音点歌"
+                    android:text="首页大厅"
                     android:textStyle="bold"
+                    android:textSize="13sp"
+                    android:paddingHorizontal="16dp"
+                    android:focusable="true" />
+
+                <Button
+                    android:id="@+id/tabPinyin"
+                    android:layout_width="wrap_content"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="10dp"
+                    android:background="@drawable/btn_keyboard_key"
+                    android:textColor="@color/color_keyboard_key_text"
+                    android:text="拼音点歌"
                     android:textSize="13sp"
                     android:paddingHorizontal="16dp"
                     android:focusable="true" />
@@ -152,12 +164,20 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1">
 
+                <!-- 商业点歌机大磁贴控制台大厅 -->
+                <com.homektv.tv.ui.kiosk.KtvCommercialDashboardView
+                    android:id="@+id/kioskDashboardView"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:visibility="visible" />
+
                 <!-- 拼音搜歌面板 -->
                 <LinearLayout
                     android:id="@+id/panelPinyin"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:visibility="gone">
 
                     <!-- 左：26 字母软键盘 -->
                     <com.homektv.tv.ui.KtvKeyboardView
@@ -199,10 +219,62 @@
                     android:orientation="vertical"
                     android:visibility="gone">
 
+                    <LinearLayout
+                        android:id="@+id/singerFilterRow"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="8dp">
+
+                        <Button
+                            android:id="@+id/btnSingerAll"
+                            android:layout_width="wrap_content"
+                            android:layout_height="40dp"
+                            android:background="@drawable/btn_gold"
+                            android:text="全部"
+                            android:textColor="#111317"
+                            android:textSize="12sp"
+                            android:focusable="true" />
+
+                        <Button
+                            android:id="@+id/btnSingerMale"
+                            android:layout_width="wrap_content"
+                            android:layout_height="40dp"
+                            android:layout_marginStart="8dp"
+                            android:background="@drawable/btn_keyboard_key"
+                            android:text="男歌手"
+                            android:textColor="@color/color_keyboard_key_text"
+                            android:textSize="12sp"
+                            android:focusable="true" />
+
+                        <Button
+                            android:id="@+id/btnSingerFemale"
+                            android:layout_width="wrap_content"
+                            android:layout_height="40dp"
+                            android:layout_marginStart="8dp"
+                            android:background="@drawable/btn_keyboard_key"
+                            android:text="女歌手"
+                            android:textColor="@color/color_keyboard_key_text"
+                            android:textSize="12sp"
+                            android:focusable="true" />
+
+                        <Button
+                            android:id="@+id/btnSingerGroup"
+                            android:layout_width="wrap_content"
+                            android:layout_height="40dp"
+                            android:layout_marginStart="8dp"
+                            android:background="@drawable/btn_keyboard_key"
+                            android:text="组合"
+                            android:textColor="@color/color_keyboard_key_text"
+                            android:textSize="12sp"
+                            android:focusable="true" />
+                    </LinearLayout>
+
                     <androidx.recyclerview.widget.RecyclerView
                         android:id="@+id/singerRecyclerView"
                         android:layout_width="match_parent"
-                        android:layout_height="match_parent" />
+                        android:layout_height="0dp"
+                        android:layout_weight="1" />
                 </LinearLayout>
 
                 <!-- 榜单热歌面板 -->

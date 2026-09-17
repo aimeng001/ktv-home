@@ -107,12 +107,12 @@ export const api = {
   history: () => request('/history'),
   recentHistory: (clientToken, mine = false) => request(`/history/recent?clientToken=${encodeURIComponent(clientToken || '')}&mine=${mine}`),
   repeatHistory: (historyId, clientToken, force = false) => request(`/history/${historyId}/repeat`, { method: 'POST', body: JSON.stringify({ clientToken, force }) }),
-  favorites: (clientToken) => request(`/favorites?clientToken=${encodeURIComponent(clientToken || '')}`),
-  favoriteIds: (clientToken) => request(`/favorites/ids?clientToken=${encodeURIComponent(clientToken || '')}`),
+  favorites: (clientToken, page = null, size = 100, options = {}) => request(`/favorites?clientToken=${encodeURIComponent(clientToken || '')}${page == null ? '' : `&page=${page}&size=${size}`}`, options),
+  favoriteIds: (clientToken, page = null, size = 100, options = {}) => request(`/favorites/ids?clientToken=${encodeURIComponent(clientToken || '')}${page == null ? '' : `&page=${page}&size=${size}`}`, options),
   addFavorite: (songId, clientToken) => request(`/favorites/${songId}`, { method: 'POST', body: JSON.stringify({ clientToken }) }),
   removeFavorite: (songId, clientToken) => request(`/favorites/${songId}?clientToken=${encodeURIComponent(clientToken || '')}`, { method: 'DELETE' }),
   playlists: () => request('/playlists'),
-  playlistDetail: (id) => request(`/playlists/${id}`),
+  playlistDetail: (id, options = {}) => request(`/playlists/${id}`, options),
   orderPlaylist: (id, clientToken) => request(`/playlists/${id}/order`, { method: 'POST', body: JSON.stringify({ clientToken }) }),
   browseArtists: () => request('/browse/artists'),
   browseArtistPage: (params = {}) => request('/browse/artists/page?' + new URLSearchParams(
@@ -139,9 +139,9 @@ export const api = {
   adminLogin: (password) => request('/admin/auth/login', { method: 'POST', body: JSON.stringify({ password }) }),
   adminLogout: () => request('/admin/auth/logout', { method: 'POST' }),
   adminStatus: () => request('/admin/status'),
-  adminSongs: (params = {}) => request('/admin/songs?' + new URLSearchParams(
+  adminSongs: (params = {}, options = {}) => request('/admin/songs?' + new URLSearchParams(
     Object.entries(params).filter(([, value]) => value !== '' && value != null)
-  ).toString()),
+  ).toString(), options),
   adminSong: (id) => request(`/admin/songs/${id}`),
   adminEditSong: (id, body) => request(`/admin/songs/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   adminUpdateAudioLayout: (fileId, body) => request(`/admin/files/${fileId}/audio-layout`, { method: 'PUT', body: JSON.stringify(body) }),
@@ -152,9 +152,9 @@ export const api = {
   adminTranscodeSong: (id) => request(`/admin/songs/${id}/transcode`, { method: 'POST' }),
   adminImports: (action = '', page = 0, size = 20) => request(`/admin/imports?action=${encodeURIComponent(action)}&page=${page}&size=${size}`),
   adminDeleteImportSource: (id) => request(`/admin/imports/${id}/source`, { method: 'DELETE' }),
-  adminSourceLibrary: (params = {}) => request('/admin/source-library?' + new URLSearchParams(
+  adminSourceLibrary: (params = {}, options = {}) => request('/admin/source-library?' + new URLSearchParams(
     Object.entries(params).filter(([, value]) => value !== '' && value != null)
-  ).toString()),
+  ).toString(), options),
   adminStartSourceTranscode: (ids = [], all = false) => request('/admin/source-library/transcode', { method: 'POST', body: JSON.stringify({ ids, all }) }),
   adminPrioritizeSourceTranscode: (id) => request('/admin/source-library/transcode/priority', { method: 'POST', body: JSON.stringify({ id }) }),
   adminSourceTranscodeProgress: () => request('/admin/source-library/progress'),
@@ -258,8 +258,12 @@ export const api = {
  * @param {string} clientToken - 客户端用户标识 / client user identifier
  * @returns {object} 控制方法集合 / collection of control methods
  */
-export function makeControls(clientToken) {
-  const c = (action, params) => api.control(action, params, clientToken)
+export function makeControls(clientToken, { onResponse } = {}) {
+  const c = async (action, params) => {
+    const response = await api.control(action, params, clientToken)
+    onResponse?.(response)
+    return response
+  }
   return {
     order: (songId, force = false) => c('order', { song_id: songId, force }),
     top: (queueId) => c('top', { queue_id: queueId }),

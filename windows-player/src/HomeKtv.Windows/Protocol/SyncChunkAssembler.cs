@@ -24,26 +24,35 @@ public sealed class SyncChunkAssembler
     };
 
     private readonly object gate = new();
-    private readonly Dictionary<int, IReadOnlyList<QueueEntry>> chunks = new();
+    private sealed class AssemblyState
+    {
+        public required string EventType { get; init; }
+        public required int Total { get; init; }
+        public required QueueSnapshotHeader Header { get; init; }
+        public Dictionary<int, IReadOnlyList<QueueEntry>> Chunks { get; } = new();
+        public int EntryCount { get; set; }
+        public long LastTouched { get; set; }
+    }
+
+    private readonly Dictionary<string, AssemblyState> assemblies = new(StringComparer.Ordinal);
     private readonly int maxChunks;
     private readonly int maxEntries;
     private readonly int maxChunkBytes;
-    private string? syncId;
-    private string? eventType;
-    private int total;
-    private QueueSnapshotHeader? header;
-    private int entryCount;
+    private readonly int maxConcurrentSyncs;
+    private long touchSequence;
 
     public SyncChunkAssembler(
         int maxChunks = MaxSyncChunks,
         int maxEntries = MaxQueueEntries,
-        int maxChunkBytes = MaxMessageBytes)
+        int maxChunkBytes = MaxMessageBytes,
+        int maxConcurrentSyncs = 4)
     {
-        if (maxChunks <= 0 || maxEntries <= 0 || maxChunkBytes <= 0)
+        if (maxChunks <= 0 || maxEntries <= 0 || maxChunkBytes <= 0 || maxConcurrentSyncs <= 0)
             throw new ArgumentOutOfRangeException();
         this.maxChunks = maxChunks;
         this.maxEntries = maxEntries;
         this.maxChunkBytes = maxChunkBytes;
+        this.maxConcurrentSyncs = maxConcurrentSyncs;
     }
 
     public AssembledSnapshot? Accept(QueueSnapshotChunk chunk, int wireBytes = 0)
@@ -66,59 +75,62 @@ public sealed class SyncChunkAssembler
                 return null;
             }
 
-            if (syncId is null)
+            if (!assemblies.TryGetValue(chunk.SyncId, out var assembly))
             {
-                syncId = chunk.SyncId;
-                eventType = chunk.EventType;
-                total = chunk.Total;
-                header = chunk.Header;
-            }
-            else if (syncId != chunk.SyncId)
-            {
-                ResetUnsafe();
-                syncId = chunk.SyncId;
-                eventType = chunk.EventType;
-                total = chunk.Total;
-                header = chunk.Header;
-            }
-            else if (eventType != chunk.EventType
-                || total != chunk.Total
-                || !Equals(header, chunk.Header))
-            {
-                ResetUnsafe();
-                return null;
-            }
-
-            if (chunks.ContainsKey(chunk.Index))
-            {
-                ResetUnsafe();
-                return null;
-            }
-            if (entryCount + entries.Count > maxEntries)
-            {
-                ResetUnsafe();
-                return null;
-            }
-
-            chunks[chunk.Index] = entries;
-            entryCount += entries.Count;
-            if (chunks.Count != total) return null;
-
-            var combined = new List<QueueEntry>(entryCount);
-            for (var index = 0; index < total; index++)
-            {
-                if (!chunks.TryGetValue(index, out var page))
+                if (assemblies.Count >= maxConcurrentSyncs)
                 {
-                    ResetUnsafe();
+                    var oldest = assemblies.MinBy(item => item.Value.LastTouched).Key;
+                    assemblies.Remove(oldest);
+                }
+
+                assembly = new AssemblyState
+                {
+                    EventType = chunk.EventType,
+                    Total = chunk.Total,
+                    Header = chunk.Header,
+                    LastTouched = ++touchSequence,
+                };
+                assemblies.Add(chunk.SyncId, assembly);
+            }
+            else if (assembly.EventType != chunk.EventType
+                || assembly.Total != chunk.Total
+                || !Equals(assembly.Header, chunk.Header))
+            {
+                assemblies.Remove(chunk.SyncId);
+                return null;
+            }
+            assembly.LastTouched = ++touchSequence;
+
+            if (assembly.Chunks.ContainsKey(chunk.Index))
+            {
+                assemblies.Remove(chunk.SyncId);
+                return null;
+            }
+            if (assembly.EntryCount + entries.Count > maxEntries)
+            {
+                assemblies.Remove(chunk.SyncId);
+                return null;
+            }
+
+            assembly.Chunks[chunk.Index] = entries;
+            assembly.EntryCount += entries.Count;
+            if (assembly.Chunks.Count != assembly.Total) return null;
+
+            var combined = new List<QueueEntry>(assembly.EntryCount);
+            for (var index = 0; index < assembly.Total; index++)
+            {
+                if (!assembly.Chunks.TryGetValue(index, out var page))
+                {
+                    assemblies.Remove(chunk.SyncId);
                     return null;
                 }
                 combined.AddRange(page);
             }
 
             var result = new AssembledSnapshot(
-                eventType!,
-                header!.ToSnapshot(combined));
-            ResetUnsafe();
+                assembly.EventType,
+                assembly.Header.ToSnapshot(combined));
+            assemblies.Remove(chunk.SyncId);
             return result;
         }
     }
@@ -130,11 +142,6 @@ public sealed class SyncChunkAssembler
 
     private void ResetUnsafe()
     {
-        syncId = null;
-        eventType = null;
-        total = 0;
-        header = null;
-        entryCount = 0;
-        chunks.Clear();
+        assemblies.Clear();
     }
 }

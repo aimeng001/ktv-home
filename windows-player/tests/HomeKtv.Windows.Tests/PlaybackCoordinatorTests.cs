@@ -1,5 +1,7 @@
+using System.Text.Json;
 using HomeKtv.Windows.Playback;
 using HomeKtv.Windows.Protocol;
+using HomeKtv.Windows.ServerConnection;
 
 namespace HomeKtv.Windows.Tests;
 
@@ -12,8 +14,8 @@ public sealed class PlaybackCoordinatorTests
         var api = new FakeServerApi(FileSourceFor(AudioLayout.DUAL_CHANNEL));
         var coordinator = new PlaybackCoordinator(api, output);
 
-        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("accompaniment"));
-        await coordinator.ApplySnapshotAsync("vocal_changed", Snapshot("original"));
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("accompaniment", audioLayout: AudioLayout.DUAL_CHANNEL));
+        await coordinator.ApplySnapshotAsync("vocal_changed", Snapshot("original", audioLayout: AudioLayout.DUAL_CHANNEL));
 
         Assert.Equal(1, output.LoadCount);
         Assert.Equal(0, output.SeekCount);
@@ -29,7 +31,7 @@ public sealed class PlaybackCoordinatorTests
         var api = new FakeServerApi(FileSourceFor(AudioLayout.DUAL_TRACK));
         var coordinator = new PlaybackCoordinator(api, output);
 
-        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("accompaniment"));
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("accompaniment", audioLayout: AudioLayout.DUAL_TRACK));
 
         Assert.Equal(new[] { 1 }, output.AudioTrackIndices);
         Assert.Equal(1, output.LoadCount);
@@ -204,6 +206,7 @@ public sealed class PlaybackCoordinatorTests
 
         Assert.Equal(1, exception.QueueId);
         Assert.Null(exception.FileId);
+        Assert.Equal(PlaybackFailureKind.MediaMissing, exception.FailureKind);
     }
 
     [Fact]
@@ -217,6 +220,37 @@ public sealed class PlaybackCoordinatorTests
             coordinator.ApplySnapshotAsync("sync_full", Snapshot("original")));
 
         Assert.Equal(10, exception.FileId);
+        Assert.Equal(PlaybackFailureKind.OutputFailure, exception.FailureKind);
+        Assert.Equal(1, output.StopCount);
+    }
+
+    [Fact]
+    public async Task Server_auth_failure_stops_local_projection_without_skipping_queue()
+    {
+        var output = new RecordingPlaybackOutput();
+        var coordinator = new PlaybackCoordinator(
+            new ThrowingServerApi(new KtvApiException(401, "UNAUTHORIZED", "bad credential")), output);
+
+        var exception = await Assert.ThrowsAsync<KtvApiException>(() =>
+            coordinator.ApplySnapshotAsync("sync_full", Snapshot("original")));
+
+        Assert.Equal(401, exception.StatusCode);
+        Assert.Equal(1, output.StopCount);
+        Assert.Null(coordinator.ActiveOutput);
+    }
+
+    [Fact]
+    public async Task Invalidate_output_projection_stops_an_already_loaded_output()
+    {
+        var output = new RecordingPlaybackOutput();
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO)), output);
+
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original"));
+        await coordinator.InvalidateOutputProjectionAsync();
+
+        Assert.Equal(1, output.StopCount);
+        Assert.Null(coordinator.ActiveOutput);
     }
 
     [Fact]
@@ -255,7 +289,7 @@ public sealed class PlaybackCoordinatorTests
             (work, cancellationToken) => coordinator.ApplySnapshotAsync(
                 work.EventType, work.Snapshot, cancellationToken, work.IsCurrent));
 
-        pump.Submit("now_playing", Snapshot("accompaniment", state: "playing"));
+        pump.Submit("now_playing", Snapshot("accompaniment", state: "playing", audioLayout: AudioLayout.DUAL_CHANNEL));
         await output.FirstLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         pump.Submit(
@@ -266,7 +300,8 @@ public sealed class PlaybackCoordinatorTests
                 volume: 22,
                 muted: true,
                 positionMs: 4_321,
-                seekSequence: 1));
+                seekSequence: 1,
+                audioLayout: AudioLayout.DUAL_CHANNEL));
         output.ReleaseFirstLoad.TrySetResult(true);
         await pump.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -278,6 +313,89 @@ public sealed class PlaybackCoordinatorTests
         Assert.Equal(new[] { ChannelMapMode.LEFT_MONO }, output.ChannelModes);
     }
 
+    /**
+     * The server may publish a higher-priority file row that has not finished
+     * probing. Priority alone must not select a source that cannot be streamed.
+     */
+    [Fact]
+    public async Task Not_ready_highest_priority_file_is_skipped_for_a_ready_lower_priority_file()
+    {
+        var output = new RecordingPlaybackOutput();
+        var coordinator = new PlaybackCoordinator(
+            new MultiFileServerApi(
+                FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 21, ready: false),
+                FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 22, ready: true)),
+            output);
+
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original"));
+
+        Assert.Equal(new long[] { 22 }, output.LoadedFileIds);
+    }
+
+    [Fact]
+    public async Task Song_with_only_not_ready_files_fails_before_requesting_a_stream()
+    {
+        var output = new RecordingPlaybackOutput();
+        var api = new MultiFileServerApi(
+            FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 31, ready: false));
+        var coordinator = new PlaybackCoordinator(api, output);
+
+        await Assert.ThrowsAsync<PlaybackAttemptException>(() =>
+            coordinator.ApplySnapshotAsync("sync_full", Snapshot("original")));
+
+        Assert.Empty(output.LoadedFileIds);
+        Assert.Empty(api.RequestedStreams);
+    }
+
+    /** An older server omits the ready flag; the client must keep working. */
+    [Fact]
+    public void File_source_without_a_ready_field_deserializes_as_unknown()
+    {
+        var source = JsonSerializer.Deserialize<FileSource>(
+            """
+            {"id":7,"format":"matroska","audioTracks":1,"vocalTrackIndex":null,
+             "resolution":"1080p","priority":3,"audioLayout":{"layout":"NORMAL_STEREO"}}
+            """,
+            ProtocolJson.Options);
+
+        Assert.NotNull(source);
+        Assert.Equal(7L, source!.Id);
+        Assert.Null(source.Ready);
+    }
+
+    [Fact]
+    public async Task Vocal_changed_event_with_new_snapshot_layout_reapplies_audio()
+    {
+        var output = new RecordingPlaybackOutput();
+        var api = new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO));
+        var coordinator = new PlaybackCoordinator(api, output);
+
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original", audioLayout: AudioLayout.NORMAL_STEREO));
+        Assert.Equal(new[] { ChannelMapMode.STEREO }, output.ChannelModes);
+
+        await coordinator.ApplySnapshotAsync("vocal_changed", Snapshot("accompaniment", audioLayout: AudioLayout.DUAL_CHANNEL));
+
+        Assert.Equal(
+            new[] { ChannelMapMode.STEREO, ChannelMapMode.RIGHT_MONO },
+            output.ChannelModes);
+    }
+
+    [Fact]
+    public async Task Selected_ready_file_layout_overrides_a_stale_snapshot_layout()
+    {
+        var output = new RecordingPlaybackOutput();
+        var coordinator = new PlaybackCoordinator(
+            new MultiFileServerApi(
+                FileSourceFor(AudioLayout.DUAL_TRACK, fileId: 21, ready: false),
+                FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 22, ready: true)),
+            output);
+
+        await coordinator.ApplySnapshotAsync(
+            "sync_full", Snapshot("accompaniment", audioLayout: AudioLayout.DUAL_TRACK));
+
+        Assert.Equal(new[] { 0 }, output.AudioTrackIndices);
+    }
+
     private static QueueSnapshot Snapshot(
         string vocalMode,
         long queueId = 1,
@@ -286,26 +404,31 @@ public sealed class PlaybackCoordinatorTests
         int volume = 60,
         bool muted = false,
         long positionMs = 0,
-        long seekSequence = 0) => new(
+        long seekSequence = 0,
+        AudioLayout audioLayout = AudioLayout.NORMAL_STEREO) => new(
         new NowPlaying(queueId, new SongDto(songId, $"Song {songId}", "Artist"), null),
         Array.Empty<QueueEntry>(),
         state,
         volume,
         muted,
         vocalMode,
-        new AudioLayoutDto(AudioLayout.NORMAL_STEREO, null, null, AudioChannel.LEFT, AudioChannel.RIGHT),
+        new AudioLayoutDto(audioLayout,
+            audioLayout == AudioLayout.DUAL_TRACK ? 0 : null,
+            audioLayout == AudioLayout.DUAL_TRACK ? 1 : null,
+            AudioChannel.LEFT, AudioChannel.RIGHT),
         true,
         0,
         positionMs,
         seekSequence);
 
-    private static FileSource FileSourceFor(AudioLayout layout, long fileId = 10) =>
+    private static FileSource FileSourceFor(AudioLayout layout, long fileId = 10, bool? ready = null) =>
         new(fileId, "matroska", layout == AudioLayout.DUAL_TRACK ? 2 : 1,
             layout == AudioLayout.DUAL_TRACK ? 1 : null,
             "1080p", 100, new AudioLayoutDto(layout,
                 layout == AudioLayout.DUAL_TRACK ? 0 : null,
                 layout == AudioLayout.DUAL_TRACK ? 1 : null,
-                AudioChannel.LEFT, AudioChannel.RIGHT));
+                AudioChannel.LEFT, AudioChannel.RIGHT),
+            ready);
 
     private sealed class FakeServerApi(params FileSource[] files) : IPlaybackServerApi
     {
@@ -320,10 +443,34 @@ public sealed class PlaybackCoordinatorTests
         public string StreamUrl(long fileId) => $"http://server/api/stream/{fileId}";
     }
 
+    /** Returns every supplied file source so priority/readiness selection can be exercised. */
+    private sealed class MultiFileServerApi(params FileSource[] files) : IPlaybackServerApi
+    {
+        public List<long> RequestedStreams { get; } = new();
+
+        public Task<SongDetail?> GetSongDetailAsync(long songId, CancellationToken cancellationToken = default)
+            => Task.FromResult<SongDetail?>(new SongDetail(
+                songId, "Song", "Artist", "AUDIO", false, 100_000, "none", null, null, files));
+
+        public string StreamUrl(long fileId)
+        {
+            RequestedStreams.Add(fileId);
+            return $"http://server/api/stream/{fileId}";
+        }
+    }
+
     private sealed class MissingFileServerApi : IPlaybackServerApi
     {
         public Task<SongDetail?> GetSongDetailAsync(long songId, CancellationToken cancellationToken = default)
             => Task.FromResult<SongDetail?>(null);
+
+        public string StreamUrl(long fileId) => $"http://server/api/stream/{fileId}";
+    }
+
+    private sealed class ThrowingServerApi(Exception exception) : IPlaybackServerApi
+    {
+        public Task<SongDetail?> GetSongDetailAsync(long songId, CancellationToken cancellationToken = default)
+            => Task.FromException<SongDetail?>(exception);
 
         public string StreamUrl(long fileId) => $"http://server/api/stream/{fileId}";
     }

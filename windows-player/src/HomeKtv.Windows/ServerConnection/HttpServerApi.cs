@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using HomeKtv.Windows.Playback;
@@ -52,6 +53,14 @@ public sealed class HttpServerApi : IPlaybackServerApi, IDisposable
                 new Uri(endpoint.ApiBaseUri, $"songs/{songId}"), HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken)
             .ConfigureAwait(false);
+        // A missing song is the only detail lookup failure that proves the
+        // queued media no longer exists.  Auth/server failures must retain
+        // their status so the playback terminal can stop without skipping.
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode)
+        {
+            throw await ReadApiExceptionAsync(response, cancellationToken).ConfigureAwait(false);
+        }
         if (!response.IsSuccessStatusCode) return null;
         return await ReadJsonAsync<SongDetail>(response.Content, BoundedHttpContentReader.MaxJsonBytes,
             cancellationToken).ConfigureAwait(false);

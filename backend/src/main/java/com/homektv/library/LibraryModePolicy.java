@@ -52,12 +52,57 @@ public final class LibraryModePolicy {
      */
     public static void requireExternalPathInsideSource(AppProperties props, Path candidate) {
         if (!isExternalReadOnly(props)) return;
-        Path sourceRoot = resolveBoundaryPath(Path.of(props.getSourceLibraryPath()));
-        Path resolvedCandidate = resolveBoundaryPath(candidate);
-        if (!resolvedCandidate.startsWith(sourceRoot)) {
-            throw new ApiException(EXTERNAL_READ_ONLY_CODE,
-                    "EXTERNAL_READ_ONLY：媒体路径必须位于外部曲库目录内");
+        requirePathInsideRoot(Path.of(props.getSourceLibraryPath()), candidate,
+                EXTERNAL_READ_ONLY_CODE, "EXTERNAL_READ_ONLY：媒体路径必须位于外部曲库目录内");
+    }
+
+    /**
+     * Resolves an existing media path and verifies that it remains below the
+     * active playback-library root for either library mode.
+     */
+    public static Path requireReadablePathInsideActiveLibrary(AppProperties props, Path candidate) {
+        Path resolved = requirePathInsideActiveLibrary(props, candidate);
+        if (!Files.isRegularFile(resolved, LinkOption.NOFOLLOW_LINKS)) {
+            throw new ApiException("FILE_NOT_FOUND", "媒体文件不存在或不是普通文件：" + candidate);
         }
+        return resolved;
+    }
+
+    /**
+     * Resolves an existing managed import source and verifies that it remains
+     * below the configured source directory. Managed import reads source files
+     * while the active playback root is the separate KTV library directory.
+     */
+    public static Path requireReadablePathInsideSource(AppProperties props, Path candidate) {
+        Path resolved = requirePathInsideSource(props, candidate);
+        if (!Files.isRegularFile(resolved, LinkOption.NOFOLLOW_LINKS)) {
+            throw new ApiException("FILE_NOT_FOUND", "媒体源文件不存在或不是普通文件：" + candidate);
+        }
+        return resolved;
+    }
+
+    /** Verifies a source path (which may not exist yet) below the configured source root. */
+    public static Path requirePathInsideSource(AppProperties props, Path candidate) {
+        return requirePathInsideRoot(Path.of(props.getSourceLibraryPath()), candidate,
+                "FILE_PATH_OUTSIDE_SOURCE", "媒体源文件必须位于配置的源目录内");
+    }
+
+    /** Verifies a path (which may not exist yet) below the active library root. */
+    public static Path requirePathInsideActiveLibrary(AppProperties props, Path candidate) {
+        return requirePathInsideRoot(activeLibraryRoot(props), candidate, "FILE_PATH_OUTSIDE_LIBRARY",
+                "媒体路径必须位于当前曲库目录内");
+    }
+
+    private static Path requirePathInsideRoot(Path root, Path candidate, String code, String message) {
+        if (candidate == null) {
+            throw new ApiException(code, message);
+        }
+        Path resolvedRoot = resolveBoundaryPath(root);
+        Path resolvedCandidate = resolveBoundaryPath(candidate);
+        if (!resolvedCandidate.startsWith(resolvedRoot)) {
+            throw new ApiException(code, message + "：" + candidate.toAbsolutePath().normalize());
+        }
+        return resolvedCandidate;
     }
 
     /**

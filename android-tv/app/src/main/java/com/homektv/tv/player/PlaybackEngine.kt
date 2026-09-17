@@ -88,6 +88,8 @@ class PlaybackEngine(
     /** Invalidates delayed transient-error retries when a new request replaces the media. */
     private val retryGate = PlaybackRetryGate()
     private var currentRetryTicket: PlaybackRetryTicket? = null
+    private var retryRunnable: Runnable? = null
+    private val retryState = PlaybackRetryState()
     /** Callback identity is committed only after the requested media reaches READY. */
     private val identityGate = PlaybackIdentityGate()
     private var requestedVocalMode: String = "original"
@@ -97,9 +99,9 @@ class PlaybackEngine(
     private var vocalRequestAt: Long = 0L
     private var playRequestAt: Long = 0L
     private var awaitingTracks = false
-    /** 最后一帧视频上屏时间（elapsedRealtime）；0 表示尚无帧。 */
-    private var lastVideoFrameAt: Long = 0L
-    private var videoStallRecoveries = 0
+    /** Monotonic, generation-bound watchdog for selected video tracks. */
+    private val videoWatchdog = VideoPlaybackWatchdog()
+    private var videoGeneration: Long = 0L
     private var appliedSelectionFileId: Long? = null
     private var appliedSelectionMode: String? = null
     private var appliedSelectionGroup: androidx.media3.common.TrackGroup? = null
@@ -171,8 +173,7 @@ class PlaybackEngine(
                 // 在暂停/恢复后会停止出帧，音频照常走、画面定格。记录每帧上屏时间，
                 // 由 progressTicker 检测并就地 seek 强制 flush 解码器恢复。
                 it.setVideoFrameMetadataListener { _, _, _, _ ->
-                    lastVideoFrameAt = SystemClock.elapsedRealtime()
-                    videoStallRecoveries = 0
+                    videoWatchdog.onFrameMetadata(videoGeneration, SystemClock.elapsedRealtime())
                 }
             }
     }
@@ -200,16 +201,19 @@ class PlaybackEngine(
     ) {
         val requested = PlaybackRequestIdentity(queueId = queueId, fileId = fileId)
         if (shouldReusePlaybackRequest(currentRequest, requested, player.playbackState)) {
+            retryState.setPlayWhenReady(playWhenReady)
+            if (!playWhenReady) cancelRetry()
             player.playWhenReady = playWhenReady
             return
         }
+        cancelRetry()
         Log.d(TAG, "play fileId=$fileId url=$streamUrl")
         transientRetryCount = 0
-        videoStallRecoveries = 0
-        lastVideoFrameAt = 0L
+        videoGeneration = videoWatchdog.onMediaChanged()
         playRequestAt = SystemClock.elapsedRealtime()
         currentRequest = requested
         currentRetryTicket = retryGate.begin(requested)
+        retryState.start(initialPositionMs, playWhenReady)
         currentQueueId = queueId
         currentFileId = fileId
         identityGate.begin(
@@ -243,22 +247,37 @@ class PlaybackEngine(
     }
 
     fun pause() {
+        retryState.pause()
+        cancelRetry()
         player.playWhenReady = false
     }
 
     fun resume() {
+        retryState.resume()
         player.playWhenReady = true
     }
 
     /** 回到片头（对应 restart 控制）。 */
     fun restart() {
+        cancelRetry()
+        retryState.seekTo(0L)
+        retryState.resume()
         player.seekTo(0)
         player.playWhenReady = true
     }
 
     /** Applies a server-requested seek without reloading the current media item. */
     fun seekTo(positionMs: Long) {
+        retryState.seekTo(positionMs)
+        cancelRetry()
         player.seekTo(positionMs.coerceAtLeast(0L))
+    }
+
+    /** Stops the old output before a replacement request performs network I/O. */
+    fun beginReplacement(queueId: Long?) {
+        stop()
+        currentQueueId = queueId
+        retryState.beginReplacement()
     }
 
     /**
@@ -266,11 +285,12 @@ class PlaybackEngine(
      * 使下次同 fileId 也会重新装载。
      */
     fun stop() {
+        cancelRetry()
+        retryState.beginReplacement()
         currentRequest = null
-        currentRetryTicket = null
-        retryGate.invalidate()
         currentQueueId = null
         currentFileId = null
+        videoGeneration = videoWatchdog.onMediaChanged()
         identityGate.invalidate()
         playRequestAt = 0L
         awaitingTracks = false
@@ -391,10 +411,10 @@ class PlaybackEngine(
     val currentPositionMs: Long get() = player.currentPosition.coerceAtLeast(0L)
 
     fun release() {
+        cancelRetry()
+        retryState.beginReplacement()
         stopProgressTicker()
         identityGate.invalidate()
-        currentRetryTicket = null
-        retryGate.invalidate()
         appContext.contentResolver.unregisterContentObserver(systemVolumeObserver)
         player.release()
         httpClient.closeResources()
@@ -405,6 +425,8 @@ class PlaybackEngine(
     private val progressTicker = object : Runnable {
         override fun run() {
             if (player.isPlaying) {
+                // 持续记录续播点：瞬时错误发生时播放器自报的位置可能已不可用。
+                retryState.onPositionSampled(player.currentPosition)
                 identityGate.callbackIdentity()?.let { active ->
                     onProgress(player.currentPosition, active.queueId)
                 }
@@ -416,20 +438,24 @@ class PlaybackEngine(
 
     /** 播放中超过 [VIDEO_STALL_THRESHOLD_MS] 没有视频帧上屏 → 就地 seek 强制 flush 解码器。 */
     private fun checkVideoStall() {
-        if (player.videoFormat == null) return // 纯音频源无视频轨
-        if (lastVideoFrameAt == 0L) return   // 起播阶段由 onIsPlayingChanged 路径负责
-        val stalledMs = SystemClock.elapsedRealtime() - lastVideoFrameAt
-        if (stalledMs < VIDEO_STALL_THRESHOLD_MS) return
-        if (videoStallRecoveries >= MAX_VIDEO_STALL_RECOVERIES) {
-            Log.w(TAG, "video stall persists after $videoStallRecoveries recoveries, give up")
-            lastVideoFrameAt = SystemClock.elapsedRealtime() // 避免每秒刷日志
-            return
+        when (videoWatchdog.poll(SystemClock.elapsedRealtime())) {
+            VideoPlaybackWatchdog.Decision.NONE -> Unit
+            VideoPlaybackWatchdog.Decision.RECOVER -> {
+                val position = player.currentPosition
+                Log.w(TAG, "video frame watchdog recovery at position=$position (in-place seek)")
+                player.seekTo(position)
+            }
+            VideoPlaybackWatchdog.Decision.EXHAUSTED -> {
+                Log.w(TAG, "video frame watchdog exhausted; reporting playback error")
+                stopProgressTicker()
+                identityGate.invalidate()
+                cancelRetry()
+                onError(
+                    "VIDEO_FIRST_FRAME_TIMEOUT",
+                    PlaybackErrorContext.forPlayback(currentQueueId, currentFileId),
+                )
+            }
         }
-        videoStallRecoveries++
-        val position = player.currentPosition
-        Log.w(TAG, "video stall ${stalledMs}ms at position=$position, recovery #$videoStallRecoveries (in-place seek)")
-        player.seekTo(position)
-        lastVideoFrameAt = SystemClock.elapsedRealtime()
     }
 
     private fun startProgressTicker() {
@@ -443,9 +469,19 @@ class PlaybackEngine(
 
     private val playerListener = object : Player.Listener {
         override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            videoWatchdog.onTracksChanged(
+                selectedVideo = tracks.groups.any {
+                    it.type == C.TRACK_TYPE_VIDEO && it.isSelected
+                },
+                nowMs = SystemClock.elapsedRealtime(),
+            )
             if (tracks.groups.none { it.type == C.TRACK_TYPE_AUDIO }) return
             awaitingTracks = false
             applyVocalSelection()
+        }
+
+        override fun onRenderedFirstFrame() {
+            videoWatchdog.onRenderedFirstFrame(videoGeneration, SystemClock.elapsedRealtime())
         }
 
         override fun onPlaybackStateChanged(state: Int) {
@@ -471,6 +507,7 @@ class PlaybackEngine(
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            videoWatchdog.onPlayingChanged(isPlaying, SystemClock.elapsedRealtime())
             if (!isPlaying || playRequestAt == 0L) return
             val elapsed = SystemClock.elapsedRealtime() - playRequestAt
             Log.i(TAG, "playback started fileId=$currentFileId in ${elapsed}ms")
@@ -485,25 +522,27 @@ class PlaybackEngine(
             if (isTransient(error) && transientRetryCount < MAX_TRANSIENT_RETRIES
                 && retryTicket != null && retryRequest != null && retryFileId != null) {
                 transientRetryCount++
-                val position = player.currentPosition
+                val position = retryState.positionForRetry(player.currentPosition)
                 Log.w(TAG, "retry media fileId=$retryFileId attempt=$transientRetryCount position=$position")
-                main.postDelayed({
+                val runnable = Runnable {
+                    retryRunnable = null
                     if (retryGate.isCurrent(retryTicket, currentRequest)
                         && currentFileId == retryFileId
                         && player.currentMediaItem?.mediaId == retryFileId.toString()) {
                         player.prepare()
                         player.seekTo(position)
-                        player.playWhenReady = true
-                        startProgressTicker()
+                        player.playWhenReady = retryState.playWhenReady
+                        if (retryState.playWhenReady) startProgressTicker() else stopProgressTicker()
                     }
-                }, RETRY_DELAY_MS)
+                }
+                retryRunnable = runnable
+                main.postDelayed(runnable, RETRY_DELAY_MS)
                 return
             }
             transientRetryCount = 0
             stopProgressTicker()
             identityGate.invalidate()
-            currentRetryTicket = null
-            retryGate.invalidate()
+            cancelRetry()
             onError(error.errorCodeName, PlaybackErrorContext.forPlayback(currentQueueId, currentFileId))
         }
 
@@ -521,10 +560,15 @@ class PlaybackEngine(
         private const val PROGRESS_INTERVAL_MS = 100L
         private const val MAX_TRANSIENT_RETRIES = 2
         private const val RETRY_DELAY_MS = 750L
-        private const val VIDEO_STALL_THRESHOLD_MS = 3_000L
-        private const val MAX_VIDEO_STALL_RECOVERIES = 3
     }
 
     private var transientRetryCount = 0
+
+    private fun cancelRetry() {
+        retryRunnable?.let(main::removeCallbacks)
+        retryRunnable = null
+        currentRetryTicket = null
+        retryGate.invalidate()
+    }
 
 }

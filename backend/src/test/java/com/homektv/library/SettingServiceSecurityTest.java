@@ -86,4 +86,25 @@ class SettingServiceSecurityTest {
                 .isInstanceOf(ApiException.class)
                 .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_TYPE");
     }
+
+    @Test
+    void putAll_rejectsNonStringAndUnknownDirectCopyOptions() {
+        assertThatThrownBy(() -> service.putAll(Map.of(
+                        "direct_copy_containers", List.of("mkv", 7))))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_TYPE");
+
+        assertThatThrownBy(() -> service.putAll(Map.of(
+                        "direct_copy_containers", List.of("file://source"))))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_VALUE");
+    }
+
+    @Test
+    void transcodePolicy_doesNotStringifyInvalidPersistedListElements() {
+        Setting stored = new Setting("direct_copy_containers", "[1,\"mkv\"]");
+        when(repo.findAll()).thenReturn(List.of(stored));
+
+        assertThat(service.transcodePolicy().directCopyContainers()).containsExactly("mkv");
+    }
 }

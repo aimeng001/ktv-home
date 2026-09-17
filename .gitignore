@@ -61,6 +61,11 @@ backend/src/main/resources/application-local.yml
 /.maven-local/
 /.gradle-local/
 /.android-local/
+**/.m2-local/
+**/.gradle-local/
+**/.maven-local/
+**/.kotlin/
+.workbuddy/
 .pytest_cache/
 
 # Local release archives

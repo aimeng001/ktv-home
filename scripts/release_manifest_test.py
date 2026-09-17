@@ -135,6 +135,63 @@ class ReleaseManifestTests(unittest.TestCase):
             self.assertNotEqual(0, verify.returncode)
             self.assertIn("hash", verify.stderr.lower())
 
+    def test_verify_fails_when_release_identity_does_not_match_expected_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            migrations = root / "backend" / "src" / "main" / "resources" / "db" / "migration"
+            migrations.mkdir(parents=True)
+            (migrations / "V1__initial.sql").write_text("select 1;", encoding="utf-8")
+            artifacts = root / "release-assets"
+            artifacts.mkdir()
+            artifact = artifacts / "app.zip"
+            artifact.write_bytes(b"fixture")
+            manifest = artifacts / "release-manifest.json"
+
+            built = self.run_manifest(
+                "build",
+                "--repository",
+                str(root),
+                "--output",
+                str(manifest),
+                "--release-tag",
+                "v1.0.0",
+                "--version",
+                "1.0.0",
+                "--channel",
+                "stable",
+                "--source-sha",
+                "abc123",
+                "--build-time",
+                "2026-08-30T00:00:00Z",
+                "--artifact-dir",
+                str(artifacts),
+                "--include",
+                artifact.name,
+            )
+            self.assertEqual(0, built.returncode, built.stderr)
+
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            data["releaseTag"] = "v9.9.9"
+            manifest.write_text(json.dumps(data), encoding="utf-8")
+
+            verify = self.run_manifest(
+                "verify",
+                "--repository",
+                str(root),
+                "--manifest",
+                str(manifest),
+                "--release-tag",
+                "v1.0.0",
+                "--version",
+                "1.0.0",
+                "--channel",
+                "stable",
+                "--source-sha",
+                "abc123",
+            )
+            self.assertNotEqual(0, verify.returncode)
+            self.assertIn("releaseTag", verify.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

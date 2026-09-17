@@ -1,6 +1,7 @@
 <template>
   <AdminLayout active="ktv">
-    <header class="page-head"><div><h1>KTV曲库管理</h1><p>正式可播放曲库，手机点歌和 TV 播放均从这里读取</p></div></header>
+    <header class="page-head"><div><h1>KTV曲库管理</h1><p>正式可播放曲库，手机点歌和 TV 播放均从这里读取</p></div><button class="secondary" @click="showAiTaskPanel=true">AI 任务</button></header>
+    <div v-if="loadError" class="notice error-notice" role="alert"><span>KTV曲库读取失败：{{ loadError }}</span><button class="text-btn" @click="load">重试</button></div>
     <div v-if="libraryMode === 'EXTERNAL_READ_ONLY'" class="readonly-notice">外部只读曲库不能在 Home KTV 中删除源歌曲；如需移除歌曲，请在 NAS 中处理后重新扫描。</div>
     <div v-else-if="libraryMode === null" class="readonly-notice">曲库模式尚未确认，删除操作已隐藏；请检查服务连接后重试。</div>
     <!-- 筛选面板 / Filter Panel -->
@@ -26,7 +27,6 @@
         <label><span>歌手 <em class="req">*</em></span><input v-model.trim="editForm.artist" required maxlength="100" placeholder="演唱者" /></label>
         <label><span>语种</span><input v-model.trim="editForm.language" maxlength="20" placeholder="如：国语、粤语、英语" /></label>
         <label><span>标签 / 曲风</span><input v-model.trim="editForm.tags" placeholder="多个标签用逗号分隔，如：流行, 经典" /></label>
-        <label><span>拼音首字母</span><input v-model.trim="editForm.pinyin" placeholder="如：ZJL、YQ" /></label>
         <div class="modal-actions"><button type="button" class="secondary" :disabled="songSaving" @click="closeSongEditor">取消</button><button type="submit" class="primary" :disabled="songSaving || !editForm.title || !editForm.artist">{{ songSaving ? '保存中…' : '保存修改' }}</button></div>
       </form>
     </div></div>
@@ -38,6 +38,7 @@
         <div v-if="!playlistOptions.length" class="match-empty">暂无已有歌单，请先在主题歌单页面创建</div>
       </div>
     </div></div>
+    <AiTaskPanel v-if="showAiTaskPanel" :selected-ids="Array.from(selected)" @close="showAiTaskPanel=false" @applied="load" />
   </AdminLayout>
 </template>
 
@@ -48,24 +49,29 @@
  * KTV Library Management Page — manages the official playable song library,
  * supports filtering, editing, and deleting songs.
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChevronDown, ListPlus, Pencil, Tags, Trash2, X } from 'lucide-vue-next'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import AudioLayoutEditor from './AudioLayoutEditor.vue'
+import AiTaskPanel from '../../components/admin/AiTaskPanel.vue'
 import { audioLayoutLabel } from './audioLayout'
 import { canDeleteSongs } from './libraryMode'
 import { sourceLabel } from './librarySource'
 import { buildScrapeRoute } from './ktvLibraryScrapeRoute'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
+import { buildSongEditPayload } from './editSongState'
+import { createLatestRequest } from '../latestRequest'
 /** 歌曲列表、总数、当前页、总页数、已选集合 / Song list, total, page, total pages, selected set */
 const songs=ref([]),total=ref(0),page=ref(0),totalPages=ref(1),selected=ref(new Set())
 const router=useRouter()
 const playlistPickerOpen=ref(false),playlistPickerSong=ref(null),playlistOptions=ref([]),playlistLoading=ref(false),playlistAddingId=ref(null)
+const showAiTaskPanel=ref(true)
 const songEditorOpen=ref(false),editingSong=ref(null),songSaving=ref(false)
-const editForm=reactive({title:'',artist:'',language:'',tags:'',pinyin:''})
-const libraryMode=ref(null)
+const editForm=reactive({title:'',artist:'',language:'',tags:''})
+const libraryMode=ref(null),loadError=ref('')
+const listRequests=createLatestRequest()
 const canDelete=computed(()=>canDeleteSongs(libraryMode.value))
 /** 筛选条件 / Filter criteria */
 const filters=reactive({keyword:'',type:'',source:''})
@@ -78,15 +84,26 @@ const allSelected=computed(()=>songs.value.length>0&&songs.value.every(s=>select
  * and cleans up selected items that no longer exist.
  */
 async function load(){
+  const request=listRequests.begin()
+  loadError.value=''
   libraryMode.value=null
   try{
-    const mode=await api.adminSourceLibrary({page:0,size:1})
+    const mode=await api.adminSourceLibrary({page:0,size:1},{signal:request.signal})
+    if(!listRequests.isCurrent(request.id))return
     libraryMode.value=mode?.libraryMode||null
   }catch(e){
+    if(!listRequests.isCurrent(request.id))return
     libraryMode.value=null
   }
-  const r=await api.adminSongs({...filters,page:page.value,size:20});songs.value=r.content||[];total.value=r.total||0;totalPages.value=r.totalPages||1;selected.value=new Set([...selected.value].filter(id=>songs.value.some(s=>s.id===id)))
+  try{
+    const r=await api.adminSongs({...filters,page:page.value,size:20},{signal:request.signal})
+    if(!listRequests.isCurrent(request.id))return
+    songs.value=r.content||[];total.value=r.total||0;totalPages.value=r.totalPages||1;selected.value=new Set([...selected.value].filter(id=>songs.value.some(s=>s.id===id)))
+  }catch(e){
+    if(listRequests.isCurrent(request.id) && e.name!=='AbortError')loadError.value=e.message||'曲库加载失败'
+  }
 }
+onBeforeUnmount(()=>listRequests.cancel())
 /** 搜索：重置到第一页并加载 / Search: reset to first page and load */
 function search(){page.value=0;load()}
 /** 重置筛选条件并搜索 / Reset filter criteria and search */
@@ -98,7 +115,6 @@ function openSongEditor(song){
   editForm.artist=song.artist||''
   editForm.language=song.language||''
   editForm.tags=(song.tags||[]).join(', ')
-  editForm.pinyin=song.pinyin||''
   songEditorOpen.value=true
 }
 function closeSongEditor(){
@@ -108,13 +124,7 @@ async function saveSongEdit(){
   if(!editingSong.value||songSaving.value)return
   songSaving.value=true
   try{
-    const payload={
-      title:editForm.title,
-      artist:editForm.artist,
-      language:editForm.language||null,
-      tags:editForm.tags?editForm.tags.split(/[,，\s]+/).filter(Boolean):[],
-      pinyin:editForm.pinyin||null
-    }
+    const payload=buildSongEditPayload(editForm)
     const updated=await api.adminEditSong(editingSong.value.id,payload)
     if(updated){
       Object.assign(editingSong.value,updated)

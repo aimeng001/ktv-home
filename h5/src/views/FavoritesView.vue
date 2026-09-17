@@ -36,6 +36,7 @@ import { useAsyncResource } from '../composables/useAsyncResource'
 import { useOrderLock } from '../composables/useOrderLock'
 import { formatOrderToast } from './orderFeedbackState'
 import { useQueuedSongIds } from '../composables/useQueuedSongIds'
+import { loadAllFavoritePages } from './favoritesState'
 
 const user = useUserStore()
 const favorites = useFavoritesStore()
@@ -44,7 +45,7 @@ const controls = makeControls(user.clientToken)
 const { executeOrder, inflightIds } = useOrderLock()
 const { orderedIds, player } = useQueuedSongIds(inflightIds)
 const favoritesResource = useAsyncResource(async () => {
-  const result = await api.favorites(user.clientToken)
+  const result = await loadAllFavoritePages((page, size) => api.favorites(user.clientToken, page, size))
   await favorites.load(user.clientToken, true)
   return result
 }, [])

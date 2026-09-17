@@ -9,6 +9,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -39,6 +41,19 @@ class SongAvailabilityPolicyTest {
         assertThat(policy.isPlayable(song)).isTrue();
     }
 
+    @Test
+    void batchPlayabilityUsesOneReadinessQueryAndKeepsStatusPolicy() {
+        Song ready = song(10L, "ok");
+        Song pending = song(11L, "ok");
+        Song unrecognized = song(12L, "file_missing");
+        when(fileRepository.findSongIdsWithReadyFile(java.util.Set.of(10L, 11L))).thenReturn(java.util.Set.of(10L));
+
+        SongAvailabilityPolicy policy = new SongAvailabilityPolicy(fileRepository);
+
+        assertThat(policy.playableSongIds(java.util.List.of(ready, pending, unrecognized)))
+                .containsExactly(10L);
+        verify(fileRepository, times(1)).findSongIdsWithReadyFile(java.util.Set.of(10L, 11L));
+    }
     @Test
     void missingOrUnrecognizedSongIsNotPlayable() {
         Song song = song(9L, "unrecognized");

@@ -4,6 +4,8 @@ import com.homektv.domain.Favorite;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 
@@ -14,6 +16,7 @@ import java.util.List;
  */
 public interface FavoriteRepository extends JpaRepository<Favorite, Long> {
     List<Favorite> findByUserIdOrderByCreatedAtDesc(Long userId);
+    Page<Favorite> findByUserIdOrderByCreatedAtDesc(Long userId, Pageable pageable);
     boolean existsByUserIdAndSongId(Long userId, Long songId);
     @Modifying
     @Query(value = "INSERT INTO favorites (user_id, song_id) VALUES (:userId, :songId) " +

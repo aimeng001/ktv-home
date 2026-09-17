@@ -57,13 +57,9 @@ public class AiAnalysisWorker {
      */
     @Async("aiBulkExecutor")
     public void analyze(Long taskId) {
+        if (taskId == null || taskRepository.claimPending(taskId) != 1) return;
         AiAnalysisTask task = taskRepository.findById(taskId).orElse(null);
-        if (task == null) return;
-        if ("paused".equals(task.getStatus())) return;
-        task.setStatus("processing");
-        task.setAttemptCount(task.getAttemptCount() + 1);
-        task.setErrorMessage(null);
-        taskRepository.save(task);
+        if (task == null || isPaused(taskId)) return;
         try {
             boolean importTarget = "IMPORT_RECORD".equals(task.getTargetType());
             Song song = importTarget ? null : songRepository.findById(task.getSongId())
@@ -131,12 +127,14 @@ public class AiAnalysisWorker {
                 task.setStatus("review");
             }
         } catch (Exception e) {
-            if (isPaused(taskId)) return;
-            task.setStatus(e instanceof ApiException api && "AI_IDENTITY_CONFLICT".equals(api.getCode()) ? "review" : "failed");
-            task.setErrorMessage(safeMessage(e));
+            String terminalStatus = e instanceof ApiException api && "AI_IDENTITY_CONFLICT".equals(api.getCode())
+                    ? "review" : "failed";
+            taskRepository.finishProcessingError(taskId, terminalStatus, safeMessage(e));
+            return;
         }
-        if (isPaused(taskId)) return;
-        taskRepository.save(task);
+        taskRepository.finishProcessing(taskId,
+                task.getResultJson(), task.getFieldConfidence(), task.getEvidence(),
+                task.getModelRole(), task.getModel(), task.getStatus(), task.getErrorMessage());
     }
 
     private boolean isPaused(Long taskId) {

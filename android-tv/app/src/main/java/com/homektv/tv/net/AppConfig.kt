@@ -37,6 +37,13 @@ class AppConfig(context: Context) {
     val savedServers: List<SavedServer>
         get() = readSavedServers()
 
+    /** Snapshot of the saved server selected by [hostPort]. */
+    internal fun serverForHost(hostPort: String? = serverHost): SavedServer? {
+        val normalized = hostPort?.let(::normalizeHost) ?: return null
+        return readSavedServers().firstOrNull { it.hostPort == normalized }
+            ?: SavedServer(normalized, normalized)
+    }
+
     /**
      * 连接成功后去重置顶，最多保留 10 台设备。
      *
@@ -52,17 +59,105 @@ class AppConfig(context: Context) {
             existing != null -> existing.name
             else -> hostPort
         }
-        val updated = buildList {
-            add(SavedServer(hostPort, name))
-            addAll(readSavedServers().filterNot { it.hostPort == hostPort })
-        }.take(MAX_SAVED_SERVERS)
-        writeSavedServers(updated)
-        serverHost = hostPort
+        // A missing identity is an explicit unknown-server choice (for example
+        // a legacy subnet candidate). Never turn it into the identity of the
+        // previously saved server at the same host.
+        val selectedInstanceId = ServerSessionScope.normalizeInstanceId(server.instanceId)
+        val selected = SavedServer(hostPort, name, selectedInstanceId)
+        val updated = SavedServerPolicy.merge(readSavedServers(), selected, MAX_SAVED_SERVERS)
+        writeSavedServersAndSelect(updated, hostPort)
+    }
+
+    @Synchronized
+    fun migrateLegacyScope(from: SavedServer, to: SavedServer): Boolean {
+        if (from.hostPort != to.hostPort || from.instanceId != null || to.instanceId == null) return false
+        // This method is called only after the user explicitly accepted the
+        // legacy-to-instance migration dialog. Write and verify the encrypted
+        // credential first; clear the old scope only after every new value is
+        // present so a failed Keystore operation cannot destroy the old login.
+        if (!credentialStore.migrate(from, to)) return false
+
+        val oldUserTokenKey = ServerSessionScope.preferenceKey(KEY_USER_TOKEN_PREFIX, from)
+        val newUserTokenKey = ServerSessionScope.preferenceKey(KEY_USER_TOKEN_PREFIX, to)
+        val oldUserToken = prefs.getString(oldUserTokenKey, null)
+
+        val oldPlayerTokenKey = ServerSessionScope.preferenceKey(KEY_PLAYER_TOKEN_PREFIX, from)
+        val newPlayerTokenKey = ServerSessionScope.preferenceKey(KEY_PLAYER_TOKEN_PREFIX, to)
+        val oldPlayerToken = prefs.getString(oldPlayerTokenKey, null)
+
+        val oldNicknameKey = ServerSessionScope.preferenceKey(KEY_NICKNAME_PREFIX, from)
+        val newNicknameKey = ServerSessionScope.preferenceKey(KEY_NICKNAME_PREFIX, to)
+        val oldNickname = prefs.getString(oldNicknameKey, null)
+
+        val oldModeKey = ServerSessionScope.preferenceKey(KEY_MODE_PREFIX, from)
+        val newModeKey = ServerSessionScope.preferenceKey(KEY_MODE_PREFIX, to)
+        val oldMode = prefs.getString(oldModeKey, null)
+        val oldPendingKey = ServerSessionScope.preferenceKey(KEY_PENDING_FINISHED_PREFIX, from)
+        val pendingFrom = pendingFinishedQueueIds(from)
+        val pendingTo = pendingFinishedQueueIds(to)
+        val oldPlayErrorKey = ServerSessionScope.preferenceKey(KEY_PENDING_PLAYBACK_ERRORS_PREFIX, from)
+        val pendingPlayErrorsFrom = pendingPlaybackErrors(from)
+        val pendingPlayErrorsTo = pendingPlaybackErrors(to)
+
+        prefs.edit(commit = true) {
+            if (!oldUserToken.isNullOrBlank() && prefs.getString(newUserTokenKey, null).isNullOrBlank()) {
+                putString(newUserTokenKey, oldUserToken)
+            }
+            if (!oldPlayerToken.isNullOrBlank() && prefs.getString(newPlayerTokenKey, null).isNullOrBlank()) {
+                putString(newPlayerTokenKey, oldPlayerToken)
+            }
+            if (!oldNickname.isNullOrBlank() && prefs.getString(newNicknameKey, null).isNullOrBlank()) {
+                putString(newNicknameKey, oldNickname)
+            }
+            if (!oldMode.isNullOrBlank() && prefs.getString(newModeKey, null).isNullOrBlank()) {
+                putString(newModeKey, oldMode)
+            }
+        }
+        savePendingFinishedQueueIds(PendingFinishedPolicy.merge(pendingTo, pendingFrom), to)
+        savePendingPlaybackErrors(PlaybackErrorOutbox.merge(pendingPlayErrorsTo, pendingPlayErrorsFrom), to)
+        prefs.edit(commit = true) {
+            remove(oldUserTokenKey)
+            remove(oldPlayerTokenKey)
+            remove(oldNicknameKey)
+            remove(oldModeKey)
+            remove(oldPendingKey)
+            remove(oldPlayErrorKey)
+            remove(KEY_TOKEN)
+        }
+        credentialStore.clear(from)
+        return true
     }
 
     @Synchronized
     fun removeSavedServer(hostPort: String) {
         writeSavedServers(readSavedServers().filterNot { it.hostPort == hostPort })
+    }
+
+    @Synchronized
+    fun forgetServer(server: SavedServer) {
+        val normalizedHost = normalizeHost(server.hostPort) ?: return
+        val saved = readSavedServers()
+        val removed = saved.filter { it.hostPort == normalizedHost }
+        val remaining = saved.filterNot { it.hostPort == normalizedHost }
+        val selectedHost = serverHost?.let(::normalizeHost)
+        writeSavedServers(remaining)
+        val scopes = (removed + server).distinct()
+        scopes.forEach(credentialStore::clearAllScopes)
+        prefs.edit(commit = true) {
+            scopes.forEach { scope ->
+                remove(ServerSessionScope.preferenceKey(KEY_USER_TOKEN_PREFIX, scope))
+                remove(ServerSessionScope.preferenceKey(KEY_PLAYER_TOKEN_PREFIX, scope))
+                remove(ServerSessionScope.preferenceKey(KEY_NICKNAME_PREFIX, scope))
+                remove(ServerSessionScope.preferenceKey(KEY_MODE_PREFIX, scope))
+                remove(ServerSessionScope.preferenceKey(KEY_PENDING_FINISHED_PREFIX, scope))
+                remove(ServerSessionScope.preferenceKey(KEY_PENDING_PLAYBACK_ERRORS_PREFIX, scope))
+            }
+            if (selectedHost == normalizedHost) {
+                remaining.firstOrNull()?.hostPort?.let { host -> putString(KEY_HOST, host) }
+                    ?: remove(KEY_HOST)
+                remove(KEY_TOKEN)
+            }
+        }
     }
 
     var microphoneMonitorEnabled: Boolean
@@ -71,45 +166,83 @@ class AppConfig(context: Context) {
 
     /** 与服务端 KTV_PLAYER_CREDENTIAL 对应的可选电视连接密钥。 */
     var playerCredential: String
-        get() = credentialStore.read(serverHost)
-        set(value) = credentialStore.write(value, serverHost)
+        get() = credentialStore.read(serverForHost())
+        set(value) = credentialStore.write(value, serverForHost())
+
+    internal fun playerCredentialFor(server: SavedServer?): String = credentialStore.read(server)
 
     /** Finished queue reports waiting for a server acknowledgement. */
     fun pendingFinishedQueueIds(serverHost: String? = this.serverHost): List<Long> =
-        prefs.getString(pendingFinishedKey(serverHost), null)
+        pendingFinishedQueueIds(serverForHost(serverHost))
+
+    internal fun pendingFinishedQueueIds(server: SavedServer?): List<Long> {
+        val scope = server ?: return emptyList()
+        return prefs.getString(ServerSessionScope.preferenceKey(KEY_PENDING_FINISHED_PREFIX, scope), null)
             ?.split(',')
             ?.mapNotNull { it.trim().toLongOrNull()?.takeIf { id -> id > 0 } }
-            ?.distinct()
-            ?.take(MAX_PENDING_FINISHED)
+            ?.let(PendingFinishedPolicy::sanitize)
             ?: emptyList()
+    }
 
     /** Persists only valid, bounded queue IDs; the source media is never touched. */
     @Synchronized
     fun savePendingFinishedQueueIds(queueIds: List<Long>, serverHost: String? = this.serverHost) {
-        val value = queueIds.asSequence()
-            .filter { it > 0 }
-            .distinct()
-            .take(MAX_PENDING_FINISHED)
-            .joinToString(",")
+        savePendingFinishedQueueIds(queueIds, serverForHost(serverHost))
+    }
+
+    @Synchronized
+    internal fun savePendingFinishedQueueIds(queueIds: List<Long>, server: SavedServer?) {
+        if (server == null) return
+        val value = PendingFinishedPolicy.sanitize(queueIds).joinToString(",")
         prefs.edit(commit = true) {
-            val key = pendingFinishedKey(serverHost)
+            val key = ServerSessionScope.preferenceKey(KEY_PENDING_FINISHED_PREFIX, server)
             if (value.isEmpty()) remove(key)
-            else putString(key, value)
+            else {
+                putString(key, value)
+            }
         }
     }
 
+    /** Play-error reports waiting for a server acknowledgement. */
+    internal fun pendingPlaybackErrors(server: SavedServer?): List<PendingPlaybackError> {
+        if (server == null) return emptyList()
+        val raw = prefs.getString(
+            ServerSessionScope.preferenceKey(KEY_PENDING_PLAYBACK_ERRORS_PREFIX, server), null,
+        ) ?: return emptyList()
+        if (raw.length > MAX_PENDING_PLAYBACK_ERRORS_JSON_CHARS) return emptyList()
+        return runCatching {
+            json.decodeFromString(ListSerializer(PendingPlaybackError.serializer()), raw)
+        }.getOrDefault(emptyList())
+    }
+
+    @Synchronized
+    internal fun savePendingPlaybackErrors(errors: List<PendingPlaybackError>, server: SavedServer?) {
+        if (server == null) return
+        val sanitized = PlaybackErrorOutbox.sanitize(errors)
+        val key = ServerSessionScope.preferenceKey(KEY_PENDING_PLAYBACK_ERRORS_PREFIX, server)
+        val value = json.encodeToString(ListSerializer(PendingPlaybackError.serializer()), sanitized)
+        prefs.edit(commit = true) {
+            if (sanitized.isEmpty()) remove(key) else putString(key, value)
+        }
+    }
     /** WebSocket 地址：ws://host:port/ws?client_type=tv&client_token=xxx */
     fun wsUrl(clientToken: String): String {
-        return buildTvWebSocketUrl(serverHost.orEmpty(), clientToken, playerCredential)
+        return wsUrlFor(serverForHost(), clientToken)
     }
+
+    internal fun wsUrlFor(server: SavedServer?, clientToken: String): String =
+        buildTvWebSocketUrl(server?.hostPort.orEmpty(), clientToken, playerCredentialFor(server))
 
     /** WebSocket 地址 for the controller-compatible V1 session. */
     fun controllerWsUrl(userToken: String = this.userToken): String =
+        controllerWsUrlFor(serverForHost(), userToken)
+
+    internal fun controllerWsUrlFor(server: SavedServer?, userToken: String): String =
         buildControllerWebSocketUrl(
-            serverHost = serverHost.orEmpty(),
+            serverHost = server?.hostPort.orEmpty(),
             userToken = userToken,
             platform = controllerPlatform(),
-            deviceMode = effectiveMode().name,
+            deviceMode = effectiveMode(server?.hostPort).name,
         )
 
     /** Explicit form-factor metadata lets the server count phones without
@@ -134,7 +267,10 @@ class AppConfig(context: Context) {
      * accidentally reuse the playback identity.
      */
     val playerToken: String
-        get() = tokenForServer(KEY_PLAYER_TOKEN_PREFIX, "tv-", migrateLegacy = true)
+        get() = playerTokenFor(serverForHost())
+
+    internal fun playerTokenFor(server: SavedServer?): String =
+        tokenForServer(KEY_PLAYER_TOKEN_PREFIX, "tv-", server, migrateLegacy = true)
 
     /** Backwards-compatible name used by the existing TV playback code. */
     val clientToken: String
@@ -142,22 +278,19 @@ class AppConfig(context: Context) {
 
     /** Stable controller identity scoped to the selected server. */
     val userToken: String
-        get() = tokenForServer(KEY_USER_TOKEN_PREFIX, "user-")
+        get() = userTokenFor(serverForHost())
 
-    fun userTokenFor(hostPort: String?): String =
-        tokenForServer(KEY_USER_TOKEN_PREFIX, "user-", hostPort = hostPort)
+    fun userTokenFor(hostPort: String?): String = userTokenFor(serverForHost(hostPort))
+
+    internal fun userTokenFor(server: SavedServer?): String =
+        tokenForServer(KEY_USER_TOKEN_PREFIX, "user-", server)
 
     /** Nicknames are server-scoped and never sent as part of the player WS. */
     fun nicknameFor(hostPort: String? = serverHost): String =
-        prefs.getString(serverScopedPreferenceKey(KEY_NICKNAME_PREFIX, hostPort), "").orEmpty()
+        readScopedString(KEY_NICKNAME_PREFIX, serverForHost(hostPort)).orEmpty()
 
     fun saveNickname(nickname: String, hostPort: String? = serverHost) {
-        prefs.edit {
-            putString(
-                serverScopedPreferenceKey(KEY_NICKNAME_PREFIX, hostPort),
-                nickname.trim().take(MAX_NICKNAME_LENGTH),
-            )
-        }
+        writeScopedString(KEY_NICKNAME_PREFIX, serverForHost(hostPort), nickname.trim().take(MAX_NICKNAME_LENGTH))
     }
 
     /** The first-run recommendation; a saved choice always wins per server. */
@@ -172,14 +305,14 @@ class AppConfig(context: Context) {
         )
 
     fun modeFor(hostPort: String? = serverHost): DeviceMode? =
-        prefs.getString(serverScopedPreferenceKey(KEY_MODE_PREFIX, hostPort), null)
+        readScopedString(KEY_MODE_PREFIX, serverForHost(hostPort))
             ?.let { value -> runCatching { DeviceMode.valueOf(value) }.getOrNull() }
 
     fun effectiveMode(hostPort: String? = serverHost): DeviceMode =
         DeviceModeRouter.resolve(recommendedMode, modeFor(hostPort))
 
     fun saveMode(mode: DeviceMode, hostPort: String? = serverHost) {
-        prefs.edit { putString(serverScopedPreferenceKey(KEY_MODE_PREFIX, hostPort), mode.name) }
+        writeScopedString(KEY_MODE_PREFIX, serverForHost(hostPort), mode.name)
     }
 
     fun getModeMigrationVersion(): Int = prefs.getInt("mode_migration_version", 0)
@@ -191,19 +324,34 @@ class AppConfig(context: Context) {
     private fun tokenForServer(
         prefix: String,
         label: String,
-        hostPort: String? = serverHost,
+        server: SavedServer?,
         migrateLegacy: Boolean = false,
     ): String {
-        val scope = hostPort.orEmpty().trim()
-        val key = serverScopedPreferenceKey(prefix, scope)
+        val key = server?.let { ServerSessionScope.preferenceKey(prefix, it) }
+            ?: ServerSessionScope.hostPreferenceKey(prefix, null)
         prefs.getString(key, null)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
 
-        val legacy = if (migrateLegacy && scope == serverHost.orEmpty().trim()) {
+        val legacy = if (migrateLegacy && server?.instanceId == null && server?.hostPort == serverHost?.trim()) {
             prefs.getString(KEY_TOKEN, null)?.trim()?.takeIf { it.isNotEmpty() }
         } else null
         val token = legacy ?: label + java.util.UUID.randomUUID().toString().replace("-", "").take(16)
-        prefs.edit(commit = true) { putString(key, token) }
+        prefs.edit(commit = true) {
+            putString(key, token)
+        }
         return token
+    }
+
+    private fun readScopedString(prefix: String, server: SavedServer?): String? {
+        if (server == null) return null
+        val key = ServerSessionScope.preferenceKey(prefix, server)
+        return prefs.getString(key, null)?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun writeScopedString(prefix: String, server: SavedServer?, value: String) {
+        if (server == null) return
+        prefs.edit(commit = true) {
+            putString(ServerSessionScope.preferenceKey(prefix, server), value)
+        }
     }
 
     private fun migrateLegacyServer() {
@@ -223,8 +371,15 @@ class AppConfig(context: Context) {
     }
 
     private fun writeSavedServers(servers: List<SavedServer>) {
+        writeSavedServersAndSelect(servers, null)
+    }
+
+    private fun writeSavedServersAndSelect(servers: List<SavedServer>, hostPort: String?) {
         val raw = json.encodeToString(ListSerializer(SavedServer.serializer()), servers)
-        prefs.edit { putString(KEY_SAVED_SERVERS, raw) }
+        prefs.edit(commit = true) {
+            putString(KEY_SAVED_SERVERS, raw)
+            hostPort?.let { putString(KEY_HOST, it) }
+        }
     }
 
     companion object {
@@ -237,15 +392,13 @@ class AppConfig(context: Context) {
         private const val KEY_MICROPHONE_MONITOR = "microphone_monitor_enabled"
         private const val KEY_SAVED_SERVERS = "saved_servers"
         private const val KEY_PENDING_FINISHED_PREFIX = "pending_finished_queue_ids_"
+        private const val KEY_PENDING_PLAYBACK_ERRORS_PREFIX = "pending_playback_errors_"
+        private const val MAX_PENDING_PLAYBACK_ERRORS_JSON_CHARS = 1_000_000
         private const val MAX_SAVED_SERVERS = 10
-        private const val MAX_PENDING_FINISHED = 100
         private const val MAX_NICKNAME_LENGTH = 32
 
-        private fun pendingFinishedKey(serverHost: String?): String =
-            serverScopedPreferenceKey(KEY_PENDING_FINISHED_PREFIX, serverHost)
-
         internal fun serverScopedPreferenceKey(prefix: String, serverHost: String?): String =
-            prefix + serverHost.orEmpty().trim()
+            ServerSessionScope.hostPreferenceKey(prefix, serverHost)
 
         /**
          * 归一化用户输入：去空格、剥离 http(s):// 前缀与尾部斜杠；

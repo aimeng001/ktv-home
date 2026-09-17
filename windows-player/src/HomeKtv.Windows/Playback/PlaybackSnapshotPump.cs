@@ -106,6 +106,16 @@ public sealed class PlaybackSnapshotPump : IAsyncDisposable
         }
     }
 
+    /** Invalidates queued and in-flight work without submitting a replacement snapshot. */
+    public void Fence()
+    {
+        lock (stateLock)
+        {
+            generation++;
+            latestItem?.CancellationSource.Cancel();
+        }
+    }
+
     private bool IsCurrent(long candidateGeneration)
     {
         lock (stateLock)

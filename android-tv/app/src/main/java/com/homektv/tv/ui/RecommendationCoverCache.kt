@@ -50,6 +50,7 @@ internal class WeightedLruCache<K, V>(
     private val weight: (V) -> Long,
 ) {
     private val values = LinkedHashMap<K, V>(capacity.coerceAtLeast(1), 0.75f, true)
+    private val loading = mutableSetOf<K>()
     var byteSize: Long = 0L
         private set
 
@@ -57,6 +58,20 @@ internal class WeightedLruCache<K, V>(
 
     operator fun set(key: K, value: V) {
         put(key, value)
+    }
+
+    fun tryStartLoad(key: K): Boolean {
+        if (values[key] != null || loading.contains(key)) return false
+        return loading.add(key)
+    }
+
+    fun complete(key: K, value: V) {
+        loading.remove(key)
+        put(key, value)
+    }
+
+    fun fail(key: K) {
+        loading.remove(key)
     }
 
     fun put(key: K, value: V) {
@@ -67,6 +82,7 @@ internal class WeightedLruCache<K, V>(
     }
 
     fun clear() {
+        loading.clear()
         values.clear()
         byteSize = 0L
     }

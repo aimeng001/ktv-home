@@ -18,7 +18,11 @@
     <!-- 加载中 / Loading state -->
     <div v-else-if="loading" class="tip">加载中…</div>
     <!-- 歌单不存在 / Playlist not found -->
-    <div v-else class="tip">歌单不存在或尚未公开</div>
+    <div v-else-if="notFound" class="tip">歌单不存在或尚未公开</div>
+    <div v-else class="tip error-tip">
+      <span>歌单读取失败：{{ loadError }}</span>
+      <button class="retry" @click="loadPlaylist">重试</button>
+    </div>
     <TabBar active="home" />
   </div>
 </template>
@@ -30,7 +34,7 @@
  * Playlist detail page — displays playlist cover, song list,
  * and supports single-song order, bulk order, and sharing.
  */
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import api, { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
@@ -40,6 +44,7 @@ import { formatOrderToast } from './orderFeedbackState'
 import { useQueuedSongIds } from '../composables/useQueuedSongIds'
 import SongRow from '../components/SongRow.vue'
 import TabBar from '../components/TabBar.vue'
+import { createLatestRequest } from './latestRequest'
 
 const route = useRoute()
 const user = useUserStore()
@@ -54,9 +59,35 @@ const playlist = ref(null)
 const loading = ref(true)
 /** 是否正在整单点歌 / Whether bulk ordering is in progress */
 const ordering = ref(false)
-/** 已点歌曲 ID 集合 / Set of already-ordered song IDs */
+const notFound = ref(false)
+const loadError = ref('')
+const playlistRequests = createLatestRequest()
 
-onMounted(async () => { try { playlist.value = await api.playlistDetail(route.params.id) } catch { playlist.value = null } finally { loading.value = false } })
+async function loadPlaylist(id = route.params.id) {
+  const request = playlistRequests.begin()
+  loading.value = true
+  loadError.value = ''
+  notFound.value = false
+  try {
+    const result = await api.playlistDetail(id, { signal: request.signal })
+    if (!playlistRequests.isCurrent(request.id)) return
+    playlist.value = result
+  } catch (e) {
+    if (!playlistRequests.isCurrent(request.id) || e.name === 'AbortError') return
+    playlist.value = null
+    if (e.status === 404 || e.code === 'PLAYLIST_NOT_FOUND') {
+      notFound.value = true
+    } else {
+      loadError.value = e.message || '加载失败'
+    }
+  } finally {
+    if (playlistRequests.isCurrent(request.id)) loading.value = false
+  }
+}
+
+onMounted(() => loadPlaylist())
+watch(() => route.params.id, id => loadPlaylist(id))
+onBeforeUnmount(() => playlistRequests.cancel())
 
 /**
  * 将单首歌曲加入点歌队列（带防抖并发锁）。
@@ -87,7 +118,11 @@ async function orderAll() {
   try {
     const result = await api.orderPlaylist(playlist.value.id, user.clientToken)
     if (result.snapshot) player.applySnapshot(result.snapshot)
-    toast(result.skipped ? `已加入 ${result.ordered} 首，跳过 ${result.skipped} 首` : `已加入 ${result.ordered} 首歌曲`)
+    if (result.queueFull) {
+      toast(`已加入 ${result.ordered} 首，队列已满`)
+    } else {
+      toast(result.skipped ? `已加入 ${result.ordered} 首，跳过 ${result.skipped} 首` : `已加入 ${result.ordered} 首歌曲`)
+    }
   } catch (error) { toast(error.message || '整单点歌失败') }
   finally { ordering.value = false }
 }
@@ -117,5 +152,5 @@ function coverEmoji(theme = '') {
 </script>
 
 <style scoped>
-.page{min-height:100vh;padding-bottom:74px}.top{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(8,10,15,.94);backdrop-filter:blur(14px);z-index:2}.top button{border:0;background:none;color:var(--text);font-size:30px;width:35px}.top .share{font-size:22px}main{padding:16px}.hero{display:flex;gap:16px;align-items:center;padding:16px;border-radius:17px;background:radial-gradient(circle at 90% 0,rgba(240,199,66,.18),transparent 45%),var(--panel2);border:1px solid var(--glass-border)}.cover{width:94px;height:94px;border-radius:17px;display:grid;place-items:center;background:linear-gradient(145deg,rgba(240,199,66,.24),rgba(139,92,246,.2));background-size:cover;background-position:center;font-size:42px;flex:none}.hero-info{min-width:0}.hero h1{font-size:20px;margin:5px 0}.hero p{font-size:12px;color:var(--dim);margin:0 0 8px;line-height:1.5}.hero small{color:var(--dim2)}.ai{font-size:9px;color:var(--gold);border:1px solid rgba(240,199,66,.3);padding:2px 6px;border-radius:999px}.order-all{width:100%;margin:14px 0 8px;padding:12px;border:0;border-radius:12px;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1c1705;font-weight:800}.order-all:disabled{opacity:.5}.songs{background:var(--panel2);border:1px solid var(--glass-border);border-radius:15px;padding:0 12px}.tip{text-align:center;color:var(--dim2);padding:70px 15px}
+.page{min-height:100vh;padding-bottom:74px}.top{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(8,10,15,.94);backdrop-filter:blur(14px);z-index:2}.top button{border:0;background:none;color:var(--text);font-size:30px;width:35px}.top .share{font-size:22px}main{padding:16px}.hero{display:flex;gap:16px;align-items:center;padding:16px;border-radius:17px;background:radial-gradient(circle at 90% 0,rgba(240,199,66,.18),transparent 45%),var(--panel2);border:1px solid var(--glass-border)}.cover{width:94px;height:94px;border-radius:17px;display:grid;place-items:center;background:linear-gradient(145deg,rgba(240,199,66,.24),rgba(139,92,246,.2));background-size:cover;background-position:center;font-size:42px;flex:none}.hero-info{min-width:0}.hero h1{font-size:20px;margin:5px 0}.hero p{font-size:12px;color:var(--dim);margin:0 0 8px;line-height:1.5}.hero small{color:var(--dim2)}.ai{font-size:9px;color:var(--gold);border:1px solid rgba(240,199,66,.3);padding:2px 6px;border-radius:999px}.order-all{width:100%;margin:14px 0 8px;padding:12px;border:0;border-radius:12px;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1c1705;font-weight:800}.order-all:disabled{opacity:.5}.songs{background:var(--panel2);border:1px solid var(--glass-border);border-radius:15px;padding:0 12px}.tip{text-align:center;color:var(--dim2);padding:70px 15px}.error-tip{color:var(--coral);display:flex;align-items:center;justify-content:center;gap:8px}.retry{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer}
 </style>

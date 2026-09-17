@@ -9,6 +9,7 @@
       </div>
     </header>
 
+    <div v-if="loadError" class="notice error-notice" role="alert"><span>源素材读取失败：{{ loadError }}</span><button class="text-btn" @click="load">重试</button></div>
     <section v-if="externalMode" class="readonly-panel"><strong>外部只读曲库</strong><span>当前 NAS 曲库仅允许扫描、索引和播放；转码、删除、移动和自动清理已禁用。</span></section>
 
     <!-- 筛选面板 / Filter panel -->
@@ -74,14 +75,17 @@ import { ChevronDown, ListRestart, RefreshCw, Trash2 } from 'lucide-vue-next'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
+import { createLatestRequest } from '../latestRequest'
 
 // 列表数据、分页、选中项 / List data, pagination, selected items
 const rows = ref([]), total = ref(0), page = ref(0), totalPages = ref(1), selected = ref([]), externalMode = ref(false)
 const cleaning = ref(false)
-// 默认展示全部源素材；格式筛选目前没有单独的界面控件。
+const loadError = ref('')
+// 默认展示全部源素材；支持关键词、处理状态与格式分析筛选。
 const filters = reactive({ keyword: '', status: '', formatAnalysis: '' })
 const progress = ref({ running:false, total:0, completed:0 })
 let timer = null
+const listRequests = createLatestRequest()
 
 /** 当前页是否全选（仅非删除项）/ Whether all non-deleted items on current page are selected */
 const allSelected = computed(() => rows.value.some(x => !x.sourceDeleted) && rows.value.filter(x => !x.sourceDeleted).every(x => selected.value.includes(x.id)))
@@ -96,7 +100,21 @@ const progressPercent = computed(() => progress.value.total ? Math.round(progres
  * 加载源素材列表数据。
  * Load source material list data.
  */
-async function load() { const r = await api.adminSourceLibrary({ ...filters, page:page.value, size:20 }); externalMode.value=r.libraryMode==='EXTERNAL_READ_ONLY'; rows.value=r.content||[]; total.value=r.total||0; totalPages.value=r.totalPages||1; selected.value=externalMode.value?[]:selected.value.filter(id=>rows.value.some(x=>x.id===id)) }
+async function load() {
+  const request = listRequests.begin()
+  loadError.value = ''
+  try {
+    const r = await api.adminSourceLibrary({ ...filters, page:page.value, size:20 }, { signal: request.signal })
+    if (!listRequests.isCurrent(request.id)) return
+    externalMode.value=r.libraryMode==='EXTERNAL_READ_ONLY'
+    rows.value=r.content||[]
+    total.value=r.total||0
+    totalPages.value=r.totalPages||1
+    selected.value=externalMode.value?[]:selected.value.filter(id=>rows.value.some(x=>x.id===id))
+  } catch(e) {
+    if (listRequests.isCurrent(request.id) && e.name !== 'AbortError') loadError.value = e.message || '加载源素材失败'
+  }
+}
 
 /**
  * 轮询转码进度，任务结束后自动清除定时器并刷新列表。
@@ -277,7 +295,7 @@ onMounted(async()=>{await Promise.all([load(),loadProgress()]);if(progress.value
  * 页面卸载：清除进度轮询定时器。
  * On unmount: clear progress polling timer.
  */
-onUnmounted(()=>{if(timer)clearInterval(timer)})
+onUnmounted(()=>{if(timer)clearInterval(timer);listRequests.cancel()})
 </script>
 
 <style scoped>

@@ -15,6 +15,12 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
+  servlet:
+    multipart:
+      # Keep request parsing bounded before controller code calls MultipartFile#getBytes.
+      max-file-size: 10MB
+      max-request-size: 12MB
+      file-size-threshold: 0B
 
 server:
   port: ${SERVER_PORT:8080}

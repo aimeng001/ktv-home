@@ -106,9 +106,9 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
                     android:orientation="horizontal">
-                    <TextView android:id="@+id/txtLibraryStat" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" android:text="曲库 0 首" android:textColor="@color/dim" android:textSize="15sp" />
-                    <TextView android:id="@+id/txtPlayedStat" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="14dp" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" android:text="今晚已唱 0 首" android:textColor="@color/dim" android:textSize="15sp" />
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="14dp" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" android:text="排队中 0 首" android:textColor="@color/dim" android:textSize="15sp" />
+                    <TextView android:id="@+id/txtLibraryStat" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" android:text="曲库" android:textColor="@color/dim" android:textSize="15sp" android:visibility="gone" />
+                    <TextView android:id="@+id/txtPlayedStat" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="14dp" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" android:text="今晚已唱 0 首" android:textColor="@color/dim" android:textSize="15sp" android:visibility="gone" />
+                    <TextView android:id="@+id/txtWaitingStat" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="14dp" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" android:text="排队中" android:textColor="@color/dim" android:textSize="15sp" android:visibility="gone" />
                 </LinearLayout>
             </LinearLayout>
 

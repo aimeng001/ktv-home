@@ -98,6 +98,49 @@ class CollaborativeArtistWritePathTest {
     }
 
     @Test
+    void reparsingCommercialCatalogPrefixPersistsEightDigitNumber() {
+        Song song = song(5L, "旧歌名", "旧歌手");
+        SongFile file = new SongFile();
+        file.setSongId(5L);
+        file.setFilePath("/source/00123456-周杰伦-晴天-国语-流行.mkv");
+        SongRepository songs = mock(SongRepository.class);
+        SongFileRepository files = mock(SongFileRepository.class);
+        when(songs.findById(5L)).thenReturn(Optional.of(song));
+        when(songs.findDistinctArtistByStatus("ok")).thenReturn(List.of("周杰伦"));
+        when(songs.findByFingerprint(anyString())).thenReturn(Optional.empty());
+        when(songs.save(any(Song.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(files.findBySongIdAndValidTrueOrderByPriorityDesc(5L)).thenReturn(List.of(file));
+
+        SongReparseService service = new SongReparseService(songs, files, mock(ArtistCreditService.class));
+
+        service.apply(List.of(5L), "artist_title");
+
+        org.assertj.core.api.Assertions.assertThat(song.getCatalogNumber()).isEqualTo("00123456");
+    }
+
+    @Test
+    void reparsingFilenameWithoutCatalogClearsStaleNumber() {
+        Song song = song(6L, "旧歌名", "旧歌手");
+        song.setCatalogNumber("00123456");
+        SongFile file = new SongFile();
+        file.setSongId(6L);
+        file.setFilePath("/source/周杰伦-晴天-国语-流行.mkv");
+        SongRepository songs = mock(SongRepository.class);
+        SongFileRepository files = mock(SongFileRepository.class);
+        when(songs.findById(6L)).thenReturn(Optional.of(song));
+        when(songs.findDistinctArtistByStatus("ok")).thenReturn(List.of("周杰伦"));
+        when(songs.findByFingerprint(anyString())).thenReturn(Optional.empty());
+        when(songs.save(any(Song.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(files.findBySongIdAndValidTrueOrderByPriorityDesc(6L)).thenReturn(List.of(file));
+
+        SongReparseService service = new SongReparseService(songs, files, mock(ArtistCreditService.class));
+
+        service.apply(List.of(6L), "artist_title");
+
+        org.assertj.core.api.Assertions.assertThat(song.getCatalogNumber()).isEmpty();
+    }
+
+    @Test
     void externalStructuredArtistsAreStoredAsSeparateCredits() {
         Song song = song(3L, "旧歌名", "旧歌手");
         ExternalTrack track = new ExternalTrack(MusicProvider.QQ, "track-3", "合唱歌曲",

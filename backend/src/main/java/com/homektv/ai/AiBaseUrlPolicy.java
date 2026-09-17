@@ -42,6 +42,22 @@ public final class AiBaseUrlPolicy {
         requireSafeNormalized(normalize(value), allowPrivateNetwork);
     }
 
+    /** Returns true only when every resolved address is private/local. */
+    public static boolean isPrivateNetwork(String value) {
+        String normalized = normalize(value);
+        if (normalized.isBlank()) return false;
+        try {
+            URI uri = URI.create(normalized);
+            String host = uri.getHost();
+            if (host == null || host.isBlank()) return false;
+            host = host.replace("[", "").replace("]", "");
+            InetAddress[] addresses = InetAddress.getAllByName(host);
+            return addresses.length > 0 && Arrays.stream(addresses).allMatch(AiBaseUrlPolicy::isPrivate);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private static void requireSafeNormalized(String normalized, boolean allowPrivateNetwork) {
         if (normalized.isBlank()) return;
         URI uri = URI.create(normalized);

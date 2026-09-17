@@ -22,12 +22,39 @@ public sealed class PendingPlaybackReportTests
     public void Report_stays_pending_until_a_terminal_acknowledgement()
     {
         var reports = new PendingPlaybackReportQueue();
-        Assert.True(reports.Enqueue(42));
+        Assert.Equal(PendingPlaybackReportEnqueueResult.Added, reports.Enqueue(42));
 
         reports.Acknowledge(42, "UNKNOWN");
         Assert.Equal(new[] { 42L }, reports.PendingQueueIds);
 
         reports.Acknowledge(42, "ALREADY_APPLIED");
+        Assert.Empty(reports.PendingQueueIds);
+    }
+
+    [Fact]
+    public void Full_queue_returns_explicit_failure_without_discarding_existing_reports()
+    {
+        var reports = new PendingPlaybackReportQueue(Enumerable.Range(1, PendingPlaybackReportQueue.MaxPending)
+            .Select(value => (long)value));
+
+        var result = reports.Enqueue(PendingPlaybackReportQueue.MaxPending + 1L);
+
+        Assert.Equal(PendingPlaybackReportEnqueueResult.Full, result);
+        Assert.Equal(PendingPlaybackReportQueue.MaxPending, reports.PendingQueueIds.Count);
+        Assert.Equal(1L, reports.PendingQueueIds[0]);
+        Assert.Equal(PendingPlaybackReportQueue.MaxPending,
+            reports.PendingQueueIds[^1]);
+    }
+
+    [Fact]
+    public void Persistence_failure_is_explicit_and_does_not_leave_a_memory_only_report()
+    {
+        var reports = new PendingPlaybackReportQueue(
+            persist: _ => throw new IOException("disk full"));
+
+        var result = reports.Enqueue(42);
+
+        Assert.Equal(PendingPlaybackReportEnqueueResult.PersistenceFailed, result);
         Assert.Empty(reports.PendingQueueIds);
     }
 

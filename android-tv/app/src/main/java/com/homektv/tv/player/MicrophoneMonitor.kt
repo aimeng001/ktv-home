@@ -34,7 +34,7 @@ class MicrophoneMonitor(
 
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(AudioManager::class.java)
-    private val running = AtomicBoolean(false)
+    private val sessionCoordinator = MicrophoneSessionCoordinator()
     private var worker: Thread? = null
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
@@ -65,7 +65,8 @@ class MicrophoneMonitor(
      * Starts microphone monitoring and returns false when permission or hardware is unavailable.
      */
     fun start(): Boolean {
-        if (running.get()) return true
+        if (sessionCoordinator.running.get() && worker?.isAlive == true) return true
+        sessionCoordinator.stop()
         if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             onStateChanged(State(false, message = "需要麦克风权限"))
             return false
@@ -162,15 +163,17 @@ class MicrophoneMonitor(
 
         audioRecord = record
         audioTrack = track
-        running.set(true)
+        val session = sessionCoordinator.beginSession()
         worker = thread(name = "ktv-microphone-monitor", isDaemon = true) {
             val buffer = ShortArray(inputBuffer / 2)
             try {
                 track.play()
                 record.startRecording()
                 Log.i(TAG, "microphone active device=${input.productName} sampleRate=$sampleRate buffer=$inputBuffer")
-                onStateChanged(State(true, input.productName?.toString() ?: MicrophoneInputSelector.label(input.type)))
-                while (running.get()) {
+                if (sessionCoordinator.isCurrent(session)) {
+                    onStateChanged(State(true, input.productName?.toString() ?: MicrophoneInputSelector.label(input.type)))
+                }
+                while (sessionCoordinator.isCurrent(session)) {
                     val read = record.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
                     if (read > 0) {
                         track.write(buffer, 0, read, AudioTrack.WRITE_BLOCKING)
@@ -178,16 +181,20 @@ class MicrophoneMonitor(
                 }
             } catch (error: Exception) {
                 Log.w(TAG, "microphone monitor failed", error)
-                onStateChanged(State(false, message = error.message ?: "麦克风监听失败"))
+                if (sessionCoordinator.isCurrent(session)) {
+                    sessionCoordinator.endSession(session)
+                    onStateChanged(State(false, message = error.message ?: "麦克风监听失败"))
+                }
             } finally {
                 releaseAudioObjects(record, track)
+                sessionCoordinator.endSession(session)
             }
         }
         return true
     }
 
     fun stop() {
-        running.set(false)
+        sessionCoordinator.stop()
         audioRecord?.stopSafely()
         audioTrack?.pauseSafely()
         worker?.interrupt()

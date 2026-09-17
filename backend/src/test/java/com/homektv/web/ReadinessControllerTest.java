@@ -11,6 +11,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ReadinessControllerTest {
 
@@ -18,13 +20,16 @@ class ReadinessControllerTest {
     void readinessReturnsOkWhenDatabaseIsReachable() throws Exception {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForObject("SELECT 1", Integer.class)).thenReturn(1);
+        var identity = mock(com.homektv.discovery.ServerInstanceIdentityService.class);
+        when(identity.getOrCreate()).thenReturn("550e8400-e29b-41d4-a716-446655440000");
 
-        MockMvc mvc = standaloneSetup(new ReadinessController(jdbc)).build();
+        MockMvc mvc = standaloneSetup(new ReadinessController(jdbc, identity)).build();
 
         mvc.perform(get("/api/ready"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"))
-                .andExpect(jsonPath("$.service").value("home-ktv"));
+                .andExpect(jsonPath("$.service").value("home-ktv"))
+                .andExpect(jsonPath("$.instanceId").value("550e8400-e29b-41d4-a716-446655440000"));
     }
 
     @Test
@@ -32,12 +37,15 @@ class ReadinessControllerTest {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForObject("SELECT 1", Integer.class))
                 .thenThrow(new DataAccessResourceFailureException("database unavailable"));
+        var identity = mock(com.homektv.discovery.ServerInstanceIdentityService.class);
+        when(identity.getOrCreate()).thenReturn("550e8400-e29b-41d4-a716-446655440000");
 
-        MockMvc mvc = standaloneSetup(new ReadinessController(jdbc)).build();
+        MockMvc mvc = standaloneSetup(new ReadinessController(jdbc, identity)).build();
 
         mvc.perform(get("/api/ready"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.status").value("DOWN"))
-                .andExpect(jsonPath("$.service").value("home-ktv"));
+                .andExpect(jsonPath("$.service").value("home-ktv"))
+                .andExpect(jsonPath("$.instanceId").value("550e8400-e29b-41d4-a716-446655440000"));
     }
 }

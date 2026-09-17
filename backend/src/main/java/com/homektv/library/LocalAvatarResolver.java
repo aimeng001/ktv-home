@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -84,7 +85,7 @@ public class LocalAvatarResolver {
                     imagePath = imageIndex.get(ArtistCreditParser.key(profile.displayName()));
                 }
 
-                if (imagePath != null && Files.isRegularFile(imagePath) && Files.isReadable(imagePath)) {
+                if (isRegularNonLink(imagePath)) {
                     try {
                         if (Files.size(imagePath) > MAX_FILE_SIZE) {
                             log.warn("本地头像文件过大(>10MB)，跳过自动导入: {}", imagePath);
@@ -122,7 +123,8 @@ public class LocalAvatarResolver {
      * only advisory because a file can be replaced or grow before it is opened.
      */
     static byte[] readBounded(Path imagePath) throws IOException {
-        try (var input = Files.newInputStream(imagePath)) {
+        if (!isRegularNonLink(imagePath)) return null;
+        try (var input = Files.newInputStream(imagePath, LinkOption.NOFOLLOW_LINKS)) {
             byte[] bytes = input.readNBytes((int) MAX_FILE_SIZE + 1);
             return bytes.length > MAX_FILE_SIZE ? null : bytes;
         }
@@ -159,8 +161,15 @@ public class LocalAvatarResolver {
 
     public void indexDirectory(Path dir, Map<String, Path> index) {
         if (dir == null || !Files.isDirectory(dir)) return;
+        final Path realRoot;
+        try {
+            realRoot = dir.toRealPath();
+        } catch (IOException e) {
+            log.debug("本地头像目录无法解析真实路径，跳过: {} - {}", dir, e.getMessage());
+            return;
+        }
         try (Stream<Path> stream = Files.walk(dir, 3)) {
-            stream.filter(Files::isRegularFile).forEach(file -> {
+            stream.filter(file -> isRegularFileUnderRoot(realRoot, file)).forEach(file -> {
                 // 确保跳过被排除系统目录下的文件
                 for (Path parent = file.getParent(); parent != null && !parent.equals(dir.getParent()); parent = parent.getParent()) {
                     String parentName = parent.getFileName() != null ? parent.getFileName().toString().toLowerCase(Locale.ROOT) : "";
@@ -180,6 +189,22 @@ public class LocalAvatarResolver {
             });
         } catch (IOException e) {
             log.debug("扫描本地头像目录跳过: {} - {}", dir, e.getMessage());
+        }
+    }
+
+    private static boolean isRegularNonLink(Path path) {
+        return path != null && !Files.isSymbolicLink(path)
+                && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS);
+    }
+
+    private static boolean isRegularFileUnderRoot(Path realRoot, Path candidate) {
+        if (candidate == null || Files.isSymbolicLink(candidate)) return false;
+        try {
+            Path realFile = candidate.toRealPath();
+            return realFile.startsWith(realRoot)
+                    && Files.isRegularFile(realFile, LinkOption.NOFOLLOW_LINKS);
+        } catch (IOException e) {
+            return false;
         }
     }
 

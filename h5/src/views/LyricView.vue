@@ -57,7 +57,7 @@ import { createLyricLoader } from './lyricLoader'
 
 const player = usePlayerStore()
 const user = useUserStore()
-const controls = makeControls(user.clientToken)
+const controls = makeControls(user.clientToken, { onResponse: response => player.applyControlResponse(response) })
 const { toast } = useToast()
 
 /** 当前播放歌曲的计算属性 / Computed: currently playing song */

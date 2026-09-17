@@ -287,12 +287,11 @@ the optional reasoning model falls back to the bulk model when left empty. The
 settings page can discover models where supported and test authentication, chat,
 and JSON capabilities.
 
-**The current request path still requires a non-empty API key.** Fully unauthenticated
-local Ollama/LM Studio/OpenAI-compatible endpoints are therefore not completely
-supported yet and are tracked in the remediation plan. With Docker deployments,
+Public providers require a non-empty API key. Private or local Ollama/LM Studio/
+OpenAI-compatible endpoints may omit the key only when the explicit
+`KTV_AI_ALLOW_PRIVATE_NETWORK=true` opt-in is enabled. With Docker deployments,
 `localhost` means the Home KTV container itself, not the host running Ollama; use
-an address that the Home KTV server can actually reach. Private/LAN AI addresses
-still require the explicit `KTV_AI_ALLOW_PRIVATE_NETWORK=true` opt-in.
+an address that the Home KTV server can actually reach.
 
 Stored API keys are encrypted with AES-256-GCM. Keep the generated
 `data/secrets/config.key` file with the application data backup. When AI is not

@@ -134,8 +134,8 @@ class PlaybackServiceTest {
         song.setStatus("ok");
         when(queueRepository.findByStatusOrderByOrderIndexAsc(QueueService.WAITING))
                 .thenReturn(List.of(pending));
-        when(songRepository.findById(2L)).thenReturn(Optional.of(song));
-        when(fileRepository.existsReadyFile(2L)).thenReturn(false);
+        when(songRepository.findAllById(java.util.Set.of(2L))).thenReturn(List.of(song));
+        when(fileRepository.findSongIdsWithReadyFile(java.util.Set.of(2L))).thenReturn(java.util.Set.of());
 
         playbackService.play();
 
@@ -185,6 +185,23 @@ class PlaybackServiceTest {
         assertThat(file.getOriginalChannel()).isEqualTo(AudioChannel.RIGHT);
         assertThat(file.getAccompanimentChannel()).isEqualTo(AudioChannel.LEFT);
         verify(fileRepository).save(file);
+    }
+
+    @Test
+    void swapVocalTracks_keepsPositionAndSeekSequence() {
+        playerState.setPositionMs(12_345L);
+        playerState.setSeekSequence(3L);
+        SongFile file = file(203L, 2L);
+        file.setAudioTracks(1);
+        file.setAudioLayout(AudioLayout.DUAL_CHANNEL);
+        file.setOriginalChannel(AudioChannel.LEFT);
+        file.setAccompanimentChannel(AudioChannel.RIGHT);
+        when(fileRepository.findBySongIdAndValidTrueOrderByPriorityDesc(2L)).thenReturn(List.of(file));
+
+        PlayerState result = playbackService.swapVocalTracks();
+
+        assertThat(result.getPositionMs()).isEqualTo(12_345L);
+        assertThat(result.getSeekSequence()).isEqualTo(3L);
     }
 
     private static SongFile file(long id, long songId) {

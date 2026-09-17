@@ -1,6 +1,7 @@
 package com.homektv.web;
 
 import com.homektv.queue.RoomHostService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import com.homektv.ws.WsBroadcaster;
 import com.homektv.ws.WsEvent;
@@ -19,10 +20,18 @@ public class RoomHostController {
     private final RoomHostService service;
     private final WsBroadcaster broadcaster;
 
-    public RoomHostController(RoomHostService service) {
-        this(service, null);
-    }
-
+    /**
+     * 唯一的构造函数，必须标注 {@code @Autowired}。
+     *
+     * <p>本类曾经额外提供一个单参便利构造函数，导致出现两个都未标注 {@code @Autowired}
+     * 的候选构造函数。Spring 无法在它们之间做出选择、又找不到无参构造函数，
+     * 在刷新上下文时抛 {@code BeanInstantiationException: No default constructor found}，
+     * 使整个服务端无法启动。该便利构造函数没有任何生产用途（仅测试便利），已删除。
+     *
+     * @param service 房间主持人服务
+     * @param broadcaster WebSocket 广播器
+     */
+    @Autowired
     public RoomHostController(RoomHostService service, WsBroadcaster broadcaster) {
         this.service = service;
         this.broadcaster = broadcaster;

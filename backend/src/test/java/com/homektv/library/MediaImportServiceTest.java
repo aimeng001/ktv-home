@@ -581,6 +581,24 @@ class MediaImportServiceTest {
     }
 
     @Test
+    void pendingTranscodeRejectsSourcePathOutsideConfiguredSourceRoot() throws Exception {
+        Path outside = temp.resolve("outside-source.mpg");
+        Files.writeString(outside, "outside-source");
+        MediaImportRecord record = pendingRecord(42L, "placeholder.mpg");
+        record.setSourcePath(outside.toString());
+        record.setSourceMd5(new FileHashService().md5(outside));
+        when(importRepo.findByIdIn(List.of(42L))).thenReturn(List.of(record));
+        when(importRepo.findById(42L)).thenReturn(Optional.of(record));
+
+        service.startPendingTranscode(List.of(42L), false);
+        awaitFinished();
+
+        assertThat(service.getProgress().failed()).isEqualTo(1);
+        verify(hashService, never()).md5(eq(outside));
+        verifyNoInteractions(probe, mediaTranscoder);
+    }
+
+    @Test
     void verifiedOutputSnapshotAvoidsRehashingDuringCleanup() throws Exception {
         Path importedSource = sourceDir.resolve("歌手 - 快速清理.mp4");
         Path importedOutput = targetDir.resolve("歌手 - 快速清理.mp4");

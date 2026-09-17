@@ -14,6 +14,7 @@ class QueueSnapshotSerializationTest {
             """
             {
               "state": "playing",
+              "stateRevision": 27,
               "vocalMode": "original",
               "positionMs": 12345,
               "audioLayout": {
@@ -27,6 +28,7 @@ class QueueSnapshotSerializationTest {
         )
 
         assertEquals("playing", snapshot.state)
+        assertEquals(27L, snapshot.stateRevision)
         assertEquals(12345L, snapshot.positionMs)
         assertEquals("DUAL_CHANNEL", snapshot.audioLayout.layout)
         assertEquals("LEFT", snapshot.audioLayout.originalChannel)
@@ -43,6 +45,7 @@ class QueueSnapshotSerializationTest {
         assertEquals("LEFT", snapshot.audioLayout.originalChannel)
         assertEquals("RIGHT", snapshot.audioLayout.accompanimentChannel)
         assertEquals(0L, snapshot.positionMs)
+        assertEquals(0L, snapshot.stateRevision)
         assertNull(snapshot.playing)
     }
 }

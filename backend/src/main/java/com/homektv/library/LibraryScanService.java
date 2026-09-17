@@ -612,6 +612,10 @@ public class LibraryScanService {
             song.setVocalForm(candidate.vocalForm());
             changed = true;
         }
+        if (!Objects.equals(song.getCatalogNumber(), candidate.catalogNumber())) {
+            song.setCatalogNumber(candidate.catalogNumber());
+            changed = true;
+        }
         if (!Objects.equals(song.getFingerprint(), fingerprint)) {
             song.setFingerprint(fingerprint);
             changed = true;
@@ -1186,6 +1190,9 @@ public class LibraryScanService {
         if (parsed.vocalForm() != null && !parsed.vocalForm().isBlank()) {
             provisional.setVocalForm(parsed.vocalForm());
         }
+        if (parsed.catalogNumber() != null && !parsed.catalogNumber().isBlank()) {
+            provisional.setCatalogNumber(parsed.catalogNumber());
+        }
         provisional.setMetadataProvenance("{\"title\":{\"source\":\"filename_fast_index\"},"
                 + "\"artist\":{\"source\":\"filename_fast_index\"}}");
         provisional.setNeedsAiOptimization(!parsed.recognized());
@@ -1624,6 +1631,13 @@ public class LibraryScanService {
             isNew = true;
         }
 
+        // The catalog number is filename-derived metadata. Keep it in sync for
+        // new, existing, and fingerprint-merged rows, including clearing a
+        // stale number when a file is renamed without the commercial prefix.
+        if (filenameMeta != null && !Objects.equals(song.getCatalogNumber(), filenameMeta.catalogNumber())) {
+            song.setCatalogNumber(filenameMeta.catalogNumber());
+        }
+
         // 6) 歌词/封面落盘。同名增强 LRC 优先，且允许侧车文件独立更新。
         if (sidecarLyricText != null) {
             String lyricPath = assetWriter.writeLyric(fingerprint, sidecarLyricText);
@@ -1835,6 +1849,9 @@ public class LibraryScanService {
         if (!song.isMetadataLocked("vocalForm")
                 && filenameMeta != null && !filenameMeta.vocalForm().isBlank()) {
             song.setVocalForm(filenameMeta.vocalForm());
+        }
+        if (filenameMeta != null && !Objects.equals(song.getCatalogNumber(), filenameMeta.catalogNumber())) {
+            song.setCatalogNumber(filenameMeta.catalogNumber());
         }
         if (!titleLocked && !artistLocked) {
             song.setMetadataProvenance("{\"title\":{\"source\":\"" + titleSource

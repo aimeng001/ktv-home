@@ -79,6 +79,6 @@ class KioskModeCoordinator(
     }
 
     companion object {
-        const val DEFAULT_IDLE_TIMEOUT_MS = 25_000L
+        const val DEFAULT_IDLE_TIMEOUT_MS = 30_000L
     }
 }

@@ -10,6 +10,7 @@ import com.homektv.tv.net.RoomHostStatus
 import com.homektv.tv.net.ArtistItem
 import com.homektv.tv.net.NamedCount
 import com.homektv.tv.net.SongDto
+import com.homektv.tv.net.SnapshotRevisionPolicy
 import com.homektv.tv.net.UserProfile
 
 enum class ControllerConnection {
@@ -62,8 +63,15 @@ data class ControllerUiState(
 )
 
 object ControllerStateReducer {
-    fun withSnapshot(state: ControllerUiState, snapshot: QueueSnapshot): ControllerUiState =
-        state.copy(
+    fun withSnapshot(state: ControllerUiState, snapshot: QueueSnapshot): ControllerUiState {
+        val currentRevision = state.queue.stateRevision
+        val incomingRevision = snapshot.stateRevision
+        // Once a revisioned snapshot has been accepted, a legacy or older REST/WS
+        // response must not roll the controller back to an older queue state.
+        if (!SnapshotRevisionPolicy.accepts(currentRevision, incomingRevision)) {
+            return state
+        }
+        return state.copy(
             connection = ControllerConnection.ONLINE,
             queue = snapshot,
             queueProjection = com.homektv.tv.ui.SongQueueProjection.from(
@@ -73,6 +81,7 @@ object ControllerStateReducer {
             ),
             error = if (state.registration == RegistrationStatus.RETRY_REQUIRED) state.error else null,
         )
+    }
 
     fun withSearchStarted(state: ControllerUiState, query: String): ControllerUiState =
         state.copy(

@@ -176,4 +176,14 @@ class FilenameParserTest {
         assertThat(legacyWithTrack.artist()).isEqualTo("周杰伦");
         assertThat(legacyWithTrack.title()).isEqualTo("晴天");
     }
+
+    @Test
+    void preservesEightDigitCatalogNumberSeparatelyFromTrackNumbers() {
+        ParsedMeta parsed = FilenameParser.parse("00123456-周杰伦-晴天-国语-流行.mkv", EXISTING_ARTISTS);
+
+        assertThat(parsed.catalogNumber()).isEqualTo("00123456");
+        assertThat(parsed.artist()).isEqualTo("周杰伦");
+        assertThat(parsed.title()).isEqualTo("晴天");
+        assertThat(parsed.recognized()).isTrue();
+    }
 }

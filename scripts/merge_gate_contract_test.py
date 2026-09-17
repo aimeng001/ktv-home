@@ -33,8 +33,18 @@ def head_paths() -> set[str]:
     return {line for line in result.stdout.splitlines() if line}
 
 
+def source_music_mount(compose: str) -> str:
+    """Returns the ``type: bind`` block that mounts the shared source library."""
+    target = compose.index("        target: /source-music")
+    start = compose.rfind("      - type: bind", 0, target)
+    end = compose.find("      - type: bind", target)
+    return compose[start : end if end >= 0 else len(compose)]
+
+
 class MergeGateContractTests(unittest.TestCase):
-    def _nas_compose_config(self, values: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    def _compose_config(
+        self, filename: str, values: dict[str, str]
+    ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory(prefix="ktv-compose-contract-") as temp_dir:
             env_file = Path(temp_dir) / ".env"
             env_file.write_text(
@@ -45,8 +55,10 @@ class MergeGateContractTests(unittest.TestCase):
             for key in {
                 "KTV_DB_PASSWORD",
                 "KTV_ADMIN_PASSWORD",
+                "KTV_LIBRARY_MODE",
                 "KTV_RELEASE_IMAGE",
                 "KTV_SOURCE_MUSIC_DIR",
+                "KTV_SOURCE_MUSIC_READ_ONLY",
                 "KTV_MUSIC_DIR",
                 "KTV_DATA_DIR",
                 "KTV_PG_DIR",
@@ -60,7 +72,7 @@ class MergeGateContractTests(unittest.TestCase):
                     "--env-file",
                     str(env_file),
                     "-f",
-                    str(REPOSITORY / "docker-compose.nas.yml"),
+                    str(REPOSITORY / filename),
                     "config",
                     "--format",
                     "json",
@@ -71,6 +83,9 @@ class MergeGateContractTests(unittest.TestCase):
                 text=True,
                 env=environment,
             )
+
+    def _nas_compose_config(self, values: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        return self._compose_config("docker-compose.nas.yml", values)
 
     def test_readme_separates_existing_nas_and_managed_deployments(self) -> None:
         readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
@@ -251,7 +266,7 @@ class MergeGateContractTests(unittest.TestCase):
         )
         self.assertIn("large-library-scan:", workflow)
         self.assertIn("runLargeLibraryScanTest=true", workflow)
-        self.assertIn("scanRows=20000", workflow)
+        self.assertIn("scanRows=10000", workflow)
         self.assertIn("-Xmx512m", workflow)
 
     def test_standalone_nas_source_path_is_configurable_and_read_only(self) -> None:
@@ -265,6 +280,52 @@ class MergeGateContractTests(unittest.TestCase):
         self.assertIn("target: /source-music", source_mount)
         self.assertIn("read_only: true", source_mount)
         self.assertIn("create_host_path: false", source_mount)
+
+    def test_production_compose_defaults_the_source_library_to_read_only(self) -> None:
+        for filename in ("docker-compose.yml", "docker-compose.prebuilt.yml"):
+            compose = (REPOSITORY / filename).read_text(encoding="utf-8")
+            source_mount = source_music_mount(compose)
+
+            self.assertIn(
+                "read_only: ${KTV_SOURCE_MUSIC_READ_ONLY:-true}",
+                source_mount,
+                f"{filename} must default /source-music to read-only",
+            )
+
+        nas_mount = source_music_mount(
+            (REPOSITORY / "docker-compose.nas.yml").read_text(encoding="utf-8")
+        )
+        self.assertIn("read_only: true", nas_mount)
+
+    def test_external_read_only_deployment_never_mounts_the_source_writable(self) -> None:
+        for filename in ("docker-compose.yml", "docker-compose.prebuilt.yml"):
+            result = self._compose_config(
+                filename,
+                {
+                    "KTV_DB_PASSWORD": "sentinel-db",
+                    "KTV_LIBRARY_MODE": "EXTERNAL_READ_ONLY",
+                },
+            )
+            self.assertEqual(0, result.returncode, f"{filename}: {result.stderr}")
+            mounts = {
+                mount["target"]: mount
+                for mount in json.loads(result.stdout)["services"]["ktv"]["volumes"]
+            }
+            self.assertTrue(
+                mounts["/source-music"]["read_only"],
+                f"{filename} must keep /source-music read-only for EXTERNAL_READ_ONLY",
+            )
+
+    def test_env_example_never_pins_a_writable_source_library(self) -> None:
+        env_example = (REPOSITORY / ".env.example").read_text(encoding="utf-8")
+
+        self.assertIn("KTV_SOURCE_MUSIC_READ_ONLY", env_example)
+        self.assertIn("MANAGED", env_example)
+        self.assertNotRegex(
+            env_example,
+            r"(?m)^\s*KTV_SOURCE_MUSIC_READ_ONLY\s*=\s*false\s*$",
+            "opting out of the read-only source mount must stay a commented, explicit step",
+        )
 
     def test_standalone_nas_deployment_does_not_require_a_gpu_device(self) -> None:
         compose = (REPOSITORY / "docker-compose.nas.yml").read_text(encoding="utf-8")
@@ -376,6 +437,14 @@ class MergeGateContractTests(unittest.TestCase):
             env_example,
             "Missing KTV_PLAYER_CREDENTIAL in .env.example",
         )
+
+    def test_env_example_and_readme_warn_managed_mode_requires_read_write_opt_out(self) -> None:
+        env_example = (REPOSITORY / ".env.example").read_text(encoding="utf-8")
+        self.assertIn("MANAGED 模式导入后会清理源文件，需要写入源目录时必须取消下一行注释", env_example)
+        self.assertIn("# KTV_SOURCE_MUSIC_READ_ONLY=false", env_example)
+
+        readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+        self.assertIn("KTV_SOURCE_MUSIC_READ_ONLY=false", readme)
 
 
 if __name__ == "__main__":

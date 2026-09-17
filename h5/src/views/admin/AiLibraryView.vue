@@ -12,6 +12,7 @@
         <button class="secondary icon-text-button" :disabled="loading" title="刷新歌单" @click="refreshAll">
           <RefreshCw :size="15" :class="{ spin: loading }" />刷新
         </button>
+        <button class="secondary icon-text-button" @click="showTaskPanel=true">AI 任务</button>
       </div>
     </header>
 
@@ -51,6 +52,8 @@
         <button class="primary" @click="search"><Search :size="14" />查询</button>
       </div>
     </section>
+
+    <AiTaskPanel v-if="showTaskPanel" @close="showTaskPanel=false" @applied="loadPlaylists" />
 
     <section class="table-panel">
       <div class="toolbar">
@@ -100,6 +103,7 @@
         <div><button class="secondary" :disabled="page === 0" @click="go(page - 1)">上一页</button><button class="secondary" :disabled="page >= totalPages - 1" @click="go(page + 1)">下一页</button></div>
       </div>
     </section>
+
 
     <div v-if="editorOpen" class="mask" @click.self="closeEditor">
       <section class="modal editor-modal" role="dialog" aria-modal="true" :aria-label="playlistForm.id ? '编辑歌单' : '新建歌单'">
@@ -196,6 +200,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
+import AiTaskPanel from '../../components/admin/AiTaskPanel.vue'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
 import {
   ArrowDown, ArrowUp, Check, CheckCircle2, ChevronDown, GripVertical, ListMusic,
@@ -226,6 +231,7 @@ const playlistPreview = ref(null)
 const generateForm = reactive({ limit: 100 })
 const playlistForm = reactive({ id: null, name: '', description: '', theme: '', publicVisible: true })
 const filters = reactive({ keyword: '', source: '', visibility: '' })
+const showTaskPanel = ref(true)
 
 const filteredPlaylists = computed(() => {
   const keyword = filters.keyword.toLowerCase()

@@ -29,6 +29,7 @@ import com.homektv.tv.net.KtvHttpTransport
 import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.SongDto
 import com.homektv.tv.player.EffectPlayer
+import com.homektv.tv.ui.kiosk.KtvSingerFilterPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -60,6 +61,7 @@ class KtvKioskOverlayController(
     private val onNext: () -> Unit,
     private val onRestart: () -> Unit,
     private val onToggleVocal: () -> Unit,
+    initialExternalDisplayActive: Boolean = false,
 ) {
 
     private val config = AppConfig(activity)
@@ -68,7 +70,8 @@ class KtvKioskOverlayController(
     private val personalActionRouter = KioskPersonalActionRouter(personalActions)
     private val queueActionRouter = KioskQueueActionRouter(controllerActions)
 
-    val presentationState = KioskPresentationState()
+    val presentationState = KioskPresentationState(initialTab = KioskTab.DASHBOARD)
+    private val dashboardPolicy = com.homektv.tv.ui.kiosk.KtvDashboardPolicy()
 
     private val searchAdapter = KtvKioskSongAdapter(
         onOrder = ::orderSong,
@@ -91,17 +94,17 @@ class KtvKioskOverlayController(
         onOpen = ::openPlaylist,
         onOrder = { playlist -> personalActionRouter.orderPlaylist(playlist.id) },
     )
-    private val singerAvatarCache = RecommendationCoverCache<android.graphics.Bitmap>(
+    private val singerAvatarCache = WeightedLruCache<String, android.graphics.Bitmap>(
         capacity = 128,
         maxBytes = 16L * 1024L * 1024L,
         weight = { it.allocationByteCount.toLong() },
     )
-    private val pendingAvatarCallbacks = mutableMapOf<Long, MutableList<(android.graphics.Bitmap?) -> Unit>>()
+    private val pendingAvatarCallbacks = mutableMapOf<String, MutableList<(android.graphics.Bitmap?) -> Unit>>()
 
     private val singerAdapter = SingerCardAdapter(
         onArtistClick = ::onArtistSelected,
         imageLoader = { url, callback ->
-            val key = url.hashCode().toLong()
+            val key = url
             val cached = singerAvatarCache.get(key)
             if (cached != null) {
                 callback(cached)
@@ -110,15 +113,14 @@ class KtvKioskOverlayController(
                 subscribers.add(callback)
                 if (singerAvatarCache.tryStartLoad(key)) {
                     activity.lifecycleScope.launch {
-                        val bitmap = withContext(Dispatchers.IO) {
+                        val bytes = withContext(Dispatchers.IO) {
                             val bytesRes = transport.getBytes(url)
-                            if (bytesRes is KtvApiResult.Success) {
-                                BitmapSafety.decode(
-                                    bytes = bytesRes.value,
-                                    maxDimension = 256,
-                                    maxPixels = 256L * 256L,
-                                )
-                            } else null
+                            (bytesRes as? KtvApiResult.Success)?.value
+                        }
+                        val bitmap = bytes?.let {
+                            withContext(Dispatchers.Default) {
+                                ArtworkDecoder.decode(it, ArtworkProfile.AVATAR)
+                            }
                         }
                         val waiting = pendingAvatarCallbacks.remove(key) ?: emptyList()
                         if (bitmap != null) {
@@ -144,6 +146,7 @@ class KtvKioskOverlayController(
     private var categoryMode = KioskCategoryMode.NEW
     private var categoryDetail = false
     private var playlistDetail = false
+    private var externalDisplayActive = initialExternalDisplayActive
 
     init {
         setupViews()
@@ -159,6 +162,12 @@ class KtvKioskOverlayController(
 
         overlay.singerRecyclerView.layoutManager = GridLayoutManager(activity, 4)
         overlay.singerRecyclerView.adapter = singerAdapter
+
+        val singerFilters = KtvSingerFilterPolicy.filters
+        overlay.btnSingerAll.setOnClickListener { loadSingerGender(singerFilters[0].gender) }
+        overlay.btnSingerMale.setOnClickListener { loadSingerGender(singerFilters[1].gender) }
+        overlay.btnSingerFemale.setOnClickListener { loadSingerGender(singerFilters[2].gender) }
+        overlay.btnSingerGroup.setOnClickListener { loadSingerGender(singerFilters[3].gender) }
 
         overlay.rankingRecyclerView.layoutManager = LinearLayoutManager(activity)
         overlay.rankingRecyclerView.adapter = rankingAdapter
@@ -184,6 +193,42 @@ class KtvKioskOverlayController(
         }
 
         // 2. 标签切换绑定
+        overlay.tabDashboard.setOnClickListener {
+            presentationState.selectTab(KioskTab.DASHBOARD)
+        }
+        overlay.kioskDashboardView.onTileClick = { tile ->
+            coordinator.resetIdleTimer()
+            dashboardPolicy.onTileClicked(tile)
+            overlay.kioskDashboardView.lastFocusedTile = tile
+            when (tile) {
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.PINYIN -> presentationState.selectTab(KioskTab.PINYIN)
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.SINGER -> presentationState.selectTab(KioskTab.SINGERS)
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.CATEGORY -> {
+                    categoryMode = when (com.homektv.tv.ui.kiosk.KtvCategoryRoutePolicy.dashboardCategory()) {
+                        com.homektv.tv.ui.kiosk.KtvCategoryRoute.TAGS -> KioskCategoryMode.TAGS
+                        com.homektv.tv.ui.kiosk.KtvCategoryRoute.LANGUAGES -> KioskCategoryMode.LANGUAGES
+                        com.homektv.tv.ui.kiosk.KtvCategoryRoute.NEW -> KioskCategoryMode.NEW
+                    }
+                    categoryDetail = false
+                    focusController.hasInnerDetailBack = false
+                    overlay.categoryRecyclerView.adapter = categoryNameAdapter
+                    overlay.txtCategoryHeader.text = "选择标签"
+                    presentationState.selectTab(KioskTab.CATEGORIES)
+                    loadCategories()
+                }
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.LANGUAGE -> {
+                    categoryMode = KioskCategoryMode.LANGUAGES
+                    categoryDetail = false
+                    focusController.hasInnerDetailBack = false
+                    overlay.categoryRecyclerView.adapter = categoryNameAdapter
+                    overlay.txtCategoryHeader.text = "选择语种"
+                    presentationState.selectTab(KioskTab.CATEGORIES)
+                    catalogActionRouter.languages()
+                }
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.RANKING -> presentationState.selectTab(KioskTab.RANKINGS)
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.ORDERED_QUEUE -> openQueueDrawer()
+            }
+        }
         overlay.tabPinyin.setOnClickListener {
             if (presentationState.selectedArtist.value != null) {
                 presentationState.clearArtistSelection()
@@ -225,9 +270,10 @@ class KtvKioskOverlayController(
         }
         overlay.btnKioskExit.setOnClickListener { toggleKiosk(false) }
 
-        // 3. 26 字母软键盘绑定
+        // 3. 软键盘绑定
         overlay.kioskKeyboard.onKeywordChanged = { keyword ->
             coordinator.resetIdleTimer()
+            focusController.hasInputText = keyword.isNotEmpty()
             onKeywordInput(keyword)
         }
         overlay.kioskKeyboard.onImeRequest = {
@@ -302,7 +348,7 @@ class KtvKioskOverlayController(
                 controllerState = state
                 renderCatalogState(state)
                 if (state.connection != ControllerConnection.CONNECTING) {
-                    updateSnapshot(state.queue)
+                    updateSnapshot(state.queue, state.queueProjection)
                 }
                 queueDialog?.updateActor(
                     currentUserId = state.currentUser?.id,
@@ -329,6 +375,7 @@ class KtvKioskOverlayController(
                 dx: Int,
                 dy: Int,
             ) {
+                coordinator.resetIdleTimer()
                 if (dy <= 0 || recyclerView.canScrollVertically(1)) return
                 loadMore()
             }
@@ -340,6 +387,7 @@ class KtvKioskOverlayController(
         val selectedArtist = presentationState.selectedArtist.value
 
         singerAdapter.submitList(state.artists)
+        updateSingerFilterButtons(state.artistGender)
         rankingAdapter.submitList(state.ranking)
         when (categoryMode) {
             KioskCategoryMode.NEW -> categoryAdapter.submitList(state.newSongs)
@@ -452,6 +500,7 @@ class KtvKioskOverlayController(
             btn.setTextColor(if (active) activeColor else inactiveColor)
         }
 
+        updateTabBtn(overlay.tabDashboard, tab == KioskTab.DASHBOARD)
         updateTabBtn(overlay.tabPinyin, tab == KioskTab.PINYIN)
         updateTabBtn(overlay.tabSingers, tab == KioskTab.SINGERS)
         updateTabBtn(overlay.tabRankings, tab == KioskTab.RANKINGS)
@@ -463,6 +512,8 @@ class KtvKioskOverlayController(
         updateTabBtn(overlay.btnCategoryLanguages, categoryMode == KioskCategoryMode.LANGUAGES)
         updateTabBtn(overlay.btnCategoryTags, categoryMode == KioskCategoryMode.TAGS)
 
+        overlay.kioskNavTabs.visibility = if (tab == KioskTab.DASHBOARD) View.GONE else View.VISIBLE
+        overlay.kioskDashboardView.visibility = if (tab == KioskTab.DASHBOARD) View.VISIBLE else View.GONE
         overlay.panelPinyin.visibility = if (tab == KioskTab.PINYIN) View.VISIBLE else View.GONE
         overlay.panelSingers.visibility = if (tab == KioskTab.SINGERS) View.VISIBLE else View.GONE
         overlay.panelRankings.visibility = if (tab == KioskTab.RANKINGS) View.VISIBLE else View.GONE
@@ -470,6 +521,10 @@ class KtvKioskOverlayController(
         overlay.panelPersonal.visibility = if (
             tab == KioskTab.FAVORITES || tab == KioskTab.PLAYLISTS || tab == KioskTab.HISTORY
         ) View.VISIBLE else View.GONE
+
+        if (tab == KioskTab.DASHBOARD) {
+            overlay.kioskDashboardView.requestDashboardFocus()
+        }
 
         if (tab != KioskTab.CATEGORIES && categoryDetail) {
             categoryDetail = false
@@ -493,6 +548,7 @@ class KtvKioskOverlayController(
         }
 
         when (tab) {
+            KioskTab.DASHBOARD -> Unit
             KioskTab.PINYIN -> Unit
             KioskTab.SINGERS -> if (!artistsLoaded) loadArtists()
             KioskTab.RANKINGS -> if (!rankingsLoaded) loadRankings()
@@ -522,13 +578,52 @@ class KtvKioskOverlayController(
         catalogActionRouter.artists()
     }
 
+    private fun loadSingerGender(gender: String) {
+        coordinator.resetIdleTimer()
+        focusController.hasInnerDetailBack = false
+        presentationState.clearArtistSelection()
+        catalogActions.loadArtists(gender = gender, initial = "", restorePage = 0)
+        binding.kioskOverlay.singerRecyclerView.requestFocus()
+    }
+
+    private fun updateSingerFilterButtons(gender: String) {
+        val buttons = listOf(
+            binding.kioskOverlay.btnSingerAll to KtvSingerFilterPolicy.filters[0],
+            binding.kioskOverlay.btnSingerMale to KtvSingerFilterPolicy.filters[1],
+            binding.kioskOverlay.btnSingerFemale to KtvSingerFilterPolicy.filters[2],
+            binding.kioskOverlay.btnSingerGroup to KtvSingerFilterPolicy.filters[3],
+        )
+        buttons.forEach { (button, filter) ->
+            val selected = KtvSingerFilterPolicy.isSelected(filter, gender)
+            button.setBackgroundResource(
+                if (selected) R.drawable.btn_gold else R.drawable.btn_keyboard_key,
+            )
+            button.setTextColor(
+                if (selected) 0xFF111317.toInt()
+                else activity.resources.getColor(R.color.color_keyboard_key_text, null),
+            )
+        }
+    }
+
     private fun loadRankings() {
         catalogActionRouter.rankings()
     }
 
     private fun loadCategories() {
-        binding.kioskOverlay.txtCategoryHeader.text = "✨ 最新入库曲目推荐"
-        catalogActionRouter.newSongs()
+        when (categoryMode) {
+            KioskCategoryMode.TAGS -> {
+                binding.kioskOverlay.txtCategoryHeader.text = "选择标签"
+                catalogActionRouter.tags()
+            }
+            KioskCategoryMode.LANGUAGES -> {
+                binding.kioskOverlay.txtCategoryHeader.text = "选择语种"
+                catalogActionRouter.languages()
+            }
+            KioskCategoryMode.NEW -> {
+                binding.kioskOverlay.txtCategoryHeader.text = "✨ 最新入库曲目推荐"
+                catalogActionRouter.newSongs()
+            }
+        }
     }
 
     private fun onArtistSelected(artist: ArtistItem) {
@@ -632,9 +727,11 @@ class KtvKioskOverlayController(
         queueDialog = dialog
     }
 
-    fun updateSnapshot(snapshot: QueueSnapshot) {
+    fun updateSnapshot(
+        snapshot: QueueSnapshot,
+        queueProjection: Map<Long, SongQueueState> = emptyMap(),
+    ) {
         currentSnapshot = snapshot
-        val queueProjection = SongQueueProjection.from(snapshot)
         searchAdapter.updateQueueProjection(queueProjection)
         rankingAdapter.updateQueueProjection(queueProjection)
         categoryAdapter.updateQueueProjection(queueProjection)
@@ -643,6 +740,8 @@ class KtvKioskOverlayController(
         val title = snapshot.playing?.song?.title
         val artist = snapshot.playing?.song?.artist
         val waitingCount = snapshot.list.count { it.status == "waiting" }
+
+        binding.kioskOverlay.kioskDashboardView.updateQueueCount(waitingCount)
 
         binding.kioskOverlay.kioskBottomBar.bindPlayback(
             title = title,
@@ -659,10 +758,7 @@ class KtvKioskOverlayController(
             if (snapshot.audioLayout.layout == "DUAL_TRACK") 2 else 1,
         )
 
-        binding.kioskOverlay.txtPipLabel.text = PipLabelPolicy.resolve(
-            state = snapshot.state,
-            hasPlaying = snapshot.playing != null,
-        )
+        renderPipState()
 
         if (queueDialog?.isShowing == true) {
             val currentTitle = snapshot.playing?.song?.let { "${it.title} · ${it.artist}" } ?: "当前暂无歌曲播放"
@@ -675,17 +771,23 @@ class KtvKioskOverlayController(
         coordinator.toggleKiosk(active)
     }
 
+    fun updateExternalDisplay(active: Boolean) {
+        externalDisplayActive = active
+        if (focusController.isKioskActive) renderPipState()
+    }
+
     private fun applyKioskActive(active: Boolean) {
         focusController.isKioskActive = active
         if (active) {
             binding.kioskOverlay.kioskRootOverlay.visibility = View.VISIBLE
             reparentView(binding.playerView, binding.kioskOverlay.pipVideoAnchor)
             (binding.playerView.videoSurfaceView as? SurfaceView)?.setZOrderMediaOverlay(true)
-            binding.kioskOverlay.txtPipLabel.text = PipLabelPolicy.resolve(
-                state = currentSnapshot?.state,
-                hasPlaying = currentSnapshot?.playing != null,
-            )
-            binding.kioskOverlay.tabPinyin.requestFocus()
+            renderPipState()
+            if (presentationState.currentTab.value == KioskTab.DASHBOARD) {
+                binding.kioskOverlay.kioskDashboardView.requestDashboardFocus()
+            } else {
+                binding.kioskOverlay.tabPinyin.requestFocus()
+            }
         } else {
             focusController.hasInnerDetailBack = false
             presentationState.clearArtistSelection()
@@ -696,6 +798,16 @@ class KtvKioskOverlayController(
             binding.kioskOverlay.kioskRootOverlay.visibility = View.GONE
             binding.playerView.requestFocus()
         }
+    }
+
+    private fun renderPipState() {
+        val state = KioskPipDisplayPolicy.resolve(
+            externalDisplayActive = externalDisplayActive,
+            playbackState = currentSnapshot?.state,
+            hasPlaying = currentSnapshot?.playing != null,
+        )
+        binding.kioskOverlay.pipVideoFrame.visibility = if (state.videoVisible) View.VISIBLE else View.GONE
+        binding.kioskOverlay.txtPipLabel.text = state.label
     }
 
     fun destroy() {
@@ -777,8 +889,20 @@ class KtvKioskOverlayController(
             if (event.action == KeyEvent.ACTION_UP) {
                 focusController.handleBackPress(
                     onDismissDrawer = { queueDialog?.dismiss() },
+                    onClearInputText = {
+                        binding.kioskOverlay.kioskKeyboard.clear()
+                        focusController.hasInputText = false
+                        loadDefaultSongs()
+                    },
                     onInnerDetailBack = { resetInnerDetail() },
-                    onExitKiosk = { toggleKiosk(false) },
+                    onExitKiosk = {
+                        if (presentationState.currentTab.value != KioskTab.DASHBOARD) {
+                            dashboardPolicy.handleBack()
+                            presentationState.selectTab(KioskTab.DASHBOARD)
+                        } else {
+                            toggleKiosk(false)
+                        }
+                    },
                     onExitApp = { /* handled by activity when not intercepted */ },
                 )
                 return true

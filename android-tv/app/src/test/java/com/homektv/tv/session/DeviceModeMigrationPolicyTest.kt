@@ -6,6 +6,26 @@ import org.junit.Test
 class DeviceModeMigrationPolicyTest {
 
     @Test
+    fun dismissingMigrationPromptDoesNotRecordCompletion() {
+        assertEquals(
+            false,
+            DeviceModeMigrationPolicy.shouldRecordMigration(DeviceModeMigrationPolicy.PromptResult.DISMISSED),
+        )
+    }
+
+    @Test
+    fun explicitMigrationChoicesRecordCompletion() {
+        assertEquals(
+            true,
+            DeviceModeMigrationPolicy.shouldRecordMigration(DeviceModeMigrationPolicy.PromptResult.KEEP_PLAYER),
+        )
+        assertEquals(
+            true,
+            DeviceModeMigrationPolicy.shouldRecordMigration(DeviceModeMigrationPolicy.PromptResult.SWITCH_TO_COMBINED),
+        )
+    }
+
+    @Test
     fun legacyPlayerOnTvRequiresMigrationPrompt() {
         val action = DeviceModeMigrationPolicy.evaluate(
             savedMode = DeviceMode.PLAYER,

@@ -73,6 +73,8 @@ def build_manifest(
     includes: Iterable[str] | None = None,
     image_ref: str | None = None,
 ) -> dict:
+    if not release_tag.strip():
+        raise ValueError("release tag must not be empty")
     if not SAFE_VERSION.fullmatch(version):
         raise ValueError(f"invalid release version: {version}")
     if channel not in {"stable", "unstable"}:
@@ -115,16 +117,67 @@ def write_manifest(manifest: dict, output: Path) -> None:
     )
 
 
-def verify_manifest(repository: Path, manifest_path: Path) -> list[str]:
+def verify_manifest(
+    repository: Path,
+    manifest_path: Path,
+    *,
+    expected_release_tag: str | None = None,
+    expected_version: str | None = None,
+    expected_channel: str | None = None,
+    expected_source_sha: str | None = None,
+    expected_image_ref: str | None = None,
+) -> list[str]:
     errors: list[str] = []
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return [f"cannot read manifest: {error}"]
 
+    if not isinstance(manifest, dict):
+        return ["manifest root must be an object"]
     if manifest.get("schemaVersion") != SCHEMA_VERSION:
         errors.append("unsupported manifest schemaVersion")
+
+    release_tag = manifest.get("releaseTag")
+    if not isinstance(release_tag, str) or not release_tag.strip():
+        errors.append("manifest releaseTag is missing or empty")
+    elif expected_release_tag is not None and release_tag != expected_release_tag:
+        errors.append(
+            f"releaseTag mismatch: manifest={release_tag} expected={expected_release_tag}"
+        )
+
+    version = manifest.get("version")
+    if not isinstance(version, str) or not SAFE_VERSION.fullmatch(version):
+        errors.append("manifest version is missing or invalid")
+    elif expected_version is not None and version != expected_version:
+        errors.append(f"version mismatch: manifest={version} expected={expected_version}")
+
+    channel = manifest.get("channel")
+    if channel not in {"stable", "unstable"}:
+        errors.append("manifest channel is missing or invalid")
+    elif expected_channel is not None and channel != expected_channel:
+        errors.append(f"channel mismatch: manifest={channel} expected={expected_channel}")
+
     source = manifest.get("source") or {}
+    if not isinstance(source, dict):
+        errors.append("manifest source must be an object")
+        source = {}
+    source_sha = source.get("gitSha")
+    if not isinstance(source_sha, str) or not source_sha.strip():
+        errors.append("manifest source.gitSha is missing or empty")
+    elif expected_source_sha is not None and source_sha != expected_source_sha:
+        errors.append(
+            f"source SHA mismatch: manifest={source_sha} expected={expected_source_sha}"
+        )
+
+    image = manifest.get("image") or {}
+    if not isinstance(image, dict):
+        errors.append("manifest image must be an object")
+        image = {}
+    image_ref = image.get("ref")
+    if expected_image_ref is not None and image_ref != expected_image_ref:
+        errors.append(f"image ref mismatch: manifest={image_ref} expected={expected_image_ref}")
+
     expected_migration = latest_migration(repository.resolve())
     if source.get("latestMigration") != expected_migration:
         errors.append(
@@ -172,6 +225,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     verify = subparsers.add_parser("verify")
     verify.add_argument("--repository", type=Path, required=True)
     verify.add_argument("--manifest", type=Path, required=True)
+    verify.add_argument("--release-tag")
+    verify.add_argument("--version")
+    verify.add_argument("--channel")
+    verify.add_argument("--source-sha")
+    verify.add_argument("--image-ref")
     return parser.parse_args(argv)
 
 
@@ -179,23 +237,42 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     try:
         if args.command == "build":
-            write_manifest(
-                build_manifest(
-                    repository=args.repository,
-                    output=args.output,
-                    release_tag=args.release_tag,
-                    version=args.version,
-                    channel=args.channel,
-                    source_sha=args.source_sha,
-                    build_time=args.build_time,
-                    artifact_dir=args.artifact_dir,
-                    includes=args.include,
-                    image_ref=args.image_ref,
-                ),
-                args.output,
+            manifest = build_manifest(
+                repository=args.repository,
+                output=args.output,
+                release_tag=args.release_tag,
+                version=args.version,
+                channel=args.channel,
+                source_sha=args.source_sha,
+                build_time=args.build_time,
+                artifact_dir=args.artifact_dir,
+                includes=args.include,
+                image_ref=args.image_ref,
             )
+            write_manifest(manifest, args.output)
+            errors = verify_manifest(
+                args.repository,
+                args.output,
+                expected_release_tag=args.release_tag,
+                expected_version=args.version,
+                expected_channel=args.channel,
+                expected_source_sha=args.source_sha,
+                expected_image_ref=args.image_ref,
+            )
+            if errors:
+                for error in errors:
+                    print(error, file=sys.stderr)
+                return 1
             return 0
-        errors = verify_manifest(args.repository, args.manifest)
+        errors = verify_manifest(
+            args.repository,
+            args.manifest,
+            expected_release_tag=args.release_tag,
+            expected_version=args.version,
+            expected_channel=args.channel,
+            expected_source_sha=args.source_sha,
+            expected_image_ref=args.image_ref,
+        )
         if errors:
             for error in errors:
                 print(error, file=sys.stderr)

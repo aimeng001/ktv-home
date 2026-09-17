@@ -28,6 +28,10 @@ public class Song {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /** Optional fixed-width catalog number parsed from an 8-digit filename prefix. */
+    @Column(name = "catalog_number", length = 8)
+    private String catalogNumber = "";
+
     /** 歌曲标题。 / Song title. */
     @Column(nullable = false)
     private String title;
@@ -171,6 +175,11 @@ public class Song {
     // ---- getters / setters ----
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
+    public String getCatalogNumber() { return catalogNumber == null ? "" : catalogNumber; }
+    public void setCatalogNumber(String catalogNumber) {
+        String value = catalogNumber == null ? "" : catalogNumber.trim();
+        this.catalogNumber = value.matches("\\d{8}") ? value : "";
+    }
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
     public String getArtist() { return artist; }

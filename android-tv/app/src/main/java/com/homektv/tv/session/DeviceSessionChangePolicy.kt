@@ -5,6 +5,7 @@ data class DeviceSessionFingerprint(
     val serverHost: String?,
     val mode: DeviceMode,
     val nickname: String,
+    val instanceId: String? = null,
 )
 
 object DeviceSessionChangePolicy {

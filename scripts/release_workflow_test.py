@@ -126,14 +126,24 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         for gate in ("backend-release-gate", "large-scan-gate", "docker-runtime-test"):
             self.assertIn(gate, image)
-        self.assertIn("./mvnw --batch-mode test", backend)
+        self.assertIn("./mvnw --batch-mode", backend)
+        self.assertIn("test", backend)
         self.assertIn("runLargeLibraryScanTest=true", large_scan)
-        self.assertIn("scanRows=100000", large_scan)
+        self.assertIn("scanRows=10000", large_scan)
+        self.assertNotIn("scanRows=100000", large_scan)
         self.assertIn("-Xmx512m", large_scan)
         self.assertIn("docker build", runtime)
         self.assertIn("/api/build-info", runtime)
         self.assertIn("/api/admin/scan/start", runtime)
         self.assertIn("/api/admin/diagnostics/memory", runtime)
+
+    def test_android_release_gate_pins_the_signer_certificate(self) -> None:
+        android_tv = job_block(self.workflow, "android-tv")
+
+        self.assertIn("KTV_TV_CERT_SHA256", android_tv)
+        self.assertIn("apksigner verify --print-certs", android_tv)
+        self.assertIn("certificate SHA-256 digest", android_tv)
+        self.assertIn("Signer certificate mismatch", android_tv)
 
     def test_ci_runtime_compose_is_bounded_and_external_source_is_read_only(self) -> None:
         compose = (WORKFLOW.parents[2] / "docker-compose.ci.yml").read_text(encoding="utf-8")

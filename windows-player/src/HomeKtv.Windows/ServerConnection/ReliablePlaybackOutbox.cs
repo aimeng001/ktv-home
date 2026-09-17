@@ -20,7 +20,19 @@ public enum ReliableSendResult
     Rejected,
 }
 
-public sealed record ReliableMessage(string Key, string Text, int Utf8Bytes);
+public sealed record ReliablePlayError(long QueueId, long? FileId, string Message);
+
+public sealed record ReliableMessage(
+    string Key,
+    string Text,
+    int Utf8Bytes,
+    ReliablePlayError? PlayError = null)
+{
+    public string Serialize(long generation) => PlayError is null
+        ? Text
+        : ServerMessageFactory.PlayError(PlayError.QueueId, PlayError.FileId,
+            PlayError.Message, generation);
+}
 
 /**
  * Bounded, keyed outbox for reports that must survive reconnects and process

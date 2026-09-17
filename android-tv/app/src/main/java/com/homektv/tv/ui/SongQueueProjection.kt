@@ -24,8 +24,9 @@ object SongQueueProjection {
         snapshot.list.filter { it.status == "waiting" }.forEachIndexed { idx, entry ->
             val songId = entry.song?.id ?: return@forEachIndexed
             val queueId = entry.queueId ?: return@forEachIndexed
-            val canManage = if (currentUserId == null && !isRoomHost) true
-            else QueuePermissionPolicy.canManage(entry, currentUserId, isRoomHost)
+            // Unknown actor is never an authorization signal. The server remains
+            // the final authority; this projection only controls local affordances.
+            val canManage = QueuePermissionPolicy.canManage(entry, currentUserId, isRoomHost)
             result.putIfAbsent(songId, SongQueueState.Waiting(
                 position = idx + 1,
                 queueId = queueId,

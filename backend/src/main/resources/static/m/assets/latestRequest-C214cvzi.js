@@ -1,0 +1,1 @@
+function r(){let t=0,e=null;return{begin(){return e==null||e.abort(),e=new AbortController,{id:++t,signal:e.signal}},isCurrent(n){return n===t},cancel(){t+=1,e==null||e.abort(),e=null}}}export{r as c};

@@ -58,7 +58,8 @@ public sealed record QueueSnapshot(
     [property: JsonPropertyName("tvOnline")] bool TvOnline,
     [property: JsonPropertyName("connectedPhones")] long ConnectedPhones,
     [property: JsonPropertyName("positionMs")] long PositionMs = 0,
-    [property: JsonPropertyName("seekSequence")] long SeekSequence = 0);
+    [property: JsonPropertyName("seekSequence")] long SeekSequence = 0,
+    [property: JsonPropertyName("stateRevision")] long StateRevision = 0);
 
 public sealed record QueueSnapshotHeader(
     [property: JsonPropertyName("playing")] NowPlaying? Playing,
@@ -70,11 +71,12 @@ public sealed record QueueSnapshotHeader(
     [property: JsonPropertyName("tvOnline")] bool TvOnline,
     [property: JsonPropertyName("connectedPhones")] long ConnectedPhones,
     [property: JsonPropertyName("positionMs")] long PositionMs,
-    [property: JsonPropertyName("seekSequence")] long SeekSequence)
+    [property: JsonPropertyName("seekSequence")] long SeekSequence,
+    [property: JsonPropertyName("stateRevision")] long StateRevision = 0)
 {
     public QueueSnapshot ToSnapshot(IReadOnlyList<QueueEntry> entries) => new(
         Playing, entries, State, Volume, Muted, VocalMode, AudioLayout,
-        TvOnline, ConnectedPhones, PositionMs, SeekSequence);
+        TvOnline, ConnectedPhones, PositionMs, SeekSequence, StateRevision);
 }
 
 public sealed record QueueSnapshotChunk(
@@ -93,7 +95,9 @@ public sealed record FileSource(
     [property: JsonPropertyName("vocalTrackIndex")] int? VocalTrackIndex,
     [property: JsonPropertyName("resolution")] string? Resolution,
     [property: JsonPropertyName("priority")] int Priority,
-    [property: JsonPropertyName("audioLayout")] AudioLayoutDto AudioLayout);
+    [property: JsonPropertyName("audioLayout")] AudioLayoutDto AudioLayout,
+    /// <summary>Server-derived readiness; null means an older server omitted the field.</summary>
+    [property: JsonPropertyName("ready")] bool? Ready = null);
 
 public sealed record SongDetail(
     [property: JsonPropertyName("id")] long Id,

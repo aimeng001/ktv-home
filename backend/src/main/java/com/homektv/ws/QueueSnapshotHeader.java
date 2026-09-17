@@ -14,7 +14,8 @@ public record QueueSnapshotHeader(
         boolean tvOnline,
         long connectedPhones,
         long positionMs,
-        long seekSequence
+        long seekSequence,
+        long stateRevision
 ) {
     public QueueSnapshotHeader {
         audioLayout = audioLayout == null ? AudioLayoutDto.normalStereo() : audioLayout;
@@ -24,11 +25,12 @@ public record QueueSnapshotHeader(
         return new QueueSnapshotHeader(snapshot.playing(), snapshot.state(), snapshot.volume(),
                 snapshot.muted(), snapshot.vocalMode(), snapshot.audioLayout(),
                 snapshot.tvOnline(), snapshot.connectedPhones(), snapshot.positionMs(),
-                snapshot.seekSequence());
+                snapshot.seekSequence(), snapshot.stateRevision());
     }
 
     public QueueSnapshot toSnapshot(java.util.List<QueueSnapshot.QueueEntry> entries) {
         return new QueueSnapshot(playing, entries, state, volume, muted, vocalMode,
-                audioLayout, tvOnline, connectedPhones, positionMs, seekSequence);
+                audioLayout, tvOnline, connectedPhones, positionMs, seekSequence,
+                stateRevision);
     }
 }

@@ -3,9 +3,14 @@ package com.homektv.tv.net
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.Inet4Address
@@ -40,25 +45,26 @@ class LanScanner {
     /** 扫描本机所在 /24 网段的所有候选端口，并逐台报告命中。 */
     suspend fun scanAll(
         onProgress: ((scanned: Int, total: Int) -> Unit)? = null,
-        onFound: ((hostPort: String) -> Unit)? = null,
-    ): List<String> =
+        onFound: ((server: DiscoveredServer) -> Unit)? = null,
+    ): List<DiscoveredServer> =
         coroutineScope {
             val prefix = localSubnetPrefix() ?: return@coroutineScope emptyList()
             val targets = scanTargets(prefix)
             val total = targets.size
             val counter = java.util.concurrent.atomic.AtomicInteger(0)
-            val found = ConcurrentHashMap.newKeySet<String>()
+            val found = ConcurrentHashMap<String, DiscoveredServer>()
             for (batch in targets.chunked(MAX_CONCURRENT_PROBES)) {
                 batch.map { hostPort ->
                     async(Dispatchers.IO) {
-                        if (validate(hostPort) && found.add(hostPort)) {
-                            onFound?.invoke(hostPort)
+                        val server = discover(hostPort)
+                        if (server != null && found.putIfAbsent(server.hostPort, server) == null) {
+                            onFound?.invoke(server)
                         }
                         onProgress?.invoke(counter.incrementAndGet(), total)
                     }
                 }.awaitAll()
             }
-            targets.filter(found::contains)
+            targets.mapNotNull(found::get)
         }
 
     internal fun scanTargets(prefix: String): List<String> = CANDIDATE_PORTS.flatMap { port ->
@@ -69,24 +75,41 @@ class LanScanner {
      * 单地址探测：先确认服务身份，再确认数据库 readiness。
      * 健康端点可在数据库不可用时仍返回 UP，因此两者都必须成功才允许保存地址。
      */
-    suspend fun validate(hostPort: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun validate(hostPort: String): Boolean = discover(hostPort) != null
+
+    /** Returns the validated server identity exposed by the health endpoint. */
+    suspend fun discover(hostPort: String): DiscoveredServer? = withContext(Dispatchers.IO) {
         withTimeoutOrNull(PROBE_TIMEOUT_MS + 300) {
             try {
-                validationSatisfied(VALIDATION_PATHS.associateWith { path -> probe(hostPort, path) })
+                val health = probeBody(hostPort, "/api/health") ?: return@withTimeoutOrNull null
+                val ready = probeBody(hostPort, "/api/ready") ?: return@withTimeoutOrNull null
+                parseDiscoveredServer(hostPort, health, ready)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
-                false
+                null
             }
-        } ?: false
+        }
     }
 
-    private fun probe(hostPort: String, path: String): Boolean {
+    /**
+     * Validates readiness and, when supplied, the stable server identity. A
+     * healthy HTTP response from a different Home KTV instance is not enough
+     * to replace the current session.
+     */
+    suspend fun validate(hostPort: String, expectedInstanceId: String?): Boolean {
+        if (expectedInstanceId == null) return validate(hostPort)
+        val expected = DiscoveryProtocol.normalizeInstanceId(expectedInstanceId) ?: return false
+        return discover(hostPort)?.instanceId == expected
+    }
+
+    private fun probeBody(hostPort: String, path: String): String? {
         val req = Request.Builder()
             .url("http://$hostPort$path")
             .get()
             .build()
         return client.newCall(req).execute().use { resp ->
-            resp.isSuccessful && (ResponseBodyReader.readText(resp.body, 64L * 1024L)
-                ?.contains("home-ktv") == true)
+            if (resp.isSuccessful) ResponseBodyReader.readText(resp.body, 64L * 1024L) else null
         }
     }
 
@@ -129,6 +152,43 @@ class LanScanner {
         private const val MAX_CONCURRENT_PROBES = 64
         internal val CANDIDATE_PORTS = listOf(8080, 80, 8000, 8081, 8090, 8888, 9000, 9090)
         internal val VALIDATION_PATHS = listOf("/api/health", "/api/ready")
+
+        /**
+         * Parses both successful probe bodies and preserves the stable instance ID
+         * for subnet-discovered servers. An explicitly present but malformed ID is
+         * rejected instead of being silently downgraded to an unknown server.
+         */
+        internal fun parseDiscoveredServer(
+            hostPort: String,
+            healthPayload: String,
+            readyPayload: String,
+        ): DiscoveredServer? = runCatching {
+            val health = Json.parseToJsonElement(healthPayload).jsonObject
+            val ready = Json.parseToJsonElement(readyPayload).jsonObject
+            if (health["service"]?.jsonPrimitive?.contentOrNull != "home-ktv") return null
+            if (ready["service"]?.jsonPrimitive?.contentOrNull != "home-ktv") return null
+
+            val hasInstanceId = health.containsKey("instanceId")
+            val instanceId = health["instanceId"]?.jsonPrimitive?.contentOrNull
+                ?.let(DiscoveryProtocol::normalizeInstanceId)
+            if (hasInstanceId && instanceId == null) return null
+
+            val name = health["name"]?.jsonPrimitive?.contentOrNull
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?: hostPort
+            DiscoveredServer(hostPort = hostPort, name = name, instanceId = instanceId)
+        }.getOrNull()
+
+        internal fun identityValidationSatisfied(healthPayload: String?, expectedInstanceId: String): Boolean {
+            val expected = DiscoveryProtocol.normalizeInstanceId(expectedInstanceId) ?: return false
+            val root = runCatching { Json.parseToJsonElement(healthPayload.orEmpty()).jsonObject }.getOrNull()
+                ?: return false
+            val service = root["service"]?.jsonPrimitive?.contentOrNull
+            val actual = root["instanceId"]?.jsonPrimitive?.contentOrNull
+                ?.let(DiscoveryProtocol::normalizeInstanceId)
+            return service == "home-ktv" && actual == expected
+        }
 
         private val VIRTUAL_NAME_PREFIXES = listOf(
             "tun", "tap", "ppp", "p2p", "docker", "veth", "virbr", "dummy",

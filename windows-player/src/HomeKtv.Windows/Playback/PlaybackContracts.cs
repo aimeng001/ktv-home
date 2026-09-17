@@ -38,3 +38,9 @@ public interface IPlaybackOutput
 
     Task SetChannelModeAsync(ChannelMapMode mode, CancellationToken cancellationToken = default);
 }
+
+/** Stops an existing local renderer without creating a replacement renderer. */
+public interface IPlaybackOutputFence
+{
+    Task StopIfRunningAsync(CancellationToken cancellationToken = default);
+}

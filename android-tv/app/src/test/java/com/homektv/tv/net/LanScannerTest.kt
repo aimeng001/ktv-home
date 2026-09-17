@@ -1,6 +1,7 @@
 package com.homektv.tv.net
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -33,6 +34,42 @@ class LanScannerTest {
         } finally {
             scanner.close()
         }
+    }
+
+    @Test
+    fun identityValidationRejectsAHealthyDifferentServer() {
+        val expected = "550e8400-e29b-41d4-a716-446655440000"
+        val healthy = "{\"service\":\"home-ktv\",\"instanceId\":\"$expected\"}"
+        val different = "{\"service\":\"home-ktv\",\"instanceId\":\"6ba7b810-9dad-11d1-80b4-00c04fd430c8\"}"
+
+        assertTrue(LanScanner.identityValidationSatisfied(healthy, expected))
+        assertTrue(!LanScanner.identityValidationSatisfied(different, expected))
+        assertTrue(!LanScanner.identityValidationSatisfied("{\"service\":\"home-ktv\"}", expected))
+        assertTrue(!LanScanner.identityValidationSatisfied(healthy, "not-a-uuid"))
+    }
+
+    @Test
+    fun subnetHealthProbeCarriesStableServerIdentity() {
+        val instanceId = "550e8400-e29b-41d4-a716-446655440000"
+
+        val discovered = LanScanner.parseDiscoveredServer(
+            hostPort = "192.168.1.10:8080",
+            healthPayload = "{\"service\":\"home-ktv\",\"instanceId\":\"$instanceId\"}",
+            readyPayload = "{\"service\":\"home-ktv\",\"status\":\"UP\"}",
+        )
+
+        assertEquals(instanceId, discovered?.instanceId)
+    }
+
+    @Test
+    fun malformedExplicitHealthIdentityIsNotDowngradedToUnknownServer() {
+        assertNull(
+            LanScanner.parseDiscoveredServer(
+                hostPort = "192.168.1.10:8080",
+                healthPayload = "{\"service\":\"home-ktv\",\"instanceId\":\"not-a-uuid\"}",
+                readyPayload = "{\"service\":\"home-ktv\",\"status\":\"UP\"}",
+            ),
+        )
     }
 
     @Test

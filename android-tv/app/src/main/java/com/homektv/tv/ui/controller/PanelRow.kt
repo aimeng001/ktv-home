@@ -26,14 +26,14 @@ internal data class ArtistPanelRow(
     val artist: ArtistItem,
     val action: () -> Unit,
 ) : PanelRow {
-    override val stableId: Long = -1_000_000_000L + artist.artistKey.hashCode()
+    override val stableId: Long = StableIdPolicy.hash64(-1_000_000_000L, artist.artistKey)
 }
 
 internal data class NamedCountPanelRow(
     val item: NamedCount,
     val action: () -> Unit,
 ) : PanelRow {
-    override val stableId: Long = -2_000_000_000L + item.name.hashCode()
+    override val stableId: Long = StableIdPolicy.hash64(-2_000_000_000L, item.name)
 }
 
 internal data class PlaylistPanelRow(
@@ -92,6 +92,7 @@ internal data class ActionPanelRow(
     val text: String,
     val enabled: Boolean,
     val contentDescription: String,
+    val actionKey: String = "",
     val action: () -> Unit,
 ) : PanelRow {
     override val stableId: Long = id

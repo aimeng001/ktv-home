@@ -515,6 +515,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               AND s.artist IS NOT NULL AND s.artist <> ''
               AND NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
             ORDER BY 1
+            LIMIT 50000
             """, nativeQuery = true)
     List<String> findDistinctArtistByStatus(@Param("status") String status);
 

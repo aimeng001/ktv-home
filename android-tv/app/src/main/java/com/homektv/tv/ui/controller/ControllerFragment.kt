@@ -40,9 +40,13 @@ import com.homektv.tv.controller.ControllerViewModelFactory
 import com.homektv.tv.controller.QueuePermissionPolicy
 import com.homektv.tv.databinding.FragmentControllerBinding
 import com.homektv.tv.net.SongDto
-import com.homektv.tv.ui.BitmapSafety
+import com.homektv.tv.ui.ArtworkDecoder
+import com.homektv.tv.ui.ArtworkProfile
 import com.homektv.tv.ui.SetupActivity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Native controller screen. The Activity only hosts this Fragment; all page
@@ -93,6 +97,7 @@ class ControllerFragment : Fragment() {
     private var restoredCatalogPage = 0
     private var restoredPlaylistDetailId = 0L
     private var restoredScrollY = 0
+    private var playlistCoverJob: Job? = null
     private lateinit var panelAdapter: ControllerListAdapter<PanelRow>
     private lateinit var catalogAdapter: ControllerListAdapter<PanelRow>
     private lateinit var personalAdapter: ControllerListAdapter<PanelRow>
@@ -205,6 +210,8 @@ class ControllerFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        playlistCoverJob?.cancel()
+        playlistCoverJob = null
         phonePanelViews.clear()
         rootView = null
         super.onDestroyView()
@@ -571,38 +578,34 @@ class ControllerFragment : Fragment() {
     }
 
     /** Ignore freshly-created click lambdas so unrelated state changes do not rebind every row. */
-    private fun panelRowsContentSame(old: PanelRow, new: PanelRow): Boolean = when {
-        old is ArtistPanelRow && new is ArtistPanelRow -> old.artist == new.artist
-        old is NamedCountPanelRow && new is NamedCountPanelRow -> old.item == new.item
-        old is ActionPanelRow && new is ActionPanelRow ->
-            old.id == new.id && old.text == new.text && old.enabled == new.enabled &&
-                old.contentDescription == new.contentDescription
-        else -> old == new
-    }
-
+    private fun panelRowsContentSame(old: PanelRow, new: PanelRow): Boolean =
+        PanelRowDiffPolicy.areContentsTheSame(old, new)
 
     private fun searchRows(state: ControllerUiState): List<PanelRow> {
         if (state.loading) return listOf(MessagePanelRow(-1L, "搜索中…"))
         if (state.query.isBlank()) return emptyList()
         if (state.results.isEmpty()) {
+            val isWish = state.error == null
             return listOf(
-                MessagePanelRow(-2L, if (state.error == null) "没有找到匹配歌曲" else "搜索失败，请检查服务连接"),
+                MessagePanelRow(-2L, if (isWish) "没有找到匹配歌曲" else "搜索失败，请检查服务连接"),
                 ActionPanelRow(
-                    -3L,
-                    if (state.error == null) "告诉我们想唱《${state.query}》" else "重试",
-                    !state.writing,
-                    if (state.error == null) "提交点歌心愿" else "重试搜索",
+                    id = -3L,
+                    text = if (isWish) "告诉我们想唱《${state.query}》" else "重试",
+                    enabled = !state.writing,
+                    contentDescription = if (isWish) "提交点歌心愿" else "重试搜索",
+                    actionKey = if (isWish) "wish:${state.query}" else "retry:${state.query}",
                 ) {
-                    if (state.error == null) viewModel.submitWish(state.query) else viewModel.setQuery(state.query)
+                    if (isWish) viewModel.submitWish(state.query) else viewModel.setQuery(state.query)
                 },
             )
         }
         val rows = state.results.map { songPanelRow(state, it) }.toMutableList<PanelRow>()
         if (state.searchHasMore) rows += ActionPanelRow(
-            -4L,
-            if (state.searchLoadingMore) "加载中…" else "加载更多",
-            !state.writing && !state.searchLoadingMore,
-            "加载更多搜索结果",
+            id = -4L,
+            text = if (state.searchLoadingMore) "加载中…" else "加载更多",
+            enabled = !state.writing && !state.searchLoadingMore,
+            contentDescription = "加载更多搜索结果",
+            actionKey = "load_more_search:${state.query}:${state.results.size}",
         ) { viewModel.loadMoreSearch() }
         return rows
     }
@@ -657,10 +660,11 @@ class ControllerFragment : Fragment() {
         }
         if (state.catalogHasMore && (catalogMode == CatalogMode.ARTISTS || state.catalogDetail)) {
             rows += ActionPanelRow(
-                -11L,
-                if (state.catalogLoadingMore) "加载中…" else "加载更多",
-                !state.writing && !state.catalogLoadingMore,
-                "加载更多分类结果",
+                id = -11L,
+                text = if (state.catalogLoadingMore) "加载中…" else "加载更多",
+                enabled = !state.writing && !state.catalogLoadingMore,
+                contentDescription = "加载更多分类结果",
+                actionKey = "load_more_catalog:${catalogMode}:${state.catalogPage}",
             ) { viewModel.loadMoreCatalog() }
         }
         return rows
@@ -684,6 +688,8 @@ class ControllerFragment : Fragment() {
     }
 
     private fun renderPlaylistDetailHeader(state: ControllerUiState, detail: com.homektv.tv.net.PlaylistDetail) {
+        playlistCoverJob?.cancel()
+        playlistCoverJob = null
         personalHeaderContainer.addView(button("返回主题歌单") {
             viewModel.clearPlaylistDetail()
             viewModel.loadPlaylists()
@@ -705,12 +711,20 @@ class ControllerFragment : Fragment() {
             matchWrapParams(top = 2),
         )
         state.playlistCoverBytes?.let { bytes ->
-            personalHeaderContainer.addView(ImageView(requireContext()).apply {
-                setImageBitmap(BitmapSafety.decode(bytes, maxDimension = 320, maxPixels = 1_000_000))
+            val coverView = ImageView(requireContext()).apply {
                 contentDescription = "主题歌单封面 ${detail.name}"
                 adjustViewBounds = true
                 minimumHeight = dp(96)
-            }, matchWrapParams(top = 4))
+            }
+            personalHeaderContainer.addView(coverView, matchWrapParams(top = 4))
+            playlistCoverJob = viewLifecycleOwner.lifecycleScope.launch {
+                val bitmap = withContext(Dispatchers.Default) {
+                    ArtworkDecoder.decode(bytes, ArtworkProfile.PLAYLIST)
+                }
+                if (bitmap != null && isAdded && view != null && coverView.parent != null) {
+                    coverView.setImageBitmap(bitmap)
+                }
+            }
         }
     }
 

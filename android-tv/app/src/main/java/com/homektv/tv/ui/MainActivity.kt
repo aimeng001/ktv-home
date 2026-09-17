@@ -4,7 +4,6 @@ import android.Manifest
 import android.animation.ObjectAnimator
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
@@ -50,12 +49,18 @@ import com.homektv.tv.net.MediaApi
 import com.homektv.tv.net.ApkPackageInfo
 import com.homektv.tv.net.PlaybackErrorContext
 import com.homektv.tv.net.QueueSnapshot
+import com.homektv.tv.net.SnapshotRevisionPolicy
 import com.homektv.tv.net.StandbyContent
 import com.homektv.tv.player.PlaybackEngine
 import com.homektv.tv.player.EffectPlayer
 import com.homektv.tv.player.LrcParser
 import com.homektv.tv.player.LyricLine
 import com.homektv.tv.player.MicrophoneMonitor
+import com.homektv.tv.player.PlaybackCoordinator
+import com.homektv.tv.player.PlaybackSource
+import com.homektv.tv.player.PlaybackReplacementRequest
+import com.homektv.tv.player.PlaybackReplacementToken
+import com.homektv.tv.player.PlaybackSourceFailurePolicy
 import com.homektv.tv.player.PlaybackLoadGate
 import com.homektv.tv.player.PlaybackLoadTicket
 import com.homektv.tv.player.DesiredPlaybackState
@@ -93,6 +98,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var effectPlayer: EffectPlayer? = null
     private var effectOverlay: EffectOverlayView? = null
     private var microphoneMonitor: MicrophoneMonitor? = null
+    private var presentationController: KtvPresentationController? = null
+    private var externalDisplayActive = false
+    /** The Presentation surface currently bound to the single playback engine. */
+    private var attachedExternalPlayerView: androidx.media3.ui.PlayerView? = null
     private var microphoneActive = false
     private lateinit var updateManager: AndroidUpdateManager
     private val microphonePermissionLauncher = registerForActivityResult(
@@ -111,6 +120,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var currentFileId: Long? = null
     private val playbackLoadGate = PlaybackLoadGate()
     private var playbackLoadJob: Job? = null
+    private var playbackReplacementJob: Job? = null
+    private var activePlaybackLoadTicket: PlaybackLoadTicket? = null
     private val desiredPlaybackState = DesiredPlaybackState()
     private val playbackLoadProjection = PlaybackLoadProjection(desiredPlaybackState)
     private val playbackSeekGate = PlaybackSeekGate()
@@ -130,12 +141,18 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private val progressHide = Runnable { hidePlaybackProgress() }
     private var recommendations: List<com.homektv.tv.net.SongDto> = emptyList()
     private var recommendationOffset = 0
-    private val recommendationCovers = RecommendationCoverCache<android.graphics.Bitmap>(64)
+    private val recommendationCovers = RecommendationCoverCache<android.graphics.Bitmap>(
+        capacity = 64,
+        maxBytes = 64L * 1024L * 1024L,
+        weight = { it.allocationByteCount.toLong() },
+    )
     private val artistAvatars = LinkedHashMap<String, android.graphics.Bitmap>(128, 0.75f, true)
     private var artistAvatarUrl: String? = null
     private var artistAvatarRequestAt = 0L
     private var artistAvatarRequestId = 0L
     private var artistAvatarJob: Job? = null
+    private var standbyLogoRequestId = 0L
+    private var standbyLogoJob: Job? = null
     private var standbyCarouselEnabled = true
     private var antiBurnEnabled = true
     private var standbyIntervalMs = 8_000L
@@ -144,6 +161,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var hasCurrentSong = false
     private val standbyTicker = object : Runnable {
         override fun run() {
+            if (!::binding.isInitialized || binding.standbyPanel.visibility != View.VISIBLE) return
             if (standbyCarouselEnabled && recommendations.isNotEmpty()) {
                 renderRecommendationCards()
                 recommendationOffset = (recommendationOffset + 1) % recommendations.size
@@ -166,14 +184,17 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
     private val standbySettingsTicker = object : Runnable {
         override fun run() {
-            lifecycleScope.launch { applyStandbyContent(mediaApi.fetchStandbyContent()) }
+            lifecycleScope.launch { mediaApi.fetchStandbyContent()?.let(::applyStandbyContent) }
             binding.standbyPanel.postDelayed(this, 60_000L)
         }
     }
 
     private val modeCapabilities by lazy { DeviceModeCapabilities.forMode(config.effectiveMode()) }
     private lateinit var kioskController: KtvKioskOverlayController
-    private val kioskCoordinator = KioskModeCoordinator()
+    private val kioskCoordinator = KioskModeCoordinator(
+        idleTimeoutMs = KioskModeCoordinator.DEFAULT_IDLE_TIMEOUT_MS,
+        scheduler = HandlerIdleTimerScheduler(),
+    )
     private val focusController = KtvFocusController()
     private val kioskViewModel: ControllerViewModel by lazy {
         ViewModelProvider(
@@ -181,6 +202,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             ControllerViewModelFactory(application, realtimeEnabled = false),
         )[ControllerViewModel::class.java]
     }
+    private lateinit var playbackCoordinator: PlaybackCoordinator
 
     private var sessionFingerprint: DeviceSessionFingerprint? = null
 
@@ -199,6 +221,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             serverHost = config.serverHost,
             mode = config.effectiveMode(),
             nickname = config.nicknameFor(),
+            instanceId = config.serverForHost(config.serverHost)?.instanceId,
         )
         val audioPreview = intent.action == "com.homektv.tv.action.AUDIO_PREVIEW" ||
             intent.getBooleanExtra("audio_preview", false)
@@ -219,6 +242,52 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.txtAddress.text = config.h5Url()
 
         mediaApi = MediaApi(config)
+        playbackCoordinator = PlaybackCoordinator(
+            source = object : PlaybackSource {
+                override suspend fun resolveFileSource(songId: Long) = mediaApi.resolveFileSource(songId)
+                override fun streamUrl(fileId: Long): String = mediaApi.streamUrl(fileId)
+            },
+            desiredState = desiredPlaybackState,
+            scope = lifecycleScope,
+            onBeginReplacement = {
+                // Invalidate the old output before waiting on the next REST
+                // resolution. The coordinator owns retries; this callback only
+                // performs the synchronous player-side stop.
+                playbackLoadJob?.cancel()
+                playbackLoadJob = null
+                engine?.stop()
+                loadedQueueId = null
+                currentFileId = null
+            },
+            onFileReady = { token, file, snapshot, streamUrl ->
+                onPlaybackFileReady(token, file, snapshot, streamUrl)
+            },
+            onMissingSource = { token ->
+                val ticket = activePlaybackLoadTicket
+                if (ticket != null && playbackCoordinator.isCurrent(token) && isCurrentPlaybackLoad(ticket)) {
+                    onPlayError(PlaybackErrorContext.missingSource(token.request.queueId))
+                }
+            },
+            onWaitingForSource = { token, _ ->
+                if (playbackCoordinator.isCurrent(token)) onToast(getString(R.string.play_waiting_network))
+            },
+            onSourceFailure = { token, error ->
+                if (playbackCoordinator.isCurrent(token)) {
+                    val message = if (error.status == 401 || error.status == 403) {
+                        "点歌服务凭据无效，请重新配置"
+                    } else {
+                        "歌曲详情协议异常，已停止自动播放"
+                    }
+                    onToast(message)
+                }
+            },
+            onSourceExhausted = { token, _ ->
+                if (playbackCoordinator.isCurrent(token)) {
+                    onToast(getString(R.string.play_waiting_network))
+                    onPlayError(PlaybackSourceFailurePolicy.errorContext(token))
+                }
+            },
+        )
         updateManager = AndroidUpdateManager(this, mediaApi) { onToast(it) }
         if (config.isConfigured) {
             updateManager.checkForUpdate(lifecycleScope)
@@ -248,6 +317,33 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 if (percent != currentVolume) sendControl("set_volume", "{\"volume\":$percent}")
             }
         }
+        presentationController = KtvPresentationController(this) { externalPlayerView ->
+            if (externalPlayerView == null) {
+                externalDisplayActive = false
+                if (::kioskController.isInitialized) kioskController.updateExternalDisplay(false)
+                attachedExternalPlayerView?.let { engine?.detach(it) }
+                attachedExternalPlayerView = null
+                engine?.detach(binding.playerView)
+                engine?.attach(binding.playerView)
+                if (hasCurrentSong && currentPlaybackState != "idle") {
+                    binding.playerView.visibility = View.VISIBLE
+                }
+            } else {
+                externalDisplayActive = true
+                if (::kioskController.isInitialized) kioskController.updateExternalDisplay(true)
+                attachedExternalPlayerView
+                    ?.takeUnless { it === externalPlayerView }
+                    ?.let { engine?.detach(it) }
+                engine?.detach(binding.playerView)
+                engine?.attach(externalPlayerView)
+                attachedExternalPlayerView = externalPlayerView
+                if (hasCurrentSong && currentPlaybackState != "idle") {
+                    // Keep the main screen available for the point-song UI while the
+                    // external Presentation owns the video surface.
+                    binding.playerView.visibility = View.INVISIBLE
+                }
+            }
+        }.also { it.start() }
         effectPlayer = EffectPlayer()
         microphoneMonitor = MicrophoneMonitor(this) { state ->
             runOnUiThread {
@@ -274,6 +370,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 controllerActions = kioskViewModel,
                 catalogActions = kioskViewModel,
                 personalActions = kioskViewModel,
+                initialExternalDisplayActive = externalDisplayActive,
                 onTogglePlayback = { togglePlayback() },
                 onNext = { sendControl("next") },
                 onRestart = { sendControl("restart") },
@@ -321,6 +418,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             serverHost = currentConfig.serverHost,
             mode = currentConfig.effectiveMode(),
             nickname = currentConfig.nicknameFor(),
+            instanceId = currentConfig.serverForHost(currentConfig.serverHost)?.instanceId,
         )
         if (DeviceSessionChangePolicy.requiresRestart(previous, current)) {
             if (current.mode == DeviceMode.CONTROLLER) {
@@ -365,15 +463,24 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         standbyMotionAnimators.clear()
         invalidatePlaybackLoad()
         socket?.close()
+        presentationController?.stop()
+        presentationController = null
+        attachedExternalPlayerView?.let { engine?.detach(it) }
+        attachedExternalPlayerView = null
         clock.removeCallbacks(clockTick)
         clock.removeCallbacks(progressHide)
-        binding.standbyPanel.removeCallbacks(standbyTicker)
-        binding.standbyPanel.removeCallbacks(burnInTicker)
-        binding.standbyPanel.removeCallbacks(standbySettingsTicker)
+        standbyLogoJob?.cancel()
+        standbyLogoJob = null
+        if (::binding.isInitialized) {
+            binding.standbyPanel.removeCallbacks(standbyTicker)
+            binding.standbyPanel.removeCallbacks(burnInTicker)
+            binding.standbyPanel.removeCallbacks(standbySettingsTicker)
+        }
         socket = null
-        engine?.detach(binding.playerView)
+        if (::binding.isInitialized) engine?.detach(binding.playerView)
         engine?.release()
         engine = null
+        if (::mediaApi.isInitialized) mediaApi.close()
         effectPlayer?.release()
         effectPlayer = null
         effectOverlay?.clear()
@@ -645,6 +752,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     private fun showQueueOverlay() {
         binding.remoteMenu.visibility = View.GONE
+        cachedQueueSnapshot?.let { renderQueue(it) }
         binding.queueOverlay.visibility = View.VISIBLE
         val target = binding.queueList.getChildAt(0) ?: binding.queueClose
         target.requestFocus()
@@ -667,13 +775,17 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     // ---- KtvSocket.Listener ----
 
     override fun onConnectionChanged(connected: Boolean) {
-        binding.txtStatus.setText(
-            if (connected) R.string.status_connected else R.string.status_connecting
-        )
+        playerConnected = connected
+        if (!connected) lastSnapshotRevision = 0L
+        playerConnectionStatus = PlayerConnectionStatusPolicy.onConnectionChanged(connected, playerRoleActive)
+        renderPlayerConnectionStatus()
         if (connected && ::updateManager.isInitialized) updateManager.checkForUpdate(lifecycleScope)
     }
 
     override fun onPlayerRole(active: Boolean) {
+        playerRoleActive = active
+        playerConnectionStatus = PlayerConnectionStatusPolicy.onPlayerRole(active, playerConnected)
+        renderPlayerConnectionStatus()
         if (active) return
         invalidatePlaybackLoad()
         currentQueueId = null
@@ -683,9 +795,28 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         showStandby()
     }
 
+    private fun renderPlayerConnectionStatus() {
+        binding.txtStatus.setText(
+            when (playerConnectionStatus) {
+                PlayerConnectionStatus.CONNECTING -> R.string.status_connecting
+                PlayerConnectionStatus.ONLINE -> R.string.status_connected
+                PlayerConnectionStatus.STANDBY -> R.string.status_standby
+            },
+        )
+    }
+
     private var snapshotReceived = false
+    private var lastSnapshotRevision = 0L
+    private var cachedQueueSnapshot: QueueSnapshot? = null
+    private var playerConnectionStatus = PlayerConnectionStatus.CONNECTING
+    private var playerConnected = false
+    private var playerRoleActive = true
 
     override fun onSnapshot(event: String, snapshot: QueueSnapshot) {
+        if (!SnapshotRevisionPolicy.accepts(lastSnapshotRevision, snapshot.stateRevision)) return
+        if (snapshot.stateRevision > lastSnapshotRevision) {
+            lastSnapshotRevision = snapshot.stateRevision
+        }
         // Metadata/cover requests below may suspend for several seconds. Always publish the
         // newest complete server state before starting or continuing that asynchronous work.
         desiredPlaybackState.update(snapshot)
@@ -707,9 +838,15 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.txtLyricPrevious.updatePlayback(engine?.currentPositionMs ?: 0L, lyricsPlaying)
         binding.txtAudioLyricCurrent.updatePlayback(engine?.currentPositionMs ?: 0L, lyricsPlaying)
         hasCurrentSong = snapshot.playing != null
-        renderQueue(snapshot)
+        cachedQueueSnapshot = snapshot
+        if (binding.queueOverlay.visibility == View.VISIBLE) {
+            renderQueue(snapshot)
+        }
         binding.txtPhones.text =
             getString(R.string.status_phones, snapshot.connectedPhones.toInt())
+        binding.txtWaitingStat.text = "排队中 ${StandbyStatsPolicy.waitingCount(snapshot)} 首"
+        binding.txtWaitingStat.visibility = View.VISIBLE
+        binding.txtPlayedStat.visibility = View.GONE
         applyPlayback(snapshot)
         if (event == VOCAL_CHANGED_EVENT) refreshVocalTrackMapping(snapshot)
     }
@@ -788,7 +925,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         val muted = snapshot.muted
 
         // 同一首：只处理播放/暂停 + 音量，不重新装载
-        if (playing.queueId == currentQueueId && playbackLoadJob?.isActive == true) {
+        if (playing.queueId == currentQueueId &&
+            (playbackReplacementJob?.isActive == true || playbackLoadJob?.isActive == true)
+        ) {
             return
         }
         if (playing.queueId == currentQueueId && loadedQueueId == playing.queueId) {
@@ -809,7 +948,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         loadedQueueId = null
         currentFileId = null
         val targetQueueId = playing.queueId
-        val loadTicket = beginPlaybackLoad(targetQueueId)
+        activePlaybackLoadTicket = beginPlaybackLoad(targetQueueId)
         val audioMode = playing.song?.mediaType.equals("AUDIO", ignoreCase = true)
         lyricLines = emptyList()
         lastLyricIndex = -1
@@ -831,32 +970,55 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             binding.txtAudioLyricCurrent.setLine(null, 0L)
             binding.txtAudioLyricNext.text = song?.title.orEmpty()
         }
+        val replacement = playbackCoordinator.replace(
+            PlaybackReplacementRequest(queueId = targetQueueId, songId = songId),
+        )
+        playbackReplacementJob = replacement.job
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        if (::kioskController.isInitialized) kioskCoordinator.resetIdleTimer()
+    }
+
+    private fun onPlaybackFileReady(
+        token: PlaybackReplacementToken,
+        file: com.homektv.tv.net.FileSource,
+        snapshot: QueueSnapshot,
+        streamUrl: String,
+    ) {
+        val loadTicket = activePlaybackLoadTicket ?: return
+        if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return
+        playbackReplacementJob = null
+        val targetQueueId = token.request.queueId
+        val songId = token.request.songId
+        val audioMode = snapshot.playing?.song?.mediaType.equals("AUDIO", ignoreCase = true)
+        val eng = engine ?: return
+        accompanimentTrackIndex = file.audioLayout.accompanimentTrackIndex ?: file.vocalTrackIndex
+        audioTrackCount = file.audioTracks
+        currentAudioLayout = file.audioLayout
+        currentFileId = file.id
         playbackLoadJob = lifecycleScope.launch {
-            val file = mediaApi.bestFileSource(songId)
-            if (!isCurrentPlaybackLoad(loadTicket)) return@launch
-            if (file == null) {
-                onPlayError(PlaybackErrorContext.missingSource(targetQueueId))
-                return@launch
-            }
-            accompanimentTrackIndex = file.audioLayout.accompanimentTrackIndex ?: file.vocalTrackIndex
-            audioTrackCount = file.audioTracks
-            currentAudioLayout = file.audioLayout
-            currentFileId = file.id
             lyricLines = mediaApi.fetchLyric(songId)?.let(LrcParser::parse).orEmpty()
-            if (!isCurrentPlaybackLoad(loadTicket)) return@launch
+            if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
             if (audioMode) {
                 val coverBytes = mediaApi.fetchCover(songId)
-                if (!isCurrentPlaybackLoad(loadTicket)) return@launch
+                if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
                 coverBytes?.let { bytes ->
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { binding.imgAudioCover.setImageBitmap(it) }
+                    val bitmap = withContext(Dispatchers.Default) {
+                        ArtworkDecoder.decode(bytes, ArtworkProfile.COVER)
+                    }
+                    if (bitmap != null && playbackCoordinator.isCurrent(token) && isCurrentPlaybackLoad(loadTicket)) {
+                        binding.imgAudioCover.setImageBitmap(bitmap)
+                    }
                 }
                 if (lyricLines.isNotEmpty()) binding.txtAudioLyricNext.text = lyricLines.first().text
             }
-            if (!isCurrentPlaybackLoad(loadTicket)) return@launch
+            if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
             val command = playbackLoadProjection.commandForLoadedFile(
                 queueId = targetQueueId,
                 fileId = file.id,
-                streamUrl = mediaApi.streamUrl(file.id),
+                streamUrl = streamUrl,
                 accompanimentTrackIndex = accompanimentTrackIndex,
                 audioTrackCount = audioTrackCount,
                 audioLayout = currentAudioLayout,
@@ -868,7 +1030,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 command.audioLayout,
             )
             eng.applyVolume(command.volume, command.muted)
-            if (!isCurrentPlaybackLoad(loadTicket)) return@launch
+            if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
             eng.play(
                 command.fileId,
                 command.streamUrl,
@@ -876,7 +1038,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 command.playWhenReady,
                 command.positionMs,
             )
-            if (!isCurrentPlaybackLoad(loadTicket)) return@launch
+            if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
             loadedQueueId = targetQueueId
             playbackSeekGate.markApplied(command.seekSequence)
         }
@@ -885,6 +1047,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private fun beginPlaybackLoad(queueId: Long?): PlaybackLoadTicket {
         playbackLoadJob?.cancel()
         playbackLoadJob = null
+        playbackReplacementJob?.cancel()
+        playbackReplacementJob = null
         return playbackLoadGate.begin(queueId)
     }
 
@@ -894,7 +1058,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private fun invalidatePlaybackLoad() {
         playbackLoadJob?.cancel()
         playbackLoadJob = null
+        playbackReplacementJob?.cancel()
+        playbackReplacementJob = null
+        activePlaybackLoadTicket = null
         playbackLoadGate.invalidate()
+        if (::playbackCoordinator.isInitialized) playbackCoordinator.invalidate()
     }
 
     private fun refreshVocalTrackMapping(snapshot: QueueSnapshot) {
@@ -940,7 +1108,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         lifecycleScope.launch {
             val bytes = mediaApi.fetchQr(QR_SIZE_PX)
             val bmp = bytes?.let {
-                runCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull()
+                withContext(Dispatchers.Default) {
+                    ArtworkDecoder.decode(it, ArtworkProfile.QR)
+                }
             }
             if (bmp != null) {
                 binding.imgQr.setImageBitmap(bmp)
@@ -955,9 +1125,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private fun loadStandbyContent() {
         lifecycleScope.launch {
             val content = mediaApi.fetchStandbyContent()
-            applyStandbyContent(content)
+            content?.let(::applyStandbyContent)
             val libraryCount = mediaApi.fetchLibraryCount()
-            binding.txtLibraryStat.text = "曲库 ${libraryCount ?: recommendations.size} 首"
+            binding.txtLibraryStat.visibility = if (libraryCount == null) View.GONE else View.VISIBLE
+            if (libraryCount != null) binding.txtLibraryStat.text = "曲库 $libraryCount 首"
             binding.recommendationRow.visibility = if (recommendations.isEmpty()) View.GONE else View.VISIBLE
             binding.txtRecommendationsEmpty.visibility = if (recommendations.isEmpty()) View.VISIBLE else View.GONE
             if (recommendations.isNotEmpty()) renderRecommendationCards()
@@ -965,6 +1136,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun applyStandbyContent(content: StandbyContent) {
+        standbyLogoJob?.cancel()
+        val logoRequestId = ++standbyLogoRequestId
         applyVideoScaleMode(content.videoScaleMode)
         standbyCarouselEnabled = content.carouselEnabled
         antiBurnEnabled = content.antiBurn
@@ -989,13 +1162,19 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.recommendationRow.visibility = if (recommendations.isEmpty()) View.GONE else View.VISIBLE
         binding.txtRecommendationsEmpty.visibility = if (recommendations.isEmpty()) View.VISIBLE else View.GONE
         if (recommendations.isNotEmpty()) renderRecommendationCards()
-        if (content.logoUrl == null) {
+        val logoUrl = content.logoUrl?.trim()?.takeIf { it.isNotEmpty() }
+        if (logoUrl == null) {
             binding.imgStandbyLogo.setImageResource(R.drawable.home_ktv_logo)
             binding.imgStandbyLogo.visibility = View.VISIBLE
             binding.txtBrandName.visibility = View.VISIBLE
         } else {
-            lifecycleScope.launch {
-                val bitmap = mediaApi.fetchUrl(content.logoUrl)?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+            standbyLogoJob = lifecycleScope.launch {
+                val bitmap = mediaApi.fetchUrl(logoUrl)?.let {
+                    withContext(Dispatchers.Default) {
+                        ArtworkDecoder.decode(it, ArtworkProfile.LOGO)
+                    }
+                }
+                if (logoRequestId != standbyLogoRequestId) return@launch
                 if (bitmap != null) {
                     binding.imgStandbyLogo.setImageBitmap(bitmap)
                     binding.imgStandbyLogo.visibility = View.VISIBLE
@@ -1058,7 +1237,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                         val bytes = mediaApi.fetchCover(song.id)
                         val bitmap = withContext(Dispatchers.Default) {
                             bytes?.let {
-                                BitmapFactory.decodeByteArray(it, 0, it.size)
+                                ArtworkDecoder.decode(it, ArtworkProfile.COVER)
                             }
                         }
                         if (bitmap != null) {
@@ -1078,7 +1257,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun showPlayer(audioMode: Boolean = false) {
-        binding.playerView.visibility = View.VISIBLE
+        binding.standbyPanel.removeCallbacks(standbyTicker)
+        binding.playerView.visibility = if (externalDisplayActive) View.INVISIBLE else View.VISIBLE
         binding.standbyPanel.visibility = View.GONE
         binding.ktvOverlay.visibility = if (audioMode) View.GONE else View.VISIBLE
         binding.audioOverlay.visibility = if (audioMode) View.VISIBLE else View.GONE
@@ -1086,15 +1266,19 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun showStandby() {
+        binding.standbyPanel.removeCallbacks(standbyTicker)
         binding.playerView.visibility = View.GONE
         binding.standbyPanel.visibility = View.VISIBLE
         binding.ktvOverlay.visibility = View.GONE
         binding.audioOverlay.visibility = View.GONE
         hidePlaybackProgress()
+        binding.standbyPanel.post(standbyTicker)
     }
 
     private fun showPlaybackProgress() {
-        if (!::binding.isInitialized || binding.playerView.visibility != View.VISIBLE) return
+        if (!::binding.isInitialized ||
+            (binding.playerView.visibility != View.VISIBLE && !externalDisplayActive)
+        ) return
         binding.playerInfoPanel.visibility = View.VISIBLE
         binding.playProgress.visibility = View.VISIBLE
         binding.audioProgress.visibility = View.VISIBLE
@@ -1174,7 +1358,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         }
         artistAvatarJob = lifecycleScope.launch {
             val bitmap = mediaApi.fetchUrl(url)?.let { bytes ->
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                withContext(Dispatchers.Default) {
+                    ArtworkDecoder.decode(bytes, ArtworkProfile.AVATAR)
+                }
             }
             if (bitmap != null) {
                 artistAvatars[url] = bitmap

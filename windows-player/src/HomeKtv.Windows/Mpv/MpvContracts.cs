@@ -40,6 +40,11 @@ public sealed class MpvCommandException : Exception
     public MpvCommandException(string message) : base(message) { }
 }
 
+public sealed class MpvCommandTimeoutException : MpvConnectionException
+{
+    public MpvCommandTimeoutException(string message) : base(message) { }
+}
+
 public sealed record MpvIpcMessage(
     [property: JsonPropertyName("request_id")] long? RequestId,
     [property: JsonPropertyName("error")] string? Error,
@@ -116,15 +121,32 @@ public static class MpvCommands
         mode switch
         {
             Playback.ChannelMapMode.STEREO => ["set_property", "af", Array.Empty<object>()],
+            // mpv 的对象型选项条目只认 name / label / enabled / params 四个键
+            // （见 mpv options/m_option.c set_obj_settings_list）。用别的键会被静默丢弃：
+            // lavfi 拿不到 graph，声道映射不生效，而命令仍返回成功。
+            // 这里用显式字典而不是匿名类型，避免 params 作为 C# 关键字带来的歧义。
             Playback.ChannelMapMode.LEFT_MONO => ["set_property", "af", new object[]
             {
-                new { name = "lavfi", options = new Dictionary<string, string> { ["graph"] = "pan=stereo|c0=c0|c1=c0" } }
+                ChannelFilterEntry("pan=stereo|c0=c0|c1=c0")
             }],
             Playback.ChannelMapMode.RIGHT_MONO => ["set_property", "af", new object[]
             {
-                new { name = "lavfi", options = new Dictionary<string, string> { ["graph"] = "pan=stereo|c0=c1|c1=c1" } }
+                ChannelFilterEntry("pan=stereo|c0=c1|c1=c1")
             }],
             _ => throw new ArgumentOutOfRangeException(nameof(mode)),
+        };
+
+    /// <summary>
+    /// 构造一个 mpv 对象型选项条目（af / vf 通用形状）。
+    ///
+    /// <p>字段名必须是 <c>name</c> 与 <c>params</c>：mpv 解析 <c>af</c> 属性时只识别
+    /// name / label / enabled / params，其它键会被静默忽略（<c>set_obj_settings_list</c> 无 else 分支）。
+    /// </summary>
+    private static Dictionary<string, object> ChannelFilterEntry(string graph) =>
+        new()
+        {
+            ["name"] = "lavfi",
+            ["params"] = new Dictionary<string, string> { ["graph"] = graph },
         };
 }
 

@@ -108,17 +108,77 @@ class ApkArchivePolicyTest {
     }
 
     @Test
-    fun matchingPackageAndVersionWhenExpectedSignaturesEmptyReturnsTrue() {
+    fun missingExpectedSignaturesReturnsFalse() {
         val actual = ApkIdentity(
             packageName = expectedPackage,
             versionCode = expectedVersion,
             signatureDigests = listOf("any_signature"),
         )
-        assertTrue(
+        assertFalse(
             ApkArchivePolicy.verify(
                 expectedPackageName = expectedPackage,
                 expectedVersionCode = expectedVersion,
                 expectedSignatures = emptyList(),
+                actual = actual,
+            ),
+        )
+    }
+
+    @Test
+    fun forwardSignatureRotationIsAcceptedWhenCandidateCarriesInstalledSignerInLineage() {
+        val actual = ApkIdentity(
+            packageName = expectedPackage,
+            versionCode = expectedVersion,
+            signatureDigests = listOf("new_signature", "old_signature"),
+            currentSignatureDigests = listOf("new_signature"),
+        )
+
+        assertTrue(
+            ApkArchivePolicy.verify(
+                expectedPackageName = expectedPackage,
+                expectedVersionCode = expectedVersion,
+                expectedSignatures = listOf("old_signature"),
+                expectedCurrentSignatures = listOf("old_signature"),
+                actual = actual,
+            ),
+        )
+    }
+
+    @Test
+    fun rotatedCandidateWithoutCurrentSignerLineageIsRejected() {
+        val actual = ApkIdentity(
+            packageName = expectedPackage,
+            versionCode = expectedVersion,
+            signatureDigests = listOf("wrong_signature"),
+            currentSignatureDigests = listOf("wrong_signature"),
+        )
+
+        assertFalse(
+            ApkArchivePolicy.verify(
+                expectedPackageName = expectedPackage,
+                expectedVersionCode = expectedVersion,
+                expectedSignatures = listOf("new_signature"),
+                expectedCurrentSignatures = listOf("new_signature"),
+                actual = actual,
+            ),
+        )
+    }
+
+    @Test
+    fun signatureReadWithoutCurrentSignerIsRejected() {
+        val actual = ApkIdentity(
+            packageName = expectedPackage,
+            versionCode = expectedVersion,
+            signatureDigests = expectedSigs,
+            currentSignatureDigests = emptyList(),
+        )
+
+        assertFalse(
+            ApkArchivePolicy.verify(
+                expectedPackageName = expectedPackage,
+                expectedVersionCode = expectedVersion,
+                expectedSignatures = expectedSigs,
+                expectedCurrentSignatures = expectedSigs,
                 actual = actual,
             ),
         )

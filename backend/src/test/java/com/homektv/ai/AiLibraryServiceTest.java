@@ -32,6 +32,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -154,6 +155,35 @@ class AiLibraryServiceTest {
         verify(taskRepository).saveAndFlush(captor.capture());
         assertThat(captor.getValue().getModel()).isEqualTo("bulk-model");
         assertThat(captor.getValue().getModelRole()).isEqualTo("BULK");
+    }
+
+    @Test
+    void repairBatchSkipsSongsWithAnExistingActiveTask() {
+        SongRepository songRepository = mock(SongRepository.class);
+        AiAnalysisTaskRepository taskRepository = mock(AiAnalysisTaskRepository.class);
+        AiAnalysisWorker worker = mock(AiAnalysisWorker.class);
+        AiConfigService configService = mock(AiConfigService.class);
+        when(songRepository.findAll(any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(song(4L, "已有任务", "歌手"), song(5L, "新任务", "歌手"))));
+        when(configService.isConfigured()).thenReturn(false);
+        when(configService.resolve()).thenReturn(new AiConfigService.ResolvedConfig(false, "", "", "",
+                30, 0.97, 0.92, AiConfigService.JsonMode.AUTO, 2, 1, ""));
+        when(taskRepository.existsBySongIdAndStatusIn(eq(4L), anyList())).thenReturn(true);
+
+        AiLibraryService service = new AiLibraryService(taskRepository, songRepository,
+                mock(PlaylistRepository.class), mock(PlaylistSongRepository.class), worker,
+                new ObjectMapper(), configService, mock(AssetWriter.class),
+                mock(AiClassificationApplier.class), mock(OpenAiCompatibleClient.class),
+                mock(MediaImportRecordRepository.class));
+
+        Map<String, Object> result = service.createRepairBatch();
+
+        assertThat(result).containsEntry("created", 1)
+                .containsEntry("skippedExisting", 1);
+        verify(taskRepository).existsBySongIdAndStatusIn(eq(4L), anyList());
+        verify(taskRepository).existsBySongIdAndStatusIn(eq(5L), anyList());
+        verify(taskRepository, times(1)).saveAndFlush(any(AiAnalysisTask.class));
+        verify(worker, times(1)).analyze(any());
     }
 
     @Test

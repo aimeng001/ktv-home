@@ -34,6 +34,7 @@ internal class InboundDispatchQueue(
         if (!open || event.wireBytes <= 0 || event.wireBytes > maxBytes) return false
 
         if (isSnapshotType(event.type)) {
+            dropAllChunks()
             val oldIndex = events.indexOfFirst { isSnapshotType(it.type) }
             if (oldIndex >= 0) {
                 val old = events.removeAt(oldIndex)
@@ -42,6 +43,11 @@ internal class InboundDispatchQueue(
                     return false
                 }
                 queuedBytes -= old.wireBytes
+            }
+        } else if (event.type == "snapshot_chunk") {
+            val incomingSyncId = extractSyncId(event.payload)
+            if (!incomingSyncId.isNullOrBlank()) {
+                dropChunksNotMatching(incomingSyncId)
             }
         } else if (events.size >= maxItems) {
             return false
@@ -87,20 +93,40 @@ internal class InboundDispatchQueue(
         open = false
     }
 
-    private fun isSnapshotType(type: String): Boolean = type in SNAPSHOT_TYPES
+    private fun isSnapshotType(type: String): Boolean = SnapshotEventPolicy.isCompleteSnapshot(type)
+
+    private fun extractSyncId(payload: JsonElement?): String? = runCatching {
+        (payload as? kotlinx.serialization.json.JsonObject)?.get("syncId")
+            ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+    }.getOrNull()
+
+    private fun dropAllChunks() {
+        val iterator = events.iterator()
+        while (iterator.hasNext()) {
+            val ev = iterator.next()
+            if (ev.type == "snapshot_chunk") {
+                queuedBytes -= ev.wireBytes
+                iterator.remove()
+            }
+        }
+    }
+
+    private fun dropChunksNotMatching(currentSyncId: String) {
+        val iterator = events.iterator()
+        while (iterator.hasNext()) {
+            val ev = iterator.next()
+            if (ev.type == "snapshot_chunk") {
+                val oldSyncId = extractSyncId(ev.payload)
+                if (oldSyncId != null && oldSyncId != currentSyncId) {
+                    queuedBytes -= ev.wireBytes
+                    iterator.remove()
+                }
+            }
+        }
+    }
 
     private companion object {
         const val DEFAULT_MAX_ITEMS = 96
         const val DEFAULT_MAX_BYTES = 16 * 1024 * 1024
-        val SNAPSHOT_TYPES = setOf(
-            "sync_full",
-            "queue_updated",
-            "now_playing",
-            "player_state",
-            "playback_restarted",
-            "playback_seeked",
-            "volume_changed",
-            "vocal_changed",
-        )
     }
 }

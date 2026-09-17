@@ -5,6 +5,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -19,21 +20,55 @@ import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.SocketTimeoutException
 import java.util.Collections
+import java.io.Closeable
 
 /**
  * 局域网服务发现器，按 mDNS、UDP 和子网扫描顺序查找 Home KTV 服务。
  *
  * Discovers Home KTV servers on the LAN using mDNS, UDP, and subnet scanning.
  */
-class LanDiscovery(context: Context) {
+class LanDiscovery(context: Context) : Closeable {
     /** Discovery stages reported to the UI. / 向界面报告的发现阶段。 */
     enum class Stage { MDNS, UDP, SUBNET }
 
     private val appContext = context.applicationContext
     private val scanner = LanScanner()
 
-    fun close() {
+    override fun close() {
         scanner.close()
+    }
+
+    /**
+     * Recovery path: stop at the first valid result from the highest-priority
+     * discovery mechanism. The full setup scan still uses discoverAll().
+     */
+    suspend fun discoverPreferred(): List<DiscoveredServer> = discoverPreferred(expectedInstanceId = null)
+
+    /**
+     * Recovery discovery is identity-bound. Unrelated results from a higher
+     * priority stage must not suppress the lower-priority stages.
+     */
+    suspend fun discoverPreferred(expectedInstanceId: String?): List<DiscoveredServer> {
+        if (expectedInstanceId != null) {
+            val expected = DiscoveryProtocol.normalizeInstanceId(expectedInstanceId) ?: return emptyList()
+            val mdns = discoverMdns { }
+            val mdnsMatches = DiscoveryIdentityPolicy.firstMatching(expected, mdns)
+            if (mdnsMatches.isNotEmpty()) return mdnsMatches
+
+            val udp = discoverUdp { }
+            val udpMatches = DiscoveryIdentityPolicy.firstMatching(expected, udp)
+            if (udpMatches.isNotEmpty()) return udpMatches
+
+            val scanned = scanner.scanAll()
+            return DiscoveryIdentityPolicy.firstMatching(expected, scanned)
+        }
+        val mdns = discoverMdns { }
+        if (!DiscoveryFallbackPolicy.shouldRunFallback(mdns.size)) return mdns
+
+        val udp = discoverUdp { }
+        if (!DiscoveryFallbackPolicy.shouldRunFallback(udp.size)) return udp
+
+        return scanner.scanAll()
     }
 
     /**
@@ -63,8 +98,8 @@ class LanDiscovery(context: Context) {
         onStage?.invoke(Stage.UDP)
         discoverUdp(::collect)
         onStage?.invoke(Stage.SUBNET)
-        scanner.scanAll(onProgress) { hostPort ->
-            collect(DiscoveredServer(hostPort, hostPort))
+        scanner.scanAll(onProgress) { server ->
+            collect(server)
         }
         return synchronized(found) { found.values.toList() }
     }
@@ -95,19 +130,27 @@ class LanDiscovery(context: Context) {
                     override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                         val address = serviceInfo.host?.hostAddress ?: return
                         val formattedHost = if (':' in address) "[$address]" else address
+                        val rawInstanceId = serviceInfo.attributes["instanceId"]
+                            ?.toString(Charsets.UTF_8)
+                        val instanceId = when {
+                            rawInstanceId == null -> null
+                            else -> DiscoveryProtocol.normalizeInstanceId(rawInstanceId) ?: return
+                        }
                         val server = DiscoveredServer(
                             hostPort = "$formattedHost:${serviceInfo.port}",
                             name = serviceInfo.serviceName.trim().ifEmpty { address },
+                            instanceId = instanceId,
                         )
                         scope.launch {
-                            if (scanner.validate(server.hostPort)) {
+                            val validated = validateDiscovered(server) ?: return@launch
+                            if (validated.hostPort == server.hostPort) {
                                 val isNew = synchronized(results) {
                                     if (results.containsKey(server.hostPort)) false else {
-                                        results[server.hostPort] = server
+                                        results[server.hostPort] = validated
                                         true
                                     }
                                 }
-                                if (isNew) onFound(server)
+                                if (isNew) onFound(validated)
                             }
                         }
                     }
@@ -118,6 +161,8 @@ class LanDiscovery(context: Context) {
             nsd.discoverServices(DiscoveryProtocol.SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
             withTimeoutOrNull(MDNS_TIMEOUT_MS) { stopped.await() }
             synchronized(results) { results.values.toList() }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {
             emptyList()
         } finally {
@@ -130,38 +175,50 @@ class LanDiscovery(context: Context) {
         coroutineScope {
             val candidates = withContext(Dispatchers.IO) {
                 val received = linkedMapOf<String, DiscoveredServer>()
-                runCatching {
-                DatagramSocket().use { socket ->
-                    socket.broadcast = true
-                    socket.soTimeout = UDP_TIMEOUT_MS.toInt()
-                    val payload = DiscoveryProtocol.REQUEST.encodeToByteArray()
-                    broadcastAddresses().forEach { address ->
-                        socket.send(DatagramPacket(payload, payload.size, address, DiscoveryProtocol.UDP_PORT))
-                    }
-                    val buffer = ByteArray(1_024)
-                    try {
-                        while (true) {
-                            val response = DatagramPacket(buffer, buffer.size)
-                            socket.receive(response)
-                            val server = DiscoveryProtocol.parseResponse(
-                                response.data.decodeToString(response.offset, response.offset + response.length),
-                                response.address.hostAddress ?: continue,
-                            ) ?: continue
-                            received[server.hostPort] = server
+                try {
+                    DatagramSocket().use { socket ->
+                        socket.broadcast = true
+                        socket.soTimeout = UDP_TIMEOUT_MS.toInt()
+                        val payload = DiscoveryProtocol.REQUEST.encodeToByteArray()
+                        broadcastAddresses().forEach { address ->
+                            socket.send(DatagramPacket(payload, payload.size, address, DiscoveryProtocol.UDP_PORT))
                         }
-                    } catch (_: SocketTimeoutException) {
-                        // The receive window elapsed; validate everything collected below.
+                        val buffer = ByteArray(1_024)
+                        try {
+                            while (true) {
+                                val response = DatagramPacket(buffer, buffer.size)
+                                socket.receive(response)
+                                val server = DiscoveryProtocol.parseResponse(
+                                    response.data.decodeToString(response.offset, response.offset + response.length),
+                                    response.address.hostAddress ?: continue,
+                                ) ?: continue
+                                received[server.hostPort] = server
+                            }
+                        } catch (_: SocketTimeoutException) {
+                            // The receive window elapsed; validate everything collected below.
+                        }
                     }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // Network interfaces and broadcast permissions are optional.
                 }
-                }.getOrNull()
                 received.values.toList()
             }
             candidates.map { server ->
                 async(Dispatchers.IO) {
-                    server.takeIf { scanner.validate(it.hostPort) }
+                    validateDiscovered(server)
                 }
             }.awaitAll().filterNotNull().onEach(onFound)
         }
+
+    /** Confirms an advertised identity against the endpoint's health response. */
+    private suspend fun validateDiscovered(server: DiscoveredServer): DiscoveredServer? {
+        val validated = scanner.discover(server.hostPort) ?: return null
+        val advertisedId = server.instanceId?.let(DiscoveryProtocol::normalizeInstanceId)
+        if (advertisedId != null && advertisedId != validated.instanceId) return null
+        return server.copy(instanceId = validated.instanceId ?: advertisedId)
+    }
 
     private fun broadcastAddresses(): Set<InetAddress> {
         val addresses = linkedSetOf(InetAddress.getByName("255.255.255.255"))

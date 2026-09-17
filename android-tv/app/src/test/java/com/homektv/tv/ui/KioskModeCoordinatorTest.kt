@@ -46,6 +46,11 @@ class KioskModeCoordinatorTest {
     }
 
     @Test
+    fun productionDefaultIdleTimeout_isThirtySeconds() {
+        assertEquals(30_000L, KioskModeCoordinator.DEFAULT_IDLE_TIMEOUT_MS)
+    }
+
+    @Test
     fun exitKiosk_deactivatesKiosk() {
         val coordinator = KioskModeCoordinator(idleTimeoutMs = 20_000L)
         coordinator.toggleKiosk(true)

@@ -5,6 +5,7 @@ import com.homektv.tv.net.QueueEntry
 import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.SongDto
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -61,5 +62,23 @@ class SongQueueProjectionTest {
         )
         val projection = SongQueueProjection.from(snapshot)
         assertEquals(SongQueueState.Playing, projection[100L])
+    }
+
+    @Test
+    fun unknownActorCannotManageWaitingEntry() {
+        val projection = SongQueueProjection.from(
+            QueueSnapshot(
+                list = listOf(
+                    QueueEntry(
+                        queueId = 9L,
+                        orderedBy = 77L,
+                        song = SongDto(id = 109L),
+                        status = "waiting",
+                    ),
+                ),
+            ),
+        )
+
+        assertFalse((projection[109L] as SongQueueState.Waiting).canManage)
     }
 }

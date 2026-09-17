@@ -18,4 +18,10 @@ class SyncReadyGateTest {
         gate.onDisconnect()
         assertFalse(gate.isReady())
     }
+
+    @Test
+    fun playerRoleEventEstablishesConnectionWithoutPretendingSyncIsReady() {
+        assertTrue(ConnectionEventPolicy.establishesConnection("player_role"))
+        assertFalse(ConnectionEventPolicy.establishesConnection("toast"))
+    }
 }

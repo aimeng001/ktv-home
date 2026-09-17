@@ -28,14 +28,28 @@ class AiConfigValidationTest {
     }
 
     @Test
-    void enabledAiMayBeUsableWithoutApiKey() {
+    void enabledLocalAiMayBeUsableWithoutApiKey() {
         properties.getAi().setEnabled(true);
-        properties.getAi().setBaseUrl("https://8.8.8.8/v1");
+        properties.getAi().setBaseUrl("http://127.0.0.1:11434/v1");
         properties.getAi().setBulkModel("local-model");
         properties.getAi().setApiKey("");
+        properties.getAi().setAllowPrivateNetwork(true);
 
         assertThatCode(service::requireConfigured).doesNotThrowAnyException();
         assertThat(service.isConfigured()).isTrue();
+    }
+
+    @Test
+    void enabledPublicAiWithoutApiKeyIsRejectedBeforeAnyRequest() {
+        properties.getAi().setEnabled(true);
+        properties.getAi().setBaseUrl("https://8.8.8.8/v1");
+        properties.getAi().setBulkModel("public-model");
+        properties.getAi().setApiKey("");
+
+        assertThat(service.isConfigured()).isFalse();
+        org.assertj.core.api.Assertions.assertThatThrownBy(service::requireConfigured)
+                .isInstanceOf(com.homektv.web.ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "AI_API_KEY_MISSING");
     }
 
     @Test

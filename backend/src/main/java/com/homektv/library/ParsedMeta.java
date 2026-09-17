@@ -9,9 +9,10 @@ package com.homektv.library;
  * @param category 分类（文件名未提供时为空）
  * @param vocalForm 演唱形式（文件名未提供时为空）
  * @param status    {@link #RECOGNIZED} 或 {@link #NEEDS_REVIEW}
+ * @param catalogNumber 8 位曲库编号（文件名未提供时为空）
  */
 public record ParsedMeta(String title, String artist, String language, String category,
-                         String vocalForm, String status) {
+                         String vocalForm, String status, String catalogNumber) {
 
     public static final String RECOGNIZED = "RECOGNIZED";
     public static final String NEEDS_REVIEW = "NEEDS_REVIEW";
@@ -23,16 +24,27 @@ public record ParsedMeta(String title, String artist, String language, String ca
         category = category == null ? "" : category.trim();
         vocalForm = vocalForm == null ? "" : vocalForm.trim();
         status = NEEDS_REVIEW.equals(status) ? NEEDS_REVIEW : RECOGNIZED;
+        catalogNumber = catalogNumber == null ? "" : catalogNumber.trim();
     }
 
     /** 保留现有五参数构造调用方的兼容 API。 */
     public ParsedMeta(String title, String artist, String language, String category, String status) {
-        this(title, artist, language, category, "", status);
+        this(title, artist, language, category, "", status, "");
+    }
+
+    /** Compatibility constructor for callers that already provide vocal form. */
+    public ParsedMeta(String title, String artist, String language, String category,
+                      String vocalForm, String status) {
+        this(title, artist, language, category, vocalForm, status, "");
     }
 
     /** 保持既有调用方使用 boolean recognized() 的兼容 API。 */
     public ParsedMeta(String title, String artist, boolean recognized) {
-        this(title, artist, "", "", "", recognized ? RECOGNIZED : NEEDS_REVIEW);
+        this(title, artist, "", "", "", recognized ? RECOGNIZED : NEEDS_REVIEW, "");
+    }
+
+    public ParsedMeta withCatalogNumber(String value) {
+        return new ParsedMeta(title, artist, language, category, vocalForm, status, value);
     }
 
     public boolean recognized() {

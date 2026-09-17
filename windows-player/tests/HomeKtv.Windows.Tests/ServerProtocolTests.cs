@@ -112,5 +112,16 @@ public sealed class ServerProtocolTests
         Assert.NotNull(snapshot);
         Assert.Equal(0, snapshot!.PositionMs);
         Assert.Equal(0, snapshot.SeekSequence);
+        Assert.Equal(0, snapshot.StateRevision);
+    }
+
+    [Fact]
+    public void Revisioned_snapshot_keeps_state_revision_through_json_protocol()
+    {
+        var snapshot = ProtocolParser.ParseSnapshot(
+            "{\"playing\":null,\"list\":[],\"state\":\"idle\",\"volume\":60,\"muted\":false,\"vocalMode\":\"accompaniment\",\"audioLayout\":{\"layout\":\"NORMAL_STEREO\"},\"tvOnline\":false,\"connectedPhones\":0,\"stateRevision\":42}");
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(42, snapshot!.StateRevision);
     }
 }

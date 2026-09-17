@@ -11,6 +11,7 @@ data class ApkIdentity(
     val packageName: String,
     val versionCode: Long,
     val signatureDigests: List<String> = emptyList(),
+    val currentSignatureDigests: List<String> = signatureDigests,
 )
 
 object ApkArchivePolicy {
@@ -18,18 +19,36 @@ object ApkArchivePolicy {
         expectedPackageName: String,
         expectedVersionCode: Long,
         expectedSignatures: List<String>,
+        expectedCurrentSignatures: List<String> = expectedSignatures,
         actual: ApkIdentity?,
     ): Boolean {
         if (actual == null) return false
         if (actual.packageName != expectedPackageName) return false
         if (actual.versionCode != expectedVersionCode) return false
-        if (expectedSignatures.isNotEmpty()) {
-            if (actual.signatureDigests.isEmpty()) return false
-            if (actual.signatureDigests.toSet() != expectedSignatures.toSet()) return false
-        }
-        return true
+        if (expectedSignatures.isEmpty() || expectedCurrentSignatures.isEmpty()) return false
+        if (actual.signatureDigests.isEmpty() || actual.currentSignatureDigests.isEmpty()) return false
+
+        val expectedHistory = expectedSignatures.toSet()
+        val expectedCurrent = expectedCurrentSignatures.toSet()
+        val actualHistory = actual.signatureDigests.toSet()
+        val actualCurrent = actual.currentSignatureDigests.toSet()
+        if (!expectedHistory.containsAll(expectedCurrent)) return false
+        if (!actualHistory.containsAll(actualCurrent)) return false
+
+        // The same current signer is the common case. A forward rotation is
+        // accepted only when the candidate's verified lineage carries the
+        // currently installed signer; an old signer cannot be used after the
+        // installed app has already moved forward.
+        return actualCurrent == expectedCurrent ||
+            (expectedCurrent.size == 1 && actualCurrent.size == 1 &&
+                actualHistory.contains(expectedCurrent.single()))
     }
 }
+
+private data class ExtractedSignatures(
+    val history: List<String>,
+    val current: List<String>,
+)
 
 object ApkArchiveVerifier {
     fun verifyApk(
@@ -51,7 +70,8 @@ object ApkArchiveVerifier {
         val installedSignatures = runCatching {
             val installed = pm.getPackageInfo(expectedPackageName, flags)
             extractSignatures(installed)
-        }.getOrDefault(emptyList())
+        }.getOrNull() ?: return false
+        if (installedSignatures.history.isEmpty() || installedSignatures.current.isEmpty()) return false
 
         val archive = runCatching {
             pm.getPackageArchiveInfo(apkFile.absolutePath, flags)
@@ -69,29 +89,40 @@ object ApkArchiveVerifier {
         val actualIdentity = ApkIdentity(
             packageName = archive.packageName ?: "",
             versionCode = actualVersionCode,
-            signatureDigests = actualSignatures,
+            signatureDigests = actualSignatures.history,
+            currentSignatureDigests = actualSignatures.current,
         )
 
         return ApkArchivePolicy.verify(
             expectedPackageName = expectedPackageName,
             expectedVersionCode = expectedVersionCode,
-            expectedSignatures = installedSignatures,
+            expectedSignatures = installedSignatures.history,
+            expectedCurrentSignatures = installedSignatures.current,
             actual = actualIdentity,
         )
     }
 
-    private fun extractSignatures(packageInfo: PackageInfo): List<String> {
+    private fun extractSignatures(packageInfo: PackageInfo): ExtractedSignatures {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val signingInfo = packageInfo.signingInfo ?: return emptyList()
-            val certs = if (signingInfo.hasMultipleSigners()) {
-                signingInfo.apkContentsSigners
+            val signingInfo = packageInfo.signingInfo ?: return ExtractedSignatures(emptyList(), emptyList())
+            val current = signingInfo.apkContentsSigners?.map { signatureToSha256(it.toByteArray()) }.orEmpty()
+            val history = if (signingInfo.hasMultipleSigners()) {
+                current
             } else {
                 signingInfo.signingCertificateHistory
+                    ?.map { signatureToSha256(it.toByteArray()) }
+                    .orEmpty()
             }
-            return certs?.map { signatureToSha256(it.toByteArray()) } ?: emptyList()
+            return ExtractedSignatures(
+                history = history,
+                current = current,
+            )
         } else {
             @Suppress("DEPRECATION")
-            return packageInfo.signatures?.map { signatureToSha256(it.toByteArray()) } ?: emptyList()
+            val signatures = packageInfo.signatures
+                ?.map { signatureToSha256(it.toByteArray()) }
+                .orEmpty()
+            return ExtractedSignatures(history = signatures, current = signatures)
         }
     }
 

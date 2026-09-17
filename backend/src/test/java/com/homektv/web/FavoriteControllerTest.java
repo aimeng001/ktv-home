@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -66,6 +68,14 @@ class FavoriteControllerTest {
     }
 
     @Test
+    void pagedListDoesNotLoadTheWholeFavoriteCollection() {
+        songs.put(10L, song(10L, "晴天"));
+        favorites.add(favorite(10L));
+
+        assertThat(controller.list("token-1", 0, 1)).extracting("title").containsExactly("晴天");
+    }
+
+    @Test
     void removingFavoriteIsSafeWhenAlreadyMissing() {
         assertThat(controller.remove(10L, "token-1")).containsEntry("favorite", false);
         assertThat(favorites).isEmpty();
@@ -73,7 +83,13 @@ class FavoriteControllerTest {
 
     private FavoriteRepository favoriteRepository() {
         return proxy(FavoriteRepository.class, (method, args) -> switch (method.getName()) {
-            case "findByUserIdOrderByCreatedAtDesc" -> List.copyOf(favorites);
+            case "findByUserIdOrderByCreatedAtDesc" -> {
+                if (args != null && args.length == 2) {
+                    int size = ((PageRequest) args[1]).getPageSize();
+                    yield new PageImpl<>(List.copyOf(favorites).subList(0, Math.min(size, favorites.size())), (PageRequest) args[1], favorites.size());
+                }
+                yield List.copyOf(favorites);
+            }
             case "insertIfAbsent" -> {
                 boolean exists = favorites.stream().anyMatch(f -> f.getUserId().equals(args[0]) && f.getSongId().equals(args[1]));
                 if (!exists) favorites.add(favorite((Long) args[1]));

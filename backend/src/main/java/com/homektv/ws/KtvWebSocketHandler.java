@@ -129,6 +129,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 broadcaster.sendTo(session, WsEvent.of(WsEvent.PLAYBACK_REPORT_ACK,
                         java.util.Map.of(
                                 "queue_id", queueId,
+                                "report_type", "finished",
                                 "status", result.status().name())));
                 if (result.status() == FinishResult.Status.APPLIED) {
                     broadcaster.broadcastPlayback(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
@@ -149,6 +150,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 broadcaster.sendTo(session, WsEvent.of(WsEvent.PLAYBACK_REPORT_ACK,
                         java.util.Map.of(
                                 "queue_id", queueId == null ? 0L : queueId,
+                                "report_type", "play_error",
                                 "status", result.accepted() ? "APPLIED" : "STALE")));
                 if (!result.accepted()) return;
                 broadcaster.broadcast(WsEvent.of(WsEvent.TOAST,

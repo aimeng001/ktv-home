@@ -6,6 +6,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Parses song metadata from media filenames.
@@ -13,6 +15,7 @@ import java.util.Map;
 public final class FilenameParser {
 
     private static final String DEFAULT_RULE = "artist_title";
+    private static final Pattern CATALOG_PREFIX = Pattern.compile("^\\s*(\\d{8})(?=\\s*[-._])");
 
     private static final Map<String, String> LANGUAGE_ALIASES = Map.ofEntries(
             Map.entry("国语", "国语"),
@@ -92,6 +95,14 @@ public final class FilenameParser {
     }
 
     static ParsedMeta parse(String filename, String rule, ArtistIndex artistIndex) {
+        String catalogNumber = catalogNumberOf(filename);
+        String parseFilename = catalogNumber.isBlank()
+                ? filename
+                : filename.replaceFirst("^\\s*\\d{8}\\s*[-._]\\s*", "");
+        return parseWithoutCatalog(parseFilename, rule, artistIndex).withCatalogNumber(catalogNumber);
+    }
+
+    private static ParsedMeta parseWithoutCatalog(String filename, String rule, ArtistIndex artistIndex) {
         String base = stripExtension(filename).trim();
         if (base.isBlank()) return ParsedMeta.unrecognized(base);
 
@@ -122,6 +133,12 @@ public final class FilenameParser {
             return parseStandard(parts, suffix, artistIndex, base.trim());
         }
         return parseLegacy(parts, rule, artistIndex, base.trim());
+    }
+
+    private static String catalogNumberOf(String filename) {
+        if (filename == null) return "";
+        Matcher matcher = CATALOG_PREFIX.matcher(filename);
+        return matcher.find() ? matcher.group(1) : "";
     }
 
     private static String normalizeDashSeparators(String value) {

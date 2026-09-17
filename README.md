@@ -173,7 +173,7 @@ docker compose -f docker-compose.nas.yml up -d --wait
 docker compose -f docker-compose.prebuilt.yml up -d --pull always --wait
 ```
 
-这个文件默认使用 `KTV_LIBRARY_MODE=MANAGED`。请确保 `KTV_SOURCE_MUSIC_DIR` 和 `KTV_MUSIC_DIR` 是不同目录，并允许容器按 Managed 流程写入。
+这个文件默认使用 `KTV_LIBRARY_MODE=MANAGED`。请确保 `KTV_SOURCE_MUSIC_DIR` 和 `KTV_MUSIC_DIR` 是不同目录，并允许容器按 Managed 流程写入。注意：由于 Compose 源曲库挂载默认只读，若使用 MANAGED 模式导入并清理源文件，必须在 `.env` 中显式设置 `KTV_SOURCE_MUSIC_READ_ONLY=false`，否则源文件无法移动，导入将全部失败。
 
 ### 2. 启动服务
 
@@ -546,6 +546,19 @@ python scripts/full_test_runner.py --backend local --backend-parallelism 8
 ```
 
 执行器为每个模块保留独立日志，并在最后报告总墙钟时间；Android 默认复用 Gradle daemon，CI 或需要隔离时再加 `--no-daemon`。`--backend local` 不是完整发布 Gate，Docker 集成测试仍须在有 Docker 的环境单独执行。
+
+大型曲库与检索基准测试（需 Docker 环境与足够内存，默认不进入日常测试套件）：
+
+```bash
+# 10000 首扫描内存基准测试（受限堆 512M）
+cd backend && ./mvnw test -Dtest=LargeExternalLibraryScanTest -DrunLargeLibraryScanTest=true -DscanRows=10000 -DargLine="-Xms128m -Xmx512m"
+
+# 大曲库并发读与聚合基准测试（Opt-in，需 Docker）
+cd backend && ./mvnw test -Dtest=LargeLibraryMemoryTest -DrunLargeLibraryTest=true -DargLine="-Xmx512m"
+
+# 20万行规模检索性能与执行计划基准测试（Opt-in，需 Docker）
+cd backend && ./mvnw test -Dtest=SearchLargeLibraryPerformanceTest -DrunSearchPerformanceTest=true
+```
 
 目录结构：
 

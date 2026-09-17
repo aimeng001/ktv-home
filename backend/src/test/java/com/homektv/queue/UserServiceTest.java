@@ -10,6 +10,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class UserServiceTest {
 
@@ -33,5 +34,17 @@ class UserServiceTest {
         verify(repository).countByClientTokenNotAndNickname(eq("current"), eq("小明"));
         verify(repository).countByClientTokenNotAndNicknameStartingWith(eq("current"), eq("小明#"));
         verify(repository, never()).findAll();
+    }
+
+    @Test
+    void rejectsOversizedClientTokensAndNicknamesBeforePersisting() {
+        AppUserRepository repository = mock(AppUserRepository.class);
+        UserService service = new UserService(repository);
+
+        assertThatThrownBy(() -> service.upsert("x".repeat(257), "小明"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.upsert("token", "x".repeat(41)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(repository, never()).insertIfAbsent(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
     }
 }

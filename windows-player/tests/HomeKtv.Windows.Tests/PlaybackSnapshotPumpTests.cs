@@ -66,6 +66,30 @@ public sealed class PlaybackSnapshotPumpTests
         Assert.Equal(new[] { 3L }, committedQueues);
     }
 
+    [Fact]
+    public async Task Fence_cancels_inflight_projection_without_committing_it()
+    {
+        var started = NewSignal();
+        var release = NewSignal();
+        var committed = false;
+
+        await using var pump = new PlaybackSnapshotPump(async (work, cancellationToken) =>
+        {
+            started.TrySetResult(true);
+            await release.Task.WaitAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            committed = true;
+        });
+
+        pump.Submit("now_playing", Snapshot(1));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        pump.Fence();
+        release.TrySetResult(true);
+        await pump.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(committed);
+    }
+
     private static QueueSnapshot Snapshot(long queueId) => new(
         new NowPlaying(queueId, new SongDto(100 + queueId, "Song", "Artist"), null),
         Array.Empty<QueueEntry>(),
