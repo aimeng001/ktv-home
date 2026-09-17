@@ -144,6 +144,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("apksigner verify --print-certs", android_tv)
         self.assertIn("certificate SHA-256 digest", android_tv)
         self.assertIn("Signer certificate mismatch", android_tv)
+        self.assertIn("ANDROID_HOME/build-tools/35.0.0", android_tv)
+        self.assertIn("GITHUB_PATH", android_tv)
 
     def test_ci_runtime_compose_is_bounded_and_external_source_is_read_only(self) -> None:
         compose = (WORKFLOW.parents[2] / "docker-compose.ci.yml").read_text(encoding="utf-8")
