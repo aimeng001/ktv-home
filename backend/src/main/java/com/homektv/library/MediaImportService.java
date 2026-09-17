@@ -37,7 +37,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.Iterator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -156,44 +155,47 @@ public class MediaImportService {
         int copied = 0, pending = 0, sourceDup = 0, outputDup = 0, unrecognized = 0, failed = 0;
         int total = 0;
         int completed = 0;
+        List<Path> candidates;
         try (Stream<Path> files = Files.walk(sourceRoot)) {
-            Iterator<Path> candidates = files
+            candidates = files
                     .filter(Files::isRegularFile)
                     .filter(LibraryScanService::isMediaFile)
-                    .iterator();
-            while (candidates.hasNext()) {
-                Path source = candidates.next();
-                if (!Files.exists(source)) {
-                    continue;
-                }
-                total++;
-                scanProgress.set(new SourceScanProgress(true, total, completed,
-                        source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
-                        startedAt, null));
-                try {
-                    ScanOutcome outcome = analyzeAndMaybeCopy(source, targetRoot);
-                    switch (outcome) {
-                        case COPIED -> copied++;
-                        case PENDING -> pending++;
-                        case SOURCE_DUPLICATE -> sourceDup++;
-                        case OUTPUT_DUPLICATE -> outputDup++;
-                        case UNRECOGNIZED -> unrecognized++;
-                        case UNCHANGED -> { }
-                    }
-                } catch (Exception e) {
-                    failed++;
-                    upsertRecord(source, null, null, null, null, FAILED, messageOf(e), false,
-                            false, false, null, null);
-                }
-                completed++;
-                scanProgress.set(new SourceScanProgress(true, total, completed,
-                        source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
-                        startedAt, null));
-            }
+                    .toList();
         } catch (IOException | UncheckedIOException e) {
             scanProgress.set(new SourceScanProgress(false, total, completed, null, copied, pending,
                     sourceDup, outputDup, unrecognized, failed + 1, startedAt, OffsetDateTime.now()));
             throw new ApiException("SOURCE_SCAN_FAILED", "遍历扫描源目录失败：" + e.getMessage());
+        }
+        // Snapshot candidates before moving media or sidecars. Mutating a live
+        // Files.walk stream can make the next directory entry disappear on
+        // Linux, surfacing as NoSuchFileException during an otherwise valid import.
+        for (Path source : candidates) {
+            if (!Files.exists(source)) {
+                continue;
+            }
+            total++;
+            scanProgress.set(new SourceScanProgress(true, total, completed,
+                    source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
+                    startedAt, null));
+            try {
+                ScanOutcome outcome = analyzeAndMaybeCopy(source, targetRoot);
+                switch (outcome) {
+                    case COPIED -> copied++;
+                    case PENDING -> pending++;
+                    case SOURCE_DUPLICATE -> sourceDup++;
+                    case OUTPUT_DUPLICATE -> outputDup++;
+                    case UNRECOGNIZED -> unrecognized++;
+                    case UNCHANGED -> { }
+                }
+            } catch (Exception e) {
+                failed++;
+                upsertRecord(source, null, null, null, null, FAILED, messageOf(e), false,
+                        false, false, null, null);
+            }
+            completed++;
+            scanProgress.set(new SourceScanProgress(true, total, completed,
+                    source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
+                    startedAt, null));
         }
         SourceScanResult result = new SourceScanResult(total, copied, pending, sourceDup, outputDup,
                 unrecognized, failed);

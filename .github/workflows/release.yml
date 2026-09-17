@@ -166,6 +166,8 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Cache Android SDK components
         id: cache-android-sdk
         uses: actions/cache@v4
