@@ -6,6 +6,8 @@ import com.homektv.musicsource.ArtistMetadataProvider;
 import com.homektv.musicsource.MusicProvider;
 import com.homektv.musicsource.MusicSourceConfig;
 import com.homektv.musicsource.MusicSourceConfigService;
+import com.homektv.musicsource.MusicSourceException;
+import com.homektv.musicsource.ProviderRateLimitedException;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -38,6 +40,18 @@ class ArtistAvatarWorkerTest {
 
         assertThat(worker.unresolvedKeys()).containsExactly("zhoujielun");
         verify(profiles).unresolvedAvatarKeys(10_000);
+    }
+
+    @Test
+    void automaticScanUsesTheLargeBoundedPendingProfilePage() {
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        when(profiles.pendingAvatarKeys(10_000)).thenReturn(List.of("zhoujielun"));
+        ArtistAvatarWorker worker = new ArtistAvatarWorker(
+                mock(JdbcTemplate.class), profiles, mock(MusicSourceConfigService.class),
+                mock(ExternalCoverService.class), mock(AssetWriter.class), List.of(), Runnable::run);
+
+        assertThat(worker.pendingKeys()).containsExactly("zhoujielun");
+        verify(profiles).pendingAvatarKeys(10_000);
     }
 
     @Test
@@ -146,6 +160,7 @@ class ArtistAvatarWorkerTest {
         when(provider.provider()).thenReturn(MusicProvider.QQ);
         when(provider.search(eq("周杰伦"), eq(5), any())).thenReturn(List.of(
                 new ExternalArtist(MusicProvider.QQ, "1", "周杰伦", List.of(), "https://y.gtimg.cn/1.jpg")));
+        when(assets.hasArtistCoverCapacity(any(Long.TYPE))).thenReturn(true);
         when(covers.downloadArtistAvatar(eq(MusicProvider.QQ), eq("https://y.gtimg.cn/1.jpg"),
                 eq("zhoujielun:lease-token"), any())).thenReturn("artist-covers/stale.jpg");
         when(profiles.markAvatarReadyIfClaimed("zhoujielun", "QQ", "1", "artist-covers/stale.jpg",
@@ -161,7 +176,36 @@ class ArtistAvatarWorkerTest {
     }
 
     @Test
-    void oneWorkerRunClaimsAtMostOneBoundedBatch() throws Exception {
+    void databaseFailureAfterAvatarDownloadCleansTheUncommittedCache() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        ExternalCoverService covers = mock(ExternalCoverService.class);
+        AssetWriter assets = mock(AssetWriter.class);
+        ArtistMetadataProvider provider = mock(ArtistMetadataProvider.class);
+        ResultSet row = claimRow("zhoujielun", "QQ", "lease-token");
+        when(profiles.find("zhoujielun")).thenReturn(Optional.of(new ArtistProfileService.Profile(
+                "zhoujielun", "周杰伦", "PERSON", null, null, null, "PENDING")));
+        when(config.getConfig()).thenReturn(new MusicSourceConfig(
+                true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95));
+        when(provider.provider()).thenReturn(MusicProvider.QQ);
+        when(provider.search(eq("周杰伦"), eq(5), any())).thenReturn(List.of(
+                new ExternalArtist(MusicProvider.QQ, "1", "周杰伦", List.of(), "https://y.gtimg.cn/1.jpg")));
+        when(assets.hasArtistCoverCapacity(any(Long.TYPE))).thenReturn(true);
+        when(covers.downloadArtistAvatar(eq(MusicProvider.QQ), eq("https://y.gtimg.cn/1.jpg"),
+                eq("zhoujielun:lease-token"), any())).thenReturn("artist-covers/uncommitted.jpg");
+        when(profiles.markAvatarReadyIfClaimed("zhoujielun", "QQ", "1", "artist-covers/uncommitted.jpg",
+                1L, "lease-token")).thenThrow(new DataAccessResourceFailureException("database unavailable"));
+        stubOneClaimThenEmpty(jdbc, row);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+
+        new ArtistAvatarWorker(jdbc, profiles, config, covers, assets, List.of(provider), Runnable::run).process();
+
+        verify(assets).deleteReadableCache("artist-covers/uncommitted.jpg");
+    }
+
+    @Test
+    void oneWorkerRunContinuesAfterOneBoundedBatch() throws Exception {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ArtistProfileService profiles = mock(ArtistProfileService.class);
         ResultSet row = claimRow("zhoujielun", "QQ", "lease-token");
@@ -177,7 +221,7 @@ class ArtistAvatarWorkerTest {
         new ArtistAvatarWorker(jdbc, profiles, mock(MusicSourceConfigService.class),
                 mock(ExternalCoverService.class), mock(AssetWriter.class), List.of(), Runnable::run).process();
 
-        assertThat(claimCount).hasValue(100);
+        assertThat(claimCount).hasValue(102);
     }
 
     @Test
@@ -197,7 +241,67 @@ class ArtistAvatarWorkerTest {
         assertThatCode(worker::process).doesNotThrowAnyException();
         org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
         verify(jdbc, org.mockito.Mockito.atLeastOnce()).update(sql.capture(), any(Object[].class));
-        assertThat(sql.getAllValues()).anyMatch(value -> value.contains("status='PENDING'"));
+        assertThat(sql.getAllValues()).anyMatch(value -> value.contains("status=CASE")
+                && value.contains("'PENDING'") && value.contains("'FAILED'"));
+    }
+
+    @Test
+    void providerCooldownDefersWithoutIncreasingRetryAttempts() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        ExternalCoverService covers = mock(ExternalCoverService.class);
+        AssetWriter assets = mock(AssetWriter.class);
+        ArtistMetadataProvider provider = mock(ArtistMetadataProvider.class);
+        ResultSet row = claimRow("zhoujielun", "QQ", "lease-token");
+        when(profiles.find("zhoujielun")).thenReturn(Optional.of(new ArtistProfileService.Profile(
+                "zhoujielun", "周杰伦", "PERSON", null, null, null, "PENDING")));
+        when(config.getConfig()).thenReturn(new MusicSourceConfig(
+                true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95));
+        when(provider.provider()).thenReturn(MusicProvider.QQ);
+        when(provider.search(eq("周杰伦"), eq(5), any())).thenReturn(List.of(
+                new ExternalArtist(MusicProvider.QQ, "1", "周杰伦", List.of(), "https://y.gtimg.cn/1.jpg")));
+        when(assets.hasArtistCoverCapacity(any(Long.TYPE))).thenReturn(true);
+        when(covers.downloadArtistAvatar(eq(MusicProvider.QQ), eq("https://y.gtimg.cn/1.jpg"),
+                eq("zhoujielun:lease-token"), any()))
+                .thenThrow(new ProviderRateLimitedException(MusicProvider.QQ,
+                        java.time.Instant.parse("2026-09-17T02:00:00Z")));
+        stubOneClaimThenEmpty(jdbc, row);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+
+        new ArtistAvatarWorker(jdbc, profiles, config, covers, assets, List.of(provider), Runnable::run).process();
+
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc, org.mockito.Mockito.atLeastOnce()).update(sql.capture(), any(Object[].class));
+        assertThat(sql.getAllValues()).anyMatch(value -> value.contains("status='PENDING'")
+                && !value.contains("attempts=attempts+1"));
+    }
+
+    @Test
+    void retryableProviderFailureReachesAStableFailedTerminalState() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        ArtistMetadataProvider provider = mock(ArtistMetadataProvider.class);
+        ResultSet row = claimRow("zhoujielun", "QQ", "lease-token");
+        when(row.getInt("attempts")).thenReturn(7);
+        when(profiles.find("zhoujielun")).thenReturn(Optional.of(new ArtistProfileService.Profile(
+                "zhoujielun", "周杰伦", "PERSON", null, null, null, "PENDING")));
+        when(config.getConfig()).thenReturn(new MusicSourceConfig(
+                true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95));
+        when(provider.provider()).thenReturn(MusicProvider.QQ);
+        when(provider.search(eq("周杰伦"), eq(5), any()))
+                .thenThrow(new MusicSourceException(MusicProvider.QQ, "平台超时"));
+        stubOneClaimThenEmpty(jdbc, row);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+
+        new ArtistAvatarWorker(jdbc, profiles, config, mock(ExternalCoverService.class),
+                mock(AssetWriter.class), List.of(provider), Runnable::run).process();
+
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc, org.mockito.Mockito.atLeastOnce()).update(sql.capture(), any(Object[].class));
+        assertThat(sql.getAllValues()).anyMatch(value -> value.contains("status=CASE")
+                && value.contains("'FAILED'") && value.contains("attempts=attempts+1"));
     }
 
     private static ResultSet claimRow(String artistKey, String provider, String token) throws Exception {

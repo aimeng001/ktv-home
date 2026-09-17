@@ -44,7 +44,10 @@ services:
       KTV_SOURCE_LIBRARY_PATH: /source-music
       KTV_LIBRARY_PATH: /music
       KTV_LIBRARY_MODE: ${KTV_LIBRARY_MODE:-MANAGED}
+      KTV_AVATAR_LIBRARY_PATH: /avatar-library
       KTV_DATA_PATH: /data
+      KTV_MUSIC_PROVIDER_MIN_INTERVAL_MS: ${KTV_MUSIC_PROVIDER_MIN_INTERVAL_MS:-5000}
+      KTV_MUSIC_PROVIDER_DAILY_LIMIT: ${KTV_MUSIC_PROVIDER_DAILY_LIMIT:-300}
       KTV_ADMIN_PASSWORD: ${KTV_ADMIN_PASSWORD:-}
       KTV_PLAYER_CREDENTIAL: "${KTV_PLAYER_CREDENTIAL:-}"
       KTV_DISCOVERY_ENABLED: ${KTV_DISCOVERY_ENABLED:-true}
@@ -83,6 +86,12 @@ services:
       - type: bind
         source: ${KTV_DATA_DIR:-./data}
         target: /data
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ${KTV_AVATAR_LIBRARY_DIR:-./avatar-library}
+        target: /avatar-library
+        read_only: true
         bind:
           create_host_path: true
     depends_on:

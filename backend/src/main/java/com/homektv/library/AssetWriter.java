@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.Optional;
@@ -24,6 +25,7 @@ public class AssetWriter {
     private static final Logger log = LoggerFactory.getLogger(AssetWriter.class);
     static final int MAX_IMAGE_BYTES = 10 * 1024 * 1024;
     static final int MAX_LYRIC_BYTES = 1 * 1024 * 1024;
+    static final long MAX_ARTIST_COVER_CACHE_BYTES = 1L * 1024 * 1024 * 1024;
 
     private final Path dataRoot;
     private final AppProperties props;
@@ -59,6 +61,37 @@ public class AssetWriter {
         requireImageSize(image);
         write(rel, image);
         return rel;
+    }
+
+    /**
+     * Checks whether one bounded network avatar can be added without exceeding
+     * the application-owned artist-cover cache. This method never deletes a
+     * file; the existing orphan sweeper remains the only cleanup mechanism.
+     */
+    public boolean hasArtistCoverCapacity(long incomingBytes) {
+        if (incomingBytes < 0 || incomingBytes > MAX_ARTIST_COVER_CACHE_BYTES) return false;
+        Path root = dataRoot.toAbsolutePath().normalize().resolve("artist-covers").normalize();
+        Path normalizedDataRoot = dataRoot.toAbsolutePath().normalize();
+        if (!root.startsWith(normalizedDataRoot)) return false;
+        if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return true;
+        if (Files.isSymbolicLink(root) || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) return false;
+        try (var paths = Files.walk(root)) {
+            Path realDataRoot = normalizedDataRoot.toRealPath();
+            Path realRoot = root.toRealPath();
+            if (!realRoot.startsWith(realDataRoot)) return false;
+            long used = 0;
+            for (Path path : paths.toList()) {
+                if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) continue;
+                if (!path.toRealPath().startsWith(realRoot)) return false;
+                long size = Files.size(path);
+                if (size > MAX_ARTIST_COVER_CACHE_BYTES - used) return false;
+                used += size;
+            }
+            return used <= MAX_ARTIST_COVER_CACHE_BYTES - incomingBytes;
+        } catch (IOException failure) {
+            log.debug("歌手头像缓存容量无法确认：{}", failure.getMessage());
+            return false;
+        }
     }
 
     /**

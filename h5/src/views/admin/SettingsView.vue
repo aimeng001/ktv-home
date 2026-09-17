@@ -75,30 +75,30 @@
         </section>
 
         <section v-show="section === 'metadata'" class="section" id="section-metadata">
-          <SectionHead title="音乐元数据" description="为 KTV 曲库刮削歌名、歌手、专辑、发行时间和封面"><Music2 :size="19" /><template #aside><span class="source-pill" :class="{ok: musicForm.enabled && musicForm.providers.length}"><i></i>{{ musicForm.enabled && musicForm.providers.length ? '已启用' : '默认关闭' }}</span></template></SectionHead>
+          <SectionHead title="音乐元数据" description="为 KTV 曲库刮削歌名、歌手、专辑、发行时间和封面；歌手头像另按本地优先规则补全"><Music2 :size="19" /><template #aside><span class="source-pill" :class="{ok: musicForm.enabled && musicForm.providers.length}"><i></i>{{ musicForm.enabled && musicForm.providers.length ? '已启用' : '默认关闭' }}</span></template></SectionHead>
           <div class="setting-group">
             <div class="group-head"><strong>刮削来源</strong><span>仅用于补全 KTV 曲库，不提供在线搜歌或播放</span></div>
             <SettingRow id="music_sources_enabled" label="启用元数据刮削"><Toggle v-model="musicForm.enabled" /></SettingRow>
             <SettingRow id="music_sources_providers" label="刮削平台" hint="批量任务会从已选平台匹配最可靠的候选"><Checks v-model="musicForm.providers" :options="musicProviderOptions" /></SettingRow>
           </div>
           <div class="setting-group">
-            <div class="group-head"><strong>请求与缓存</strong><span>限制单次请求规模，减少上游压力</span></div>
+            <div class="group-head"><strong>请求与缓存</strong><span>歌曲元数据、歌手头像搜索和头像下载共享 Provider 限速</span></div>
             <SettingRow id="music_sources_limit" label="每个平台搜索数量"><div class="unit-input"><input v-model.number="musicForm.resultLimit" class="input short" type="number" min="1" max="50" /><span>条</span></div></SettingRow>
             <SettingRow id="music_sources_timeout" label="请求超时"><div class="unit-input"><input v-model.number="musicForm.timeoutSeconds" class="input short" type="number" min="2" max="30" /><span>秒</span></div></SettingRow>
             <SettingRow id="music_sources_cache" label="搜索缓存"><div class="unit-input"><input v-model.number="musicForm.searchCacheHours" class="input short" type="number" min="1" max="168" /><span>小时</span></div></SettingRow>
             <SettingRow id="music_sources_threshold" label="自动写入阈值" hint="达到该置信度的结果自动写入，低于阈值进入人工审核"><div class="unit-input"><input v-model.number="musicForm.autoApplyThreshold" class="input short" type="number" min="0.5" max="1" step="0.01" /><span>{{ Math.round(musicForm.autoApplyThreshold * 100) }}%</span></div></SettingRow>
             <SettingRow id="music_sources_concurrency" label="单平台并发上限" hint="批量刮削时，每个平台同时进行的请求数"><div class="unit-input"><input v-model.number="musicForm.concurrencyLimit" class="input short" type="number" min="1" max="4" /><span>个</span></div></SettingRow>
-            <SettingRow id="music_sources_interval" label="同平台请求间隔" hint="即使提高并发，同一平台的请求仍按此间隔发出"><div class="unit-input"><input v-model.number="musicForm.requestIntervalMs" class="input short" type="number" min="500" max="30000" step="100" /><span>毫秒</span></div></SettingRow>
+            <SettingRow id="music_sources_interval" label="同平台请求间隔" hint="实际安全下限为 5 秒；头像搜索、头像下载和歌曲元数据共用该平台的限速状态"><div class="unit-input"><input v-model.number="musicForm.requestIntervalMs" class="input short" type="number" min="500" max="30000" step="100" /><span>毫秒</span></div></SettingRow>
           </div>
           <div class="setting-group">
-            <div class="group-head"><strong>平台状态</strong><span>平台故障不会影响其它来源和本地曲库</span></div>
+            <div class="group-head"><strong>平台状态</strong><span>此处测试的是歌曲元数据连通性，不代表歌手头像搜索或头像 CDN 一定可用</span></div>
             <div v-for="item in musicStatus" :key="item.provider" class="provider-health">
               <span class="health-dot" :class="{ok:item.healthy}"></span>
-              <div><strong>{{ item.displayName }}</strong><small v-if="item.lastSuccessAt">最近成功 {{ formatTime(item.lastSuccessAt) }}</small><small v-else-if="item.lastError">{{ item.lastError }}</small><small v-else>尚未测试</small></div>
+              <div><strong>{{ item.displayName }}</strong><small v-if="isCooling(item)">请求冷却至 {{ formatTime(item.cooldownUntil) }}</small><small v-else-if="item.lastError">{{ item.lastError }}</small><small v-else-if="item.lastSuccessAt">最近成功 {{ formatTime(item.lastSuccessAt) }}</small><small v-else>尚未测试</small><small v-if="item.requestCount != null">今日外部请求 {{ item.requestCount }} / {{ item.dailyLimit || 300 }}</small></div>
               <button class="btn ghost small" :disabled="testingMusic" @click="testMusic([item.provider])">测试连接</button>
             </div>
           </div>
-          <div class="section-actions"><button class="btn" :disabled="testingMusic || !musicForm.providers.length" @click="testMusic(musicForm.providers)"><TestTube2 :size="15" />{{ testingMusic ? '测试中…' : '测试已选平台' }}</button><span v-if="musicTestMessage" class="test-message">{{ musicTestMessage }}</span></div>
+          <div class="section-actions"><button class="btn" :disabled="testingMusic || !musicForm.providers.length" @click="testMusic(musicForm.providers)"><TestTube2 :size="15" />{{ testingMusic ? '测试中…' : '测试歌曲元数据连通性' }}</button><span v-if="musicTestMessage" class="test-message">{{ musicTestMessage }}</span></div>
         </section>
 
         <section v-show="section === 'transcode'" class="section" id="section-transcode">
@@ -287,6 +287,7 @@ function selectSection(value){ section.value=value; router.replace({query:{...ro
 function jump(item){ selectSection(item.section); nextTick(()=>document.getElementById(item.key)?.scrollIntoView({behavior:'smooth',block:'center'})) }
 function sourceLabel(value){ return value==='DATABASE'?'管理后台':value==='ENVIRONMENT'?'环境变量':value==='NONE'?'未配置':'默认值' }
 function formatTime(value){ return value ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '—' }
+function isCooling(item){ return Boolean(item?.cooldownUntil && Date.parse(item.cooldownUntil) > Date.now()) }
 function applyPreset(p){ if(p.baseUrl) aiForm.baseUrl=p.baseUrl }
 async function load(){
   loading.value=true

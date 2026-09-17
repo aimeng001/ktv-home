@@ -17,38 +17,32 @@ import java.util.Set;
 public class QqMusicMetadataProvider implements MusicMetadataProvider {
     private static final String HOST = "https://c.y.qq.com";
     private final MusicSourceHttp http;
-    private final ProviderCallGuard guard;
 
     public QqMusicMetadataProvider(ObjectMapper mapper, ProviderCallGuard guard) {
-        this.http = new MusicSourceHttp(mapper, MusicProvider.QQ, Set.of("c.y.qq.com"));
-        this.guard = guard;
+        this.http = new MusicSourceHttp(mapper, MusicProvider.QQ, Set.of("c.y.qq.com"), guard);
     }
 
     @Override public MusicProvider provider() { return MusicProvider.QQ; }
 
     @Override
     public List<ExternalTrack> search(String keyword, int limit, Duration timeout) {
-        return guard.call(provider(), () -> {
-            Map<String, Object> query = new LinkedHashMap<>();
-            query.put("format", "json"); query.put("outCharset", "utf-8"); query.put("ct", 24);
-            query.put("qqmusic_ver", 1298); query.put("remoteplace", "txt.yqq.song");
-            query.put("platform", "yqq.json"); query.put("aggr", 1); query.put("cr", 1);
-            query.put("p", 1); query.put("n", Math.min(limit, 50)); query.put("w", keyword);
-            JsonNode root = http.get(HOST + "/soso/fcgi-bin/client_search_cp?" + MusicSourceHttp.query(query), Map.of(), timeout);
-            return parseSongs(root.path("data").path("song").path("list"), limit);
-        });
+        Map<String, Object> query = new LinkedHashMap<>();
+        query.put("format", "json"); query.put("outCharset", "utf-8"); query.put("ct", 24);
+        query.put("qqmusic_ver", 1298); query.put("remoteplace", "txt.yqq.song");
+        query.put("platform", "yqq.json"); query.put("aggr", 1); query.put("cr", 1);
+        query.put("p", 1); query.put("n", Math.min(limit, 50)); query.put("w", keyword);
+        JsonNode root = http.get(HOST + "/soso/fcgi-bin/client_search_cp?" + MusicSourceHttp.query(query), Map.of(), timeout);
+        return parseSongs(root.path("data").path("song").path("list"), limit);
     }
 
     @Override
     public ExternalTrack detail(String externalId, Duration timeout) {
-        return guard.call(provider(), () -> {
-            String url = HOST + "/v8/fcg-bin/fcg_play_single_song.fcg?format=json&platform=yqq&songmid="
-                    + java.net.URLEncoder.encode(externalId, java.nio.charset.StandardCharsets.UTF_8);
-            JsonNode root = http.get(url, Map.of(), timeout);
-            List<ExternalTrack> tracks = parseSongs(root.path("data"), 1);
-            if (tracks.isEmpty()) throw new MusicSourceException(provider(), "歌曲详情不存在");
-            return tracks.getFirst();
-        });
+        String url = HOST + "/v8/fcg-bin/fcg_play_single_song.fcg?format=json&platform=yqq&songmid="
+                + java.net.URLEncoder.encode(externalId, java.nio.charset.StandardCharsets.UTF_8);
+        JsonNode root = http.get(url, Map.of(), timeout);
+        List<ExternalTrack> tracks = parseSongs(root.path("data"), 1);
+        if (tracks.isEmpty()) throw new MusicSourceException(provider(), "歌曲详情不存在");
+        return tracks.getFirst();
     }
 
     List<ExternalTrack> parseSongs(JsonNode songs, int limit) {

@@ -6,6 +6,10 @@ import com.homektv.musicsource.ExternalCoverService;
 import com.homektv.musicsource.MusicProvider;
 import com.homektv.musicsource.MusicSourceConfig;
 import com.homektv.musicsource.MusicSourceConfigService;
+import com.homektv.musicsource.MusicSourceException;
+import com.homektv.musicsource.ProviderHttpException;
+import com.homektv.musicsource.ProviderRateLimitedException;
+import com.homektv.musicsource.ProviderRateStateUnavailableException;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +19,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.EnumMap;
 import java.util.List;
@@ -26,6 +33,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ArtistAvatarWorker {
     private static final Logger log = LoggerFactory.getLogger(ArtistAvatarWorker.class);
     private static final int MAX_BATCH = 100;
+    private static final int MAX_ENQUEUE_KEYS = 10_000;
+    private static final int MAX_ATTEMPTS = 8;
 
     private final JdbcTemplate jdbc;
     private final ArtistProfileService profiles;
@@ -52,7 +61,7 @@ public class ArtistAvatarWorker {
     }
 
     public List<String> pendingKeys() {
-        return profiles.pendingAvatarKeys(MAX_BATCH);
+        return profiles.pendingAvatarKeys(MAX_ENQUEUE_KEYS);
     }
 
     /** Used only after an administrator changes providers to retry unresolved profiles. */
@@ -71,6 +80,7 @@ public class ArtistAvatarWorker {
     }
 
     public void process() {
+        boolean fullBatch = false;
         try {
             int processed = 0;
             while (processed < MAX_BATCH) {
@@ -79,9 +89,16 @@ public class ArtistAvatarWorker {
                 process(job);
                 processed++;
             }
+            fullBatch = true;
         } finally {
             running.set(false);
+            if (fullBatch) trigger();
         }
+    }
+
+    @Scheduled(fixedDelayString = "${app.artist-avatar.recovery-ms:60000}")
+    void recoverStuckQueue() {
+        trigger();
     }
 
     private void process(Job job) {
@@ -90,7 +107,7 @@ public class ArtistAvatarWorker {
             profile = profiles.find(job.artistKey()).orElse(null);
         } catch (DataAccessException failure) {
             log.debug("artist profile lookup unavailable for {}: {}", job.artistKey(), failure.getMessage());
-            defer(job, "歌手档案暂时不可用");
+            deferRetry(job, "歌手档案暂时不可用", Instant.now().plus(Duration.ofMinutes(10)));
             return;
         }
         if (profile == null) {
@@ -117,11 +134,11 @@ public class ArtistAvatarWorker {
             config = configService.getConfig();
         } catch (RuntimeException failure) {
             log.debug("artist avatar configuration unavailable for {}: {}", profile.displayName(), failure.getMessage());
-            defer(job, "音乐元数据设置暂时不可用");
+            deferRetry(job, "音乐元数据设置暂时不可用", Instant.now().plus(Duration.ofMinutes(10)));
             return;
         }
         if (config == null || !config.enabled() || config.providers() == null || config.providers().isEmpty()) {
-            defer(job, "音乐元数据服务未启用");
+            defer(job, "音乐元数据服务未启用", Instant.now().plus(Duration.ofMinutes(10)));
             return;
         }
         if (!config.providers().contains(job.provider())) {
@@ -138,6 +155,8 @@ public class ArtistAvatarWorker {
             return;
         }
         Duration timeout = Duration.ofSeconds(config.timeoutSeconds());
+        String downloadedPath = null;
+        boolean avatarCommitted = false;
         try {
             ExternalArtist candidate = ArtistAvatarMatcher
                     .bestMatch(profile.displayName(), metadataProvider.search(profile.displayName(), 5, timeout))
@@ -150,17 +169,39 @@ public class ArtistAvatarWorker {
                 finish(job, "REVIEW", "未找到高置信度歌手头像");
                 return;
             }
-            String path = coverService.downloadArtistAvatar(job.provider(), candidate.avatarUrl(),
-                    profile.artistKey() + ":" + job.claimToken(), timeout);
-            if (!profiles.markAvatarReadyIfClaimed(profile.artistKey(), job.provider().name(),
-                    candidate.externalId(), path, job.id(), job.claimToken())) {
-                assets.deleteReadableCache(path);
+            if (!renewLease(job)) return;
+            if (!assets.hasArtistCoverCapacity(5L * 1024 * 1024)) {
+                defer(job, "歌手头像缓存已达到容量上限，等待孤儿清理", Instant.now().plus(Duration.ofMinutes(10)));
                 return;
             }
+            downloadedPath = coverService.downloadArtistAvatar(job.provider(), candidate.avatarUrl(),
+                    profile.artistKey() + ":" + job.claimToken(), timeout);
+            avatarCommitted = profiles.markAvatarReadyIfClaimed(profile.artistKey(), job.provider().name(),
+                    candidate.externalId(), downloadedPath, job.id(), job.claimToken());
+            if (!avatarCommitted) return;
             finish(job, "COMPLETED", null);
+        } catch (ProviderRateLimitedException failure) {
+            log.debug("artist avatar provider {} is cooling down until {}", job.provider(), failure.retryAt());
+            defer(job, "音乐平台处于冷却或限额状态", failure.retryAt());
+        } catch (ProviderHttpException failure) {
+            log.debug("artist avatar provider {} returned HTTP {} for {}", job.provider(),
+                    failure.statusCode(), profile.displayName());
+            deferRetry(job, "歌手头像平台暂时不可用", retryAt(job, failure));
+        } catch (ProviderRateStateUnavailableException failure) {
+            log.debug("artist avatar provider rate state unavailable for {}: {}",
+                    profile.displayName(), failure.getMessage());
+            defer(job, "音乐平台限速状态暂时不可用", Instant.now().plus(Duration.ofMinutes(10)));
+        } catch (MusicSourceException failure) {
+            log.debug("artist avatar provider {} failed for {}: {}", job.provider(),
+                    profile.displayName(), failure.getMessage());
+            deferRetry(job, "歌手头像平台暂时不可用", retryAt(job, null));
         } catch (RuntimeException failure) {
             log.debug("artist avatar provider {} failed for {}: {}", job.provider(), profile.displayName(), failure.getMessage());
-            defer(job, "歌手头像服务暂时不可用");
+            deferRetry(job, "歌手头像服务暂时不可用", retryAt(job, null));
+        } finally {
+            if (downloadedPath != null && !avatarCommitted) {
+                assets.deleteReadableCache(downloadedPath);
+            }
         }
     }
 
@@ -190,7 +231,7 @@ public class ArtistAvatarWorker {
                     )
                     UPDATE artist_avatar_jobs job
                     SET status='PROCESSING',
-                        attempts=job.attempts+1,
+                        attempts=job.attempts,
                         next_run_at=now(),
                         last_error=NULL,
                         lease_until=now() + interval '10 minutes',
@@ -198,9 +239,11 @@ public class ArtistAvatarWorker {
                         updated_at=now()
                     FROM candidate
                     WHERE job.id = candidate.id
-                    RETURNING job.id, job.artist_key, job.provider, job.claim_token::text AS claim_token
+                    RETURNING job.id, job.artist_key, job.provider, job.attempts,
+                              job.claim_token::text AS claim_token
                     """, (rs, index) -> new Job(rs.getLong("id"), rs.getString("artist_key"),
-                            MusicProvider.parse(rs.getString("provider")), rs.getString("claim_token")),
+                            MusicProvider.parse(rs.getString("provider")), rs.getInt("attempts"),
+                            rs.getString("claim_token")),
                     claimToken);
             return claimed.stream().findFirst().orElse(null);
         } catch (DataAccessException failure) {
@@ -217,16 +260,54 @@ public class ArtistAvatarWorker {
                 """, status, clean(error), job.id(), job.claimToken());
     }
 
-    private void defer(Job job, String reason) {
-        jdbc.update("""
-                UPDATE artist_avatar_jobs
-                SET status='PENDING', next_run_at=now() + interval '10 minutes',
-                    lease_until=NULL, claim_token=NULL, last_error=?, updated_at=now()
-                WHERE id=? AND status='PROCESSING' AND claim_token=?::uuid
-                """, reason, job.id(), job.claimToken());
+    private boolean renewLease(Job job) {
+        try {
+            return jdbc.update("""
+                    UPDATE artist_avatar_jobs
+                    SET lease_until=now() + interval '10 minutes', updated_at=now()
+                    WHERE id=? AND status='PROCESSING' AND claim_token=?::uuid
+                    """, job.id(), job.claimToken()) == 1;
+        } catch (DataAccessException failure) {
+            return false;
+        }
     }
 
-    private record Job(long id, String artistKey, MusicProvider provider, String claimToken) {}
+    private void defer(Job job, String reason, Instant retryAt) {
+        jdbc.update("""
+                UPDATE artist_avatar_jobs
+                SET status='PENDING', next_run_at=?,
+                    lease_until=NULL, claim_token=NULL, last_error=?, updated_at=now()
+                WHERE id=? AND status='PROCESSING' AND claim_token=?::uuid
+                """, OffsetDateTime.ofInstant(retryAt, ZoneOffset.UTC), reason, job.id(), job.claimToken());
+    }
+
+    private void deferRetry(Job job, String reason, Instant retryAt) {
+        jdbc.update("""
+                UPDATE artist_avatar_jobs
+                SET status=CASE WHEN attempts + 1 >= ? THEN 'FAILED' ELSE 'PENDING' END,
+                    attempts=attempts+1,
+                    next_run_at=CASE WHEN attempts + 1 >= ? THEN now() ELSE ? END,
+                    lease_until=NULL, claim_token=NULL, last_error=?, updated_at=now()
+                WHERE id=? AND status='PROCESSING' AND claim_token=?::uuid
+                """, MAX_ATTEMPTS, MAX_ATTEMPTS,
+                OffsetDateTime.ofInstant(retryAt, ZoneOffset.UTC), reason, job.id(), job.claimToken());
+    }
+
+    private Instant retryAt(Job job, ProviderHttpException failure) {
+        Instant now = Instant.now();
+        if (failure != null && failure.statusCode() == 429 && failure.retryAfter() != null) {
+            return failure.retryAfter().isAfter(now) ? failure.retryAfter() : now.plusSeconds(3600);
+        }
+        if (failure != null && failure.statusCode() == 403) return now.plus(Duration.ofHours(24));
+        return now.plus(Duration.ofSeconds(switch (Math.min(job.attempts + 1, 4)) {
+            case 1 -> 15 * 60L;
+            case 2 -> 60 * 60L;
+            case 3 -> 6 * 60 * 60L;
+            default -> 24 * 60 * 60L;
+        }));
+    }
+
+    private record Job(long id, String artistKey, MusicProvider provider, int attempts, String claimToken) {}
 
     private static String clean(String value) {
         if (value == null || value.isBlank()) return null;

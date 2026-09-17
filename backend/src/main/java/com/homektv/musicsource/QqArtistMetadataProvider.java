@@ -16,11 +16,9 @@ import java.util.Set;
 public class QqArtistMetadataProvider implements ArtistMetadataProvider {
     private static final String HOST = "https://c.y.qq.com";
     private final MusicSourceHttp http;
-    private final ProviderCallGuard guard;
 
     public QqArtistMetadataProvider(ObjectMapper mapper, ProviderCallGuard guard) {
-        this.http = new MusicSourceHttp(mapper, MusicProvider.QQ, Set.of("c.y.qq.com"));
-        this.guard = guard;
+        this.http = new MusicSourceHttp(mapper, MusicProvider.QQ, Set.of("c.y.qq.com"), guard);
     }
 
     @Override
@@ -28,16 +26,14 @@ public class QqArtistMetadataProvider implements ArtistMetadataProvider {
 
     @Override
     public List<ExternalArtist> search(String artistName, int limit, Duration timeout) {
-        return guard.call(provider(), () -> {
-            Map<String, Object> query = new LinkedHashMap<>();
-            query.put("format", "json");
-            query.put("key", artistName);
-            query.put("inCharset", "utf-8");
-            query.put("outCharset", "utf-8");
-            JsonNode root = http.get(HOST + "/splcloud/fcgi-bin/smartbox_new.fcg?" + MusicSourceHttp.query(query),
-                    Map.of(), timeout);
-            return parseArtists(root.path("data").path("singer").path("itemlist"), limit);
-        });
+        Map<String, Object> query = new LinkedHashMap<>();
+        query.put("format", "json");
+        query.put("key", artistName);
+        query.put("inCharset", "utf-8");
+        query.put("outCharset", "utf-8");
+        JsonNode root = http.get(HOST + "/splcloud/fcgi-bin/smartbox_new.fcg?" + MusicSourceHttp.query(query),
+                Map.of(), timeout);
+        return parseArtists(root.path("data").path("singer").path("itemlist"), limit);
     }
 
     List<ExternalArtist> parseArtists(JsonNode artists, int limit) {

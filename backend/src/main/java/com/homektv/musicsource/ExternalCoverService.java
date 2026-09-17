@@ -2,6 +2,7 @@ package com.homektv.musicsource;
 
 import com.homektv.library.AssetWriter;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
@@ -12,6 +13,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 @Service
@@ -22,23 +24,31 @@ public class ExternalCoverService {
             MusicProvider.NETEASE, Set.of("music.126.net"),
             MusicProvider.KUGOU, Set.of("kugou.com", "kugoucdn.com", "kgimg.com")
     );
-    private final HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
+    private final HttpClient client;
     private final AssetWriter writer;
     private final ProviderCallGuard guard;
     private final CoverImageNormalizer imageNormalizer;
 
+    @Autowired
     public ExternalCoverService(AssetWriter writer, ProviderCallGuard guard, CoverImageNormalizer imageNormalizer) {
+        this(writer, guard, imageNormalizer,
+                HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build());
+    }
+
+    ExternalCoverService(AssetWriter writer, ProviderCallGuard guard, CoverImageNormalizer imageNormalizer,
+                         HttpClient client) {
         this.writer = writer;
         this.guard = guard;
         this.imageNormalizer = imageNormalizer;
+        this.client = Objects.requireNonNull(client, "client");
     }
 
     public String download(MusicProvider provider, String coverUrl, String fingerprint, Duration timeout) {
-        return guard.call(provider, () -> downloadLimited(provider, coverUrl, fingerprint, timeout, false));
+        return downloadLimited(provider, coverUrl, fingerprint, timeout, false);
     }
 
     public String downloadArtistAvatar(MusicProvider provider, String avatarUrl, String artistKey, Duration timeout) {
-        return guard.call(provider, () -> downloadLimited(provider, avatarUrl, artistKey, timeout, true));
+        return downloadLimited(provider, avatarUrl, artistKey, timeout, true);
     }
 
     private String downloadLimited(MusicProvider provider, String coverUrl, String fingerprint,
@@ -50,24 +60,35 @@ public class ExternalCoverService {
         rejectPrivateAddress(uri.getHost());
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(timeout).header("Accept", "image/*")
                 .header("User-Agent", "HomeKTV/0.1 cover-cache").GET().build();
+        byte[] bytes = guard.call(provider, () -> fetchBytes(provider, request));
+        byte[] normalized = imageNormalizer.normalize(bytes);
+        return artistAvatar
+                ? writer.writeArtistCover(fingerprint, normalized, "jpg")
+                : writer.writeCover(fingerprint, normalized, "jpg");
+    }
+
+    private byte[] fetchBytes(MusicProvider provider, HttpRequest request) {
         try {
             HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            if (response.statusCode() < 200 || response.statusCode() >= 300)
-                throw new ApiException("EXTERNAL_COVER_DOWNLOAD_FAILED", "封面下载失败：HTTP " + response.statusCode());
-            long length = response.headers().firstValueAsLong("Content-Length").orElse(-1);
-            if (length > MAX_BYTES) throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面超过 5 MB");
-            byte[] bytes;
-            try (InputStream input = response.body()) { bytes = input.readNBytes(MAX_BYTES + 1); }
-            if (bytes.length == 0 || bytes.length > MAX_BYTES) throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面为空或超过 5 MB");
-            byte[] normalized = imageNormalizer.normalize(bytes);
-            return artistAvatar
-                    ? writer.writeArtistCover(fingerprint, normalized, "jpg")
-                    : writer.writeCover(fingerprint, normalized, "jpg");
+            try (InputStream input = response.body()) {
+                if (response.statusCode() < 200 || response.statusCode() >= 300)
+                    throw new ProviderHttpException(provider, response.statusCode(),
+                            MusicSourceHttp.parseRetryAfter(response.headers()),
+                            "封面下载失败：HTTP " + response.statusCode());
+                long length = response.headers().firstValueAsLong("Content-Length").orElse(-1);
+                if (length > MAX_BYTES) throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面超过 5 MB");
+                byte[] bytes = input.readNBytes(MAX_BYTES + 1);
+                if (bytes.length == 0 || bytes.length > MAX_BYTES)
+                    throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面为空或超过 5 MB");
+                return bytes;
+            }
+        } catch (ProviderHttpException ex) {
+            throw ex;
         } catch (ApiException ex) {
             throw ex;
         } catch (Exception ex) {
             if (ex instanceof InterruptedException) Thread.currentThread().interrupt();
-            throw new ApiException("EXTERNAL_COVER_DOWNLOAD_FAILED", "封面下载失败");
+            throw new MusicSourceException(provider, "封面下载失败", ex);
         }
     }
 

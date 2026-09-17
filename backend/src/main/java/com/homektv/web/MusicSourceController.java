@@ -1,5 +1,6 @@
 package com.homektv.web;
 
+import com.homektv.library.ArtistAvatarJobService;
 import com.homektv.musicsource.MusicMetadataApplyService;
 import com.homektv.musicsource.MusicProvider;
 import com.homektv.musicsource.MusicSourceConfig;
@@ -25,10 +26,12 @@ public class MusicSourceController {
     private final MusicSourceConfigService configService;
     private final MusicSourceSearchService searchService;
     private final MusicMetadataApplyService applyService;
+    private final ArtistAvatarJobService avatarJobs;
 
     public MusicSourceController(MusicSourceConfigService configService, MusicSourceSearchService searchService,
-                                 MusicMetadataApplyService applyService) {
+                                 MusicMetadataApplyService applyService, ArtistAvatarJobService avatarJobs) {
         this.configService = configService; this.searchService = searchService; this.applyService = applyService;
+        this.avatarJobs = avatarJobs;
     }
 
     @GetMapping("/music-sources/config")
@@ -40,6 +43,7 @@ public class MusicSourceController {
         configService.save(new MusicSourceConfig(request.enabled(), providers, request.resultLimit(),
                 request.timeoutSeconds(), request.searchCacheHours(), request.concurrencyLimit(),
                 request.requestIntervalMs(), request.autoApplyThreshold()));
+        avatarJobs.enqueueUnresolvedProfilesAsync();
         return configService.configView();
     }
 

@@ -12,18 +12,28 @@ public class ProviderCallGuard {
     private final Map<MusicProvider, Integer> activeCalls = new EnumMap<>(MusicProvider.class);
     private final Map<MusicProvider, Long> nextRequestAt = new EnumMap<>(MusicProvider.class);
     private final Supplier<MusicSourceConfig> configSupplier;
+    private final ProviderRequestRateLimiter persistentLimiter;
 
     @Autowired
+    public ProviderCallGuard(MusicSourceConfigService configService, ProviderRequestRateLimiter persistentLimiter) {
+        this(configService::getConfig, persistentLimiter);
+    }
+
     public ProviderCallGuard(MusicSourceConfigService configService) {
-        this(configService::getConfig);
+        this(configService::getConfig, null);
     }
 
     ProviderCallGuard() {
-        this(MusicSourceConfig::defaults);
+        this(MusicSourceConfig::defaults, null);
     }
 
     ProviderCallGuard(Supplier<MusicSourceConfig> configSupplier) {
+        this(configSupplier, null);
+    }
+
+    ProviderCallGuard(Supplier<MusicSourceConfig> configSupplier, ProviderRequestRateLimiter persistentLimiter) {
         this.configSupplier = configSupplier;
+        this.persistentLimiter = persistentLimiter;
         for (MusicProvider provider : MusicProvider.values()) {
             activeCalls.put(provider, 0);
             nextRequestAt.put(provider, 0L);
@@ -36,7 +46,23 @@ public class ProviderCallGuard {
             acquire(provider);
             acquired = true;
             throttle(provider, configSupplier.get().requestIntervalMs());
-            return action.get();
+            if (persistentLimiter != null) persistentLimiter.beforeRequest(provider);
+            T result;
+            try {
+                result = action.get();
+            } catch (ProviderRateLimitedException | ProviderRateStateUnavailableException ex) {
+                throw ex;
+            } catch (ProviderHttpException ex) {
+                if (persistentLimiter != null) {
+                    persistentLimiter.recordFailure(provider, ex.statusCode(), ex.retryAfter());
+                }
+                throw ex;
+            } catch (MusicSourceException ex) {
+                if (persistentLimiter != null) persistentLimiter.recordFailure(provider, null, null);
+                throw ex;
+            }
+            if (persistentLimiter != null) persistentLimiter.recordSuccess(provider);
+            return result;
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             throw new MusicSourceException(provider, "请求已取消", ex);
@@ -47,7 +73,10 @@ public class ProviderCallGuard {
 
     private void acquire(MusicProvider provider) throws InterruptedException {
         synchronized (activeCalls) {
-            while (activeCalls.get(provider) >= configSupplier.get().concurrencyLimit()) activeCalls.wait();
+            // The persisted gate is shared by metadata and avatar traffic.
+            // Keep one in-flight request per provider even if the legacy
+            // metadata setting allows a larger local worker pool.
+            while (activeCalls.get(provider) >= 1) activeCalls.wait();
             activeCalls.put(provider, activeCalls.get(provider) + 1);
         }
     }

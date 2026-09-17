@@ -158,6 +158,19 @@ describe('api client admin authentication', () => {
     expect(result).toEqual({ success: true, matched: 12 })
   })
 
+  it('adminRetryMissingAvatars sends the bounded server-side retry request and preserves abort signals', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ queued: 12, alreadyPending: 3, nextWorkAt: '2026-09-17T00:00:00Z' })
+    )
+    const signal = new AbortController().signal
+
+    const result = await api.adminRetryMissingAvatars({ signal })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/artists/avatars/retry')
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ method: 'POST', signal }))
+    expect(result.queued).toBe(12)
+  })
+
   it('adminDeleteWish issues DELETE to /api/admin/wishes/{id}', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ status: 'ok' }))
 

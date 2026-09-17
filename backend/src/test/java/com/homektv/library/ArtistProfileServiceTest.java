@@ -80,6 +80,23 @@ class ArtistProfileServiceTest {
     }
 
     @Test
+    void pendingAvatarPageSkipsProfilesThatAlreadyHaveAJob() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.query(anyString(), org.mockito.ArgumentMatchers.<RowMapper<String>>any(),
+                org.mockito.ArgumentMatchers.any(Object[].class)))
+                .thenReturn(List.of());
+
+        new ArtistProfileService(jdbc).pendingAvatarKeys(10_000);
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).query(sql.capture(), org.mockito.ArgumentMatchers.<RowMapper<String>>any(),
+                org.mockito.ArgumentMatchers.any(Object[].class));
+        assertThat(sql.getValue())
+                .contains("NOT EXISTS")
+                .contains("artist_avatar_jobs");
+    }
+
+    @Test
     void findPropagatesDatabaseFailureSoWorkersCanRetryIt() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.query(anyString(),

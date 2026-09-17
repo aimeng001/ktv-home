@@ -2,8 +2,9 @@
   <AdminLayout active="artists">
     <header class="page-head">
       <div class="title-block"><div class="title-mark"><UsersRound :size="19" /></div><div><h1>歌手库</h1><p>按歌手聚合歌曲，AI 提供类型建议，确认后再批量写回。</p></div></div>
-      <div class="head-actions"><button class="secondary action-button" :disabled="loading || refreshing || matchingAvatars" title="扫描本地头像目录并自动匹配" @click="scanLocalAvatars"><ImageIcon :size="15" :class="{spin: matchingAvatars}" />匹配本地头像</button><button class="secondary action-button" :disabled="loading || refreshing" title="刷新歌手列表" @click="load"><RefreshCw :size="15" :class="{spin: loading || refreshing}" />刷新</button><button class="primary action-button" :disabled="loading || refreshing || !artists.length || batchAnalyzing" :title="selectedKeys.size ? '批量分析已选择的歌手' : '批量分析当前筛选中的待复核歌手'" @click="openBatch"><Sparkles :size="15" />批量 AI 分析<span v-if="selectedKeys.size">({{ selectedKeys.size }})</span></button></div>
+      <div class="head-actions"><button class="secondary action-button" :disabled="loading || refreshing || matchingAvatars || backfillingAvatars" title="扫描本地头像目录并自动匹配" @click="scanLocalAvatars"><ImageIcon :size="15" :class="{spin: matchingAvatars}" />匹配本地头像</button><button class="secondary action-button" :disabled="loading || refreshing || matchingAvatars || backfillingAvatars" title="低频补全本地缺失的歌手头像" @click="backfillMissingAvatars"><ImageIcon :size="15" :class="{spin: backfillingAvatars}" />补全缺失头像</button><button class="secondary action-button" :disabled="loading || refreshing" title="刷新歌手列表" @click="load"><RefreshCw :size="15" :class="{spin: loading || refreshing}" />刷新</button><button class="primary action-button" :disabled="loading || refreshing || !artists.length || batchAnalyzing" :title="selectedKeys.size ? '批量分析已选择的歌手' : '批量分析当前筛选中的待复核歌手'" @click="openBatch"><Sparkles :size="15" />批量 AI 分析<span v-if="selectedKeys.size">({{ selectedKeys.size }})</span></button></div>
     </header>
+    <p v-if="avatarBackfillMessage" class="avatar-backfill-status" role="status">{{ avatarBackfillMessage }}</p>
 
     <section class="stats-row"><article><span>歌手总数</span><strong>{{ total }}</strong><small>当前筛选结果</small></article><article><span>待复核</span><strong>{{ pendingCount }}</strong><small>当前页类型尚未确认</small></article><article><span>已选择</span><strong>{{ selectedKeys.size }}</strong><small>可批量分析</small></article></section>
 
@@ -29,7 +30,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Check, ChevronDown, Image as ImageIcon, RefreshCw, Sparkles, UsersRound, X } from 'lucide-vue-next'
 import api from '../../api/client'
@@ -37,7 +38,7 @@ import AdminLayout from './AdminLayout.vue'
 import { alertDialog } from '../../composables/useDialog'
 import { resolveAiConfiguration } from './artistAiState'
 
-const artists = ref([]), loading = ref(false), refreshing = ref(false), matchingAvatars = ref(false), selectedKeys = ref(new Set())
+const artists = ref([]), loading = ref(false), refreshing = ref(false), matchingAvatars = ref(false), backfillingAvatars = ref(false), avatarBackfillMessage = ref(''), selectedKeys = ref(new Set())
 const router = useRouter()
 const reviewOpen = ref(false), selected = ref(null), suggestion = ref(null), analyzing = ref(false), saving = ref(false), uploadingAvatar = ref(false), reviewGender = ref('未知')
 const batchOpen = ref(false), batchAnalyzing = ref(false), batchSaving = ref(false), batchRows = ref([]), batchProgress = ref(0), batchTotal = ref(0), batchSaveProgress = ref(0)
@@ -53,6 +54,8 @@ onMounted(() => load({ resetPage: true }))
 let requestSerial = 0
 let activeRequestKey = ''
 let activeRequest = null
+let activeRequestController = null
+let avatarBackfillController = null
 function load(options = {}) {
   if (options.resetPage) page.value = 0
   if (Number.isInteger(options.page) && options.page >= 0) page.value = options.page
@@ -60,13 +63,16 @@ function load(options = {}) {
   const requestKey = JSON.stringify(params)
   if (activeRequest && activeRequestKey === requestKey) return activeRequest
   const sequence = ++requestSerial
+  activeRequestController?.abort()
   loading.value = artists.value.length === 0
   refreshing.value = artists.value.length > 0
   loadError.value = ''
   activeRequestKey = requestKey
+  const controller = new AbortController()
+  activeRequestController = controller
   const request = (async () => {
     try {
-      const result = await api.adminArtistPage(params)
+      const result = await api.adminArtistPage(params, { signal: controller.signal })
       if (sequence !== requestSerial) return result
       const nextArtists = Array.isArray(result?.items) ? result.items : []
       artists.value = nextArtists
@@ -90,6 +96,7 @@ function load(options = {}) {
     if (activeRequest === request) {
       activeRequest = null
       activeRequestKey = ''
+      activeRequestController = null
     }
   })
 }
@@ -105,6 +112,26 @@ async function scanLocalAvatars() {
     await alertDialog(e.message || '本地头像扫描失败')
   } finally {
     matchingAvatars.value = false
+  }
+}
+async function backfillMissingAvatars() {
+  if (backfillingAvatars.value) return
+  backfillingAvatars.value = true
+  avatarBackfillMessage.value = ''
+  const controller = new AbortController()
+  avatarBackfillController = controller
+  try {
+    const result = await api.adminRetryMissingAvatars({ signal: controller.signal })
+    const queued = Number(result?.queued) || 0
+    avatarBackfillMessage.value = queued
+      ? '已排队 ' + queued + ' 位缺失头像；网络请求按每个平台至少 5 秒间隔执行。'
+      : (result?.reason || '当前没有可补全的缺失头像任务。')
+    await load()
+  } catch (e) {
+    avatarBackfillMessage.value = e.message || '头像补全任务提交失败'
+  } finally {
+    if (avatarBackfillController === controller) avatarBackfillController = null
+    backfillingAvatars.value = false
   }
 }
 function toggleArtist(artist, checked) { const key = artist.artistKey || artist.name; const next = new Set(selectedKeys.value); checked ? next.add(key) : next.delete(key); selectedKeys.value = next }
@@ -166,8 +193,14 @@ async function ensureAiConfigured() {
 function closeBatch() { if (!batchAnalyzing.value && !batchSaving.value) batchOpen.value = false }
 async function applyBatch() { const rows = batchRows.value.filter(row => row.apply && row.gender !== '未知'); if (!rows.length) return; batchSaving.value = true; batchSaveProgress.value = 0; try { for (const row of rows) { await api.adminApplyArtistGender(row.artist, row.gender); batchSaveProgress.value++ } batchOpen.value = false; selectedKeys.value = new Set(); await load() } catch (e) { await alertDialog(e.message || '批量写入失败') } finally { batchSaving.value = false } }
 function confidenceClass(value) { return value >= 0.8 ? 'high' : value >= 0.5 ? 'medium' : 'low' }
+onBeforeUnmount(() => {
+  requestSerial++
+  activeRequestController?.abort()
+  avatarBackfillController?.abort()
+})
 </script>
 
 <style scoped>
 .page-head{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:18px}.title-block,.head-actions,.action-button,.toolbar>div,.modal-kicker{display:flex;align-items:center}.title-block{gap:11px}.title-mark{display:grid;width:38px;height:38px;place-items:center;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff;color:#2563eb}.page-head h1{font-size:22px;line-height:1.2}.page-head p{margin-top:6px;color:#64748b;font-size:12px}.head-actions{gap:8px}.action-button{justify-content:center;gap:6px}.stats-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}.stats-row article{padding:12px 14px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}.stats-row span,.stats-row small{display:block;color:#64748b;font-size:11px}.stats-row strong{display:block;margin:5px 0 2px;color:#172033;font-size:22px;line-height:1}.stats-row small{color:#94a3b8;font-size:10px}.filter-panel{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;padding:14px 16px;margin-bottom:16px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}.filter-panel label{display:flex;flex:0 0 150px;flex-direction:column;gap:6px;color:#64748b;font-size:11px}.filter-panel .keyword-field{flex-basis:250px}.filter-panel input,.filter-panel select,.gender-editor select,.batch-table select{height:35px;width:100%;padding:0 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#172033;font:inherit;font-size:12px}.filter-panel select,.gender-editor select{appearance:none;padding-right:30px}.select-control{position:relative;display:block}.select-control svg{position:absolute;right:9px;top:50%;color:#64748b;pointer-events:none;transform:translateY(-50%)}.filter-actions{display:flex;gap:8px}.table-panel{overflow:hidden;border:1px solid #e2e8f0;border-radius:8px;background:#fff}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border-bottom:1px solid #e2e8f0}.toolbar>div{gap:10px}.toolbar strong{color:#172033;font-size:13px}.toolbar span,.toolbar small{color:#94a3b8;font-size:11px}.table-scroll,.batch-table-wrap{overflow:auto}table{width:100%;min-width:980px;border-collapse:separate;border-spacing:0}th,td{padding:11px 12px;border-bottom:1px solid #eef2f7;text-align:left;white-space:nowrap}th{background:#f8fafc;color:#64748b;font-size:11px}td{color:#334155;font-size:12px}td strong,td small{display:block}td small{margin-top:4px;color:#94a3b8;font-size:10px}.check-cell{width:42px;text-align:center}.check-cell input{width:15px;height:15px;accent-color:#2563eb}.count{font-size:14px}.samples{display:block;max-width:430px;overflow:hidden;color:#64748b;text-overflow:ellipsis}.action-cell{position:sticky;right:0;z-index:2;width:150px;min-width:150px;background:#fff;border-left:1px solid #e2e8f0;box-shadow:-10px 0 14px -14px rgba(15,23,42,.55)}th.action-cell{z-index:3;background:#f8fafc}.artist-cell{display:flex;align-items:center;gap:8px}.artist-avatar{display:grid;width:32px;height:32px;flex:none;place-items:center;overflow:hidden;border-radius:50%;background:#eff6ff;color:#2563eb;font-size:13px;font-weight:700}.artist-avatar img{width:100%;height:100%;object-fit:cover}.kind-note{color:#a16207!important}.load-error{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;border-bottom:1px solid #fed7aa;background:#fff7ed;color:#9a3412;font-size:11px}.pagination{display:flex;align-items:center;justify-content:center;gap:12px;padding:12px 16px;border-top:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-size:11px}.status,.confidence{display:inline-flex;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:600}.status.blue{background:#dbeafe;color:#1d4ed8}.status.amber{background:#fef3c7;color:#a16207}.confidence.high{background:#dcfce7;color:#15803d}.confidence.medium{background:#fef3c7;color:#a16207}.confidence.low{background:#f1f5f9;color:#64748b}.link,.primary,.secondary{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 11px;border-radius:6px;font-size:11px;font-weight:600}.link{gap:5px;border:1px solid #dbe3ee;background:#fff;color:#2563eb}.primary{border:1px solid #2563eb;background:#2563eb;color:#fff}.secondary{border:1px solid #cbd5e1;background:#fff;color:#475569}.empty{text-align:center;color:#94a3b8;padding:45px}.mask{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:20px;background:rgba(15,23,42,.48)}.modal{width:min(620px,calc(100vw - 24px));max-height:calc(100vh - 36px);display:flex;flex-direction:column;overflow:hidden;border-radius:8px;background:#fff;box-shadow:0 20px 55px rgba(15,23,42,.22)}.batch-modal{width:min(860px,calc(100vw - 24px))}.modal-head{display:flex;align-items:flex-start;justify-content:space-between;padding:18px 20px;border-bottom:1px solid #e2e8f0}.modal-head h2{margin-top:5px;font-size:17px}.modal-head p{margin-top:5px;color:#64748b;font-size:11px}.modal-kicker{gap:5px;color:#2563eb;font-size:10px;font-weight:700}.icon-button{display:grid;width:32px;height:32px;flex:none;place-items:center;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569}.modal-body{overflow:auto;padding:18px 20px}.batch-summary{display:flex;gap:18px;padding:13px 20px;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:11px}.batch-table{min-width:760px}.batch-table td{vertical-align:middle}.batch-table select{width:100px;height:31px;padding:0 7px;font-size:11px}.reason-cell{display:block;max-width:380px;overflow:hidden;color:#64748b;text-overflow:ellipsis;white-space:nowrap}.batch-loading{display:grid;place-items:center;gap:8px;min-height:220px;color:#2563eb}.batch-loading strong{color:#172033;font-size:14px}.batch-loading span{color:#94a3b8;font-size:11px}.review-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px}.review-summary div{padding:11px 12px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc}.review-summary span,.review-summary strong{display:block}.review-summary span{color:#94a3b8;font-size:10px}.review-summary strong{margin-top:4px;color:#1d4ed8;font-size:17px}.reason{margin:12px 0;color:#64748b;font-size:11px;line-height:1.5}.sample-head{display:flex;justify-content:space-between;padding:12px 0 8px;border-top:1px solid #e2e8f0}.sample-head small{color:#94a3b8;font-size:10px}.sample-list{display:grid;grid-template-columns:1fr 1fr;gap:8px}.sample{display:flex;align-items:center;gap:8px;min-width:0;padding:8px;border:1px solid #eef2f7;border-radius:6px}.sample .cover{display:grid;width:36px;height:36px;flex:none;place-items:center;overflow:hidden;border-radius:5px;background:#eff6ff;color:#2563eb}.sample .cover img{width:100%;height:100%;object-fit:cover}.sample>div:last-child{min-width:0}.sample strong,.sample small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sample strong{font-size:11px}.sample small{margin-top:3px;color:#94a3b8;font-size:9px}.gender-editor{display:flex;align-items:center;gap:12px;margin-top:16px;color:#475569;font-size:11px}.gender-editor .select-control{width:140px}.modal-actions{display:flex;justify-content:flex-end;gap:8px;padding:13px 20px;border-top:1px solid #e2e8f0;background:#f8fafc}.review-avatar-row{display:flex;align-items:center;gap:14px;margin-bottom:14px;padding:12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc}.review-avatar{display:grid;width:48px;height:48px;flex:none;place-items:center;overflow:hidden;border-radius:50%;background:#eff6ff;color:#2563eb;font-size:18px;font-weight:700}.review-avatar img{width:100%;height:100%;object-fit:cover}.avatar-upload-action{display:flex;flex-direction:column;gap:4px}.avatar-upload-action small{color:#94a3b8;font-size:10px}.upload-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;padding:5px 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#1e293b;font-size:11px;font-weight:600;cursor:pointer}.upload-btn input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}.upload-btn.disabled{opacity:.6;pointer-events:none}.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:760px){.page-head{align-items:flex-start;flex-direction:column}.head-actions{width:100%}.head-actions>*{flex:1}.stats-row{grid-template-columns:1fr 1fr}.stats-row article:last-child{grid-column:1/-1}.filter-panel label,.filter-panel .keyword-field{flex:1 1 140px}.filter-actions{width:100%}.filter-actions>*{flex:1}.toolbar{align-items:flex-start;flex-direction:column}.sample-list{grid-template-columns:1fr}.modal-actions{flex-wrap:wrap}.modal-actions>*{flex:1}.batch-summary{gap:10px;flex-wrap:wrap}}
+.avatar-backfill-status{margin:-8px 0 16px;padding:9px 12px;border:1px solid #bfdbfe;border-radius:6px;background:#eff6ff;color:#1d4ed8;font-size:11px}
 </style>

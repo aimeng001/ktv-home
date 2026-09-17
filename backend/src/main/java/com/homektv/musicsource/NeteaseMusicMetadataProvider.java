@@ -17,45 +17,39 @@ import java.util.Set;
 public class NeteaseMusicMetadataProvider implements MusicMetadataProvider {
     private final ObjectMapper mapper;
     private final MusicSourceHttp http;
-    private final ProviderCallGuard guard;
 
     public NeteaseMusicMetadataProvider(ObjectMapper mapper, ProviderCallGuard guard) {
         this.mapper = mapper;
         this.http = new MusicSourceHttp(mapper, MusicProvider.NETEASE,
-                Set.of("interfacepc.music.163.com", "music.163.com"));
-        this.guard = guard;
+                Set.of("interfacepc.music.163.com", "music.163.com"), guard);
     }
 
     @Override public MusicProvider provider() { return MusicProvider.NETEASE; }
 
     @Override
     public List<ExternalTrack> search(String keyword, int limit, Duration timeout) {
-        return guard.call(provider(), () -> {
-            ObjectNode data = mapper.createObjectNode();
-            data.put("s", keyword); data.put("type", 1); data.put("limit", Math.min(limit, 50));
-            data.put("offset", 0); data.put("total", true);
-            ObjectNode header = data.putObject("header");
-            header.put("os", "pc"); header.put("appver", "3.1.0"); header.put("requestId", String.valueOf(System.currentTimeMillis()));
-            String path = "/api/cloudsearch/pc";
-            JsonNode root = http.form("https://interfacepc.music.163.com/eapi/cloudsearch/pc",
-                    Map.of("params", NeteaseCrypto.eapi(path, compact(data))), Map.of("Referer", "https://music.163.com/"), timeout);
-            return parseSongs(root.path("result").path("songs"), limit);
-        });
+        ObjectNode data = mapper.createObjectNode();
+        data.put("s", keyword); data.put("type", 1); data.put("limit", Math.min(limit, 50));
+        data.put("offset", 0); data.put("total", true);
+        ObjectNode header = data.putObject("header");
+        header.put("os", "pc"); header.put("appver", "3.1.0"); header.put("requestId", String.valueOf(System.currentTimeMillis()));
+        String path = "/api/cloudsearch/pc";
+        JsonNode root = http.form("https://interfacepc.music.163.com/eapi/cloudsearch/pc",
+                Map.of("params", NeteaseCrypto.eapi(path, compact(data))), Map.of("Referer", "https://music.163.com/"), timeout);
+        return parseSongs(root.path("result").path("songs"), limit);
     }
 
     @Override
     public ExternalTrack detail(String externalId, Duration timeout) {
-        return guard.call(provider(), () -> {
-            ObjectNode data = mapper.createObjectNode();
-            data.put("c", "[{\"id\":" + numericId(externalId) + "}]"); data.put("csrf_token", "");
-            NeteaseCrypto.WeapiPayload encrypted = NeteaseCrypto.weapi(compact(data));
-            JsonNode root = http.form("https://music.163.com/weapi/v3/song/detail",
-                    Map.of("params", encrypted.params(), "encSecKey", encrypted.encSecKey()),
-                    Map.of("Referer", "https://music.163.com/"), timeout);
-            List<ExternalTrack> tracks = parseSongs(root.path("songs"), 1);
-            if (tracks.isEmpty()) throw new MusicSourceException(provider(), "歌曲详情不存在");
-            return tracks.getFirst();
-        });
+        ObjectNode data = mapper.createObjectNode();
+        data.put("c", "[{\"id\":" + numericId(externalId) + "}]"); data.put("csrf_token", "");
+        NeteaseCrypto.WeapiPayload encrypted = NeteaseCrypto.weapi(compact(data));
+        JsonNode root = http.form("https://music.163.com/weapi/v3/song/detail",
+                Map.of("params", encrypted.params(), "encSecKey", encrypted.encSecKey()),
+                Map.of("Referer", "https://music.163.com/"), timeout);
+        List<ExternalTrack> tracks = parseSongs(root.path("songs"), 1);
+        if (tracks.isEmpty()) throw new MusicSourceException(provider(), "歌曲详情不存在");
+        return tracks.getFirst();
     }
 
     List<ExternalTrack> parseSongs(JsonNode songs, int limit) {

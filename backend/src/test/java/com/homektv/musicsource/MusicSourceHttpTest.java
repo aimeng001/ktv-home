@@ -16,12 +16,18 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import java.util.function.Supplier;
 
 class MusicSourceHttpTest {
 
@@ -75,6 +81,30 @@ class MusicSourceHttpTest {
                 .isInstanceOf(MusicSourceException.class)
                 .hasMessage("上游响应过大");
         assertThat(body.closed.get()).isTrue();
+    }
+
+    @Test
+    void appliesTheProviderGateToEveryActualHttpRequest() throws Exception {
+        HttpClient client = mock(HttpClient.class);
+        HttpResponse<InputStream> first = response(new ByteArrayInputStream("{}".getBytes()), null);
+        HttpResponse<InputStream> second = response(new ByteArrayInputStream("{}".getBytes()), null);
+        when(client.send(any(HttpRequest.class), org.mockito.ArgumentMatchers
+                .<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenReturn(first, second);
+        ProviderCallGuard guard = mock(ProviderCallGuard.class);
+        when(guard.call(eq(MusicProvider.QQ), any())).thenAnswer(invocation -> {
+            Supplier<JsonNode> request = invocation.getArgument(1);
+            return request.get();
+        });
+        MusicSourceHttp http = new MusicSourceHttp(
+                new ObjectMapper(), MusicProvider.QQ, Set.of("music.example"), client, guard);
+
+        http.get("https://music.example/one", Map.of(), Duration.ofSeconds(1));
+        http.get("https://music.example/two", Map.of(), Duration.ofSeconds(1));
+
+        verify(guard, times(2)).call(eq(MusicProvider.QQ), any());
+        verify(client, times(2)).send(any(HttpRequest.class), org.mockito.ArgumentMatchers
+                .<HttpResponse.BodyHandler<InputStream>>any());
     }
 
     private static HttpResponse<InputStream> response(InputStream body, String contentLength) {

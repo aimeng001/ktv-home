@@ -1,6 +1,9 @@
 package com.homektv.web;
 
 import com.homektv.ai.OpenAiCompatibleClient;
+import com.homektv.musicsource.ProviderHttpException;
+import com.homektv.musicsource.ProviderRateLimitedException;
+import com.homektv.musicsource.ProviderRateStateUnavailableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -65,5 +68,30 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(OpenAiCompatibleClient.AiProviderException.class)
     public ResponseEntity<Map<String, Object>> handleAi(OpenAiCompatibleClient.AiProviderException e) {
         return ResponseEntity.badRequest().body(Map.of("code", e.getCode(), "message", e.getMessage()));
+    }
+
+    @ExceptionHandler(ProviderRateLimitedException.class)
+    public ResponseEntity<Map<String, Object>> handleProviderRateLimited(ProviderRateLimitedException e) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
+                "code", "MUSIC_PROVIDER_RATE_LIMITED",
+                "message", e.getMessage(),
+                "retryAt", e.retryAt().toString()));
+    }
+
+    @ExceptionHandler(ProviderRateStateUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleProviderRateStateUnavailable(
+            ProviderRateStateUnavailableException e) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
+                "code", "MUSIC_PROVIDER_RATE_STATE_UNAVAILABLE",
+                "message", e.getMessage()));
+    }
+
+    @ExceptionHandler(ProviderHttpException.class)
+    public ResponseEntity<Map<String, Object>> handleProviderHttp(ProviderHttpException e) {
+        HttpStatus status = e.statusCode() == 429 ? HttpStatus.TOO_MANY_REQUESTS : HttpStatus.BAD_GATEWAY;
+        return ResponseEntity.status(status).body(Map.of(
+                "code", "MUSIC_PROVIDER_HTTP_ERROR",
+                "message", e.getMessage(),
+                "status", e.statusCode()));
     }
 }

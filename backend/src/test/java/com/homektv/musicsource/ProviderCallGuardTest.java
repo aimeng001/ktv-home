@@ -5,8 +5,11 @@ import org.junit.jupiter.api.Test;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.mockito.InOrder;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 
 class ProviderCallGuardTest {
     @Test
@@ -34,6 +37,20 @@ class ProviderCallGuardTest {
         CompletableFuture.allOf(first, second).join();
 
         assertThat((System.nanoTime() - started) / 1_000_000).isGreaterThanOrEqualTo(65);
+    }
+
+    @Test
+    void persistentLimiterWrapsEveryExternalProviderCall() {
+        MusicSourceConfig config = new MusicSourceConfig(true, Set.of(MusicProvider.QQ),
+                20, 5, 6, 1, 1500, 0.95);
+        ProviderRequestRateLimiter limiter = mock(ProviderRequestRateLimiter.class);
+        ProviderCallGuard guard = new ProviderCallGuard(() -> config, limiter);
+
+        assertThat(guard.call(MusicProvider.QQ, () -> "ok")).isEqualTo("ok");
+
+        InOrder order = inOrder(limiter);
+        order.verify(limiter).beforeRequest(MusicProvider.QQ);
+        order.verify(limiter).recordSuccess(MusicProvider.QQ);
     }
 
     private static void invoke(ProviderCallGuard guard, AtomicInteger active, AtomicInteger maximum) {

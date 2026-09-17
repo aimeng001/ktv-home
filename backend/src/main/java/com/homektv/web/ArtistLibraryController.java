@@ -1,6 +1,7 @@
 package com.homektv.web;
 
 import com.homektv.library.ArtistLibraryService;
+import com.homektv.library.ArtistAvatarJobService;
 import com.homektv.library.ArtistProfileService;
 import com.homektv.library.AssetWriter;
 import com.homektv.library.LocalAvatarResolver;
@@ -21,16 +22,19 @@ public class ArtistLibraryController {
     private final LocalAvatarResolver localAvatarResolver;
     private final AssetWriter assetWriter;
     private final ArtistProfileService profileService;
+    private final ArtistAvatarJobService avatarJobs;
     private CoverImageNormalizer coverImageNormalizer;
 
     public ArtistLibraryController(ArtistLibraryService service,
                                    LocalAvatarResolver localAvatarResolver,
                                    AssetWriter assetWriter,
-                                   ArtistProfileService profileService) {
+                                   ArtistProfileService profileService,
+                                   ArtistAvatarJobService avatarJobs) {
         this.service = service;
         this.localAvatarResolver = localAvatarResolver;
         this.assetWriter = assetWriter;
         this.profileService = profileService;
+        this.avatarJobs = avatarJobs;
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -90,7 +94,13 @@ public class ArtistLibraryController {
     @PostMapping("/local-avatars/scan")
     public Map<String, Object> scanLocalAvatars() {
         int matched = localAvatarResolver.resolveAllCandidates();
+        avatarJobs.enqueuePendingProfilesAfterCommit();
         return Map.of("success", true, "matched", matched);
+    }
+
+    @PostMapping("/avatars/retry")
+    public Map<String, Object> retryMissingAvatars() {
+        return avatarJobs.resetAndEnqueueMissingProfiles();
     }
 
     @PostMapping("/analyze")

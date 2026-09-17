@@ -18,12 +18,11 @@ import java.util.Set;
 public class KugouMusicMetadataProvider implements MusicMetadataProvider {
     private static final String SALT = "OIlwieks28dk2k092lksi2UIkp";
     private final MusicSourceHttp http;
-    private final ProviderCallGuard guard;
     private final MusicSourceConfigService configService;
 
     public KugouMusicMetadataProvider(ObjectMapper mapper, ProviderCallGuard guard, MusicSourceConfigService configService) {
-        this.http = new MusicSourceHttp(mapper, MusicProvider.KUGOU, Set.of("gateway.kugou.com", "songsearch.kugou.com"));
-        this.guard = guard;
+        this.http = new MusicSourceHttp(mapper, MusicProvider.KUGOU,
+                Set.of("gateway.kugou.com", "songsearch.kugou.com"), guard);
         this.configService = configService;
     }
 
@@ -31,17 +30,15 @@ public class KugouMusicMetadataProvider implements MusicMetadataProvider {
 
     @Override
     public List<ExternalTrack> search(String keyword, int limit, Duration timeout) {
-        return guard.call(provider(), () -> doSearch(keyword, limit, timeout));
+        return doSearch(keyword, limit, timeout);
     }
 
     @Override
     public ExternalTrack detail(String externalId, Duration timeout) {
-        return guard.call(provider(), () -> {
-            for (ExternalTrack track : doSearch(externalId, 10, timeout)) {
-                if (track.externalId().equalsIgnoreCase(externalId)) return track;
-            }
-            throw new MusicSourceException(provider(), "歌曲详情不存在");
-        });
+        for (ExternalTrack track : doSearch(externalId, 10, timeout)) {
+            if (track.externalId().equalsIgnoreCase(externalId)) return track;
+        }
+        throw new MusicSourceException(provider(), "歌曲详情不存在");
     }
 
     private List<ExternalTrack> doSearch(String keyword, int limit, Duration timeout) {

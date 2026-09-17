@@ -36,6 +36,9 @@ app:
   library-mode: ${KTV_LIBRARY_MODE:MANAGED}
   avatar-library-path: ${KTV_AVATAR_LIBRARY_PATH:/avatar-library}
   data-path: ${KTV_DATA_PATH:./data}
+  music-provider-rate-limit:
+    min-interval-ms: ${KTV_MUSIC_PROVIDER_MIN_INTERVAL_MS:5000}
+    daily-limit: ${KTV_MUSIC_PROVIDER_DAILY_LIMIT:300}
   scan:
     missing-guard:
       minimum-previous-files: ${KTV_SCAN_MISSING_GUARD_MIN_FILES:1000}

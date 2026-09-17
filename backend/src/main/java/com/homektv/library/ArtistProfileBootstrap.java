@@ -5,10 +5,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 /** Runs the one-time legacy profile backfill off the application startup path. */
 @Component
@@ -17,52 +18,90 @@ public class ArtistProfileBootstrap {
     private final ArtistProfileService profiles;
     private final LocalAvatarResolver localAvatarResolver;
     private final ArtistCreditReconciliationService creditReconciliation;
+    private final ArtistAvatarJobService avatarJobs;
+    private final Executor executor;
+    private final AtomicBoolean refreshRequested = new AtomicBoolean(false);
     private final AtomicBoolean refreshRunning = new AtomicBoolean(false);
     private final AtomicBoolean creditsReconciled = new AtomicBoolean(false);
 
     public ArtistProfileBootstrap(ArtistProfileService profiles, LocalAvatarResolver localAvatarResolver,
-                                  ArtistCreditReconciliationService creditReconciliation) {
+                                  ArtistCreditReconciliationService creditReconciliation,
+                                  ArtistAvatarJobService avatarJobs,
+                                  @org.springframework.beans.factory.annotation.Qualifier("artistProfileExecutor")
+                                  Executor executor) {
         this.profiles = profiles;
         this.localAvatarResolver = localAvatarResolver;
         this.creditReconciliation = creditReconciliation;
+        this.avatarJobs = avatarJobs;
+        this.executor = executor;
     }
 
-    @Async("artistProfileExecutor")
     @EventListener(ApplicationReadyEvent.class)
     public void backfill() {
-        refreshNow();
+        requestRefresh();
     }
 
     /** Reconciles profiles after a scan without delaying the scan response. */
-    @Async("artistProfileExecutor")
     public void refreshAfterScan() {
-        refreshNow();
+        requestRefresh();
     }
 
-    private void refreshNow() {
-        if (!refreshRunning.compareAndSet(false, true)) return;
+    private void requestRefresh() {
+        refreshRequested.set(true);
+        submitIfPossible();
+    }
+
+    private void submitIfPossible() {
+        if (!refreshRequested.get() || !refreshRunning.compareAndSet(false, true)) return;
         try {
-            reconcileCreditsOnce();
-            int count = profiles.backfillFromSongs();
-            int matched = localAvatarResolver.resolveAllCandidates();
-            log.info("artist profile backfill completed: {} source names, {} local avatars resolved", count, matched);
-        } catch (RuntimeException failure) {
-            log.warn("artist profile backfill did not complete: {}", failure.getMessage());
-        } finally {
+            AtomicBoolean completed = new AtomicBoolean(true);
+            executor.execute(() -> {
+                try {
+                    if (refreshRequested.getAndSet(false)) completed.set(refreshNow());
+                } finally {
+                    refreshRunning.set(false);
+                    if (completed.get() && refreshRequested.get()) submitIfPossible();
+                }
+            });
+        } catch (RejectedExecutionException failure) {
             refreshRunning.set(false);
+            log.debug("artist profile refresh queued for retry: {}", failure.getMessage());
         }
     }
 
-    private void reconcileCreditsOnce() {
-        if (creditsReconciled.get()) return;
+    @Scheduled(fixedDelayString = "${app.artist-profile.refresh-retry-ms:60000}")
+    void retryRejectedRefresh() {
+        submitIfPossible();
+    }
+
+    private boolean refreshNow() {
+        boolean creditsCompleted = reconcileCreditsOnce();
+        try {
+            int count = profiles.backfillFromSongs();
+            int matched = localAvatarResolver.resolveAllCandidates();
+            avatarJobs.enqueuePendingProfilesAfterCommit();
+            log.info("artist profile backfill completed: {} source names, {} local avatars resolved", count, matched);
+            if (!creditsCompleted) refreshRequested.set(true);
+            return creditsCompleted;
+        } catch (RuntimeException failure) {
+            refreshRequested.set(true);
+            log.warn("artist profile backfill did not complete: {}", failure.getMessage());
+            return false;
+        }
+    }
+
+    private boolean reconcileCreditsOnce() {
+        if (creditsReconciled.get()) return true;
         try {
             int processed = creditReconciliation.reconcileValidSongs();
             creditsReconciled.set(true);
             log.info("artist credit reconciliation completed: {} valid songs", processed);
+            return true;
         } catch (RuntimeException failure) {
             // Keep the flag false so the next post-scan/scheduled refresh can
             // retry after a transient database or migration failure.
             log.warn("artist credit reconciliation did not complete: {}", failure.getMessage());
+            return false;
         }
     }
 }

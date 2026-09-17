@@ -16,13 +16,11 @@ import java.util.Set;
 public class NeteaseArtistMetadataProvider implements ArtistMetadataProvider {
     private final ObjectMapper mapper;
     private final MusicSourceHttp http;
-    private final ProviderCallGuard guard;
 
     public NeteaseArtistMetadataProvider(ObjectMapper mapper, ProviderCallGuard guard) {
         this.mapper = mapper;
         this.http = new MusicSourceHttp(mapper, MusicProvider.NETEASE,
-                Set.of("interfacepc.music.163.com", "music.163.com"));
-        this.guard = guard;
+                Set.of("interfacepc.music.163.com", "music.163.com"), guard);
     }
 
     @Override
@@ -30,22 +28,20 @@ public class NeteaseArtistMetadataProvider implements ArtistMetadataProvider {
 
     @Override
     public List<ExternalArtist> search(String artistName, int limit, Duration timeout) {
-        return guard.call(provider(), () -> {
-            ObjectNode data = mapper.createObjectNode();
-            data.put("s", artistName);
-            data.put("type", 100);
-            data.put("limit", Math.min(Math.max(limit, 1), 20));
-            data.put("offset", 0);
-            data.put("total", true);
-            ObjectNode header = data.putObject("header");
-            header.put("os", "pc");
-            header.put("appver", "3.1.0");
-            header.put("requestId", String.valueOf(System.currentTimeMillis()));
-            JsonNode root = http.form("https://interfacepc.music.163.com/eapi/cloudsearch/pc",
-                    Map.of("params", NeteaseCrypto.eapi("/api/cloudsearch/pc", compact(data))),
-                    Map.of("Referer", "https://music.163.com/"), timeout);
-            return parseArtists(root.path("result").path("artists"), limit);
-        });
+        ObjectNode data = mapper.createObjectNode();
+        data.put("s", artistName);
+        data.put("type", 100);
+        data.put("limit", Math.min(Math.max(limit, 1), 20));
+        data.put("offset", 0);
+        data.put("total", true);
+        ObjectNode header = data.putObject("header");
+        header.put("os", "pc");
+        header.put("appver", "3.1.0");
+        header.put("requestId", String.valueOf(System.currentTimeMillis()));
+        JsonNode root = http.form("https://interfacepc.music.163.com/eapi/cloudsearch/pc",
+                Map.of("params", NeteaseCrypto.eapi("/api/cloudsearch/pc", compact(data))),
+                Map.of("Referer", "https://music.163.com/"), timeout);
+        return parseArtists(root.path("result").path("artists"), limit);
     }
 
     List<ExternalArtist> parseArtists(JsonNode artists, int limit) {

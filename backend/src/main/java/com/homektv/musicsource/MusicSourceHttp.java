@@ -9,10 +9,15 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -24,17 +29,30 @@ final class MusicSourceHttp {
     private final ObjectMapper mapper;
     private final MusicProvider provider;
     private final Set<String> allowedHosts;
+    private final ProviderCallGuard callGuard;
 
     MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts) {
         this(mapper, provider, allowedHosts,
-                HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build());
+                HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(), null);
     }
 
     MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts, HttpClient client) {
+        this(mapper, provider, allowedHosts, client, null);
+    }
+
+    MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts,
+                    ProviderCallGuard callGuard) {
+        this(mapper, provider, allowedHosts,
+                HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(), callGuard);
+    }
+
+    MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts,
+                    HttpClient client, ProviderCallGuard callGuard) {
         this.mapper = mapper;
         this.provider = provider;
         this.allowedHosts = allowedHosts;
         this.client = Objects.requireNonNull(client, "client");
+        this.callGuard = callGuard;
     }
 
     JsonNode get(String url, Map<String, ?> headers, Duration timeout) {
@@ -48,6 +66,11 @@ final class MusicSourceHttp {
     }
 
     private JsonNode send(HttpRequest.Builder builder, Map<String, ?> headers, Duration timeout) {
+        if (callGuard == null) return sendOnce(builder, headers, timeout);
+        return callGuard.call(provider, () -> sendOnce(builder, headers, timeout));
+    }
+
+    private JsonNode sendOnce(HttpRequest.Builder builder, Map<String, ?> headers, Duration timeout) {
         headers.forEach((key, value) -> builder.header(key, String.valueOf(value)));
         builder.timeout(timeout).header("Accept", "application/json");
         if (headers.keySet().stream().noneMatch(key -> "user-agent".equalsIgnoreCase(key))) {
@@ -58,7 +81,8 @@ final class MusicSourceHttp {
             HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
             try (InputStream body = response.body()) {
                 if (response.statusCode() < 200 || response.statusCode() >= 300)
-                    throw new MusicSourceException(provider, "上游返回 HTTP " + response.statusCode());
+                    throw new ProviderHttpException(provider, response.statusCode(),
+                            parseRetryAfter(response.headers()), "上游返回 HTTP " + response.statusCode());
                 long declaredLength = response.headers().firstValueAsLong("Content-Length").orElse(-1);
                 if (declaredLength > MAX_BODY_BYTES) throw new ResponseTooLargeException();
                 return mapper.readTree(readAtMost(body, MAX_BODY_BYTES));
@@ -70,6 +94,21 @@ final class MusicSourceHttp {
         } catch (Exception ex) {
             if (ex instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new MusicSourceException(provider, "平台请求失败", ex);
+        }
+    }
+
+    static Instant parseRetryAfter(HttpHeaders headers) {
+        String value = headers.firstValue("Retry-After").orElse("").trim();
+        if (value.isEmpty()) return null;
+        try {
+            long seconds = Long.parseLong(value);
+            return Instant.now().plusSeconds(Math.max(0, seconds));
+        } catch (NumberFormatException ignored) {
+            try {
+                return ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
+            } catch (DateTimeParseException ignoredDate) {
+                return null;
+            }
         }
     }
 

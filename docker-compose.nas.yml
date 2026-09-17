@@ -48,6 +48,8 @@ services:
       KTV_LIBRARY_MODE: EXTERNAL_READ_ONLY
       KTV_AVATAR_LIBRARY_PATH: /avatar-library
       KTV_DATA_PATH: /data
+      KTV_MUSIC_PROVIDER_MIN_INTERVAL_MS: ${KTV_MUSIC_PROVIDER_MIN_INTERVAL_MS:-5000}
+      KTV_MUSIC_PROVIDER_DAILY_LIMIT: ${KTV_MUSIC_PROVIDER_DAILY_LIMIT:-300}
       # Set this before deployment to unlock /m/admin; empty keeps admin APIs disabled.
       # 部署前请设置此项以解锁 /m/admin；留空会关闭管理接口。
       KTV_ADMIN_PASSWORD: "${KTV_ADMIN_PASSWORD:-}"

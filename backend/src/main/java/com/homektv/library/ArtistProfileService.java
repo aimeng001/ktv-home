@@ -204,6 +204,10 @@ public class ArtistProfileService {
                     SELECT artist_key FROM artist_profiles
                     WHERE artist_kind IN ('PERSON', 'GROUP')
                       AND avatar_status IN ('PENDING', 'RETRY')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM artist_avatar_jobs job
+                          WHERE job.artist_key = artist_profiles.artist_key
+                      )
                     ORDER BY updated_at, artist_key
                     LIMIT ?
                     """, (rs, index) -> rs.getString(1), safeLimit);

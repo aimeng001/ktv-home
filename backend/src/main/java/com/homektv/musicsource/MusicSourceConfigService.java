@@ -3,6 +3,7 @@ package com.homektv.musicsource;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,10 +22,18 @@ public class MusicSourceConfigService {
     private static final String KEY = "music_sources.config";
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
+    private final int dailyLimit;
 
     public MusicSourceConfigService(JdbcTemplate jdbc, ObjectMapper mapper) {
+        this(jdbc, mapper, 300);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public MusicSourceConfigService(JdbcTemplate jdbc, ObjectMapper mapper,
+                                    @Value("${app.music-provider-rate-limit.daily-limit:300}") int dailyLimit) {
         this.jdbc = jdbc;
         this.mapper = mapper;
+        this.dailyLimit = Math.max(1, dailyLimit);
     }
 
     public MusicSourceConfig getConfig() {
@@ -79,13 +88,23 @@ public class MusicSourceConfigService {
 
     public List<Map<String, Object>> states() {
         Map<String, Map<String, Object>> stored = new LinkedHashMap<>();
-        jdbc.query("SELECT provider,healthy,last_success_at,last_error_at,last_error FROM music_source_provider_state ORDER BY provider", rs -> {
+        jdbc.query("""
+                SELECT COALESCE(source.provider, rate.provider) AS provider,
+                       source.healthy, source.last_success_at, source.last_error_at, source.last_error,
+                       rate.next_request_at, rate.cooldown_until, rate.request_count
+                FROM music_source_provider_state source
+                FULL OUTER JOIN music_provider_rate_state rate ON rate.provider=source.provider
+                ORDER BY 1
+                """, rs -> {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("provider", rs.getString("provider"));
-            row.put("healthy", rs.getBoolean("healthy"));
+            row.put("healthy", Boolean.TRUE.equals(rs.getObject("healthy")));
             row.put("lastSuccessAt", rs.getObject("last_success_at", OffsetDateTime.class));
             row.put("lastErrorAt", rs.getObject("last_error_at", OffsetDateTime.class));
             row.put("lastError", rs.getString("last_error"));
+            row.put("nextRequestAt", rs.getObject("next_request_at", OffsetDateTime.class));
+            row.put("cooldownUntil", rs.getObject("cooldown_until", OffsetDateTime.class));
+            row.put("requestCount", rs.getInt("request_count"));
             stored.put(rs.getString("provider"), row);
         });
         List<Map<String, Object>> out = new ArrayList<>();
@@ -94,6 +113,8 @@ public class MusicSourceConfigService {
             row.putIfAbsent("provider", provider.name()); row.put("displayName", provider.displayName());
             row.putIfAbsent("healthy", false); row.putIfAbsent("lastSuccessAt", null);
             row.putIfAbsent("lastErrorAt", null); row.putIfAbsent("lastError", null);
+            row.putIfAbsent("nextRequestAt", null); row.putIfAbsent("cooldownUntil", null);
+            row.putIfAbsent("requestCount", 0); row.put("dailyLimit", dailyLimit);
             out.add(row);
         }
         return out;
