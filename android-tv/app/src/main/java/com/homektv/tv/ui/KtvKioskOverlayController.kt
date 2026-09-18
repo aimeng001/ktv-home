@@ -1,5 +1,6 @@
 package com.homektv.tv.ui
 
+import android.graphics.Bitmap
 import android.view.KeyEvent
 import android.view.SurfaceView
 import android.view.View
@@ -140,6 +141,8 @@ class KtvKioskOverlayController(
     private var controllerState = ControllerUiState()
     private var lastControllerFeedback: String? = null
     private var queueDialog: KtvQueueDrawerDialog? = null
+    private var qrDialog: KtvQrDialog? = null
+    private var cachedQrBitmap: Bitmap? = null
     private var artistsLoaded = false
     private var rankingsLoaded = false
     private var categoriesLoaded = false
@@ -226,6 +229,14 @@ class KtvKioskOverlayController(
                     catalogActionRouter.languages()
                 }
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.RANKING -> presentationState.selectTab(KioskTab.RANKINGS)
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.FAVORITES -> {
+                    loadFavorites()
+                    presentationState.selectTab(KioskTab.FAVORITES)
+                }
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.HISTORY -> {
+                    loadHistory()
+                    presentationState.selectTab(KioskTab.HISTORY)
+                }
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.ORDERED_QUEUE -> openQueueDrawer()
             }
         }
@@ -327,6 +338,10 @@ class KtvKioskOverlayController(
         bottomBar.onQueueClick = {
             coordinator.resetIdleTimer()
             openQueueDrawer()
+        }
+        bottomBar.onQrCodeClick = {
+            coordinator.resetIdleTimer()
+            openQrDialog()
         }
     }
 
@@ -727,11 +742,53 @@ class KtvKioskOverlayController(
         queueDialog = dialog
     }
 
+    fun setCachedQrBitmap(bitmap: Bitmap) {
+        cachedQrBitmap = bitmap
+        qrDialog?.updateQrBitmap(bitmap)
+    }
+
+    fun openQrDialog() {
+        val portalUrl = KtvQrPolicy.formatPortalUrl(config.serverHost)
+        val dialog = KtvQrDialog(
+            context = activity,
+            portalUrl = portalUrl,
+            qrBitmap = cachedQrBitmap,
+            coordinator = coordinator,
+        )
+        dialog.onDismissQr = {
+            if (qrDialog === dialog) {
+                qrDialog = null
+            }
+        }
+        qrDialog = dialog
+        dialog.show()
+
+        if (cachedQrBitmap == null) {
+            activity.lifecycleScope.launch {
+                val qrUrl = KtvQrPolicy.buildQrUrl(config.apiBase(), 540)
+                val bytes = withContext(Dispatchers.IO) {
+                    val res = transport.getBytes(qrUrl)
+                    (res as? KtvApiResult.Success)?.value
+                }
+                val bmp = bytes?.let {
+                    withContext(Dispatchers.Default) {
+                        ArtworkDecoder.decode(it, ArtworkProfile.QR)
+                    }
+                }
+                if (bmp != null) {
+                    cachedQrBitmap = bmp
+                    dialog.updateQrBitmap(bmp)
+                }
+            }
+        }
+    }
+
     fun updateSnapshot(
         snapshot: QueueSnapshot,
         queueProjection: Map<Long, SongQueueState> = emptyMap(),
     ) {
         currentSnapshot = snapshot
+        coordinator.setPlaybackActive(snapshot.state == "playing" || snapshot.playing != null)
         searchAdapter.updateQueueProjection(queueProjection)
         rankingAdapter.updateQueueProjection(queueProjection)
         categoryAdapter.updateQueueProjection(queueProjection)
@@ -813,6 +870,9 @@ class KtvKioskOverlayController(
     fun destroy() {
         queueDialog?.dismiss()
         queueDialog = null
+        qrDialog?.dismiss()
+        qrDialog = null
+        cachedQrBitmap = null
         coordinator.destroy()
         pendingAvatarCallbacks.clear()
         singerAvatarCache.clear()
@@ -900,7 +960,13 @@ class KtvKioskOverlayController(
                             dashboardPolicy.handleBack()
                             presentationState.selectTab(KioskTab.DASHBOARD)
                         } else {
-                            toggleKiosk(false)
+                            val hasPlaying = currentSnapshot?.playing != null || currentSnapshot?.state == "playing"
+                            val action = KioskLifecyclePolicy.resolveDashboardBackAction(hasPlaying)
+                            if (action == KioskBackAction.RETURN_TO_FULLSCREEN_MV) {
+                                toggleKiosk(false)
+                            } else {
+                                Toast.makeText(activity, "当前已在大厅首页，再次按返回键退出应用", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     },
                     onExitApp = { /* handled by activity when not intercepted */ },

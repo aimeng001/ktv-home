@@ -19,23 +19,25 @@
 
         <TextView
             android:id="@+id/txtSongTitle"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="歌曲名称"
             android:textColor="@android:color/white"
             android:textSize="16sp"
             android:textStyle="bold"
-            android:singleLine="true" />
+            android:maxLines="1"
+            android:ellipsize="end" />
 
         <TextView
             android:id="@+id/txtSongArtist"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
             android:text="歌手名称"
             android:textColor="@color/dim"
             android:textSize="13sp"
-            android:singleLine="true" />
+            android:maxLines="1"
+            android:ellipsize="end" />
     </LinearLayout>
 
     <!-- 伴唱/多轨标签 -->

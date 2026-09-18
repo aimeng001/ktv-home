@@ -89,3 +89,4 @@ backend/src/main/resources/application-local.yml
 
 # Local remediation plan artifacts
 /tasks/
+/scratch/

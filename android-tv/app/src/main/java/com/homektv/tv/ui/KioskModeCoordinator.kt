@@ -40,14 +40,16 @@ class KioskModeCoordinator(
     val isKioskActive: StateFlow<Boolean> = _isKioskActive
 
     private var isModalOpened = false
+    private var isPlayingMedia = true
+
     private val idleAction = Runnable {
-        if (!isModalOpened && _isKioskActive.value) {
+        if (!isModalOpened && _isKioskActive.value && isPlayingMedia) {
             toggleKiosk(false)
         }
     }
 
-    fun toggleKiosk(active: Boolean) {
-        _isKioskActive.value = active
+    fun setPlaybackActive(active: Boolean) {
+        isPlayingMedia = active
         if (active) {
             resetIdleTimer()
         } else {
@@ -55,9 +57,18 @@ class KioskModeCoordinator(
         }
     }
 
+    fun toggleKiosk(active: Boolean) {
+        _isKioskActive.value = active
+        if (active) {
+            if (isPlayingMedia) resetIdleTimer() else scheduler?.cancel(idleAction)
+        } else {
+            scheduler?.cancel(idleAction)
+        }
+    }
+
     fun resetIdleTimer() {
         scheduler?.cancel(idleAction)
-        if (_isKioskActive.value && !isModalOpened) {
+        if (_isKioskActive.value && !isModalOpened && isPlayingMedia) {
             scheduler?.postDelayed(idleTimeoutMs, idleAction)
         }
     }
@@ -79,6 +90,6 @@ class KioskModeCoordinator(
     }
 
     companion object {
-        const val DEFAULT_IDLE_TIMEOUT_MS = 30_000L
+        const val DEFAULT_IDLE_TIMEOUT_MS = 15_000L
     }
 }

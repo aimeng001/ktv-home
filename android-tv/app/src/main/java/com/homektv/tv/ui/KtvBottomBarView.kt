@@ -25,6 +25,7 @@ class KtvBottomBarView @JvmOverloads constructor(
     var onVocalToggleClick: (() -> Unit)? = null
     var onEffectClick: ((String) -> Unit)? = null
     var onQueueClick: (() -> Unit)? = null
+    var onQrCodeClick: (() -> Unit)? = null
 
     init {
         setupActions()
@@ -38,6 +39,7 @@ class KtvBottomBarView @JvmOverloads constructor(
         binding.btnEffectApplause.setOnClickListener { onEffectClick?.invoke("clap") }
         binding.btnEffectCheer.setOnClickListener { onEffectClick?.invoke("cheer") }
         binding.btnQueueBadge.setOnClickListener { onQueueClick?.invoke() }
+        binding.btnQrCode.setOnClickListener { onQrCodeClick?.invoke() }
     }
 
     fun bindPlayback(

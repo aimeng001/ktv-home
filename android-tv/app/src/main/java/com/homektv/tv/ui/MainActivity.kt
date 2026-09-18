@@ -376,6 +376,14 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 onRestart = { sendControl("restart") },
                 onToggleVocal = { toggleVocal() },
             )
+            if (KioskLifecyclePolicy.shouldAutoLaunchKioskOnStart(config.effectiveMode(), modeCapabilities.canOpenKiosk)) {
+                binding.root.post {
+                    if (::kioskController.isInitialized) {
+                        binding.standbyPanel.visibility = View.GONE
+                        kioskController.toggleKiosk(true)
+                    }
+                }
+            }
         }
 
         setupRemoteMenu()
@@ -508,6 +516,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 return true
             }
             hideVocalPanel()
+            if (modeCapabilities.canOpenKiosk && ::kioskController.isInitialized) {
+                kioskController.toggleKiosk(true)
+                return true
+            }
             binding.remoteMenu.visibility = if (binding.remoteMenu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
             if (binding.remoteMenu.visibility == View.VISIBLE) binding.remotePlay.requestFocus()
             resetMenuTimer()
@@ -548,13 +560,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             }
             if (binding.remoteMenu.visibility != View.VISIBLE && binding.queueOverlay.visibility != View.VISIBLE && !kioskCoordinator.isKioskActive.value) {
                 when (event.keyCode) {
-                    // 确认键：屏幕下方弹出原唱/伴唱选择栏（参考主流 KTV 交互）
+                    // 确认键：呼出点歌台（MV 转入画中画），若无点歌能力则回退弹出原唱/伴唱选择栏
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                        if (currentPlaybackState == "idle" || binding.standbyPanel.visibility == View.VISIBLE) {
-                            if (modeCapabilities.canOpenKiosk && ::kioskController.isInitialized) {
-                                kioskController.toggleKiosk(true)
-                                return true
-                            }
+                        if (modeCapabilities.canOpenKiosk && ::kioskController.isInitialized) {
+                            kioskController.toggleKiosk(true)
+                            return true
                         }
                         showVocalPanel()
                         return true
@@ -597,6 +607,18 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.volumeOsd.visibility = View.VISIBLE
         binding.volumeOsd.removeCallbacks(volumeHide)
         binding.volumeOsd.postDelayed(volumeHide, 2_500L)
+    }
+
+    // ---- 原伴唱 HUD ----
+
+    private val vocalOsdHide = Runnable { binding.vocalOsd.visibility = View.GONE }
+
+    /** 切换原伴唱时屏幕中央浮现 1.5s 金色 HUD。 */
+    private fun showVocalOsd(mode: String) {
+        binding.txtVocalOsd.text = VocalTogglePolicy.resolveOsdText(mode)
+        binding.vocalOsd.visibility = View.VISIBLE
+        binding.vocalOsd.removeCallbacks(vocalOsdHide)
+        binding.vocalOsd.postDelayed(vocalOsdHide, 1_500L)
     }
 
     // ---- 原唱/伴唱选择栏 ----
@@ -742,7 +764,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     /** 原唱 ↔ 伴唱切换（遥控菜单按钮与方向下键共用）。 */
     private fun toggleVocal() {
-        sendControl("set_vocal", "{\"mode\":\"${if (currentVocalMode == "original") "accompaniment" else "original"}\"}")
+        val nextMode = VocalTogglePolicy.toggleMode(currentVocalMode)
+        showVocalOsd(nextMode)
+        sendControl("set_vocal", "{\"mode\":\"$nextMode\"}")
     }
 
     private fun changeVolume(delta: Int) {
@@ -823,6 +847,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         // 音量/静音变化（遥控音量键、H5、遥控菜单任何来源）→ 顶部 OSD；首个快照不弹
         if (snapshotReceived && (snapshot.volume != currentVolume || snapshot.muted != currentMuted)) {
             showVolumeOsd(snapshot.volume, snapshot.muted)
+        }
+        if (snapshotReceived && !snapshot.vocalMode.equals(currentVocalMode, ignoreCase = true)) {
+            showVocalOsd(snapshot.vocalMode)
         }
         snapshotReceived = true
         currentVolume = snapshot.volume
@@ -1118,6 +1145,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 binding.imgAudioMiniQr.setImageBitmap(bmp)
                 binding.imgQr.visibility = View.VISIBLE
                 binding.txtQrPlaceholder.visibility = View.GONE
+                if (::kioskController.isInitialized) {
+                    kioskController.setCachedQrBitmap(bmp)
+                }
             }
         }
     }
@@ -1268,11 +1298,16 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private fun showStandby() {
         binding.standbyPanel.removeCallbacks(standbyTicker)
         binding.playerView.visibility = View.GONE
-        binding.standbyPanel.visibility = View.VISIBLE
         binding.ktvOverlay.visibility = View.GONE
         binding.audioOverlay.visibility = View.GONE
         hidePlaybackProgress()
-        binding.standbyPanel.post(standbyTicker)
+        if (modeCapabilities.canOpenKiosk && ::kioskController.isInitialized) {
+            binding.standbyPanel.visibility = View.GONE
+            kioskController.toggleKiosk(true)
+        } else {
+            binding.standbyPanel.visibility = View.VISIBLE
+            binding.standbyPanel.post(standbyTicker)
+        }
     }
 
     private fun showPlaybackProgress() {

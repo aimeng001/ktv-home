@@ -33,4 +33,25 @@ class KtvKioskLifecycleSafetyTest {
         assertNotNull(EffectSounds.find(cheerAction))
         assertFalse(EffectSounds.ids.contains("applause"))
     }
+
+    @Test
+    fun kioskOverlayController_destroyReleasesAllDialogsAndCaches() {
+        val candidates = sequenceOf(
+            java.io.File("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt"),
+            java.io.File("android-tv/app/src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt"),
+            java.io.File("../app/src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt"),
+        )
+        val file = candidates.firstOrNull(java.io.File::isFile)
+            ?: error("Cannot locate KtvKioskOverlayController.kt")
+        val source = file.readText()
+        val destroy = source.substringAfter("fun destroy()").substringBefore("private fun reparentView")
+
+        assertTrue("queueDialog must be dismissed in destroy()", destroy.contains("queueDialog?.dismiss()"))
+        assertTrue("queueDialog reference must be cleared", destroy.contains("queueDialog = null"))
+        assertTrue("qrDialog must be dismissed in destroy()", destroy.contains("qrDialog?.dismiss()"))
+        assertTrue("qrDialog reference must be cleared", destroy.contains("qrDialog = null"))
+        assertTrue("cachedQrBitmap reference must be cleared", destroy.contains("cachedQrBitmap = null"))
+        assertTrue("singerAvatarCache must be cleared", destroy.contains("singerAvatarCache.clear()"))
+        assertTrue("pendingAvatarCallbacks must be cleared", destroy.contains("pendingAvatarCallbacks.clear()"))
+    }
 }

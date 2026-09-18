@@ -39,4 +39,21 @@ class KtvBottomBarStateTest {
         val policy = VocalTogglePolicy.resolve(null, 2)
         assertTrue(policy.isEnabled)
     }
+
+    @Test
+    fun resolveOsdText_formatsCorrectly() {
+        assertEquals("当前：原唱", VocalTogglePolicy.resolveOsdText("original"))
+        assertEquals("当前：原唱", VocalTogglePolicy.resolveOsdText("ORIGINAL"))
+        assertEquals("当前：伴唱", VocalTogglePolicy.resolveOsdText("accompaniment"))
+        assertEquals("当前：伴唱", VocalTogglePolicy.resolveOsdText("ACCOMPANIMENT"))
+        assertEquals("当前：伴唱", VocalTogglePolicy.resolveOsdText(null))
+    }
+
+    @Test
+    fun toggleMode_flipsBetweenOriginalAndAccompaniment() {
+        assertEquals("accompaniment", VocalTogglePolicy.toggleMode("original"))
+        assertEquals("accompaniment", VocalTogglePolicy.toggleMode("ORIGINAL"))
+        assertEquals("original", VocalTogglePolicy.toggleMode("accompaniment"))
+        assertEquals("original", VocalTogglePolicy.toggleMode(null))
+    }
 }

@@ -29,111 +29,120 @@
                 android:textSize="22sp"
                 android:textStyle="bold" />
 
-            <!-- 主导航标签组 -->
-            <LinearLayout
-                android:id="@+id/kioskNavTabs"
+            <!-- 主导航标签组（可水平滚动，自适应不同屏幕与DPI） -->
+            <HorizontalScrollView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="28dp"
-                android:orientation="horizontal">
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="12dp"
+                android:scrollbars="none"
+                android:fillViewport="true">
 
-                <Button
-                    android:id="@+id/tabDashboard"
+                <LinearLayout
+                    android:id="@+id/kioskNavTabs"
                     android:layout_width="wrap_content"
-                    android:layout_height="42dp"
-                    android:background="@drawable/btn_gold"
-                    android:textColor="#111317"
-                    android:text="首页大厅"
-                    android:textStyle="bold"
-                    android:textSize="13sp"
-                    android:paddingHorizontal="16dp"
-                    android:focusable="true" />
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
-                <Button
-                    android:id="@+id/tabPinyin"
-                    android:layout_width="wrap_content"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="10dp"
-                    android:background="@drawable/btn_keyboard_key"
-                    android:textColor="@color/color_keyboard_key_text"
-                    android:text="拼音点歌"
-                    android:textSize="13sp"
-                    android:paddingHorizontal="16dp"
-                    android:focusable="true" />
+                    <Button
+                        android:id="@+id/tabDashboard"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:background="@drawable/btn_gold"
+                        android:textColor="#111317"
+                        android:text="首页大厅"
+                        android:textStyle="bold"
+                        android:textSize="13sp"
+                        android:paddingHorizontal="12dp"
+                        android:focusable="true" />
 
-                <Button
-                    android:id="@+id/tabSingers"
-                    android:layout_width="wrap_content"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="10dp"
-                    android:background="@drawable/btn_keyboard_key"
-                    android:textColor="@color/color_keyboard_key_text"
-                    android:text="歌星点歌"
-                    android:textSize="13sp"
-                    android:paddingHorizontal="16dp"
-                    android:focusable="true" />
+                    <Button
+                        android:id="@+id/tabPinyin"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:text="拼音点歌"
+                        android:textSize="13sp"
+                        android:paddingHorizontal="12dp"
+                        android:focusable="true" />
 
-                <Button
-                    android:id="@+id/tabRankings"
-                    android:layout_width="wrap_content"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="10dp"
-                    android:background="@drawable/btn_keyboard_key"
-                    android:textColor="@color/color_keyboard_key_text"
-                    android:text="榜单热歌"
-                    android:textSize="13sp"
-                    android:paddingHorizontal="16dp"
-                    android:focusable="true" />
+                    <Button
+                        android:id="@+id/tabSingers"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:text="歌星点歌"
+                        android:textSize="13sp"
+                        android:paddingHorizontal="12dp"
+                        android:focusable="true" />
 
-                <Button
-                    android:id="@+id/tabCategories"
-                    android:layout_width="wrap_content"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="10dp"
-                    android:background="@drawable/btn_keyboard_key"
-                    android:textColor="@color/color_keyboard_key_text"
-                    android:text="分类点歌"
-                    android:textSize="13sp"
-                    android:paddingHorizontal="16dp"
-                    android:focusable="true" />
+                    <Button
+                        android:id="@+id/tabRankings"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:text="榜单热歌"
+                        android:textSize="13sp"
+                        android:paddingHorizontal="12dp"
+                        android:focusable="true" />
 
-                <Button
-                    android:id="@+id/tabFavorites"
-                    android:layout_width="wrap_content"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="10dp"
-                    android:background="@drawable/btn_keyboard_key"
-                    android:textColor="@color/color_keyboard_key_text"
-                    android:text="我的收藏"
-                    android:textSize="13sp"
-                    android:paddingHorizontal="16dp"
-                    android:focusable="true" />
+                    <Button
+                        android:id="@+id/tabCategories"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:text="分类点歌"
+                        android:textSize="13sp"
+                        android:paddingHorizontal="12dp"
+                        android:focusable="true" />
 
-                <Button
-                    android:id="@+id/tabPlaylists"
-                    android:layout_width="wrap_content"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="10dp"
-                    android:background="@drawable/btn_keyboard_key"
-                    android:textColor="@color/color_keyboard_key_text"
-                    android:text="主题歌单"
-                    android:textSize="13sp"
-                    android:paddingHorizontal="16dp"
-                    android:focusable="true" />
+                    <Button
+                        android:id="@+id/tabFavorites"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:text="我的收藏"
+                        android:textSize="13sp"
+                        android:paddingHorizontal="12dp"
+                        android:focusable="true" />
 
-                <Button
-                    android:id="@+id/tabHistory"
-                    android:layout_width="wrap_content"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="10dp"
-                    android:background="@drawable/btn_keyboard_key"
-                    android:textColor="@color/color_keyboard_key_text"
-                    android:text="最近唱过"
-                    android:textSize="13sp"
-                    android:paddingHorizontal="16dp"
-                    android:focusable="true" />
-            </LinearLayout>
+                    <Button
+                        android:id="@+id/tabPlaylists"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:text="主题歌单"
+                        android:textSize="13sp"
+                        android:paddingHorizontal="12dp"
+                        android:focusable="true" />
+
+                    <Button
+                        android:id="@+id/tabHistory"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:text="最近唱过"
+                        android:textSize="13sp"
+                        android:paddingHorizontal="12dp"
+                        android:focusable="true" />
+                </LinearLayout>
+            </HorizontalScrollView>
 
             <Button
                 android:id="@+id/btnKioskExit"
@@ -179,17 +188,18 @@
                     android:orientation="horizontal"
                     android:visibility="gone">
 
-                    <!-- 左：26 字母软键盘 -->
+                    <!-- 左：26 字母软键盘（按权重自适应，避免大屏空旷/小屏挤压） -->
                     <com.homektv.tv.ui.KtvKeyboardView
                         android:id="@+id/kioskKeyboard"
-                        android:layout_width="430dp"
-                        android:layout_height="match_parent" />
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1" />
 
                     <!-- 右：实时搜索结果 -->
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="match_parent"
-                        android:layout_weight="1"
+                        android:layout_weight="1.15"
                         android:layout_marginStart="14dp"
                         android:orientation="vertical">
 

@@ -27,15 +27,36 @@ class KtvDashboardPolicyTest {
     }
 
     @Test
-    fun testTilesDefinitionContainsSixCommercialKtvEntries() {
+    fun testTilesDefinitionContainsEightCommercialKtvEntries() {
         val tiles = KtvDashboardTile.values()
-        assertEquals(6, tiles.size)
+        assertEquals(8, tiles.size)
         assertTrue(tiles.contains(KtvDashboardTile.PINYIN))
         assertTrue(tiles.contains(KtvDashboardTile.SINGER))
         assertTrue(tiles.contains(KtvDashboardTile.CATEGORY))
         assertTrue(tiles.contains(KtvDashboardTile.LANGUAGE))
         assertTrue(tiles.contains(KtvDashboardTile.RANKING))
+        assertTrue(tiles.contains(KtvDashboardTile.FAVORITES))
+        assertTrue(tiles.contains(KtvDashboardTile.HISTORY))
         assertTrue(tiles.contains(KtvDashboardTile.ORDERED_QUEUE))
+    }
+
+    @Test
+    fun testFavoritesAndHistoryTileNavigationAndBackstack() {
+        val policy = KtvDashboardPolicy()
+
+        policy.onTileClicked(KtvDashboardTile.FAVORITES)
+        assertEquals(KtvKioskViewMode.FAVORITES_LIST, policy.currentMode)
+        assertEquals(KtvDashboardTile.FAVORITES, policy.lastActiveTile)
+        assertTrue(policy.canHandleBack())
+        assertTrue(policy.handleBack())
+        assertEquals(KtvKioskViewMode.DASHBOARD, policy.currentMode)
+
+        policy.onTileClicked(KtvDashboardTile.HISTORY)
+        assertEquals(KtvKioskViewMode.HISTORY_LIST, policy.currentMode)
+        assertEquals(KtvDashboardTile.HISTORY, policy.lastActiveTile)
+        assertTrue(policy.canHandleBack())
+        assertTrue(policy.handleBack())
+        assertEquals(KtvKioskViewMode.DASHBOARD, policy.currentMode)
     }
 
     @Test

@@ -3,11 +3,12 @@
     android:id="@+id/dashboardGrid"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:columnCount="3"
+    android:columnCount="4"
     android:rowCount="2"
     android:padding="8dp"
     android:alignmentMode="alignMargins">
 
+    <!-- 第一排：拼音、歌星、分类、语种 -->
     <include
         android:id="@+id/tilePinyin"
         layout="@layout/item_kiosk_dashboard_tile"
@@ -15,7 +16,7 @@
         android:layout_height="0dp"
         android:layout_columnWeight="1"
         android:layout_rowWeight="1"
-        android:nextFocusDown="@+id/tileLanguage"
+        android:nextFocusDown="@+id/tileRanking"
         android:nextFocusRight="@+id/tileSinger" />
 
     <include
@@ -25,7 +26,7 @@
         android:layout_height="0dp"
         android:layout_columnWeight="1"
         android:layout_rowWeight="1"
-        android:nextFocusDown="@+id/tileRanking"
+        android:nextFocusDown="@+id/tileFavorites"
         android:nextFocusLeft="@+id/tilePinyin"
         android:nextFocusRight="@+id/tileCategory" />
 
@@ -36,8 +37,9 @@
         android:layout_height="0dp"
         android:layout_columnWeight="1"
         android:layout_rowWeight="1"
-        android:nextFocusDown="@+id/tileQueue"
-        android:nextFocusLeft="@+id/tileSinger" />
+        android:nextFocusDown="@+id/tileHistory"
+        android:nextFocusLeft="@+id/tileSinger"
+        android:nextFocusRight="@+id/tileLanguage" />
 
     <include
         android:id="@+id/tileLanguage"
@@ -46,9 +48,10 @@
         android:layout_height="0dp"
         android:layout_columnWeight="1"
         android:layout_rowWeight="1"
-        android:nextFocusUp="@+id/tilePinyin"
-        android:nextFocusRight="@+id/tileRanking" />
+        android:nextFocusDown="@+id/tileQueue"
+        android:nextFocusLeft="@+id/tileCategory" />
 
+    <!-- 第二排：榜单、收藏、历史、已点 -->
     <include
         android:id="@+id/tileRanking"
         layout="@layout/item_kiosk_dashboard_tile"
@@ -56,9 +59,33 @@
         android:layout_height="0dp"
         android:layout_columnWeight="1"
         android:layout_rowWeight="1"
+        android:nextFocusUp="@+id/tilePinyin"
+        android:nextFocusRight="@+id/tileFavorites"
+        android:nextFocusDown="@+id/kioskBottomBar" />
+
+    <include
+        android:id="@+id/tileFavorites"
+        layout="@layout/item_kiosk_dashboard_tile"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_columnWeight="1"
+        android:layout_rowWeight="1"
         android:nextFocusUp="@+id/tileSinger"
-        android:nextFocusLeft="@+id/tileLanguage"
-        android:nextFocusRight="@+id/tileQueue" />
+        android:nextFocusLeft="@+id/tileRanking"
+        android:nextFocusRight="@+id/tileHistory"
+        android:nextFocusDown="@+id/kioskBottomBar" />
+
+    <include
+        android:id="@+id/tileHistory"
+        layout="@layout/item_kiosk_dashboard_tile"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_columnWeight="1"
+        android:layout_rowWeight="1"
+        android:nextFocusUp="@+id/tileCategory"
+        android:nextFocusLeft="@+id/tileFavorites"
+        android:nextFocusRight="@+id/tileQueue"
+        android:nextFocusDown="@+id/kioskBottomBar" />
 
     <include
         android:id="@+id/tileQueue"
@@ -67,6 +94,7 @@
         android:layout_height="0dp"
         android:layout_columnWeight="1"
         android:layout_rowWeight="1"
-        android:nextFocusUp="@+id/tileCategory"
-        android:nextFocusLeft="@+id/tileRanking" />
+        android:nextFocusUp="@+id/tileLanguage"
+        android:nextFocusLeft="@+id/tileHistory"
+        android:nextFocusDown="@+id/kioskBottomBar" />
 </GridLayout>

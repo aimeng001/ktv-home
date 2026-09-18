@@ -34,7 +34,8 @@
             android:textColorHint="@color/dim2"
             android:textSize="20sp"
             android:textStyle="bold"
-            android:singleLine="true" />
+            android:singleLine="true"
+            android:ellipsize="end" />
 
         <Button
             android:id="@+id/btnBackspace"

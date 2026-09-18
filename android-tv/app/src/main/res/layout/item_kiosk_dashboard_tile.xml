@@ -22,7 +22,9 @@
             android:layout_height="wrap_content"
             android:textColor="@android:color/white"
             android:textSize="22sp"
-            android:textStyle="bold" />
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="end" />
 
         <TextView
             android:id="@+id/txtTileSubtitle"
@@ -30,6 +32,8 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
             android:textColor="@color/dim"
-            android:textSize="13sp" />
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end" />
     </LinearLayout>
 </FrameLayout>

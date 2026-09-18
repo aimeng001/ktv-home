@@ -73,13 +73,37 @@ class LanScannerTest {
     }
 
     @Test
+    fun includesDockerNasPresetTargetInScanTargets() {
+        assertTrue(LanScanner.PRESET_TARGETS.contains("192.168.31.18:54001"))
+
+        val emptyPrefixTargets = LanScanner().scanTargets(null)
+        assertEquals(LanScanner.PRESET_TARGETS, emptyPrefixTargets)
+
+        val targets = LanScanner().scanTargets("192.168.1.")
+        assertEquals("192.168.31.18:54001", targets.first())
+        assertTrue(targets.contains("192.168.31.18:54001"))
+        assertEquals(LanScanner.PRESET_TARGETS.size + LanScanner.CANDIDATE_PORTS.size * 254, targets.size)
+    }
+
+    @Test
     fun prioritizesDefaultPortAcrossSubnet() {
         val targets = LanScanner().scanTargets("192.168.1.")
 
-        assertEquals(LanScanner.CANDIDATE_PORTS.size * 254, targets.size)
-        assertEquals("192.168.1.1:8080", targets.first())
-        assertEquals("192.168.1.254:8080", targets[253])
+        assertEquals(LanScanner.PRESET_TARGETS.size + LanScanner.CANDIDATE_PORTS.size * 254, targets.size)
+        assertTrue(targets.contains("192.168.31.18:54001"))
+        assertTrue(targets.contains("192.168.1.1:8080"))
+        assertTrue(targets.contains("192.168.1.254:8080"))
         assertTrue(targets.contains("192.168.1.10:8888"))
+        assertEquals(targets.size, targets.distinct().size)
+    }
+
+    @Test
+    fun prioritizesPresetTargetOnMatchingSubnetWithoutDuplicates() {
+        val targets = LanScanner().scanTargets("192.168.31.")
+
+        assertEquals("192.168.31.18:54001", targets.first())
+        assertTrue(targets.contains("192.168.31.18:54001"))
+        assertTrue(targets.contains("192.168.31.1:8080"))
         assertEquals(targets.size, targets.distinct().size)
     }
 }

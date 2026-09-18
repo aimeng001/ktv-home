@@ -7,7 +7,7 @@ import android.widget.FrameLayout
 import com.homektv.tv.databinding.ViewKtvCommercialDashboardBinding
 
 /**
- * 商业点歌机首页大磁贴控制台视图组件。
+ * 商业点歌机首页大磁贴控制台视图组件（4x2 矩阵，8个核心功能磁贴）。
  */
 class KtvCommercialDashboardView @JvmOverloads constructor(
     context: Context,
@@ -65,7 +65,23 @@ class KtvCommercialDashboardView @JvmOverloads constructor(
             onTileClick?.invoke(KtvDashboardTile.RANKING)
         }
 
-        // 6. 已点歌曲
+        // 6. 我的收藏
+        binding.tileFavorites.txtTileTitle.text = KtvDashboardTile.FAVORITES.title
+        binding.tileFavorites.txtTileSubtitle.text = KtvDashboardTile.FAVORITES.subtitle
+        binding.tileFavorites.tileRoot.setOnClickListener {
+            lastFocusedTile = KtvDashboardTile.FAVORITES
+            onTileClick?.invoke(KtvDashboardTile.FAVORITES)
+        }
+
+        // 7. 曾经点唱
+        binding.tileHistory.txtTileTitle.text = KtvDashboardTile.HISTORY.title
+        binding.tileHistory.txtTileSubtitle.text = KtvDashboardTile.HISTORY.subtitle
+        binding.tileHistory.tileRoot.setOnClickListener {
+            lastFocusedTile = KtvDashboardTile.HISTORY
+            onTileClick?.invoke(KtvDashboardTile.HISTORY)
+        }
+
+        // 8. 已点歌曲
         binding.tileQueue.txtTileTitle.text = KtvDashboardTile.ORDERED_QUEUE.title
         binding.tileQueue.txtTileSubtitle.text = KtvDashboardTile.ORDERED_QUEUE.subtitle
         binding.tileQueue.tileRoot.setOnClickListener {
@@ -85,6 +101,8 @@ class KtvCommercialDashboardView @JvmOverloads constructor(
             KtvDashboardTile.CATEGORY -> binding.tileCategory.tileRoot
             KtvDashboardTile.LANGUAGE -> binding.tileLanguage.tileRoot
             KtvDashboardTile.RANKING -> binding.tileRanking.tileRoot
+            KtvDashboardTile.FAVORITES -> binding.tileFavorites.tileRoot
+            KtvDashboardTile.HISTORY -> binding.tileHistory.tileRoot
             KtvDashboardTile.ORDERED_QUEUE -> binding.tileQueue.tileRoot
         }
         return targetView.requestFocus()

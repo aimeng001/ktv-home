@@ -33,23 +33,25 @@
 
             <TextView
                 android:id="@+id/txtNowPlayingTitle"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="暂无播放"
                 android:textColor="@android:color/white"
                 android:textSize="17sp"
                 android:textStyle="bold"
-                android:singleLine="true" />
+                android:singleLine="true"
+                android:ellipsize="end" />
 
             <TextView
                 android:id="@+id/txtNowPlayingArtist"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:text="请先点歌"
                 android:textColor="@color/dim"
                 android:textSize="12sp"
-                android:singleLine="true" />
+                android:singleLine="true"
+                android:ellipsize="end" />
         </LinearLayout>
 
         <TextView
@@ -140,13 +142,25 @@
             android:focusable="true" />
     </LinearLayout>
 
-    <!-- 右侧：已点队列入口抽屉按钮 -->
+    <!-- 右侧：扫码点歌与已点队列入口抽屉按钮 -->
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginStart="16dp"
         android:gravity="center_vertical"
         android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnQrCode"
+            android:layout_width="wrap_content"
+            android:layout_height="46dp"
+            android:layout_marginEnd="10dp"
+            android:background="@drawable/btn_keyboard_key"
+            android:textColor="@color/color_keyboard_key_text"
+            android:text="📱 扫码"
+            android:textSize="13sp"
+            android:paddingHorizontal="14dp"
+            android:focusable="true" />
 
         <Button
             android:id="@+id/btnQueueBadge"

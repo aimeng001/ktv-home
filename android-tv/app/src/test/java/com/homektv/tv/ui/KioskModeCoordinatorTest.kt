@@ -46,8 +46,8 @@ class KioskModeCoordinatorTest {
     }
 
     @Test
-    fun productionDefaultIdleTimeout_isThirtySeconds() {
-        assertEquals(30_000L, KioskModeCoordinator.DEFAULT_IDLE_TIMEOUT_MS)
+    fun productionDefaultIdleTimeout_isFifteenSeconds() {
+        assertEquals(15_000L, KioskModeCoordinator.DEFAULT_IDLE_TIMEOUT_MS)
     }
 
     @Test
@@ -76,19 +76,33 @@ class KioskModeCoordinatorTest {
     }
 
     @Test
-    fun idleTimeout_triggersKioskExit_afterDelay() {
+    fun idleTimeout_doesNotExitKiosk_whenNoSongIsPlaying() {
         val scheduler = FakeIdleTimerScheduler()
-        val coordinator = KioskModeCoordinator(idleTimeoutMs = 25_000L, scheduler = scheduler)
+        val coordinator = KioskModeCoordinator(idleTimeoutMs = 15_000L, scheduler = scheduler)
 
         coordinator.toggleKiosk(true)
+        coordinator.setPlaybackActive(false)
         assertTrue(coordinator.isKioskActive.value)
-        assertEquals(25_000L, scheduler.scheduledDelay)
+
+        scheduler.fire()
+        assertTrue("无歌曲播放时点歌大厅应永久常驻，不应退出至空白黑屏", coordinator.isKioskActive.value)
+    }
+
+    @Test
+    fun idleTimeout_triggersKioskExit_afterDelay_whenPlaying() {
+        val scheduler = FakeIdleTimerScheduler()
+        val coordinator = KioskModeCoordinator(idleTimeoutMs = 15_000L, scheduler = scheduler)
+
+        coordinator.setPlaybackActive(true)
+        coordinator.toggleKiosk(true)
+        assertTrue(coordinator.isKioskActive.value)
+        assertEquals(15_000L, scheduler.scheduledDelay)
         assertNotNull(scheduler.scheduledAction)
         assertFalse(scheduler.isCancelled)
 
         // Fire the scheduled timeout
         scheduler.fire()
-        assertFalse("点歌台超时后应自动退回全屏 MV", coordinator.isKioskActive.value)
+        assertFalse("歌曲播放中，点歌台超时后应自动退回全屏 MV", coordinator.isKioskActive.value)
     }
 
     @Test

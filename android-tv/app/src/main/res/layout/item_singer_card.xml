@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/singerCardRoot"
-    android:layout_width="148dp"
-    android:layout_height="176dp"
-    android:layout_margin="8dp"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="6dp"
     android:background="@drawable/bg_singer_card"
     android:focusable="true"
     android:clickable="true"
     android:gravity="center_horizontal"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="10dp">
 
     <!-- 头像容器：支持真图与首字符占位 -->
     <FrameLayout
-        android:layout_width="88dp"
-        android:layout_height="88dp"
+        android:layout_width="80dp"
+        android:layout_height="80dp"
         android:background="@drawable/bg_avatar_circle">
 
         <TextView

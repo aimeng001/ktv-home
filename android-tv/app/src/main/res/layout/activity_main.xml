@@ -349,6 +349,28 @@
             android:progressTint="@color/gold" />
     </LinearLayout>
 
+    <!-- 原伴唱 HUD：切换原伴唱时屏幕中央浮现 1.5s 金色 HUD -->
+    <LinearLayout
+        android:id="@+id/vocalOsd"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/player_glass"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:paddingHorizontal="32dp"
+        android:paddingVertical="18dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/txtVocalOsd"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/gold"
+            android:textSize="28sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
     <!-- 原唱/伴唱选择栏：确认键呼出，屏幕下方，方向键选择 + 确认生效 -->
     <LinearLayout
         android:id="@+id/vocalPanel"

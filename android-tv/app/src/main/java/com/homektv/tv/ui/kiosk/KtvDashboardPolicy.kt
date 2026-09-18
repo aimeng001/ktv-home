@@ -7,6 +7,8 @@ enum class KtvKioskViewMode {
     CATEGORY_LIST,
     LANGUAGE_LIST,
     RANKING_LIST,
+    FAVORITES_LIST,
+    HISTORY_LIST,
     ORDERED_QUEUE_DRAWER,
 }
 
@@ -24,6 +26,8 @@ class KtvDashboardPolicy {
             KtvDashboardTile.CATEGORY -> KtvKioskViewMode.CATEGORY_LIST
             KtvDashboardTile.LANGUAGE -> KtvKioskViewMode.LANGUAGE_LIST
             KtvDashboardTile.RANKING -> KtvKioskViewMode.RANKING_LIST
+            KtvDashboardTile.FAVORITES -> KtvKioskViewMode.FAVORITES_LIST
+            KtvDashboardTile.HISTORY -> KtvKioskViewMode.HISTORY_LIST
             KtvDashboardTile.ORDERED_QUEUE -> KtvKioskViewMode.ORDERED_QUEUE_DRAWER
         }
     }

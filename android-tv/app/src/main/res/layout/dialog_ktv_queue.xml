@@ -82,7 +82,8 @@
                 android:textColor="@android:color/white"
                 android:textSize="16sp"
                 android:textStyle="bold"
-                android:singleLine="true" />
+                android:singleLine="true"
+                android:ellipsize="end" />
         </LinearLayout>
 
         <TextView

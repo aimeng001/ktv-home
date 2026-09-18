@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/qrDialogRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#AA000000">
+
+    <ScrollView
+        android:id="@+id/qrDialogPanel"
+        android:layout_width="420dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/player_glass"
+        android:scrollbars="none"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingHorizontal="24dp"
+            android:paddingVertical="20dp">
+
+            <TextView
+                android:id="@+id/txtQrTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📱 手机扫码点歌"
+                android:textColor="@color/gold"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/txtQrSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="支持微信、系统相机或手机浏览器直接扫码"
+                android:textColor="@color/dim"
+                android:textSize="13sp" />
+
+            <FrameLayout
+                android:layout_width="180dp"
+                android:layout_height="180dp"
+                android:layout_marginTop="14dp"
+                android:background="@android:color/white"
+                android:padding="6dp">
+
+                <ImageView
+                    android:id="@+id/imgQrDialog"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:scaleType="fitCenter"
+                    android:contentDescription="点歌二维码" />
+
+                <ProgressBar
+                    android:id="@+id/qrDialogProgress"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/txtQrAddress"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:textColor="@android:color/white"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="💡 手机连接同 Wi-Fi 即可直接访问，按【确定】或【返回】关闭"
+                android:textColor="@color/dim"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnQrClose"
+                android:layout_width="150dp"
+                android:layout_height="42dp"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/btn_gold"
+                android:text="关闭"
+                android:textColor="#111317"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:focusable="true" />
+        </LinearLayout>
+    </ScrollView>
+</FrameLayout>

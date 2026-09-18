@@ -42,14 +42,16 @@ class LanScanner {
         client.closeResources()
     }
 
+
     /** 扫描本机所在 /24 网段的所有候选端口，并逐台报告命中。 */
     suspend fun scanAll(
         onProgress: ((scanned: Int, total: Int) -> Unit)? = null,
         onFound: ((server: DiscoveredServer) -> Unit)? = null,
     ): List<DiscoveredServer> =
         coroutineScope {
-            val prefix = localSubnetPrefix() ?: return@coroutineScope emptyList()
+            val prefix = localSubnetPrefix()
             val targets = scanTargets(prefix)
+            if (targets.isEmpty()) return@coroutineScope emptyList()
             val total = targets.size
             val counter = java.util.concurrent.atomic.AtomicInteger(0)
             val found = ConcurrentHashMap<String, DiscoveredServer>()
@@ -67,8 +69,15 @@ class LanScanner {
             targets.mapNotNull(found::get)
         }
 
-    internal fun scanTargets(prefix: String): List<String> = CANDIDATE_PORTS.flatMap { port ->
-        (1..254).map { last -> "$prefix$last:$port" }
+    internal fun scanTargets(prefix: String?, presetTargets: List<String> = PRESET_TARGETS): List<String> {
+        val subnetTargets = if (prefix.isNullOrBlank()) {
+            emptyList()
+        } else {
+            CANDIDATE_PORTS.flatMap { port ->
+                (1..254).map { last -> "$prefix$last:$port" }
+            }
+        }
+        return (presetTargets + subnetTargets).distinct()
     }
 
     /**
@@ -151,6 +160,7 @@ class LanScanner {
         private const val PROBE_TIMEOUT_MS = 300L
         private const val MAX_CONCURRENT_PROBES = 64
         internal val CANDIDATE_PORTS = listOf(8080, 80, 8000, 8081, 8090, 8888, 9000, 9090)
+        internal val PRESET_TARGETS = listOf("192.168.31.18:54001")
         internal val VALIDATION_PATHS = listOf("/api/health", "/api/ready")
 
         /**
