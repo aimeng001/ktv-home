@@ -53,6 +53,8 @@ data class ControllerUiState(
     val catalogHasMore: Boolean = false,
     val catalogLoadingMore: Boolean = false,
     val catalogDetail: Boolean = false,
+    val catalogStatus: CatalogUiStatus = CatalogUiStatus(),
+    val catalogStatusRevision: Long = 0,
     /** Stable artist key/language/tag used to restore a detail screen. */
     val catalogValue: String = "",
     val queue: QueueSnapshot = QueueSnapshot(),

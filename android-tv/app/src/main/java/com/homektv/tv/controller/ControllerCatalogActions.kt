@@ -14,3 +14,8 @@ interface ControllerCatalogActions {
     fun loadTags()
     fun loadMoreCatalog()
 }
+
+/** Optional lifecycle seam used by kiosk hosts to bound catalog polling. */
+interface ControllerCatalogVisibility {
+    fun setCatalogVisible(visible: Boolean)
+}

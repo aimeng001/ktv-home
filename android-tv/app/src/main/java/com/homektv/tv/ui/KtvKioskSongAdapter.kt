@@ -89,6 +89,7 @@ class KtvKioskSongAdapter(
                 isTop = false,
                 isSubmitting = isSubmitting,
                 queueState = queueState,
+                playable = song.playable,
             )
             binding.btnOrder.text = orderState.text
             binding.btnOrder.isEnabled = orderState.isEnabled
@@ -97,6 +98,7 @@ class KtvKioskSongAdapter(
                 isTop = true,
                 isSubmitting = isSubmitting,
                 queueState = queueState,
+                playable = song.playable,
             )
             binding.btnOrderTop.text = topState.text
             binding.btnOrderTop.isEnabled = topState.isEnabled
@@ -111,16 +113,18 @@ class KtvKioskSongAdapter(
                     submittingSongIds.remove(song.id)
                     if (SongOrderButtonPolicy.shouldApplyResult(binding.btnOrder.tag as? Long, song.id)) {
                         val currentQueueState = getQueueProjection()[song.id]
-                        val resolvedOrder = SongOrderButtonPolicy.onComplete(isTop = false, success = success)
+                        val resolvedOrder = SongOrderButtonPolicy.onComplete(
+                            isTop = false, success = success, playable = song.playable)
                         binding.btnOrder.text = if (success) resolvedOrder.text else (currentQueueState?.let {
                             SongOrderButtonPolicy.resolveStateOnBind(isTop = false, isSubmitting = false, queueState = it).text
                         } ?: resolvedOrder.text)
-                        binding.btnOrder.isEnabled = if (success) false else (currentQueueState == null)
+                        binding.btnOrder.isEnabled = if (success) false else (song.playable && currentQueueState == null)
 
                         val resolvedTop = SongOrderButtonPolicy.resolveStateOnBind(
                             isTop = true,
                             isSubmitting = false,
                             queueState = currentQueueState,
+                            playable = song.playable,
                         )
                         binding.btnOrderTop.text = resolvedTop.text
                         binding.btnOrderTop.isEnabled = resolvedTop.isEnabled
@@ -138,7 +142,8 @@ class KtvKioskSongAdapter(
                     submittingSongIds.remove(song.id)
                     if (SongOrderButtonPolicy.shouldApplyResult(binding.btnOrderTop.tag as? Long, song.id)) {
                         val currentQueueState = getQueueProjection()[song.id]
-                        val resolvedTop = SongOrderButtonPolicy.onComplete(isTop = true, success = success)
+                        val resolvedTop = SongOrderButtonPolicy.onComplete(
+                            isTop = true, success = success, playable = song.playable)
                         binding.btnOrderTop.text = resolvedTop.text
                         binding.btnOrderTop.isEnabled = resolvedTop.isEnabled
 
@@ -146,6 +151,7 @@ class KtvKioskSongAdapter(
                             isTop = false,
                             isSubmitting = false,
                             queueState = currentQueueState,
+                            playable = song.playable,
                         )
                         binding.btnOrder.text = resolvedOrder.text
                         binding.btnOrder.isEnabled = resolvedOrder.isEnabled
@@ -175,7 +181,9 @@ class KtvKioskSongAdapter(
             isTop: Boolean,
             isSubmitting: Boolean,
             queueState: SongQueueState? = null,
+            playable: Boolean = true,
         ): ButtonState = when {
+            !playable -> ButtonState(text = "准备中", isEnabled = false)
             isSubmitting -> ButtonState(text = submittingText(isTop), isEnabled = false)
             queueState == SongQueueState.Playing -> if (isTop) {
                 ButtonState(text = initialText(isTop), isEnabled = false)
@@ -193,8 +201,10 @@ class KtvKioskSongAdapter(
         fun onSubmit(isTop: Boolean): ButtonState =
             ButtonState(text = submittingText(isTop), isEnabled = false)
 
-        fun onComplete(isTop: Boolean, success: Boolean): ButtonState =
-            if (success) {
+        fun onComplete(isTop: Boolean, success: Boolean, playable: Boolean = true): ButtonState =
+            if (!playable) {
+                ButtonState(text = "准备中", isEnabled = false)
+            } else if (success) {
                 ButtonState(text = successText(isTop), isEnabled = false)
             } else {
                 ButtonState(text = initialText(isTop), isEnabled = true)

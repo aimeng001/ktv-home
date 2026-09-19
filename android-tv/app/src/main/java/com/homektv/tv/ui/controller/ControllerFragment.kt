@@ -220,7 +220,13 @@ class ControllerFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        viewModel.setCatalogVisible(true)
         viewModel.refreshQueue()
+    }
+
+    override fun onPause() {
+        viewModel.setCatalogVisible(false)
+        super.onPause()
     }
 
     override fun onDestroyView() {
@@ -700,6 +706,11 @@ class ControllerFragment : Fragment() {
             val catError = state.errorFor(UiDomain.CATALOG)
             rows += MessagePanelRow(-10L, when {
                 catError != null -> "分类内容加载失败，请检查服务连接"
+                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.OFFLINE -> "点歌服务离线，请检查网络"
+                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.HTTP_ERROR -> "曲库状态获取失败，请重试"
+                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.ROOT_UNAVAILABLE -> "曲库目录暂不可用"
+                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.SCANNING -> "曲库正在扫描，歌曲准备好后会自动刷新"
+                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.FILTER_EMPTY -> "当前筛选没有匹配歌曲"
                 catalogMode == CatalogMode.ARTISTS && !state.catalogDetail -> "暂无歌手"
                 catalogMode == CatalogMode.LANGUAGES && !state.catalogDetail -> "暂无语种"
                 catalogMode == CatalogMode.TAGS && !state.catalogDetail -> "暂无标签"

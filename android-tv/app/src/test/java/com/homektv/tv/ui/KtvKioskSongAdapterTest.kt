@@ -80,6 +80,18 @@ class KtvKioskSongAdapterTest {
     }
 
     @Test
+    fun buttonPolicy_disablesSongsThatAreIndexedButNotPlayable() {
+        val pending = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+            isTop = false,
+            isSubmitting = false,
+            queueState = null,
+            playable = false,
+        )
+        assertEquals("准备中", pending.text)
+        assertFalse(pending.isEnabled)
+    }
+
+    @Test
     fun buttonPolicy_resolveStateOnBind_retainsPlayingAndWaitingStatesAcrossRecycle() {
         // Playing song
         val orderPlaying = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
@@ -124,4 +136,3 @@ class KtvKioskSongAdapterTest {
         assertTrue(KtvKioskSongAdapter.QueueProjectionPolicy.shouldNotifyChange(50))
     }
 }
-

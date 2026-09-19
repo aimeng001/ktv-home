@@ -79,12 +79,13 @@ internal class ControllerPanelRowBinder(
         val tag = view.tag as? SongViewHolderTag ?: return
         tag.label.text = "${row.song.title} · ${row.song.artist}"
         val orderText = when {
+            !row.song.playable -> "准备中"
             row.orderPending -> "点歌中…"
             row.queueState == com.homektv.tv.ui.SongQueueState.Playing -> "演唱中"
             row.queueState is com.homektv.tv.ui.SongQueueState.Waiting -> "已点"
             else -> "点歌"
         }
-        val orderEnabled = !row.orderPending && row.queueState == null
+        val orderEnabled = row.song.playable && !row.orderPending && row.queueState == null
         tag.orderBtn.text = orderText
         tag.orderBtn.isEnabled = orderEnabled
         tag.orderBtn.contentDescription = "点歌 ${row.song.title} ${row.song.artist}"

@@ -8,6 +8,7 @@ import com.homektv.tv.net.KtvApiResult
 import com.homektv.tv.net.KtvHttpTransport
 import com.homektv.tv.net.KtvSocket
 import com.homektv.tv.net.KtvSocketRole
+import com.homektv.tv.net.LibraryApi
 import com.homektv.tv.net.QueueApi
 import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.PlaybackSnapshotBridge
@@ -30,12 +31,14 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 /** Coordinates controller REST operations and the read-only realtime snapshot. */
 class ControllerViewModel(
     application: Application,
     private val realtimeEnabled: Boolean = true,
-) : AndroidViewModel(application), KtvSocket.Listener, ControllerActions, ControllerCatalogActions, ControllerPersonalActions {
+) : AndroidViewModel(application), KtvSocket.Listener, ControllerActions, ControllerCatalogActions,
+    ControllerCatalogVisibility, ControllerPersonalActions {
 
     private val config = AppConfig(application)
     private val transport = KtvHttpTransport(config)
@@ -47,6 +50,7 @@ class ControllerViewModel(
     private val historyApi = RecentHistoryApi(transport, config.userToken)
     private val roomHostApi = RoomHostApi(transport, config.userToken)
     private val wishApi = WishApi(transport, config.userToken)
+    private val libraryApi = LibraryApi(transport)
     private val socket = if (realtimeEnabled) KtvSocket(config, this, KtvSocketRole.CONTROLLER) else null
     private val actions = ActionCoordinator()
     private var searchJob: Job? = null
@@ -58,6 +62,9 @@ class ControllerViewModel(
     private val coverRequests = LatestRequestScope(viewModelScope)
     private var catalogQuery = CatalogQuery(CatalogKind.NONE)
     private var registrationJob: Job? = null
+    private var catalogStatusJob: Job? = null
+    private var catalogPollingJob: Job? = null
+    private var catalogVisible = false
     private val _state = MutableStateFlow(ControllerUiState())
     override val state: StateFlow<ControllerUiState> = _state.asStateFlow()
     private var snapshotBridgeJob: Job? = null
@@ -88,6 +95,7 @@ class ControllerViewModel(
             }
         }
         refreshQueue()
+        if (config.isConfigured) refreshCatalogStatus()
         loadRanking()
         registerUser()
     }
@@ -95,6 +103,68 @@ class ControllerViewModel(
     /** Retry identity registration explicitly or after a socket reconnect. */
     fun retryRegistration() {
         registerUser(force = true)
+    }
+
+    /** Starts/ends catalog status polling with the owning screen lifecycle. */
+    override fun setCatalogVisible(visible: Boolean) {
+        catalogVisible = visible
+        if (!visible) {
+            catalogPollingJob?.cancel()
+            catalogPollingJob = null
+            return
+        }
+        refreshCatalogStatus()
+        if (catalogPollingJob?.isActive != true) {
+            catalogPollingJob = viewModelScope.launch {
+                while (isActive && catalogVisible) {
+                    delay(if (_state.value.catalogStatus.state == CatalogLoadState.SCANNING) 3_000L else 30_000L)
+                    if (catalogVisible) refreshCatalogStatus()
+                }
+            }
+        }
+    }
+
+    private fun refreshCatalogStatus() {
+        if (!config.isConfigured) return
+        catalogStatusJob?.cancel()
+        catalogStatusJob = viewModelScope.launch { refreshCatalogStatusNow() }
+    }
+
+    private suspend fun refreshCatalogStatusNow() {
+        when (val result = libraryApi.status()) {
+            is KtvApiResult.Success -> {
+                val current = _state.value
+                val next = CatalogStatusPolicy.from(
+                    result.value,
+                    hasItems = hasCatalogItems(current),
+                    hasFilter = catalogQuery.kind != CatalogKind.NONE ||
+                        current.artistGender.isNotBlank() || current.artistInitial.isNotBlank(),
+                )
+                if (!CatalogStatusPolicy.acceptsRevision(current.catalogStatusRevision, next.revision)) return
+                val becameReady = current.catalogStatus.state == CatalogLoadState.SCANNING &&
+                    next.state == CatalogLoadState.READY
+                _state.update { it.copy(catalogStatus = next, catalogStatusRevision = next.revision) }
+                if (becameReady) reloadCurrentCatalog()
+            }
+            is KtvApiResult.Failure -> _state.update {
+                it.copy(catalogStatus = CatalogStatusPolicy.fromError(result.error, it.catalogStatusRevision))
+            }
+        }
+    }
+
+    private fun hasCatalogItems(state: ControllerUiState): Boolean =
+        state.artists.isNotEmpty() || state.catalogSongs.isNotEmpty() ||
+            state.ranking.isNotEmpty() || state.newSongs.isNotEmpty() ||
+            state.languages.isNotEmpty() || state.tags.isNotEmpty()
+
+    private fun reloadCurrentCatalog() {
+        when (catalogQuery.kind) {
+            CatalogKind.ARTISTS -> loadArtists(catalogQuery.value, catalogQuery.secondary, 0)
+            CatalogKind.ARTIST_SONGS -> loadArtistSongs(catalogQuery.value, 0)
+            CatalogKind.LANGUAGE_SONGS -> loadLanguageSongs(catalogQuery.value, 0)
+            CatalogKind.TAG_SONGS -> loadTagSongs(catalogQuery.value, 0)
+            CatalogKind.NONE -> Unit
+        }
     }
 
     private fun registerUser(force: Boolean = false) {
@@ -192,6 +262,7 @@ class ControllerViewModel(
     }
 
     override fun loadRanking() {
+        setCatalogVisible(true)
         catalogQuery = CatalogQuery(CatalogKind.NONE)
         resetCatalogView()
         catalogRequests.launch {
@@ -208,6 +279,7 @@ class ControllerViewModel(
     }
 
     override fun loadNewSongs() {
+        setCatalogVisible(true)
         catalogQuery = CatalogQuery(CatalogKind.NONE)
         resetCatalogView()
         catalogRequests.launch {
@@ -224,6 +296,7 @@ class ControllerViewModel(
     }
 
     override fun loadArtists(gender: String, initial: String, restorePage: Int) {
+        setCatalogVisible(true)
         val safeGender = gender.trim().take(MAX_FILTER_LENGTH)
         val safeInitial = initial.trim().take(MAX_FILTER_LENGTH)
         catalogQuery = CatalogQuery(CatalogKind.ARTISTS, safeGender, safeInitial)
@@ -253,6 +326,7 @@ class ControllerViewModel(
     fun loadArtists() = loadArtists(gender = "", initial = "", restorePage = 0)
 
     override fun loadArtistSongs(artistKey: String, restorePage: Int) {
+        setCatalogVisible(true)
         val safeArtistKey = artistKey.trim().take(MAX_FILTER_LENGTH)
         catalogQuery = CatalogQuery(CatalogKind.ARTIST_SONGS, safeArtistKey)
         _state.update {
@@ -275,6 +349,7 @@ class ControllerViewModel(
     fun loadArtistSongs(artistKey: String) = loadArtistSongs(artistKey, restorePage = 0)
 
     override fun loadLanguageSongs(language: String, restorePage: Int) {
+        setCatalogVisible(true)
         val safeLanguage = language.trim().take(MAX_FILTER_LENGTH)
         catalogQuery = CatalogQuery(CatalogKind.LANGUAGE_SONGS, safeLanguage)
         _state.update {
@@ -296,6 +371,7 @@ class ControllerViewModel(
     fun loadLanguageSongs(language: String) = loadLanguageSongs(language, restorePage = 0)
 
     override fun loadTagSongs(tag: String, restorePage: Int) {
+        setCatalogVisible(true)
         val safeTag = tag.trim().take(MAX_FILTER_LENGTH)
         catalogQuery = CatalogQuery(CatalogKind.TAG_SONGS, safeTag)
         _state.update {
@@ -382,6 +458,7 @@ class ControllerViewModel(
     }
 
     override fun loadLanguages() {
+        setCatalogVisible(true)
         catalogQuery = CatalogQuery(CatalogKind.NONE)
         resetCatalogView()
         catalogRequests.launch {
@@ -401,6 +478,7 @@ class ControllerViewModel(
     }
 
     override fun loadTags() {
+        setCatalogVisible(true)
         catalogQuery = CatalogQuery(CatalogKind.NONE)
         resetCatalogView()
         catalogRequests.launch {
@@ -919,6 +997,8 @@ class ControllerViewModel(
         searchJob?.cancel()
         searchMoreJob?.cancel()
         registrationJob?.cancel()
+        catalogStatusJob?.cancel()
+        catalogPollingJob?.cancel()
         snapshotBridgeJob?.cancel()
         queueRequests.cancel()
         catalogRequests.cancel()

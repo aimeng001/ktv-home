@@ -13,6 +13,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.homektv.tv.controller.ControllerActions
 import com.homektv.tv.controller.ControllerCatalogActions
+import com.homektv.tv.controller.ControllerCatalogVisibility
 import com.homektv.tv.controller.ControllerConnection
 import com.homektv.tv.controller.ControllerPersonalActions
 import com.homektv.tv.controller.ControllerUiState
@@ -565,6 +566,7 @@ class KtvKioskOverlayController(
             }
         }
 
+        (catalogActions as? ControllerCatalogVisibility)?.setCatalogVisible(tab != KioskTab.DASHBOARD)
         when (tab) {
             KioskTab.DASHBOARD -> Unit
             KioskTab.PINYIN -> Unit
