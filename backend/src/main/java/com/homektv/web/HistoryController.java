@@ -8,6 +8,7 @@ import com.homektv.queue.PlaybackService;
 import com.homektv.queue.QueueService;
 import com.homektv.queue.SnapshotService;
 import com.homektv.queue.UserService;
+import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.AppUser;
 import com.homektv.domain.Song;
@@ -53,6 +54,7 @@ public class HistoryController {
     private final SnapshotService snapshotService;
     private final UserService userService;
     private final WsBroadcaster broadcaster;
+    private SongAvailabilityPolicy availabilityPolicy;
 
     /**
      * 构造函数，注入所有依赖服务与仓库。
@@ -83,6 +85,11 @@ public class HistoryController {
         this.clock = clock;
     }
 
+    @Autowired(required = false)
+    void setAvailabilityPolicy(SongAvailabilityPolicy availabilityPolicy) {
+        this.availabilityPolicy = availabilityPolicy;
+    }
+
     private final Clock clock;
 
     /**
@@ -95,10 +102,11 @@ public class HistoryController {
     public List<SongDto> history() {
         List<PlayHistory> histories = historyRepo.findTop50ByOrderByPlayedAtDesc();
         Map<Long, Song> songs = loadSongs(histories);
+        Map<Long, SongDto> songDtos = toDtos(songs.values());
         List<SongDto> out = new ArrayList<>();
         for (PlayHistory h : histories) {
             Song song = songs.get(h.getSongId());
-            if (song != null) out.add(SongDto.from(song));
+            if (song != null) out.add(songDtos.get(song.getId()));
         }
         return out;
     }
@@ -127,6 +135,7 @@ public class HistoryController {
                                 currentUserId, since)
                         : historyRepo.findTop50ByPlayedAtGreaterThanEqualOrderByPlayedAtDesc(since);
         Map<Long, Song> songs = loadSongs(histories);
+        Map<Long, SongDto> songDtos = toDtos(songs.values());
         Set<Long> userIds = histories.stream().map(PlayHistory::getPlayedBy)
                 .filter(Objects::nonNull).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         Map<Long, AppUser> users = loadUsers(userIds);
@@ -136,7 +145,7 @@ public class HistoryController {
             if (song != null) {
                 AppUser playedBy = users.get(history.getPlayedBy());
                 String nickname = history.getPlayedBy() == null ? "家人" : playedBy == null ? "家人" : playedBy.getNickname();
-                result.add(new RecentHistoryDto(history.getId(), SongDto.from(song), history.getPlayedBy(), nickname,
+                result.add(new RecentHistoryDto(history.getId(), songDtos.get(song.getId()), history.getPlayedBy(), nickname,
                         currentUserId != null && currentUserId.equals(history.getPlayedBy()), history.getPlayedAt()));
             }
         }
@@ -159,6 +168,23 @@ public class HistoryController {
         Map<Long, AppUser> users = new LinkedHashMap<>();
         if (found != null) found.forEach(user -> users.put(user.getId(), user));
         return users;
+    }
+
+    private Map<Long, SongDto> toDtos(Iterable<Song> songs) {
+        if (songs == null) return Map.of();
+        List<Song> values = new ArrayList<>();
+        songs.forEach(song -> { if (song != null) values.add(song); });
+        if (values.isEmpty()) return Map.of();
+        Set<Long> playableIds = availabilityPolicy == null
+                ? Set.of() : availabilityPolicy.playableSongIds(values);
+        Map<Long, SongDto> result = new LinkedHashMap<>();
+        for (Song song : values) {
+            result.put(song.getId(), availabilityPolicy == null
+                    ? SongDto.from(song)
+                    : SongDto.from(song, playableIds.contains(song.getId()),
+                    playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY));
+        }
+        return result;
     }
 
     /**

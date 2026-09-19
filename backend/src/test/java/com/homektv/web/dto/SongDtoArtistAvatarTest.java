@@ -33,4 +33,19 @@ class SongDtoArtistAvatarTest {
         song.setCatalogNumber("123");
         assertThat(SongDto.from(song).catalogNumber()).isEmpty();
     }
+
+    @Test
+    void exposesAvailabilityWithoutChangingLegacyFields() {
+        Song song = new Song();
+        song.setId(9L);
+        song.setTitle("准备中");
+        song.setArtist("韩红");
+
+        SongDto dto = SongDto.from(song, false, "SONG_NOT_READY");
+
+        assertThat(dto.id()).isEqualTo(9L);
+        assertThat(dto.title()).isEqualTo("准备中");
+        assertThat(dto.playable()).isFalse();
+        assertThat(dto.unavailableReason()).isEqualTo("SONG_NOT_READY");
+    }
 }

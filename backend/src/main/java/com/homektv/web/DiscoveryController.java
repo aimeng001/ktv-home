@@ -1,10 +1,12 @@
 package com.homektv.web;
 
 import com.homektv.domain.Song;
+import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.dto.SongDto;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -24,10 +26,16 @@ public class DiscoveryController {
 
     private final PlayHistoryRepository historyRepo;
     private final SongRepository songRepo;
+    private SongAvailabilityPolicy availabilityPolicy;
 
     public DiscoveryController(PlayHistoryRepository historyRepo, SongRepository songRepo) {
         this.historyRepo = historyRepo;
         this.songRepo = songRepo;
+    }
+
+    @Autowired(required = false)
+    void setAvailabilityPolicy(SongAvailabilityPolicy availabilityPolicy) {
+        this.availabilityPolicy = availabilityPolicy;
     }
 
     /**
@@ -53,14 +61,12 @@ public class DiscoveryController {
         Map<Long, Song> songMap = songRepo.findAllById(songIds).stream()
                 .filter(s -> "ok".equals(s.getStatus()))
                 .collect(Collectors.toMap(Song::getId, s -> s));
-        List<SongDto> out = new ArrayList<>();
+        List<Song> ordered = new ArrayList<>();
         for (Long id : songIds) {
             Song s = songMap.get(id);
-            if (s != null) {
-                out.add(SongDto.from(s));
-            }
+            if (s != null) ordered.add(s);
         }
-        return out;
+        return toDtos(ordered);
     }
 
     /**
@@ -73,9 +79,17 @@ public class DiscoveryController {
      */
     @GetMapping("/songs/new")
     public List<SongDto> newSongs() {
-        return songRepo.findTop50ByOrderByCreatedAtDesc().stream()
+        return toDtos(songRepo.findTop50ByOrderByCreatedAtDesc().stream()
                 .filter(s -> "ok".equals(s.getStatus()))
-                .map(SongDto::from)
+                .toList());
+    }
+
+    private List<SongDto> toDtos(List<Song> songs) {
+        if (availabilityPolicy == null || songs.isEmpty()) return songs.stream().map(SongDto::from).toList();
+        java.util.Set<Long> playableIds = availabilityPolicy.playableSongIds(songs);
+        return songs.stream()
+                .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
+                        playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY))
                 .toList();
     }
 }

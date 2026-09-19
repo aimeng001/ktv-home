@@ -23,11 +23,27 @@ data class SongDto(
     val artistAvatarUrl: String? = null,
     /** Optional eight-digit commercial catalog number parsed from the filename. */
     val catalogNumber: String = "",
+    /** Server-side readiness; old servers omit it and remain backward compatible. */
+    val playable: Boolean = true,
+    val unavailableReason: String? = null,
 )
 
 @Serializable
 data class LibraryStatus(
     val totalSongs: Long = 0,
+    val libraryMode: String = "UNKNOWN",
+    val rootState: String = "UNKNOWN",
+    val scanState: String = "IDLE",
+    val phase: String = "IDLE",
+    val discoveredFiles: Long = 0,
+    val indexedFiles: Long = 0,
+    val indexedSongs: Long = 0,
+    val readySongs: Long = 0,
+    val probePendingFiles: Long = 0,
+    val catalogRevision: Long = 0,
+    val statusRevision: Long = 0,
+    val errorCode: String? = null,
+    val updatedAt: String? = null,
 )
 
 @Serializable

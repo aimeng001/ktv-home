@@ -16,6 +16,7 @@ import com.homektv.web.dto.SongDto;
 import com.homektv.ws.WsBroadcaster;
 import com.homektv.ws.WsEvent;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.LinkedHashMap;
@@ -44,6 +45,7 @@ public class PlaylistPublicService {
     private final SnapshotService snapshotService;
     private final UserService userService;
     private final WsBroadcaster broadcaster;
+    private SongAvailabilityPolicy availabilityPolicy;
 
     public PlaylistPublicService(PlaylistRepository playlistRepository, PlaylistSongRepository playlistSongRepository,
                                  SongRepository songRepository, QueueService queueService,
@@ -59,6 +61,11 @@ public class PlaylistPublicService {
         this.broadcaster = broadcaster;
     }
 
+    @Autowired(required = false)
+    void setAvailabilityPolicy(SongAvailabilityPolicy availabilityPolicy) {
+        this.availabilityPolicy = availabilityPolicy;
+    }
+
     public List<Map<String, Object>> list() {
         List<Playlist> playlists = playlistRepository.findAllByOrderByUpdatedAtDesc().stream()
                 .filter(Playlist::isPublicVisible)
@@ -71,6 +78,7 @@ public class PlaylistPublicService {
                 .collect(java.util.stream.Collectors.groupingBy(
                         PlaylistSong::getPlaylistId, LinkedHashMap::new, java.util.stream.Collectors.toList()));
         Map<Long, Song> songs = loadSongs(rows.stream().map(PlaylistSong::getSongId).toList());
+        Map<Long, SongDto> songDtos = toDtos(songs.values());
         return playlists.stream()
                 .map(playlist -> {
                     List<PlaylistSong> items = rowsByPlaylist.getOrDefault(playlist.getId(), List.of());
@@ -82,7 +90,7 @@ public class PlaylistPublicService {
                     value.put("coverUrl", playlist.getCoverPath() == null ? null : "/api/playlists/" + playlist.getId() + "/cover");
                     value.put("aiGenerated", playlist.isAiGenerated());
                     value.put("songCount", items.size());
-                    value.put("preview", items.stream().map(item -> songDto(songs.get(item.getSongId())))
+                    value.put("preview", items.stream().map(item -> songDtos.get(item.getSongId()))
                             .filter(Objects::nonNull).limit(3).toList());
                     return value;
                 }).toList();
@@ -92,7 +100,8 @@ public class PlaylistPublicService {
         Playlist playlist = requirePublic(playlistId);
         List<PlaylistSong> rows = safeRows(playlistSongRepository.findByPlaylistIdOrderBySortOrder(playlistId));
         Map<Long, Song> songById = loadSongs(rows.stream().map(PlaylistSong::getSongId).toList());
-        List<SongDto> songs = rows.stream().map(item -> songDto(songById.get(item.getSongId())))
+        Map<Long, SongDto> songDtos = toDtos(songById.values());
+        List<SongDto> songs = rows.stream().map(item -> songDtos.get(item.getSongId()))
                 .filter(Objects::nonNull).toList();
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("id", playlist.getId());
@@ -158,7 +167,18 @@ public class PlaylistPublicService {
         return songs;
     }
 
-    private SongDto songDto(Song song) {
-        return song == null ? null : SongDto.from(song);
+    private Map<Long, SongDto> toDtos(Collection<Song> songs) {
+        if (songs == null || songs.isEmpty()) return Map.of();
+        java.util.Set<Long> playableIds = availabilityPolicy == null
+                ? java.util.Set.of() : availabilityPolicy.playableSongIds(songs);
+        Map<Long, SongDto> result = new LinkedHashMap<>();
+        for (Song song : songs) {
+            if (song == null) continue;
+            result.put(song.getId(), availabilityPolicy == null
+                    ? SongDto.from(song)
+                    : SongDto.from(song, playableIds.contains(song.getId()),
+                    playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY));
+        }
+        return result;
     }
 }

@@ -6,6 +6,7 @@ import com.homektv.web.dto.SongDto;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -19,9 +20,16 @@ public class CategoryBrowseService {
     private static final int PUBLIC_SONG_PAGE_SIZE = 50;
     private static final int MAX_PUBLIC_SONG_PAGE_SIZE = 100;
     private final SongRepository songRepository;
+    private final SongAvailabilityPolicy availabilityPolicy;
 
     public CategoryBrowseService(SongRepository songRepository) {
+        this(songRepository, null);
+    }
+
+    @Autowired
+    public CategoryBrowseService(SongRepository songRepository, SongAvailabilityPolicy availabilityPolicy) {
         this.songRepository = songRepository;
+        this.availabilityPolicy = availabilityPolicy;
     }
 
     public List<Map<String, Object>> artists() {
@@ -111,7 +119,7 @@ public class CategoryBrowseService {
                 normalize(artist), normalize(artistGender), normalize(language),
                 normalize(tag), normalize(vocalForm),
                 PageRequest.of(0, safeLimit, sortOrder));
-        return page.getContent().stream().map(SongDto::from).toList();
+        return toSongDtos(page.getContent());
     }
 
     /**
@@ -141,8 +149,18 @@ public class CategoryBrowseService {
                         normalizedKey, normalize(artistGender), normalize(language),
                         normalize(tag), normalize(vocalForm), request);
         List<SongDto> items = rows == null || rows.getContent() == null
-                ? List.of() : rows.getContent().stream().map(SongDto::from).toList();
+                ? List.of() : toSongDtos(rows.getContent());
         return new SongPage(items, rows == null ? 0 : rows.getTotalElements(), safePage, safeSize);
+    }
+
+    private List<SongDto> toSongDtos(List<Song> songs) {
+        if (songs == null || songs.isEmpty()) return List.of();
+        if (availabilityPolicy == null) return songs.stream().map(SongDto::from).toList();
+        Set<Long> playableIds = availabilityPolicy.playableSongIds(songs);
+        return songs.stream()
+                .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
+                        playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY))
+                .toList();
     }
 
     private static Sort songSort(String sort) {

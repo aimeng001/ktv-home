@@ -266,7 +266,29 @@ class CategoryBrowseServiceTest {
         assertThat(result.items()).extracting(SongDto::title).containsExactly("变体歌曲");
         verify(repository).browseCategorySongsByArtistKey(
                 eq("zhoujielun"), eq(""), eq(""), eq(""), eq(""), any(Pageable.class));
-        verify(repository, never()).browseCategorySongs(any(), any(), any(), any(), any(), any());
+                verify(repository, never()).browseCategorySongs(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void songsPageUsesOneBatchReadinessQueryForTheWholePage() {
+        SongRepository repository = mock(SongRepository.class);
+        SongAvailabilityPolicy availability = mock(SongAvailabilityPolicy.class);
+        Song song = new Song();
+        song.setId(43L);
+        song.setTitle("准备中");
+        song.setArtist("韩红");
+        song.setStatus("ok");
+        when(repository.browseCategorySongs(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(song), PageRequest.of(0, 50), 1));
+        when(availability.playableSongIds(any())).thenReturn(java.util.Set.of());
+
+        CategoryBrowseService.SongPage result = new CategoryBrowseService(repository, availability)
+                .songsPage("", "", "", "", "", "", "hot", 0, 50);
+
+        assertThat(result.items()).hasSize(1);
+        assertThat(result.items().getFirst().playable()).isFalse();
+        assertThat(result.items().getFirst().unavailableReason()).isEqualTo("SONG_NOT_READY");
+        verify(availability).playableSongIds(any());
     }
 
     private Song song(String gender) {

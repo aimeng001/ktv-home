@@ -3,6 +3,7 @@ package com.homektv.web;
 import com.homektv.config.AppProperties;
 import com.homektv.domain.Song;
 import com.homektv.library.AssetWriter;
+import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.library.SongSearchService;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
@@ -32,6 +33,7 @@ public class SongController {
     private final SongRepository songRepo;
     private final SongFileRepository fileRepo;
     private final AssetWriter assetWriter;
+    private SongAvailabilityPolicy availabilityPolicy;
 
     /** Compatibility constructor for test callers providing AppProperties directly. */
     public SongController(SongSearchService searchService, SongRepository songRepo,
@@ -48,6 +50,11 @@ public class SongController {
         this.assetWriter = assetWriter;
     }
 
+    @Autowired(required = false)
+    void setAvailabilityPolicy(SongAvailabilityPolicy availabilityPolicy) {
+        this.availabilityPolicy = availabilityPolicy;
+    }
+
     /**
      * 综合搜索（P1.6）：keyword 支持中文/全拼/首字母。
      *
@@ -62,7 +69,12 @@ public class SongController {
                                 @RequestParam(defaultValue = "") String type,
                                 @RequestParam(defaultValue = "0") int page) {
         List<Song> songs = searchService.search(keyword, type, page);
-        return songs.stream().map(SongDto::from).toList();
+        if (availabilityPolicy == null || songs.isEmpty()) return songs.stream().map(SongDto::from).toList();
+        java.util.Set<Long> playableIds = availabilityPolicy.playableSongIds(songs);
+        return songs.stream()
+                .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
+                        playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY))
+                .toList();
     }
 
     /**

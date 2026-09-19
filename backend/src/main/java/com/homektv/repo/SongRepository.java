@@ -611,6 +611,49 @@ public interface SongRepository extends JpaRepository<Song, Long> {
 
     long countByStatus(String status);
 
+    /** Counts indexed logical songs that have a valid file in the active role. */
+    @Query(value = """
+            SELECT COUNT(DISTINCT s.id)
+            FROM songs s
+            JOIN song_files f ON f.song_id = s.id
+            WHERE s.status = :status
+              AND f.file_role = :fileRole
+              AND f.valid = TRUE
+            """, nativeQuery = true)
+    long countIndexedSongs(@Param("status") String status, @Param("fileRole") String fileRole);
+
+    /** Counts distinct logical songs that have at least one ready media file in the active role. */
+    @Query(value = """
+            SELECT COUNT(DISTINCT s.id)
+            FROM songs s
+            JOIN song_files f ON f.song_id = s.id
+            WHERE s.status = :status
+              AND f.file_role = :fileRole
+              AND f.valid = TRUE
+              AND f.probe_pending = FALSE
+              AND f.media_type IS NOT NULL
+              AND TRIM(f.media_type) <> ''
+              AND LOWER(TRIM(f.media_type)) <> 'pending_probe'
+            """, nativeQuery = true)
+    long countReadySongs(@Param("status") String status, @Param("fileRole") String fileRole);
+
+    /** Compatibility query for isolated callers that have no active role context. */
+    @Query(value = """
+            SELECT COUNT(DISTINCT s.id)
+            FROM songs s
+            WHERE s.status = :status
+              AND EXISTS (
+                    SELECT 1 FROM song_files f
+                    WHERE f.song_id = s.id
+                      AND f.valid = TRUE
+                      AND f.probe_pending = FALSE
+                      AND f.media_type IS NOT NULL
+                      AND TRIM(f.media_type) <> ''
+                      AND LOWER(TRIM(f.media_type)) <> 'pending_probe'
+              )
+            """, nativeQuery = true)
+    long countReadySongs(@Param("status") String status);
+
     java.util.List<Song> findTop50ByOrderByCreatedAtDesc();
 
     org.springframework.data.domain.Page<Song> findByMediaType(String mediaType, org.springframework.data.domain.Pageable pageable);

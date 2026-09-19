@@ -20,14 +20,16 @@ public record SongDto(
         String lyricType,
         String coverUrl,
         int playCount,
-        String artistAvatarUrl
+        String artistAvatarUrl,
+        boolean playable,
+        String unavailableReason
 ) {
     /** Source-compatible constructor for callers using the original protocol fields. */
     public SongDto(Long id, String title, String artist, String artistGender, String mediaType,
                    boolean hasVocalTrack, int durationMs, String lyricType, String coverUrl,
                    int playCount) {
         this(id, "", title, artist, artistGender, mediaType, hasVocalTrack, durationMs, lyricType,
-                coverUrl, playCount, ArtistAvatarUrl.forCredit(artist));
+                coverUrl, playCount, ArtistAvatarUrl.forCredit(artist), true, null);
     }
 
     /** Source-compatible constructor for callers that also supplied an avatar URL. */
@@ -35,7 +37,7 @@ public record SongDto(
                    boolean hasVocalTrack, int durationMs, String lyricType, String coverUrl,
                    int playCount, String artistAvatarUrl) {
         this(id, "", title, artist, artistGender, mediaType, hasVocalTrack, durationMs, lyricType,
-                coverUrl, playCount, artistAvatarUrl);
+                coverUrl, playCount, artistAvatarUrl, true, null);
     }
     /**
      * 将 {@link Song} 领域对象转换为 SongDto，封面路径组装为 API 访问地址，无封面时返回 {@code null}。
@@ -47,6 +49,11 @@ public record SongDto(
      * @return 对应的 SongDto / the corresponding SongDto
      */
     public static SongDto from(Song s) {
+        return from(s, true, null);
+    }
+
+    /** Converts a song while carrying the server-side batch readiness decision. */
+    public static SongDto from(Song s, boolean playable, String unavailableReason) {
         return new SongDto(
                 s.getId(),
                 s.getCatalogNumber(),
@@ -59,7 +66,9 @@ public record SongDto(
                 s.getLyricType(),
                 s.getCoverPath() != null ? "/api/cover/" + s.getId() : null,
                 s.getPlayCount(),
-                ArtistAvatarUrl.forCredit(s.getArtist())
+                ArtistAvatarUrl.forCredit(s.getArtist()),
+                playable,
+                playable ? null : unavailableReason
         );
     }
 }
