@@ -28,6 +28,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -79,7 +81,7 @@ class LargeExternalLibraryScanTest {
     static void createSyntheticLibrary() throws IOException {
         for (int index = 1; index <= rows; index++) {
             Files.createFile(libraryDir.resolve(
-                    "stress-artist-%05d-stress-title-%05d-国语-流行.mkv".formatted(index, index)));
+                    "stressartist%05d-stresstitle%05d-国语-流行.mkv".formatted(index, index)));
         }
     }
 
@@ -107,12 +109,26 @@ class LargeExternalLibraryScanTest {
     @Autowired
     private FFprobeService ffprobe;
 
+    @Autowired
+    private LibraryScanStateStore scanStateStore;
+
     @Test
-    void realScanAllHandlesLargeExternalLibraryAndNoChangeRescanDoesNotProbeAgain() {
+    void bootstrapHandlesLargeExternalLibraryAndNoChangeRescanDoesNotProbeAgain()
+            throws InterruptedException {
+        LibraryScanStateStore.Snapshot bootstrap = awaitCompletedBootstrap();
+        assertThat(bootstrap.discoveredFiles()).isEqualTo(rows);
+        assertThat(bootstrap.indexedFiles()).isEqualTo(rows);
+        assertThat(bootstrap.probeCompletedFiles()).isEqualTo(rows);
+        verify(ffprobe, times(rows)).probe(any(Path.class));
+
+        // Bootstrap is the production entry point. Once it has fenced and
+        // committed the first scan, direct rescans exercise the same
+        // idempotent scan pipeline without racing its worker.
+        clearInvocations(ffprobe);
         LibraryScanService.ScanResult first = scanService.scanAll();
         assertThat(first.scanned()).isEqualTo(rows);
         assertThat(first.fastIndexed()).isEqualTo(rows);
-        assertThat(first.probeCalls()).isEqualTo(rows);
+        assertThat(first.probeCalls()).isZero();
 
         clearInvocations(ffprobe);
         LibraryScanService.ScanResult second = scanService.scanAll();
@@ -122,6 +138,22 @@ class LargeExternalLibraryScanTest {
         assertThat(second.probeCalls()).isZero();
         assertThat(third.probeCalls()).isZero();
         assertThat(second.missing()).isZero();
+    }
+
+    private LibraryScanStateStore.Snapshot awaitCompletedBootstrap() throws InterruptedException {
+        long timeoutSeconds = Math.max(60,
+                Long.getLong("scanBootstrapTimeoutSeconds", 300L));
+        long deadline = System.nanoTime()
+                + java.util.concurrent.TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        LibraryScanStateStore.Snapshot current;
+        do {
+            current = scanStateStore.find().orElse(null);
+            if (current != null && current.state() == LibraryScanStateStore.State.COMPLETED) {
+                return current;
+            }
+            Thread.sleep(100);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("bootstrap did not complete: " + current);
     }
 
     @TestConfiguration(proxyBeanMethods = false)
