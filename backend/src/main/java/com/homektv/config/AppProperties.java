@@ -50,6 +50,9 @@ public class AppProperties {
     /** Scan safety settings. */
     private Scan scan = new Scan();
 
+    /** Prefer recognized four-part filename metadata over embedded tags. */
+    private boolean structuredFilenameMetadataPreferred = false;
+
     public String getSourceLibraryPath() { return sourceLibraryPath; }
     public void setSourceLibraryPath(String sourceLibraryPath) { this.sourceLibraryPath = sourceLibraryPath; }
     public String getKtvLibraryPath() { return ktvLibraryPath; }
@@ -77,6 +80,10 @@ public class AppProperties {
     public void setRelease(Release release) { this.release = release; }
     public Scan getScan() { return scan; }
     public void setScan(Scan scan) { this.scan = scan; }
+    public boolean isStructuredFilenameMetadataPreferred() { return structuredFilenameMetadataPreferred; }
+    public void setStructuredFilenameMetadataPreferred(boolean preferred) {
+        this.structuredFilenameMetadataPreferred = preferred;
+    }
 
     public static class Scan {
         private MissingGuard missingGuard = new MissingGuard();

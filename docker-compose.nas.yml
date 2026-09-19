@@ -46,6 +46,8 @@ services:
       KTV_SOURCE_LIBRARY_PATH: /source-music
       KTV_LIBRARY_PATH: /music
       KTV_LIBRARY_MODE: EXTERNAL_READ_ONLY
+      # Four-part filenames are the authoritative local catalogue metadata.
+      KTV_LIBRARY_FILENAME_METADATA_PREFERRED: "${KTV_LIBRARY_FILENAME_METADATA_PREFERRED:-true}"
       KTV_AVATAR_LIBRARY_PATH: /avatar-library
       KTV_DATA_PATH: /data
       KTV_MUSIC_PROVIDER_MIN_INTERVAL_MS: ${KTV_MUSIC_PROVIDER_MIN_INTERVAL_MS:-5000}

@@ -922,6 +922,29 @@ class IncrementalLibraryScanTest {
     }
 
     @Test
+    void structuredFilenameMetadataRemainsAuthoritativeAfterMediaProbe() throws Exception {
+        props.setStructuredFilenameMetadataPreferred(true);
+        Path file = Files.write(sourceDir.resolve("韩红-望-国语-流行.mp3"), new byte[]{1, 2, 3});
+        TagInfo tag = new TagInfo();
+        tag.setTitle("容器测试歌名");
+        tag.setArtist("容器测试歌手");
+        tag.setLanguage("英语");
+        when(tagReader.read(file.toFile())).thenReturn(tag);
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.added()).isEqualTo(1);
+        Song song = songsById.values().stream().findFirst().orElseThrow();
+        assertThat(song.getTitle()).isEqualTo("望");
+        assertThat(song.getArtist()).isEqualTo("韩红");
+        assertThat(song.getLanguage()).isEqualTo("国语");
+        assertThat(song.getTags()).containsExactly("流行");
+        assertThat(song.getTitlePy()).isEqualTo("wang");
+        assertThat(song.getArtistPy()).isEqualTo("hanhong");
+        assertThat(song.getMetadataProvenance()).contains("filename");
+    }
+
+    @Test
     void successfullyReprobedFileRestoresSongAfterItWasMarkedMissing() throws Exception {
         Path file = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
         scanService.scanAll();

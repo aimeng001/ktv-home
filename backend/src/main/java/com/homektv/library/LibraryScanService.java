@@ -1514,31 +1514,46 @@ public class LibraryScanService {
         String titleSource;
         String artistSource;
         ParsedMeta filenameMeta = entry.filenameMeta();
+        String legacyTitle;
+        String legacyTitleSource;
         if (tag.hasTitle()) {
-            title = tag.getTitle();
-            recognized = true;
-            titleSource = "audio_tag";
+            legacyTitle = tag.getTitle();
+            legacyTitleSource = "audio_tag";
         } else if (probe.title() != null && !probe.title().isBlank()) {
-            title = probe.title();
-            recognized = true;
-            titleSource = "container_tag";
+            legacyTitle = probe.title();
+            legacyTitleSource = "container_tag";
         } else if (lrcTitle != null && !lrcTitle.isBlank()) {
-            title = lrcTitle;
-            recognized = true;
-            titleSource = "lrc_tag";
+            legacyTitle = lrcTitle;
+            legacyTitleSource = "lrc_tag";
         } else {
-            title = filenameMeta.title();
-            recognized = filenameMeta.recognized();
-            titleSource = "filename";
+            legacyTitle = filenameMeta.title();
+            legacyTitleSource = "filename";
         }
-        artist = firstNonBlank(
+        String legacyArtist = firstNonBlank(
                 tag.getArtist(),
                 probe.artist(),
                 lrcArtist,
                 filenameMeta.artist()
         );
-        artistSource = artist.isBlank() ? "default" : sourceOfArtist(
+        String legacyArtistSource = legacyArtist.isBlank() ? "default" : sourceOfArtist(
                 tag.getArtist(), probe.artist(), lrcArtist, filenameMeta.artist());
+        boolean structuredFilenamePreferred = structuredFilenameMetadataPreferred();
+        boolean structuredFilename = LibraryMetadataResolver.isStructured(filenameMeta);
+        LibraryMetadataResolver.Value resolvedTitle = LibraryMetadataResolver.resolve(
+                new LibraryMetadataResolver.Candidates(
+                        false, null, structuredFilenamePreferred && structuredFilename,
+                        new LibraryMetadataResolver.Value(filenameMeta.title(), "filename"),
+                        new LibraryMetadataResolver.Value(legacyTitle, legacyTitleSource)));
+        LibraryMetadataResolver.Value resolvedArtist = LibraryMetadataResolver.resolve(
+                new LibraryMetadataResolver.Candidates(
+                        false, null, structuredFilenamePreferred && structuredFilename,
+                        new LibraryMetadataResolver.Value(filenameMeta.artist(), "filename"),
+                        new LibraryMetadataResolver.Value(legacyArtist, legacyArtistSource)));
+        title = resolvedTitle.text();
+        titleSource = resolvedTitle.source();
+        recognized = !"filename".equals(legacyTitleSource) || filenameMeta.recognized();
+        artist = resolvedArtist.text();
+        artistSource = resolvedArtist.source();
         if (artist.isBlank()) artist = "未知歌手";
 
         // 4) Resolve the file-level semantic layout before classification. A
@@ -1613,11 +1628,8 @@ public class LibraryScanService {
             song.setFingerprint(fingerprint);
             // 未识别（标签+文件名均无有效歌名）标记 unrecognized，供后台筛选补录；否则 ok
             song.setStatus(recognized ? "ok" : "unrecognized");
-            if (tag.getLanguage() != null && !tag.getLanguage().isBlank()) song.setLanguage(normalizeLanguage(tag.getLanguage()));
-            else if (probe.language() != null && !probe.language().isBlank()) song.setLanguage(normalizeLanguage(probe.language()));
-            else if (filenameMeta != null && !filenameMeta.language().isBlank()) {
-                song.setLanguage(normalizeLanguage(filenameMeta.language()));
-            }
+            String language = effectiveLanguage(tag, probe, filenameMeta);
+            if (!language.isBlank()) song.setLanguage(language);
             if (filenameMeta != null && !filenameMeta.category().isBlank()) {
                 // 现有模型没有独立 category 列；沿用 Home KTV 的 tags 数组承载文件名分类。
                 song.setTags(new String[]{filenameMeta.category()});
@@ -1809,7 +1821,7 @@ public class LibraryScanService {
         return song != null && (song.isMetadataLocked("title") || song.isMetadataLocked("artist"));
     }
 
-    private static void applyProbedMetadata(Song song, String title, String artist, String mediaType,
+    private void applyProbedMetadata(Song song, String title, String artist, String mediaType,
                                             boolean hasVocal, MediaProbe probe, String fingerprint,
                                             boolean recognized, TagInfo tag, ParsedMeta filenameMeta,
                                             String titleSource, String artistSource) {
@@ -1835,13 +1847,8 @@ public class LibraryScanService {
             song.setStatus(recognized ? "ok" : "unrecognized");
         }
         if (!languageLocked) {
-            if (tag.getLanguage() != null && !tag.getLanguage().isBlank()) {
-                song.setLanguage(normalizeLanguage(tag.getLanguage()));
-            } else if (probe.language() != null && !probe.language().isBlank()) {
-                song.setLanguage(normalizeLanguage(probe.language()));
-            } else if (filenameMeta != null && !filenameMeta.language().isBlank()) {
-                song.setLanguage(normalizeLanguage(filenameMeta.language()));
-            }
+            String language = effectiveLanguage(tag, probe, filenameMeta);
+            if (!language.isBlank()) song.setLanguage(language);
         }
         if (!tagsLocked && filenameMeta != null && !filenameMeta.category().isBlank()) {
             song.setTags(new String[]{filenameMeta.category()});
@@ -1861,6 +1868,25 @@ public class LibraryScanService {
             song.setNeedsAiOptimization(!recognized || "未知".equals(song.getLanguage())
                     || "未知歌手".equals(song.getArtist()));
         }
+    }
+
+    private boolean structuredFilenameMetadataPreferred() {
+        return props != null && props.isStructuredFilenameMetadataPreferred();
+    }
+
+    private String effectiveLanguage(TagInfo tag, MediaProbe probe, ParsedMeta filenameMeta) {
+        if (structuredFilenameMetadataPreferred() && LibraryMetadataResolver.isStructured(filenameMeta)
+                && !filenameMeta.language().isBlank()) {
+            return normalizeLanguage(filenameMeta.language());
+        }
+        if (tag != null && tag.getLanguage() != null && !tag.getLanguage().isBlank()) {
+            return normalizeLanguage(tag.getLanguage());
+        }
+        if (probe != null && probe.language() != null && !probe.language().isBlank()) {
+            return normalizeLanguage(probe.language());
+        }
+        return filenameMeta == null || filenameMeta.language().isBlank()
+                ? "" : normalizeLanguage(filenameMeta.language());
     }
 
     private static Path sidecarLyricOf(Path mediaFile) {

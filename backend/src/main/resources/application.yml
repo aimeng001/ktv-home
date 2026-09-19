@@ -34,6 +34,7 @@ app:
   source-library-path: ${KTV_SOURCE_LIBRARY_PATH:/source-music}
   ktv-library-path: ${KTV_LIBRARY_PATH:/music}
   library-mode: ${KTV_LIBRARY_MODE:MANAGED}
+  structured-filename-metadata-preferred: ${KTV_LIBRARY_FILENAME_METADATA_PREFERRED:false}
   avatar-library-path: ${KTV_AVATAR_LIBRARY_PATH:/avatar-library}
   data-path: ${KTV_DATA_PATH:./data}
   music-provider-rate-limit:
