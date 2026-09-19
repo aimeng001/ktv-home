@@ -3,6 +3,7 @@ package com.homektv.web;
 import com.homektv.config.AppProperties;
 import com.homektv.library.AdminService;
 import com.homektv.library.LibraryScanService;
+import com.homektv.library.LibraryScanCoordinator;
 import com.homektv.library.LibraryModePolicy;
 import com.homektv.library.LibraryWatchService;
 import com.homektv.library.MediaImportService;
@@ -22,6 +23,7 @@ import com.homektv.web.dto.SongDto;
 import com.homektv.web.dto.SongEditRequest;
 import com.homektv.web.dto.VocalReviewDto;
 import org.springframework.data.domain.Page;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -46,6 +48,7 @@ public class AdminScanController {
     private final SongReparseService reparseService;
     private final SongMergeService songMergeService;
     private final AppProperties props;
+    private LibraryScanCoordinator scanCoordinator;
 
     public AdminScanController(LibraryScanService scanService, LibraryWatchService libraryWatchService,
                                AdminService adminService,
@@ -65,6 +68,12 @@ public class AdminScanController {
         this.props = props;
     }
 
+    /** Optional setter keeps direct controller tests and non-Spring callers backward compatible. */
+    @Autowired(required = false)
+    void setScanCoordinator(LibraryScanCoordinator scanCoordinator) {
+        this.scanCoordinator = scanCoordinator;
+    }
+
     /**
      * 触发全量/增量扫描（P1.8）。
      *
@@ -76,7 +85,8 @@ public class AdminScanController {
         if (LibraryModePolicy.isExternalReadOnly(props)) {
             // Fast Index is persisted before the background Media Probe queue;
             // do not hold this HTTP request open for NAS FFprobe work.
-            return Map.of("libraryScan", scanService.startScan());
+            return Map.of("libraryScan", scanCoordinator == null
+                    ? scanService.startScan() : scanCoordinator.startScan());
         }
         MediaImportService.SourceScanResult sourceScan = mediaImportService.scanSourceLibrary();
         return Map.of("sourceScan", sourceScan);
@@ -90,7 +100,9 @@ public class AdminScanController {
      */
     @PostMapping("/scan/start")
     public Object startScan() {
-        if (LibraryModePolicy.isExternalReadOnly(props)) return scanService.startScan();
+        if (LibraryModePolicy.isExternalReadOnly(props)) {
+            return scanCoordinator == null ? scanService.startScan() : scanCoordinator.startScan();
+        }
         return mediaImportService.startSourceScan();
     }
 
