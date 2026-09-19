@@ -1,0 +1,75 @@
+{
+  "date": "2026-09-19",
+  "sourceHead": "fd3a874",
+  "scope": "T1-T6 implementation with local regression and opt-in Testcontainers gates",
+  "backendRegression": {
+    "command": "mvn -o -Dmaven.repo.local=D:\\mimocode\\ktv-home\\.maven-local -Dtest=... test",
+    "tests": 124,
+    "passed": 123,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1,
+    "skipReason": "replacementWithSamePathSizeAndMtimeReprobesWhenFileIdentityChanges: filesystem did not expose a changed identity"
+  },
+  "androidUnit": {
+    "command": "android-tv\\gradlew.bat testDebugUnitTest",
+    "tests": 493,
+    "passed": 493,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "gradleUserHome": "D:\\mimocode\\ktv-home\\.gradle-local"
+  },
+  "externalScanSmoke": {
+    "test": "LargeExternalLibraryScanTest",
+    "command": "mvn -o -Dmaven.repo.local=D:\\mimocode\\ktv-home\\.maven-local -Dtest=LargeExternalLibraryScanTest -DrunLargeLibraryScanTest=true -DscanRows=1000 test",
+    "database": "PostgreSQL 16.15 in Testcontainers",
+    "files": 1000,
+    "filePattern": "stressartistNNNNN-stresstitleNNNNN-国语-流行.mkv",
+    "passed": true,
+    "assertions": [
+      "ApplicationReadyEvent Bootstrap reached COMPLETED",
+      "discovered_files=1000 and indexed_files=1000",
+      "first probe invoked 1000 times",
+      "three no-change rescans invoked probe zero times",
+      "V45 library_scan_state migration applied"
+    ]
+  },
+  "searchScale": {
+    "test": "SearchLargeLibraryPerformanceTest",
+    "command": "mvn -o -Dmaven.repo.local=D:\\mimocode\\ktv-home\\.maven-local -Dtest=SearchLargeLibraryPerformanceTest -DrunSearchPerformanceTest=true -DsearchLibraryRows=200000 test",
+    "rows": 200000,
+    "passed": true,
+    "observedElapsedMs": {
+      "shortChineseSelective": 43,
+      "shortChineseBroad": 1135,
+      "pinyinPrefix": 15,
+      "selectiveTitle": 18,
+      "tagSubstring": 10
+    },
+    "planEvidence": [
+      "short Chinese selective query used Bitmap Index/Heap Scan and no songs Seq Scan",
+      "all cases returned at most 50 rows and produced non-empty EXPLAIN ANALYZE plans"
+    ],
+    "limitations": [
+      "single local run per case, not p95",
+      "synthetic data distribution",
+      "no public artist directory performance test yet"
+    ]
+  },
+  "samplePinyin": {
+    "title": "忘不掉的你",
+    "titlePinyin": "wangbudiaodeni",
+    "titleInitials": "wbddn",
+    "artist": "张潼瑶",
+    "artistPinyin": "zhangtongyao",
+    "artistInitials": "zty"
+  },
+  "notRun": [
+    "real 200k-file NAS scan",
+    "four-song vertical playback integration",
+    "Android device/TV/remote/mpv/Range acceptance",
+    "H5 and Windows client acceptance",
+    "deployment database migration"
+  ]
+}
