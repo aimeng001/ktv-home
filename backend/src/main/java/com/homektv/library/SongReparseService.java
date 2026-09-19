@@ -69,23 +69,31 @@ public class SongReparseService {
             }
             Song song = songRepository.findById(preview.songId()).orElse(null);
             if (song == null) { skipped++; continue; }
-            song.setTitle(preview.proposedTitle());
-            song.setArtist(preview.proposedArtist());
-            song.setTitlePy(PinyinUtil.fullPinyin(preview.proposedTitle()));
-            song.setTitleInit(PinyinUtil.initials(preview.proposedTitle()));
-            song.setArtistPy(PinyinUtil.fullPinyin(preview.proposedArtist()));
-            song.setArtistInit(PinyinUtil.initials(preview.proposedArtist()));
+            boolean titleLocked = song.isMetadataLocked("title");
+            boolean artistLocked = song.isMetadataLocked("artist");
+            String effectiveTitle = titleLocked ? song.getTitle() : preview.proposedTitle();
+            String effectiveArtist = artistLocked ? song.getArtist() : preview.proposedArtist();
+            if (!titleLocked) {
+                song.setTitle(effectiveTitle);
+                song.setTitlePy(PinyinUtil.fullPinyin(effectiveTitle));
+                song.setTitleInit(PinyinUtil.initials(effectiveTitle));
+            }
+            if (!artistLocked) {
+                song.setArtist(effectiveArtist);
+                song.setArtistPy(PinyinUtil.fullPinyin(effectiveArtist));
+                song.setArtistInit(PinyinUtil.initials(effectiveArtist));
+            }
             // Reparse is authoritative for filename-derived metadata.  A file
             // that no longer has the commercial prefix must clear the old
             // number; retaining it would make a rename look like the old
             // catalogue identity on every subsequent export/search.
             song.setCatalogNumber(preview.catalogNumber());
-            String fingerprint = MediaClassifier.fingerprint(preview.proposedArtist(), preview.proposedTitle(), song.getDurationMs());
+            String fingerprint = MediaClassifier.fingerprint(effectiveArtist, effectiveTitle, song.getDurationMs());
             songRepository.findByFingerprint(fingerprint).filter(other -> !other.getId().equals(song.getId()))
                     .ifPresent(other -> { throw new ApiException("FINGERPRINT_CONFLICT", "重解析结果与歌曲 #" + other.getId() + " 重复"); });
             song.setFingerprint(fingerprint);
-            song.lockMetadata("title");
-            song.lockMetadata("artist");
+            if (!titleLocked) song.lockMetadata("title");
+            if (!artistLocked) song.lockMetadata("artist");
             song.setStatus("ok");
             songRepository.save(song);
             if (artistCreditService != null) {
