@@ -38,6 +38,7 @@ import com.homektv.tv.controller.ControllerUiState
 import com.homektv.tv.controller.ControllerViewModel
 import com.homektv.tv.controller.ControllerViewModelFactory
 import com.homektv.tv.controller.QueuePermissionPolicy
+import com.homektv.tv.controller.UiDomain
 import com.homektv.tv.databinding.FragmentControllerBinding
 import com.homektv.tv.net.SongDto
 import com.homektv.tv.ui.ArtworkDecoder
@@ -103,6 +104,19 @@ class ControllerFragment : Fragment() {
     private lateinit var personalAdapter: ControllerListAdapter<PanelRow>
     private lateinit var queueAdapter: ControllerListAdapter<PanelRow>
     private lateinit var rowBinder: ControllerPanelRowBinder
+    private var isUserAdjustingSeekBar = false
+    private var lastUserSeekAdjustMs = 0L
+    private val seekDebounceHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val commitSeekRunnable = Runnable {
+        isUserAdjustingSeekBar = false
+        val duration = viewModel.state.value.queue.playing?.song?.durationMs ?: 0
+        if (duration > 0 && ::seekBar.isInitialized) {
+            viewModel.control(
+                "seek",
+                mapOf("position_ms" to (duration.toLong() * seekBar.progress / 1000L)),
+            )
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -210,6 +224,7 @@ class ControllerFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        seekDebounceHandler.removeCallbacksAndMessages(null)
         playlistCoverJob?.cancel()
         playlistCoverJob = null
         phonePanelViews.clear()
@@ -372,18 +387,46 @@ class ControllerFragment : Fragment() {
         })
         seekBar.max = 1000
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) = Unit
-            override fun onStartTrackingTouch(bar: SeekBar?) = Unit
-            override fun onStopTrackingTouch(bar: SeekBar?) {
-                val duration = viewModel.state.value.queue.playing?.song?.durationMs ?: 0
-                if (duration > 0) {
-                    viewModel.control(
-                        "seek",
-                        mapOf("position_ms" to (duration.toLong() * (bar?.progress ?: 0) / 1000L)),
-                    )
+            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    isUserAdjustingSeekBar = true
+                    lastUserSeekAdjustMs = android.os.SystemClock.elapsedRealtime()
+                    seekDebounceHandler.removeCallbacks(commitSeekRunnable)
+                    seekDebounceHandler.postDelayed(commitSeekRunnable, 300L)
                 }
             }
+            override fun onStartTrackingTouch(bar: SeekBar?) {
+                isUserAdjustingSeekBar = true
+                seekDebounceHandler.removeCallbacks(commitSeekRunnable)
+            }
+            override fun onStopTrackingTouch(bar: SeekBar?) {
+                seekDebounceHandler.removeCallbacks(commitSeekRunnable)
+                commitSeekRunnable.run()
+            }
         })
+        seekBar.setOnKeyListener { _, keyCode, event ->
+            if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                when (keyCode) {
+                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        isUserAdjustingSeekBar = true
+                        lastUserSeekAdjustMs = android.os.SystemClock.elapsedRealtime()
+                        seekBar.progress = (seekBar.progress - 20).coerceAtLeast(0)
+                        seekDebounceHandler.removeCallbacks(commitSeekRunnable)
+                        seekDebounceHandler.postDelayed(commitSeekRunnable, 300L)
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        isUserAdjustingSeekBar = true
+                        lastUserSeekAdjustMs = android.os.SystemClock.elapsedRealtime()
+                        seekBar.progress = (seekBar.progress + 20).coerceAtMost(1000)
+                        seekDebounceHandler.removeCallbacks(commitSeekRunnable)
+                        seekDebounceHandler.postDelayed(commitSeekRunnable, 300L)
+                        true
+                    }
+                    else -> false
+                }
+            } else false
+        }
         messageText.setOnClickListener { viewModel.clearMessage() }
 
         phonePanelViews.clear()
@@ -544,8 +587,10 @@ class ControllerFragment : Fragment() {
         queueNowText.text = now?.song?.let { "正在演唱：${it.title} · ${it.artist}" } ?: "正在演唱：暂无"
         volumeSeek.progress = state.queue.volume.coerceIn(0, 100)
         val duration = now?.song?.durationMs ?: 0
-        seekBar.progress = if (duration <= 0) 0
-        else ((state.queue.positionMs.coerceIn(0, duration.toLong()) * 1000L) / duration).toInt()
+        if (!isUserAdjustingSeekBar && (android.os.SystemClock.elapsedRealtime() - lastUserSeekAdjustMs > 500L)) {
+            seekBar.progress = if (duration <= 0) 0
+            else ((state.queue.positionMs.coerceIn(0, duration.toLong()) * 1000L) / duration).toInt()
+        }
     }
 
     private fun setupPanelAdapters() {
@@ -585,7 +630,8 @@ class ControllerFragment : Fragment() {
         if (state.loading) return listOf(MessagePanelRow(-1L, "搜索中…"))
         if (state.query.isBlank()) return emptyList()
         if (state.results.isEmpty()) {
-            val isWish = state.error == null
+            val searchError = state.errorFor(UiDomain.SEARCH)
+            val isWish = searchError == null
             return listOf(
                 MessagePanelRow(-2L, if (isWish) "没有找到匹配歌曲" else "搜索失败，请检查服务连接"),
                 ActionPanelRow(
@@ -651,7 +697,9 @@ class ControllerFragment : Fragment() {
             }
         }.toMutableList<PanelRow>()
         if (rows.isEmpty()) {
+            val catError = state.errorFor(UiDomain.CATALOG)
             rows += MessagePanelRow(-10L, when {
+                catError != null -> "分类内容加载失败，请检查服务连接"
                 catalogMode == CatalogMode.ARTISTS && !state.catalogDetail -> "暂无歌手"
                 catalogMode == CatalogMode.LANGUAGES && !state.catalogDetail -> "暂无语种"
                 catalogMode == CatalogMode.TAGS && !state.catalogDetail -> "暂无标签"
@@ -673,16 +721,32 @@ class ControllerFragment : Fragment() {
     private fun renderPersonalPanel(state: ControllerUiState) {
         personalHeaderContainer.removeAllViews()
         val rows = when (personalMode) {
-            PersonalMode.FAVORITES -> state.favorites.map { songPanelRow(state, it) }
+            PersonalMode.FAVORITES -> {
+                val favError = state.errorFor(UiDomain.FAVORITES)
+                if (state.favorites.isEmpty()) {
+                    listOf(MessagePanelRow(-20L, if (favError != null) "收藏加载失败，请检查服务连接" else "暂无收藏歌曲"))
+                } else state.favorites.map { songPanelRow(state, it) }
+            }
             PersonalMode.PLAYLISTS -> when {
                 state.playlistDetailLoading -> listOf(MessagePanelRow(-20L, "主题歌单加载中…"))
                 state.playlistDetail != null -> {
                     renderPlaylistDetailHeader(state, state.playlistDetail)
-                    state.playlistDetail.songs.map { songPanelRow(state, it) }
+                    if (state.playlistDetail.songs.isEmpty()) listOf(MessagePanelRow(-21L, "歌单暂无歌曲"))
+                    else state.playlistDetail.songs.map { songPanelRow(state, it) }
                 }
-                else -> state.playlists.map { PlaylistPanelRow(it, isPending(state, "playlist_order", it.id)) }
+                else -> {
+                    val plError = state.errorFor(UiDomain.PLAYLISTS)
+                    if (state.playlists.isEmpty()) {
+                        listOf(MessagePanelRow(-22L, if (plError != null) "歌单加载失败，请检查服务连接" else "暂无歌单"))
+                    } else state.playlists.map { PlaylistPanelRow(it, isPending(state, "playlist_order", it.id)) }
+                }
             }
-            PersonalMode.HISTORY -> state.history.map { HistoryPanelRow(it, isPending(state, "history_repeat", it.historyId)) }
+            PersonalMode.HISTORY -> {
+                val histError = state.errorFor(UiDomain.HISTORY)
+                if (state.history.isEmpty()) {
+                    listOf(MessagePanelRow(-23L, if (histError != null) "历史记录加载失败，请检查服务连接" else "暂无最近唱过歌曲"))
+                } else state.history.map { HistoryPanelRow(it, isPending(state, "history_repeat", it.historyId)) }
+            }
         }
         personalAdapter.submitList(rows)
     }
@@ -769,7 +833,12 @@ class ControllerFragment : Fragment() {
                     wrapParams(),
                 )
             }
-        artistFilterContainer.addView(initialRow, matchWrapParams(top = 2))
+        val initialScroll = android.widget.HorizontalScrollView(requireContext()).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(initialRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        artistFilterContainer.addView(initialScroll, matchWrapParams(top = 2))
     }
 
     /** Give DPAD devices a deterministic vertical order after dynamic rows rebuild. */

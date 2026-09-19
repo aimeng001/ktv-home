@@ -32,6 +32,7 @@ import com.homektv.tv.net.SongDto
 import com.homektv.tv.player.EffectPlayer
 import com.homektv.tv.ui.kiosk.KtvSingerFilterPolicy
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -73,6 +74,7 @@ class KtvKioskOverlayController(
 
     val presentationState = KioskPresentationState(initialTab = KioskTab.DASHBOARD)
     private val dashboardPolicy = com.homektv.tv.ui.kiosk.KtvDashboardPolicy()
+    private val backExitGate = com.homektv.tv.navigation.BackExitGate()
 
     private val searchAdapter = KtvKioskSongAdapter(
         onOrder = ::orderSong,
@@ -143,6 +145,7 @@ class KtvKioskOverlayController(
     private var queueDialog: KtvQueueDrawerDialog? = null
     private var qrDialog: KtvQrDialog? = null
     private var cachedQrBitmap: Bitmap? = null
+    private var qrLoadJob: Job? = null
     private var artistsLoaded = false
     private var rankingsLoaded = false
     private var categoriesLoaded = false
@@ -763,21 +766,27 @@ class KtvKioskOverlayController(
         qrDialog = dialog
         dialog.show()
 
-        if (cachedQrBitmap == null) {
-            activity.lifecycleScope.launch {
-                val qrUrl = KtvQrPolicy.buildQrUrl(config.apiBase(), 540)
-                val bytes = withContext(Dispatchers.IO) {
-                    val res = transport.getBytes(qrUrl)
-                    (res as? KtvApiResult.Success)?.value
-                }
-                val bmp = bytes?.let {
-                    withContext(Dispatchers.Default) {
-                        ArtworkDecoder.decode(it, ArtworkProfile.QR)
+        if (cachedQrBitmap == null && qrLoadJob?.isActive != true) {
+            qrLoadJob = activity.lifecycleScope.launch {
+                try {
+                    val qrUrl = KtvQrPolicy.buildQrUrl(config.apiBase(), 540)
+                    val bytes = withContext(Dispatchers.IO) {
+                        val res = transport.getBytes(qrUrl)
+                        (res as? KtvApiResult.Success)?.value
                     }
-                }
-                if (bmp != null) {
-                    cachedQrBitmap = bmp
-                    dialog.updateQrBitmap(bmp)
+                    val bmp = bytes?.let {
+                        withContext(Dispatchers.Default) {
+                            ArtworkDecoder.decode(it, ArtworkProfile.QR)
+                        }
+                    }
+                    if (bmp != null) {
+                        cachedQrBitmap = bmp
+                        if (qrDialog?.isShowing == true) {
+                            qrDialog?.updateQrBitmap(bmp)
+                        }
+                    }
+                } finally {
+                    qrLoadJob = null
                 }
             }
         }
@@ -840,10 +849,15 @@ class KtvKioskOverlayController(
             reparentView(binding.playerView, binding.kioskOverlay.pipVideoAnchor)
             (binding.playerView.videoSurfaceView as? SurfaceView)?.setZOrderMediaOverlay(true)
             renderPipState()
-            if (presentationState.currentTab.value == KioskTab.DASHBOARD) {
-                binding.kioskOverlay.kioskDashboardView.requestDashboardFocus()
-            } else {
-                binding.kioskOverlay.tabPinyin.requestFocus()
+            when (presentationState.currentTab.value) {
+                KioskTab.DASHBOARD -> binding.kioskOverlay.kioskDashboardView.requestDashboardFocus()
+                KioskTab.PINYIN -> binding.kioskOverlay.tabPinyin.requestFocus()
+                KioskTab.SINGERS -> binding.kioskOverlay.tabSingers.requestFocus()
+                KioskTab.RANKINGS -> binding.kioskOverlay.tabRankings.requestFocus()
+                KioskTab.CATEGORIES -> binding.kioskOverlay.tabCategories.requestFocus()
+                KioskTab.FAVORITES -> binding.kioskOverlay.tabFavorites.requestFocus()
+                KioskTab.PLAYLISTS -> binding.kioskOverlay.tabPlaylists.requestFocus()
+                KioskTab.HISTORY -> binding.kioskOverlay.tabHistory.requestFocus()
             }
         } else {
             focusController.hasInnerDetailBack = false
@@ -872,6 +886,8 @@ class KtvKioskOverlayController(
         queueDialog = null
         qrDialog?.dismiss()
         qrDialog = null
+        qrLoadJob?.cancel()
+        qrLoadJob = null
         cachedQrBitmap = null
         coordinator.destroy()
         pendingAvatarCallbacks.clear()
@@ -939,6 +955,9 @@ class KtvKioskOverlayController(
 
     fun dispatchKeyEvent(event: KeyEvent): Boolean {
         coordinator.resetIdleTimer()
+        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) {
+            backExitGate.reset()
+        }
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (!focusController.shouldInterceptBack(event.action)) {
                 return false
@@ -959,13 +978,24 @@ class KtvKioskOverlayController(
                         if (presentationState.currentTab.value != KioskTab.DASHBOARD) {
                             dashboardPolicy.handleBack()
                             presentationState.selectTab(KioskTab.DASHBOARD)
+                            backExitGate.reset()
                         } else {
                             val hasPlaying = currentSnapshot?.playing != null || currentSnapshot?.state == "playing"
                             val action = KioskLifecyclePolicy.resolveDashboardBackAction(hasPlaying)
                             if (action == KioskBackAction.RETURN_TO_FULLSCREEN_MV) {
+                                backExitGate.reset()
                                 toggleKiosk(false)
                             } else {
-                                Toast.makeText(activity, "当前已在大厅首页，再次按返回键退出应用", Toast.LENGTH_SHORT).show()
+                                val decision = backExitGate.onBack(android.os.SystemClock.elapsedRealtime(), isAtTopLevel = true)
+                                when (decision) {
+                                    com.homektv.tv.navigation.BackExitDecision.CONSUMED_AND_PROMPTED -> {
+                                        Toast.makeText(activity, "当前已在大厅首页，再次按返回键退出应用", Toast.LENGTH_SHORT).show()
+                                    }
+                                    com.homektv.tv.navigation.BackExitDecision.EXIT_APP -> {
+                                        activity.finish()
+                                    }
+                                    com.homektv.tv.navigation.BackExitDecision.IGNORED -> {}
+                                }
                             }
                         }
                     },

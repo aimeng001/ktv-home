@@ -5,6 +5,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
@@ -47,6 +49,8 @@ class PlaybackEngine(
     private val onProgress: (positionMs: Long, queueId: Long?) -> Unit,
     private val onFinished: (queueId: Long?) -> Unit,
     private val onError: (message: String, context: PlaybackErrorContext) -> Unit,
+    private val playbackRouter: DualEnginePlaybackRouter = DualEnginePlaybackRouter(),
+    fallbackPlayerFactory: ((Context, (Boolean) -> Unit, (Long, Long) -> Unit, () -> Unit, (String) -> Unit) -> FallbackPlayer)? = null,
 ) {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -107,6 +111,92 @@ class PlaybackEngine(
     private var appliedSelectionGroup: androidx.media3.common.TrackGroup? = null
     private var appliedSelectionTrack: Int? = null
     private val channelAudioProcessor = KtvChannelAudioProcessor()
+
+    private var activeEngineType: PlaybackEngineType = PlaybackEngineType.PRIMARY_MEDIA3
+    private var attachedPlayerView: PlayerView? = null
+    private var currentHasVideoDeclared: Boolean = false
+    private var currentFormat: String? = null
+    private var currentStreamUrl: String? = null
+
+    private val fallbackSurfaceCallback = object : SurfaceHolder.Callback {
+        override fun surfaceCreated(holder: SurfaceHolder) {
+            if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                fallbackPlayer.setSurface(holder.surface)
+            }
+        }
+        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+            if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                fallbackPlayer.setSurface(holder.surface)
+            }
+        }
+        override fun surfaceDestroyed(holder: SurfaceHolder) {
+            if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                fallbackPlayer.setSurface(null)
+            }
+        }
+    }
+
+    private val fallbackPlayer: FallbackPlayer = fallbackPlayerFactory?.invoke(
+        appContext,
+        { isPlaying ->
+            if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                videoWatchdog.onPlayingChanged(isPlaying, SystemClock.elapsedRealtime())
+            }
+        },
+        { positionMs, _ ->
+            if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                retryState.onPositionSampled(positionMs)
+                identityGate.callbackIdentity()?.let { active ->
+                    onProgress(positionMs, active.queueId)
+                }
+            }
+        },
+        {
+            if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                Log.d(TAG, "fallback playback ended fileId=$currentFileId")
+                identityGate.consumeFinishedIdentity()?.let { finished ->
+                    onFinished(finished.queueId)
+                }
+            }
+        },
+        { errorMsg ->
+            if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                Log.w(TAG, "fallback player error: $errorMsg")
+                identityGate.invalidate()
+                onError(errorMsg, PlaybackErrorContext.forPlayback(currentQueueId, currentFileId))
+            }
+        },
+    ) ?: FfmpegFallbackPlayer(
+        context = appContext,
+        onStateChanged = { isPlaying ->
+            if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                videoWatchdog.onPlayingChanged(isPlaying, SystemClock.elapsedRealtime())
+            }
+        },
+        onProgress = { positionMs, _ ->
+            if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                retryState.onPositionSampled(positionMs)
+                identityGate.callbackIdentity()?.let { active ->
+                    onProgress(positionMs, active.queueId)
+                }
+            }
+        },
+        onFinished = {
+            if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                Log.d(TAG, "fallback playback ended fileId=$currentFileId")
+                identityGate.consumeFinishedIdentity()?.let { finished ->
+                    onFinished(finished.queueId)
+                }
+            }
+        },
+        onError = { errorMsg ->
+            if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                Log.w(TAG, "fallback player error: $errorMsg")
+                identityGate.invalidate()
+                onError(errorMsg, PlaybackErrorContext.forPlayback(currentQueueId, currentFileId))
+            }
+        },
+    )
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -180,11 +270,35 @@ class PlaybackEngine(
 
     /** 绑定/解绑显示层（切到播放页时绑，回待机时解绑）。 */
     fun attach(view: PlayerView) {
-        view.player = player
+        attachedPlayerView = view
+        if (activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
+            view.player = player
+        } else {
+            view.player = null
+            bindFallbackSurface(view)
+        }
     }
 
     fun detach(view: PlayerView) {
+        if (attachedPlayerView === view) {
+            (view.videoSurfaceView as? SurfaceView)?.holder?.removeCallback(fallbackSurfaceCallback)
+            attachedPlayerView = null
+        }
         if (view.player === player) view.player = null
+        if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+            fallbackPlayer.setSurface(null)
+        }
+    }
+
+    private fun bindFallbackSurface(view: PlayerView?) {
+        val surfaceView = view?.videoSurfaceView as? SurfaceView
+        if (surfaceView != null) {
+            surfaceView.holder.removeCallback(fallbackSurfaceCallback)
+            surfaceView.holder.addCallback(fallbackSurfaceCallback)
+            if (surfaceView.holder.surface?.isValid == true) {
+                fallbackPlayer.setSurface(surfaceView.holder.surface)
+            }
+        }
     }
 
     /**
@@ -198,7 +312,29 @@ class PlaybackEngine(
         queueId: Long? = null,
         playWhenReady: Boolean = true,
         initialPositionMs: Long = 0L,
+        hasVideoDeclared: Boolean = false,
+        format: String? = null,
+        videoCodec: String? = null,
     ) {
+        currentHasVideoDeclared = hasVideoDeclared
+        currentFormat = format
+        currentStreamUrl = streamUrl
+
+        val engineChoice = playbackRouter.selectEngine(videoCodec, format)
+        if (engineChoice == PlaybackEngineType.FALLBACK_FFMPEG) {
+            switchToFallbackEngine(fileId, streamUrl, queueId, playWhenReady, initialPositionMs)
+            return
+        }
+
+        if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+            fallbackPlayer.stop()
+            activeEngineType = PlaybackEngineType.PRIMARY_MEDIA3
+            attachedPlayerView?.let {
+                (it.videoSurfaceView as? SurfaceView)?.holder?.removeCallback(fallbackSurfaceCallback)
+                it.player = player
+            }
+        }
+
         val requested = PlaybackRequestIdentity(queueId = queueId, fileId = fileId)
         if (shouldReusePlaybackRequest(currentRequest, requested, player.playbackState)) {
             retryState.setPlayWhenReady(playWhenReady)
@@ -246,15 +382,61 @@ class PlaybackEngine(
         player.playWhenReady = playWhenReady
     }
 
+    private fun switchToFallbackEngine(
+        fileId: Long,
+        streamUrl: String,
+        queueId: Long?,
+        playWhenReady: Boolean,
+        initialPositionMs: Long,
+    ) {
+        activeEngineType = PlaybackEngineType.FALLBACK_FFMPEG
+        cancelRetry()
+        stopProgressTicker()
+        player.playWhenReady = false
+        player.stop()
+        player.clearMediaItems()
+        attachedPlayerView?.let {
+            it.player = null
+            bindFallbackSurface(it)
+        }
+
+        currentQueueId = queueId
+        currentFileId = fileId
+        currentStreamUrl = streamUrl
+        identityGate.begin(
+            PlaybackIdentity(
+                queueId = queueId,
+                fileId = fileId,
+                mediaId = fileId.toString(),
+            ),
+        )
+        identityGate.markReady(fileId.toString())
+
+        fallbackPlayer.prepareAndPlay(fileId, streamUrl, initialPositionMs)
+        if (!playWhenReady) {
+            fallbackPlayer.pause()
+        }
+        fallbackPlayer.setChannelMode(requestedVocalMode)
+        Log.i(TAG, "Switched to FfmpegFallbackPlayer for fileId=$fileId url=$streamUrl")
+    }
+
     fun pause() {
         retryState.pause()
         cancelRetry()
-        player.playWhenReady = false
+        if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+            fallbackPlayer.pause()
+        } else {
+            player.playWhenReady = false
+        }
     }
 
     fun resume() {
         retryState.resume()
-        player.playWhenReady = true
+        if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+            fallbackPlayer.resume()
+        } else {
+            player.playWhenReady = true
+        }
     }
 
     /** 回到片头（对应 restart 控制）。 */
@@ -262,15 +444,24 @@ class PlaybackEngine(
         cancelRetry()
         retryState.seekTo(0L)
         retryState.resume()
-        player.seekTo(0)
-        player.playWhenReady = true
+        if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+            fallbackPlayer.seekTo(0L)
+            fallbackPlayer.resume()
+        } else {
+            player.seekTo(0)
+            player.playWhenReady = true
+        }
     }
 
     /** Applies a server-requested seek without reloading the current media item. */
     fun seekTo(positionMs: Long) {
         retryState.seekTo(positionMs)
         cancelRetry()
-        player.seekTo(positionMs.coerceAtLeast(0L))
+        if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+            fallbackPlayer.seekTo(positionMs.coerceAtLeast(0L))
+        } else {
+            player.seekTo(positionMs.coerceAtLeast(0L))
+        }
     }
 
     /** Stops the old output before a replacement request performs network I/O. */
@@ -290,6 +481,7 @@ class PlaybackEngine(
         currentRequest = null
         currentQueueId = null
         currentFileId = null
+        currentStreamUrl = null
         videoGeneration = videoWatchdog.onMediaChanged()
         identityGate.invalidate()
         playRequestAt = 0L
@@ -298,6 +490,16 @@ class PlaybackEngine(
         appliedSelectionMode = null
         appliedSelectionGroup = null
         appliedSelectionTrack = null
+
+        if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+            fallbackPlayer.stop()
+            activeEngineType = PlaybackEngineType.PRIMARY_MEDIA3
+            attachedPlayerView?.let {
+                (it.videoSurfaceView as? SurfaceView)?.holder?.removeCallback(fallbackSurfaceCallback)
+                it.player = player
+            }
+        }
+
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .build()
@@ -324,6 +526,9 @@ class PlaybackEngine(
             lastAppliedStreamIdx = target
         }
         player.volume = if (muted) 0f else 1f
+        if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+            fallbackPlayer.setVolume(volume, muted)
+        }
     }
 
     /** 在当前音频轨组内切换原唱/伴唱，避免重新加载媒体。 */
@@ -338,7 +543,17 @@ class PlaybackEngine(
         requestedAudioTrackCount = audioTrackCount
         requestedAudioLayout = audioLayout
         vocalRequestAt = SystemClock.elapsedRealtime()
-        applyVocalSelection()
+        if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+            val trackIdx = resolveAudioTrackIndex(
+                audioLayout = requestedAudioLayout,
+                vocalMode = requestedVocalMode,
+                audioTrackCount = requestedAudioTrackCount,
+                legacyAccompanimentIndex = requestedAccompanimentIndex,
+            )
+            fallbackPlayer.setVocalSelection(mode, trackIdx, audioLayout)
+        } else {
+            applyVocalSelection()
+        }
     }
 
     private fun applyVocalSelection() {
@@ -407,8 +622,19 @@ class PlaybackEngine(
     }
 
     /** 当前媒体时长，供 TV-02 进度条展示。 */
-    val durationMs: Long get() = player.duration.takeIf { it > 0 } ?: 0L
-    val currentPositionMs: Long get() = player.currentPosition.coerceAtLeast(0L)
+    val durationMs: Long
+        get() = if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+            fallbackPlayer.durationMs
+        } else {
+            player.duration.takeIf { it > 0 } ?: 0L
+        }
+
+    val currentPositionMs: Long
+        get() = if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+            fallbackPlayer.currentPositionMs
+        } else {
+            player.currentPosition.coerceAtLeast(0L)
+        }
 
     fun release() {
         cancelRetry()
@@ -416,6 +642,7 @@ class PlaybackEngine(
         stopProgressTicker()
         identityGate.invalidate()
         appContext.contentResolver.unregisterContentObserver(systemVolumeObserver)
+        fallbackPlayer.release()
         player.release()
         httpClient.closeResources()
     }
@@ -469,6 +696,25 @@ class PlaybackEngine(
 
     private val playerListener = object : Player.Listener {
         override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            if (activeEngineType != PlaybackEngineType.PRIMARY_MEDIA3) return
+
+            val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+            val videoTrackCount = videoGroups.sumOf { it.length }
+            val hasSupportedVideoTrack = videoGroups.any { it.isSupported }
+
+            if (playbackRouter.shouldFallbackOnTracks(currentHasVideoDeclared, videoTrackCount, hasSupportedVideoTrack)) {
+                Log.w(TAG, "Media3 has no supported video tracks for declared video fileId=$currentFileId, falling back to FFmpeg player")
+                val curFileId = currentFileId
+                val curStreamUrl = currentStreamUrl
+                val curQueueId = currentQueueId
+                val curPos = player.currentPosition
+                val playWhenReady = player.playWhenReady
+                if (curFileId != null && curStreamUrl != null) {
+                    switchToFallbackEngine(curFileId, curStreamUrl, curQueueId, playWhenReady, curPos)
+                    return
+                }
+            }
+
             videoWatchdog.onTracksChanged(
                 selectedVideo = tracks.groups.any {
                     it.type == C.TRACK_TYPE_VIDEO && it.isSelected
@@ -516,6 +762,19 @@ class PlaybackEngine(
 
         override fun onPlayerError(error: PlaybackException) {
             Log.w(TAG, "player error: ${error.errorCodeName} ${error.message}")
+            if (isDecoderOrFormatError(error) && activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
+                val curFileId = currentFileId
+                val curStreamUrl = currentStreamUrl
+                val curQueueId = currentQueueId
+                val curPos = player.currentPosition
+                val playWhenReady = player.playWhenReady
+                if (curFileId != null && curStreamUrl != null) {
+                    Log.w(TAG, "Media3 decoder/format failure (${error.errorCodeName}), triggering fallback to FFmpeg player")
+                    switchToFallbackEngine(curFileId, curStreamUrl, curQueueId, playWhenReady, curPos)
+                    return
+                }
+            }
+
             val retryTicket = currentRetryTicket
             val retryRequest = currentRequest
             val retryFileId = currentFileId
@@ -544,6 +803,16 @@ class PlaybackEngine(
             identityGate.invalidate()
             cancelRetry()
             onError(error.errorCodeName, PlaybackErrorContext.forPlayback(currentQueueId, currentFileId))
+        }
+
+        private fun isDecoderOrFormatError(error: PlaybackException): Boolean = when (error.errorCode) {
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED -> true
+            else -> false
         }
 
         private fun isTransient(error: PlaybackException): Boolean = when (error.errorCode) {

@@ -45,6 +45,7 @@ class KaraokeLyricView @JvmOverloads constructor(
         line = value
         lineEndMs = maxOf(endMs, (value?.startMs ?: 0L) + 1L)
         contentDescription = value?.text.orEmpty()
+        adjustTextSize(width, height)
         invalidate()
     }
 
@@ -59,6 +60,34 @@ class KaraokeLyricView @JvmOverloads constructor(
         playing = false
         line = null
         invalidate()
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        adjustTextSize(w, h)
+    }
+
+    private fun adjustTextSize(w: Int, h: Int) {
+        if (h <= 0) return
+        val baseSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 42f, resources.displayMetrics)
+        paint.textSize = baseSize
+        val fm = paint.fontMetrics
+        val textHeight = fm.descent - fm.ascent
+        val maxAllowedHeight = h * 0.82f
+        var scale = if (textHeight > maxAllowedHeight && maxAllowedHeight > 0f) {
+            maxAllowedHeight / textHeight
+        } else 1f
+
+        val currentText = line?.text.orEmpty()
+        if (w > 0 && currentText.isNotEmpty()) {
+            paint.textSize = baseSize * scale
+            val textWidth = paint.measureText(currentText)
+            val maxAllowedWidth = w * 0.94f
+            if (textWidth > maxAllowedWidth && maxAllowedWidth > 0f) {
+                scale *= (maxAllowedWidth / textWidth)
+            }
+        }
+        paint.textSize = baseSize * scale.coerceIn(0.35f, 1f)
     }
 
     override fun onDraw(canvas: Canvas) {

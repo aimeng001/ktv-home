@@ -179,13 +179,13 @@ class ControllerViewModel(
             when (val result = queueApi.snapshot()) {
                 is KtvApiResult.Success -> _state.update {
                     if (!realtimeEnabled && bridgeConnected == false) {
-                        ControllerStateReducer.withSuccessfulRead(it).copy(queue = result.value)
+                        ControllerStateReducer.withSuccessfulRead(it, UiDomain.QUEUE).copy(queue = result.value)
                     } else {
                         ControllerStateReducer.withSnapshot(it, result.value)
                     }
                 }
                 is KtvApiResult.Failure -> _state.update {
-                    ControllerStateReducer.withFailure(it, result.error)
+                    ControllerStateReducer.withDomainFailure(it, UiDomain.QUEUE, result.error)
                 }
             }
         }
@@ -197,12 +197,12 @@ class ControllerViewModel(
         catalogRequests.launch {
             when (val result = songApi.ranking()) {
                 is KtvApiResult.Success -> _state.update {
-                    ControllerStateReducer.withSuccessfulRead(it).copy(
+                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
                         ranking = result.value.take(MAX_CATALOG_ITEMS),
                         catalogDetail = false,
                     )
                 }
-                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withFailure(it, result.error) }
+                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error) }
             }
         }
     }
@@ -213,12 +213,12 @@ class ControllerViewModel(
         catalogRequests.launch {
             when (val result = songApi.newSongs()) {
                 is KtvApiResult.Success -> _state.update {
-                    ControllerStateReducer.withSuccessfulRead(it).copy(
+                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
                         newSongs = result.value.take(MAX_CATALOG_ITEMS),
                         catalogDetail = false,
                     )
                 }
-                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withFailure(it, result.error) }
+                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error) }
             }
         }
     }
@@ -333,7 +333,7 @@ class ControllerViewModel(
                 is KtvApiResult.Success -> {
                     if (catalogQuery == expected) {
                         _state.update {
-                            ControllerStateReducer.withSuccessfulRead(it).copy(
+                            ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
                                 artistInitials = result.value.take(MAX_ARTIST_INITIALS),
                             )
                         }
@@ -341,7 +341,7 @@ class ControllerViewModel(
                 }
                 is KtvApiResult.Failure -> {
                     if (catalogQuery == expected) {
-                        _state.update { ControllerStateReducer.withFailure(it, result.error) }
+                        _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error) }
                     }
                 }
             }
@@ -387,7 +387,7 @@ class ControllerViewModel(
         catalogRequests.launch {
             when (val result = songApi.languages()) {
                 is KtvApiResult.Success -> _state.update {
-                    ControllerStateReducer.withSuccessfulRead(it).copy(
+                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
                         languages = result.value.take(MAX_CATALOG_ITEMS),
                         catalogSongs = emptyList(),
                         catalogHasMore = false,
@@ -395,7 +395,7 @@ class ControllerViewModel(
                         catalogValue = "",
                     )
                 }
-                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withFailure(it, result.error) }
+                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error) }
             }
         }
     }
@@ -406,7 +406,7 @@ class ControllerViewModel(
         catalogRequests.launch {
             when (val result = songApi.tags()) {
                 is KtvApiResult.Success -> _state.update {
-                    ControllerStateReducer.withSuccessfulRead(it).copy(
+                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
                         tags = result.value.take(MAX_CATALOG_ITEMS),
                         catalogSongs = emptyList(),
                         catalogHasMore = false,
@@ -414,7 +414,7 @@ class ControllerViewModel(
                         catalogValue = "",
                     )
                 }
-                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withFailure(it, result.error) }
+                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error) }
             }
         }
     }
@@ -431,7 +431,7 @@ class ControllerViewModel(
                         val artists = (if (page == 0) result.value.items
                         else (state.artists + result.value.items).distinctBy { it.artistKey })
                             .take(MAX_CATALOG_ITEMS)
-                        ControllerStateReducer.withSuccessfulRead(state).copy(
+                        ControllerStateReducer.withSuccessfulRead(state, UiDomain.CATALOG).copy(
                             artists = artists,
                             catalogSongs = emptyList(),
                             catalogDetail = false,
@@ -449,7 +449,7 @@ class ControllerViewModel(
                 }
                 is KtvApiResult.Failure -> {
                     if (catalogQuery == expected) {
-                        _state.update { ControllerStateReducer.withFailure(it, result.error) }
+                        _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error) }
                     }
                 }
             }
@@ -469,7 +469,7 @@ class ControllerViewModel(
                         val songs = (if (page == 0) result.value.items
                         else (state.catalogSongs + result.value.items).distinctBy { it.id })
                             .take(MAX_CATALOG_ITEMS)
-                        ControllerStateReducer.withSuccessfulRead(state).copy(
+                        ControllerStateReducer.withSuccessfulRead(state, UiDomain.CATALOG).copy(
                             artists = if (page == 0) emptyList() else state.artists,
                             catalogSongs = songs,
                             catalogPage = page,
@@ -487,7 +487,7 @@ class ControllerViewModel(
                 }
                 is KtvApiResult.Failure -> {
                     if (catalogQuery == expected) {
-                        _state.update { ControllerStateReducer.withFailure(it, result.error) }
+                        _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error) }
                     }
                 }
             }
@@ -637,12 +637,12 @@ class ControllerViewModel(
             when (val result = favoriteApi.list()) {
                 is KtvApiResult.Success -> _state.update {
                     val favorites = result.value.take(MAX_PERSONAL_ITEMS)
-                    ControllerStateReducer.withSuccessfulRead(it).copy(
+                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.FAVORITES).copy(
                         favorites = favorites,
                         favoriteIds = favorites.mapTo(linkedSetOf()) { song -> song.id },
                     )
                 }
-                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withFailure(it, result.error) }
+                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.FAVORITES, result.error) }
             }
         }
     }
@@ -672,14 +672,14 @@ class ControllerViewModel(
         personalRequests.launch {
             when (val result = playlistApi.list()) {
                 is KtvApiResult.Success -> _state.update {
-                    ControllerStateReducer.withSuccessfulRead(it).copy(
+                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.PLAYLISTS).copy(
                         playlists = result.value.take(MAX_PERSONAL_ITEMS),
                         playlistDetail = null,
                         playlistDetailLoading = false,
                         playlistCoverBytes = null,
                     )
                 }
-                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withFailure(it, result.error) }
+                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.PLAYLISTS, result.error) }
             }
         }
     }
@@ -700,7 +700,7 @@ class ControllerViewModel(
             when (val result = playlistApi.detail(id)) {
                 is KtvApiResult.Success -> {
                     _state.update {
-                        ControllerStateReducer.withSuccessfulRead(it).copy(
+                        ControllerStateReducer.withSuccessfulRead(it, UiDomain.PLAYLISTS).copy(
                             playlistDetail = result.value,
                             playlistDetailLoading = false,
                         )
@@ -708,7 +708,7 @@ class ControllerViewModel(
                     loadPlaylistCover(id)
                 }
                 is KtvApiResult.Failure -> _state.update {
-                    ControllerStateReducer.withFailure(it, result.error)
+                    ControllerStateReducer.withDomainFailure(it, UiDomain.PLAYLISTS, result.error)
                         .copy(playlistDetailLoading = false)
                 }
             }
@@ -745,11 +745,11 @@ class ControllerViewModel(
         personalRequests.launch {
             when (val result = historyApi.list(mine)) {
                 is KtvApiResult.Success -> _state.update {
-                    ControllerStateReducer.withSuccessfulRead(it).copy(
+                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.HISTORY).copy(
                         history = result.value.take(MAX_PERSONAL_ITEMS),
                     )
                 }
-                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withFailure(it, result.error) }
+                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.HISTORY, result.error) }
             }
         }
     }
@@ -783,9 +783,10 @@ class ControllerViewModel(
                 is KtvApiResult.Success -> _state.update {
                     ControllerStateReducer.withSuccessfulRead(
                         ControllerStateReducer.withRoomHost(it, result.value),
+                        UiDomain.ROOM_HOST,
                     )
                 }
-                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withFailure(it, result.error) }
+                is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.ROOM_HOST, result.error) }
             }
         }
     }

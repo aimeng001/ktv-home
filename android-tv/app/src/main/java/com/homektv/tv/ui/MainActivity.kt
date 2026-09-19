@@ -205,6 +205,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private lateinit var playbackCoordinator: PlaybackCoordinator
 
     private var sessionFingerprint: DeviceSessionFingerprint? = null
+    private val backExitGate = com.homektv.tv.navigation.BackExitGate()
 
     private val settingsLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -237,6 +238,22 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // 沉浸式与系统导航条防护：全屏 MV 画面保持无黑边满屏，仅浮层面板避让手势条与挖孔
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val systemBars = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+            )
+            binding.kioskOverlay.kioskRootOverlay.setPadding(
+                systemBars.left, systemBars.top, systemBars.right, systemBars.bottom
+            )
+            binding.remoteMenu.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            binding.queueOverlay.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            insets
+        }
+
         clock.post(clockTick)
 
         binding.txtAddress.text = config.h5Url()
@@ -525,22 +542,36 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             resetMenuTimer()
             return true
         }
-        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK && binding.remoteMenu.visibility == View.VISIBLE) {
-            binding.remoteMenu.visibility = View.GONE
-            return true
+        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) {
+            backExitGate.reset()
         }
-        if (binding.remoteMenu.visibility == View.VISIBLE && event.action == KeyEvent.ACTION_DOWN) resetMenuTimer()
-        if (binding.queueOverlay.visibility == View.VISIBLE && event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK) {
-            binding.queueOverlay.visibility = View.GONE
+        if (binding.remoteMenu.visibility == View.VISIBLE) {
+            if (event.action == KeyEvent.ACTION_DOWN) resetMenuTimer()
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                if (event.action == KeyEvent.ACTION_UP) {
+                    binding.remoteMenu.visibility = View.GONE
+                    backExitGate.reset()
+                }
+                return true
+            }
+        }
+        if (binding.queueOverlay.visibility == View.VISIBLE && event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP) {
+                binding.queueOverlay.visibility = View.GONE
+                backExitGate.reset()
+            }
             return true
         }
         // 原/伴唱选择栏：BACK 收起；可见期间方向键/确认键交给焦点系统（移动选择、点击生效）
-        if (binding.vocalPanel.visibility == View.VISIBLE && event.action == KeyEvent.ACTION_DOWN) {
+        if (binding.vocalPanel.visibility == View.VISIBLE) {
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-                hideVocalPanel()
+                if (event.action == KeyEvent.ACTION_UP) {
+                    hideVocalPanel()
+                    backExitGate.reset()
+                }
                 return true
             }
-            resetVocalTimer()
+            if (event.action == KeyEvent.ACTION_DOWN) resetVocalTimer()
             return super.dispatchKeyEvent(event)
         }
         if (event.action == KeyEvent.ACTION_DOWN) {
@@ -592,6 +623,21 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                     }
                 }
             }
+        }
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP) {
+                val decision = backExitGate.onBack(android.os.SystemClock.elapsedRealtime(), isAtTopLevel = true)
+                when (decision) {
+                    com.homektv.tv.navigation.BackExitDecision.CONSUMED_AND_PROMPTED -> {
+                        Toast.makeText(this, "再按一次返回键退出应用", Toast.LENGTH_SHORT).show()
+                    }
+                    com.homektv.tv.navigation.BackExitDecision.EXIT_APP -> {
+                        finish()
+                    }
+                    com.homektv.tv.navigation.BackExitDecision.IGNORED -> {}
+                }
+            }
+            return true
         }
         return super.dispatchKeyEvent(event)
     }
@@ -881,10 +927,18 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private fun renderQueue(snapshot: QueueSnapshot) {
         val now = snapshot.playing?.song
         binding.queueNow.text = if (now == null) "当前演唱：暂无" else "正在演唱  ${now.title} · ${now.artist}"
+        val focusedQueueId = (0 until binding.queueList.childCount)
+            .map { binding.queueList.getChildAt(it) }
+            .firstOrNull { it.hasFocus() }
+            ?.tag as? Long
+        val focusedIndex = (0 until binding.queueList.childCount)
+            .indexOfFirst { binding.queueList.getChildAt(it).hasFocus() }
+
         binding.queueList.removeAllViews()
         snapshot.list.forEachIndexed { index, item ->
             val song = item.song ?: return@forEachIndexed
             val row = TextView(this).apply {
+                tag = item.queueId
                 text = "%02d    %s · %s    %s".format(index + 1, song.title, song.artist, item.orderedByNick ?: "")
                 textSize = 20f
                 setTextColor(getColor(R.color.dim))
@@ -910,8 +964,21 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             }
             binding.queueList.addView(row)
         }
-        if (binding.queueOverlay.visibility == View.VISIBLE && binding.queueOverlay.findFocus() == null) {
-            (binding.queueList.getChildAt(0) ?: binding.queueClose).requestFocus()
+        if (binding.queueOverlay.visibility == View.VISIBLE) {
+            val targetFocus = if (focusedQueueId != null) {
+                (0 until binding.queueList.childCount)
+                    .map { binding.queueList.getChildAt(it) }
+                    .firstOrNull { it.tag == focusedQueueId }
+            } else null
+
+            if (targetFocus != null) {
+                targetFocus.requestFocus()
+            } else if (focusedIndex >= 0 && binding.queueList.childCount > 0) {
+                val adjacentIndex = focusedIndex.coerceIn(0, binding.queueList.childCount - 1)
+                binding.queueList.getChildAt(adjacentIndex)?.requestFocus()
+            } else if (binding.queueOverlay.findFocus() == null) {
+                (binding.queueList.getChildAt(0) ?: binding.queueClose).requestFocus()
+            }
         }
     }
 
@@ -1058,12 +1125,15 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             )
             eng.applyVolume(command.volume, command.muted)
             if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
+            val hasVideoDeclared = !snapshot.playing?.song?.mediaType.equals("AUDIO", ignoreCase = true) && !file.resolution.isNullOrBlank()
             eng.play(
                 command.fileId,
                 command.streamUrl,
                 command.queueId,
                 command.playWhenReady,
                 command.positionMs,
+                hasVideoDeclared = hasVideoDeclared,
+                format = file.format,
             )
             if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
             loadedQueueId = targetQueueId

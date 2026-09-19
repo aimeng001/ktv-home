@@ -13,6 +13,17 @@ import com.homektv.tv.net.SongDto
 import com.homektv.tv.net.SnapshotRevisionPolicy
 import com.homektv.tv.net.UserProfile
 
+enum class UiDomain {
+    SEARCH,
+    QUEUE,
+    CATALOG,
+    FAVORITES,
+    PLAYLISTS,
+    HISTORY,
+    ROOM_HOST,
+    REGISTRATION,
+}
+
 enum class ControllerConnection {
     CONNECTING,
     ONLINE,
@@ -60,7 +71,11 @@ data class ControllerUiState(
     val writing: Boolean = false,
     val message: String? = null,
     val error: KtvApiError? = null,
-)
+    val domainErrors: Map<UiDomain, KtvApiError> = emptyMap(),
+) {
+    fun errorFor(domain: UiDomain): KtvApiError? =
+        domainErrors[domain] ?: if (domain == UiDomain.QUEUE && error != null && domainErrors.isEmpty()) error else null
+}
 
 object ControllerStateReducer {
     fun withSnapshot(state: ControllerUiState, snapshot: QueueSnapshot): ControllerUiState {
@@ -71,6 +86,12 @@ object ControllerStateReducer {
         if (!SnapshotRevisionPolicy.accepts(currentRevision, incomingRevision)) {
             return state
         }
+        val nextDomainErrors = state.domainErrors - UiDomain.QUEUE
+        val nextError = if (state.registration == RegistrationStatus.RETRY_REQUIRED) {
+            state.error
+        } else {
+            nextDomainErrors.values.firstOrNull()
+        }
         return state.copy(
             connection = ControllerConnection.ONLINE,
             queue = snapshot,
@@ -79,21 +100,25 @@ object ControllerStateReducer {
                 state.currentUser?.id,
                 state.roomHost.isHost,
             ),
-            error = if (state.registration == RegistrationStatus.RETRY_REQUIRED) state.error else null,
+            error = nextError,
+            domainErrors = nextDomainErrors,
         )
     }
 
-    fun withSearchStarted(state: ControllerUiState, query: String): ControllerUiState =
-        state.copy(
+    fun withSearchStarted(state: ControllerUiState, query: String): ControllerUiState {
+        val nextDomainErrors = state.domainErrors - UiDomain.SEARCH
+        return state.copy(
             query = query,
             results = emptyList(),
             searchPage = 0,
             searchHasMore = query.isNotBlank(),
             searchLoadingMore = false,
             loading = query.isNotBlank(),
-            error = null,
+            error = nextDomainErrors.values.firstOrNull(),
+            domainErrors = nextDomainErrors,
             message = null,
         )
+    }
 
     fun withSearchResults(
         state: ControllerUiState,
@@ -105,6 +130,7 @@ object ControllerStateReducer {
         val merged = (if (page <= 0) results else (state.results + results))
             .distinctBy { it.id }
             .take(MAX_SEARCH_RESULTS)
+        val nextDomainErrors = state.domainErrors - UiDomain.SEARCH
         return state.copy(
             query = query,
             results = merged,
@@ -112,21 +138,38 @@ object ControllerStateReducer {
             searchHasMore = results.size >= pageSize && merged.size < MAX_SEARCH_RESULTS,
             searchLoadingMore = false,
             loading = false,
-            error = null,
+            error = nextDomainErrors.values.firstOrNull(),
+            domainErrors = nextDomainErrors,
         )
     }
 
-    fun withSearchLoadStarted(state: ControllerUiState): ControllerUiState =
-        state.copy(searchLoadingMore = true, error = null, message = null)
+    fun withSearchLoadStarted(state: ControllerUiState): ControllerUiState {
+        val nextDomainErrors = state.domainErrors - UiDomain.SEARCH
+        return state.copy(
+            searchLoadingMore = true,
+            error = nextDomainErrors.values.firstOrNull(),
+            domainErrors = nextDomainErrors,
+            message = null,
+        )
+    }
 
     fun withConnection(state: ControllerUiState, connected: Boolean): ControllerUiState =
         state.copy(connection = if (connected) ControllerConnection.ONLINE else ControllerConnection.OFFLINE)
 
-    /** A successful read clears stale page feedback but preserves registration failure. */
-    fun withSuccessfulRead(state: ControllerUiState): ControllerUiState = state.copy(
-        error = if (state.registration == RegistrationStatus.RETRY_REQUIRED) state.error else null,
-        message = if (state.registration == RegistrationStatus.RETRY_REQUIRED) state.message else null,
-    )
+    /** A successful read clears stale domain feedback but preserves registration failure and other domains. */
+    fun withSuccessfulRead(state: ControllerUiState, domain: UiDomain? = null): ControllerUiState {
+        val nextDomainErrors = if (domain != null) state.domainErrors - domain else emptyMap()
+        val nextError = if (state.registration == RegistrationStatus.RETRY_REQUIRED) {
+            state.error
+        } else {
+            nextDomainErrors.values.firstOrNull()
+        }
+        return state.copy(
+            error = nextError,
+            domainErrors = nextDomainErrors,
+            message = if (state.registration == RegistrationStatus.RETRY_REQUIRED) state.message else null,
+        )
+    }
 
     fun withRoomHost(state: ControllerUiState, status: RoomHostStatus): ControllerUiState {
         if (status.revision < state.roomHost.revision) return state
@@ -142,15 +185,19 @@ object ControllerStateReducer {
         )
     }
 
-    fun withFailure(state: ControllerUiState, error: KtvApiError): ControllerUiState =
+    fun withDomainFailure(state: ControllerUiState, domain: UiDomain, error: KtvApiError): ControllerUiState =
         state.copy(
-            catalogLoadingMore = false,
+            catalogLoadingMore = if (domain == UiDomain.CATALOG) false else state.catalogLoadingMore,
             error = error,
+            domainErrors = state.domainErrors + (domain to error),
             message = userMessage(error),
         )
 
+    fun withFailure(state: ControllerUiState, error: KtvApiError): ControllerUiState =
+        withDomainFailure(state, UiDomain.QUEUE, error)
+
     fun withSearchFailure(state: ControllerUiState, error: KtvApiError): ControllerUiState =
-        withFailure(state, error).copy(
+        withDomainFailure(state, UiDomain.SEARCH, error).copy(
             loading = false,
             searchLoadingMore = false,
         )

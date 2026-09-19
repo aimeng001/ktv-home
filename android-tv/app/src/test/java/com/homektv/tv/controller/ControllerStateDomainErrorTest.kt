@@ -1,0 +1,58 @@
+package com.homektv.tv.controller
+
+import com.homektv.tv.net.KtvApiError
+import com.homektv.tv.net.KtvApiErrorKind
+import com.homektv.tv.net.QueueSnapshot
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class ControllerStateDomainErrorTest {
+
+    @Test
+    fun testSearchFailureIsRecordedInSearchDomain() {
+        val initial = ControllerUiState()
+        val error = KtvApiError(kind = KtvApiErrorKind.NETWORK, code = "NETWORK_ERROR", message = "Search network failure")
+        val updated = ControllerStateReducer.withSearchFailure(initial, error)
+
+        assertEquals(error, updated.errorFor(UiDomain.SEARCH))
+        assertEquals(error, updated.domainErrors[UiDomain.SEARCH])
+    }
+
+    @Test
+    fun testSnapshotRefreshOnlyClearsQueueDomainErrorsAndPreservesSearchDomainErrors() {
+        val initial = ControllerUiState()
+        val searchError = KtvApiError(kind = KtvApiErrorKind.NETWORK, code = "NETWORK_ERROR", message = "Search network error")
+        val withSearchErr = ControllerStateReducer.withSearchFailure(initial, searchError)
+
+        val queueError = KtvApiError(kind = KtvApiErrorKind.HTTP, code = "QUEUE_FAILED", message = "Queue fetch error")
+        val withBothErrors = ControllerStateReducer.withDomainFailure(withSearchErr, UiDomain.QUEUE, queueError)
+
+        assertEquals(searchError, withBothErrors.errorFor(UiDomain.SEARCH))
+        assertEquals(queueError, withBothErrors.errorFor(UiDomain.QUEUE))
+
+        // Incoming WebSocket queue snapshot
+        val snapshot = QueueSnapshot(stateRevision = 5L, state = "idle")
+        val afterSnapshot = ControllerStateReducer.withSnapshot(withBothErrors, snapshot)
+
+        // Queue domain error must be cleared
+        assertNull(afterSnapshot.errorFor(UiDomain.QUEUE))
+        // Search domain error MUST be preserved!
+        assertEquals(searchError, afterSnapshot.errorFor(UiDomain.SEARCH))
+    }
+
+    @Test
+    fun testSearchSuccessClearsSearchDomainErrorOnly() {
+        val initial = ControllerUiState()
+        val favError = KtvApiError(kind = KtvApiErrorKind.HTTP, code = "FAV_FAILED", message = "Favorites load failed")
+        val withFavErr = ControllerStateReducer.withDomainFailure(initial, UiDomain.FAVORITES, favError)
+
+        val searchError = KtvApiError(kind = KtvApiErrorKind.NETWORK, code = "NETWORK_TIMEOUT", message = "Search timeout")
+        val withBoth = ControllerStateReducer.withSearchFailure(withFavErr, searchError)
+
+        val afterSearchStarted = ControllerStateReducer.withSearchStarted(withBoth, "周杰伦")
+        assertNull(afterSearchStarted.errorFor(UiDomain.SEARCH))
+        // Favorites error must still exist
+        assertEquals(favError, afterSearchStarted.errorFor(UiDomain.FAVORITES))
+    }
+}

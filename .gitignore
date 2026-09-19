@@ -86,6 +86,7 @@ backend/src/main/resources/application-local.yml
 /整改方案*.md
 /安卓端重做整改方案_融合审核版.md
 /整改计划.md
+/chatgpt审查*.md
 
 # Local remediation plan artifacts
 /tasks/
