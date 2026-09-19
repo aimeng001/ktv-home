@@ -33,6 +33,8 @@ data class LibraryStatus(
     val totalSongs: Long = 0,
     val libraryMode: String = "UNKNOWN",
     val rootState: String = "UNKNOWN",
+    val rootIdentityState: String = "UNKNOWN",
+    val countsKnown: Boolean = true,
     val scanState: String = "IDLE",
     val phase: String = "IDLE",
     val discoveredFiles: Long = 0,

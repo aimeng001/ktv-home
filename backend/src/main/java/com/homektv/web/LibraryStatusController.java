@@ -34,6 +34,8 @@ public class LibraryStatusController {
         response.put("totalSongs", value.totalSongs());
         response.put("libraryMode", value.libraryMode());
         response.put("rootState", value.rootState());
+        response.put("rootIdentityState", value.rootIdentityState());
+        response.put("countsKnown", value.countsKnown());
         response.put("scanState", value.scanState());
         response.put("phase", value.phase());
         response.put("discoveredFiles", value.discoveredFiles());

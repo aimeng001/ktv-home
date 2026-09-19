@@ -119,6 +119,16 @@ public class AdminScanController {
     }
 
     /**
+     * Confirms a changed external root after operator review and fences stale workers.
+     */
+    @PostMapping("/scan/rebind")
+    public Map<String, Object> rebindExternalRoot() {
+        boolean rebound = scanCoordinator != null
+                && scanCoordinator.rebindCurrentRoot();
+        return Map.of("rebound", rebound);
+    }
+
+    /**
      * 分页查询源库文件列表，支持关键词、状态、格式分析等筛选条件。
      *
      * Paginated query of the source library file list, with filters for keyword, status, and format analysis.

@@ -1,5 +1,7 @@
 package com.homektv.web;
 
+import com.homektv.library.LibraryIdentity;
+
 import com.homektv.config.AppProperties;
 import com.homektv.library.LibraryMode;
 import com.homektv.library.LibraryScanStateStore;
@@ -56,4 +58,35 @@ class LibraryStatusServiceTest {
         assertThat(result.errorCode()).isEqualTo("PROBE_FAILED");
         assertThat(result.toString()).doesNotContain(root.toString(), "internal detail");
     }
+
+    @Test
+    void reportsRootIdentityMismatchEvenWhenTheNewPathIsReadable() throws Exception {
+        AppProperties props = new AppProperties();
+        props.setLibraryMode(LibraryMode.EXTERNAL_READ_ONLY);
+        Path oldRoot = Files.createTempDirectory("library-status-old-");
+        Path newRoot = Files.createTempDirectory("library-status-new-");
+        props.setSourceLibraryPath(newRoot.toString());
+
+        SongRepository songs = mock(SongRepository.class);
+        SongFileRepository files = mock(SongFileRepository.class);
+        LibraryScanStateStore state = mock(LibraryScanStateStore.class);
+        when(songs.count()).thenReturn(1L);
+        when(songs.countIndexedSongs("ok", "EXTERNAL_READ_ONLY")).thenReturn(1L);
+        when(songs.countReadySongs("ok", "EXTERNAL_READ_ONLY")).thenReturn(1L);
+        when(files.countByFileRoleAndProbePendingTrue("EXTERNAL_READ_ONLY")).thenReturn(0L);
+        when(state.find()).thenReturn(Optional.of(new LibraryScanStateStore.Snapshot(
+                "active", oldRoot.toString(),
+                LibraryIdentity.resolve(oldRoot).persistedValue(),
+                "EXTERNAL_READ_ONLY", 1,
+                LibraryScanStateStore.State.COMPLETED, "COMPLETED", null, null, 4,
+                1, 1, 1, 0, null, null, null)));
+
+        LibraryStatusService.PublicStatus result =
+                new LibraryStatusService(props, songs, files, state).status();
+
+        assertThat(result.rootState()).isEqualTo("READABLE");
+        assertThat(result.rootIdentityState()).isEqualTo("MISMATCH");
+        assertThat(result.countsKnown()).isFalse();
+    }
+
 }

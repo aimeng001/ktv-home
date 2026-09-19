@@ -8,10 +8,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -25,21 +27,29 @@ public class LibraryScanCoordinator {
     private final LibraryScanStateStore stateStore;
     private final Executor executor;
     private final ExecutorService ownedExecutor;
+    private final ScheduledExecutorService heartbeatExecutor;
     private final AtomicBoolean scheduled = new AtomicBoolean();
 
     @Autowired
     public LibraryScanCoordinator(AppProperties props, LibraryScanService scanService,
                                   LibraryScanStateStore stateStore) {
-        this(props, scanService, stateStore, newExecutor());
+        this(props, scanService, stateStore, newExecutor(), newHeartbeatExecutor());
     }
 
     LibraryScanCoordinator(AppProperties props, LibraryScanService scanService,
-                            LibraryScanStateStore stateStore, Executor executor) {
+                           LibraryScanStateStore stateStore, Executor executor) {
+        this(props, scanService, stateStore, executor, newHeartbeatExecutor());
+    }
+
+    LibraryScanCoordinator(AppProperties props, LibraryScanService scanService,
+                           LibraryScanStateStore stateStore, Executor executor,
+                           ScheduledExecutorService heartbeatExecutor) {
         this.props = props;
         this.scanService = scanService;
         this.stateStore = stateStore;
         this.executor = executor;
         this.ownedExecutor = executor instanceof ExecutorService service ? service : null;
+        this.heartbeatExecutor = heartbeatExecutor;
     }
 
     public boolean requestBootstrap() {
@@ -59,6 +69,11 @@ public class LibraryScanCoordinator {
     public LibraryScanService.ScanProgress startScan() {
         requestScan();
         return scanService.getScanProgress();
+    }
+
+    /** Explicit administrator confirmation for a changed library root. */
+    public boolean rebindCurrentRoot() {
+        return props.isExternalReadOnly() && stateStore.rebind(props);
     }
 
     private boolean request(String trigger, Consumer<LibraryScanService.ScanResult> onSuccess) {
@@ -88,10 +103,19 @@ public class LibraryScanCoordinator {
 
     private void run(LibraryScanStateStore.Claim claim,
                      Consumer<LibraryScanService.ScanResult> onSuccess) {
-        try {
-            LibraryScanService.ScanResult result = scanService.scanAll();
-            stateStore.markCompleted(claim, result, scanService.getScanProgress());
-            if (onSuccess != null) onSuccess.accept(result);
+        try (LibraryScanLease lease = new LibraryScanLease(
+                claim,
+                stateStore,
+                this::currentProgressSnapshot,
+                heartbeatExecutor,
+                Duration.ofSeconds(30))) {
+            LibraryScanService.ScanResult result = scanService.scanAllWithLease(lease::assertOwned);
+            if (stateStore.markCompleted(claim, result, scanService.getScanProgress())
+                    && onSuccess != null) {
+                onSuccess.accept(result);
+            }
+        } catch (LeaseLostException lost) {
+            log.warn("曲库扫描租约已失效，旧任务终止：{}", lost.getMessage());
         } catch (ApiException failure) {
             stateStore.markFailed(claim, failure.getCode(), failure.getMessage());
             log.warn("曲库扫描未完成：{} - {}", failure.getCode(), failure.getMessage());
@@ -103,14 +127,33 @@ public class LibraryScanCoordinator {
         }
     }
 
+    private LibraryScanStateStore.ScanSnapshot currentProgressSnapshot() {
+        LibraryScanService.ScanProgress progress = scanService.getScanProgress();
+        return new LibraryScanStateStore.ScanSnapshot(
+                progress.phase(),
+                progress.discovered(),
+                progress.fastIndexed(),
+                progress.probeCompleted(),
+                progress.probeQueued());
+    }
+
     @PreDestroy
     void shutdown() {
         if (ownedExecutor != null) ownedExecutor.shutdownNow();
+        if (heartbeatExecutor != null) heartbeatExecutor.shutdownNow();
     }
 
     private static ExecutorService newExecutor() {
         return Executors.newSingleThreadExecutor(r -> {
             Thread thread = new Thread(r, "library-scan-coordinator");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    private static ScheduledExecutorService newHeartbeatExecutor() {
+        return Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r, "library-scan-heartbeat");
             thread.setDaemon(true);
             return thread;
         });

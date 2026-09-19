@@ -3,6 +3,7 @@ package com.homektv.library;
 import com.homektv.config.AppProperties;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
@@ -17,6 +18,7 @@ public class LibraryStatusService {
     private final SongRepository songs;
     private final SongFileRepository files;
     private final LibraryScanStateStore stateStore;
+    private CatalogRevisionService catalogRevisionService;
 
     public LibraryStatusService(AppProperties props, SongRepository songs,
                                 SongFileRepository files, LibraryScanStateStore stateStore) {
@@ -26,21 +28,36 @@ public class LibraryStatusService {
         this.stateStore = stateStore;
     }
 
+    @Autowired(required = false)
+    void setCatalogRevisionService(CatalogRevisionService catalogRevisionService) {
+        this.catalogRevisionService = catalogRevisionService;
+    }
+
     public PublicStatus status() {
         LibraryScanStateStore.Snapshot snapshot = stateStore.find().orElse(null);
         String role = LibraryModePolicy.isExternalReadOnly(props)
                 ? LibraryModePolicy.EXTERNAL_FILE_ROLE : "LIBRARY";
+        long totalSongs = songs.count();
         long indexedSongs = songs.countIndexedSongs("ok", role);
         long readySongs = songs.countReadySongs("ok", role);
         long pendingFiles = files.countByFileRoleAndProbePendingTrue(role);
         long statusRevision = snapshot == null ? 0 : snapshot.generation();
-        long catalogRevision = snapshot != null
-                && snapshot.state() == LibraryScanStateStore.State.COMPLETED
-                ? snapshot.generation() : 0;
+        long catalogRevision = catalogRevisionService == null
+                ? snapshot != null && snapshot.state() == LibraryScanStateStore.State.COMPLETED
+                    ? snapshot.generation() : 0
+                : catalogRevisionService.current();
+
+        String currentRootState = rootState();
+        String rootIdentityState = identityState(snapshot);
+        boolean countsKnown = "READABLE".equals(currentRootState)
+                && "MATCH".equals(rootIdentityState);
+
         return new PublicStatus(
-                songs.count(),
+                totalSongs,
                 props == null || props.getLibraryMode() == null ? "UNKNOWN" : props.getLibraryMode().name(),
-                rootState(),
+                currentRootState,
+                rootIdentityState,
+                countsKnown,
                 snapshot == null ? LibraryScanStateStore.State.IDLE.name() : snapshot.state().name(),
                 snapshot == null || snapshot.phase() == null ? "IDLE" : snapshot.phase(),
                 snapshot == null ? 0 : snapshot.discoveredFiles(),
@@ -52,6 +69,14 @@ public class LibraryStatusService {
                 statusRevision,
                 snapshot == null ? null : snapshot.errorCode(),
                 snapshot == null ? null : snapshot.updatedAt());
+    }
+
+    private String identityState(LibraryScanStateStore.Snapshot snapshot) {
+        if (snapshot == null || props == null) return "UNKNOWN";
+        Path root = LibraryModePolicy.activeLibraryRoot(props);
+        return LibraryIdentity.compare(
+                snapshot.rootIdentity(),
+                LibraryIdentity.resolve(root)).name();
     }
 
     private String rootState() {
@@ -71,6 +96,8 @@ public class LibraryStatusService {
             long totalSongs,
             String libraryMode,
             String rootState,
+            String rootIdentityState,
+            boolean countsKnown,
             String scanState,
             String phase,
             long discoveredFiles,
@@ -82,5 +109,15 @@ public class LibraryStatusService {
             long statusRevision,
             String errorCode,
             OffsetDateTime updatedAt) {
+        public PublicStatus(long totalSongs, String libraryMode, String rootState,
+                            String scanState, String phase, long discoveredFiles,
+                            long indexedFiles, long indexedSongs, long readySongs,
+                            long probePendingFiles, long catalogRevision,
+                            long statusRevision, String errorCode,
+                            OffsetDateTime updatedAt) {
+            this(totalSongs, libraryMode, rootState, "UNKNOWN", true, scanState, phase,
+                    discoveredFiles, indexedFiles, indexedSongs, readySongs,
+                    probePendingFiles, catalogRevision, statusRevision, errorCode, updatedAt);
+        }
     }
 }

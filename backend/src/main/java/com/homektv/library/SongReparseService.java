@@ -18,6 +18,12 @@ public class SongReparseService {
     private final SongRepository songRepository;
     private final SongFileRepository fileRepository;
     private final ArtistCreditService artistCreditService;
+    private CatalogRevisionService catalogRevisionService;
+
+    @Autowired(required = false)
+    void setCatalogRevisionService(CatalogRevisionService catalogRevisionService) {
+        this.catalogRevisionService = catalogRevisionService;
+    }
 
     public SongReparseService(SongRepository songRepository, SongFileRepository fileRepository) {
         this(songRepository, fileRepository, null);
@@ -104,6 +110,9 @@ public class SongReparseService {
                 }
             }
             updated++;
+        }
+        if (updated > 0 && catalogRevisionService != null) {
+            catalogRevisionService.bumpIfChanged(true);
         }
         return new ApplyResult(updated, skipped, previews);
     }

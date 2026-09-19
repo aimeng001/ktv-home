@@ -30,6 +30,12 @@ public class MusicMetadataApplyService {
     private final MusicSourceConfigService configService;
     private final ObjectMapper mapper;
     private final ArtistCreditService artistCreditService;
+    private com.homektv.library.CatalogRevisionService catalogRevisionService;
+
+    @Autowired(required = false)
+    void setCatalogRevisionService(com.homektv.library.CatalogRevisionService catalogRevisionService) {
+        this.catalogRevisionService = catalogRevisionService;
+    }
 
     public MusicMetadataApplyService(SongRepository songRepository, MusicSourceSearchService searchService,
                                      ExternalTrackStorage storage, ExternalCoverService coverService,
@@ -102,6 +108,7 @@ public class MusicMetadataApplyService {
         }
         storage.saveMatch(songId, track, 1);
         storage.markApplied(songId, provider, externalId);
+        if (catalogRevisionService != null) catalogRevisionService.bumpIfChanged(true);
         return new ApplyResult(song.getId(), song.getTitle(), song.getArtist(), song.getAlbum(), song.getReleaseDate(),
                 song.getAliases(), song.getCoverPath(), applied, skippedLocked, track);
     }
@@ -142,6 +149,9 @@ public class MusicMetadataApplyService {
         Song saved = songRepository.save(song);
         if (artistCreditService != null && applied.contains("artist")) {
             artistCreditService.replace(saved.getId(), saved.getArtist());
+        }
+        if (!applied.isEmpty() && catalogRevisionService != null) {
+            catalogRevisionService.bumpIfChanged(true);
         }
         return new ApplyResult(song.getId(), song.getTitle(), song.getArtist(), song.getAlbum(), song.getReleaseDate(),
                 song.getAliases(), song.getCoverPath(), applied, List.of(), null);

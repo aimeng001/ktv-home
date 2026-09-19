@@ -40,6 +40,12 @@ object CatalogStatusPolicy {
         if (status.rootState == "NOT_FOUND" || status.rootState == "NOT_READABLE") {
             return CatalogUiStatus(CatalogLoadState.ROOT_UNAVAILABLE, revision)
         }
+        val identityBlocked = status.rootIdentityState == "MISMATCH" ||
+            (status.rootIdentityState == "UNKNOWN" && !status.countsKnown &&
+                status.scanState == "COMPLETED")
+        if (identityBlocked) {
+            return CatalogUiStatus(CatalogLoadState.ROOT_UNAVAILABLE, revision, "ROOT_IDENTITY_UNVERIFIED")
+        }
         if (status.scanState == "RUNNING" || status.scanState == "IDLE" && status.phase != "COMPLETED") {
             return CatalogUiStatus(CatalogLoadState.SCANNING, revision)
         }

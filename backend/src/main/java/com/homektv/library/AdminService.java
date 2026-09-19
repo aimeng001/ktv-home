@@ -55,6 +55,12 @@ public class AdminService {
     private final ArtistCreditService artistCreditService;
     private final SongProjectionService songProjectionService;
     private ManagedLibraryDeleteService managedLibraryDeleteService;
+    private CatalogRevisionService catalogRevisionService;
+
+    @Autowired(required = false)
+    void setCatalogRevisionService(CatalogRevisionService catalogRevisionService) {
+        this.catalogRevisionService = catalogRevisionService;
+    }
 
     public AdminService(SongRepository songRepo, SongFileRepository fileRepo,
                         PlayHistoryRepository historyRepo, WsBroadcaster broadcaster,
@@ -222,6 +228,9 @@ public class AdminService {
         if (artistEdited && artistCreditService != null) {
             artistCreditService.replace(saved.getId(), saved.getArtist());
         }
+        if (catalogRevisionService != null) {
+            catalogRevisionService.bumpIfChanged(true);
+        }
         return saved;
     }
 
@@ -266,6 +275,7 @@ public class AdminService {
         file.setVocalConfidence("HIGH");
         SongFile saved = fileRepo.save(file);
         songProjectionService.recompute(saved.getSongId());
+        bumpCatalogRevision();
     }
 
     /**
@@ -321,6 +331,7 @@ public class AdminService {
         }
         SongFile saved = fileRepo.save(file);
         songProjectionService.recompute(saved.getSongId());
+        bumpCatalogRevision();
         return AudioLayoutDto.from(saved);
     }
 
@@ -336,7 +347,12 @@ public class AdminService {
         file.swapOriginalAndAccompaniment();
         SongFile saved = fileRepo.save(file);
         songProjectionService.recompute(saved.getSongId());
+        bumpCatalogRevision();
         return AudioLayoutDto.from(saved);
+    }
+
+    private void bumpCatalogRevision() {
+        if (catalogRevisionService != null) catalogRevisionService.bumpIfChanged(true);
     }
 
     private SongFile findFile(Long fileId) {

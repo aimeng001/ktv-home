@@ -26,11 +26,19 @@ public class LibraryScanStateStore {
     public boolean needsBootstrap(AppProperties props) {
         Snapshot current = find().orElse(null);
         if (current == null) return true;
+
         String root = normalizedRoot(props);
         String mode = props.getLibraryMode().name();
-        // A changed root is deliberately not auto-merged into the active
-        // catalogue. The operator must review the deployment identity first.
-        if (!root.equals(current.configuredRoot()) || !mode.equals(current.libraryMode())) return false;
+        if (!root.equals(current.configuredRoot()) || !mode.equals(current.libraryMode())) {
+            return false;
+        }
+
+        LibraryIdentity.IdentityState identityState = LibraryIdentity.compare(
+                current.rootIdentity(), LibraryIdentity.resolve(Path.of(root)));
+        if (identityState == LibraryIdentity.IdentityState.MISMATCH
+                || identityState == LibraryIdentity.IdentityState.UNKNOWN) {
+            return false;
+        }
         return current.metadataPolicyVersion() != METADATA_POLICY_VERSION
                 || current.state() != State.COMPLETED;
     }
@@ -38,17 +46,23 @@ public class LibraryScanStateStore {
     public Optional<Claim> tryClaim(AppProperties props, String trigger) {
         String root = normalizedRoot(props);
         String mode = props.getLibraryMode().name();
+        String rootIdentity = LibraryIdentity.resolve(Path.of(root)).persistedValue();
         UUID owner = UUID.randomUUID();
         UUID scanId = UUID.randomUUID();
+
         jdbc.update("""
-                INSERT INTO library_scan_state(library_key, configured_root, library_mode,
+                INSERT INTO library_scan_state(library_key, configured_root, root_identity, library_mode,
                     metadata_policy_version, state, phase, updated_at)
-                VALUES (?, ?, ?, ?, 'IDLE', 'IDLE', CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, 'IDLE', 'IDLE', CURRENT_TIMESTAMP)
                 ON CONFLICT (library_key) DO NOTHING
-                """, ACTIVE_LIBRARY_KEY, root, mode, METADATA_POLICY_VERSION);
+                """, ACTIVE_LIBRARY_KEY, root, rootIdentity, mode, METADATA_POLICY_VERSION);
+
         return jdbc.query("""
                     UPDATE library_scan_state
                     SET owner_id = ?, scan_id = ?, generation = generation + 1,
+                        root_identity = CASE
+                            WHEN root_identity IS NULL OR root_identity = configured_root
+                            THEN ? ELSE root_identity END,
                         state = 'RUNNING', phase = ?, heartbeat_at = CURRENT_TIMESTAMP,
                         started_at = CURRENT_TIMESTAMP, finished_at = NULL,
                         discovered_files = 0, indexed_files = 0,
@@ -57,26 +71,29 @@ public class LibraryScanStateStore {
                         updated_at = CURRENT_TIMESTAMP
                     WHERE library_key = ? AND configured_root = ? AND library_mode = ?
                       AND metadata_policy_version = ?
+                      AND (root_identity IS NULL OR root_identity = ? OR root_identity = configured_root)
                       AND (state <> 'RUNNING' OR heartbeat_at IS NULL
                            OR heartbeat_at < CURRENT_TIMESTAMP - (? * INTERVAL '1 second'))
                     RETURNING scan_id, owner_id, generation
                     """, ps -> {
                         ps.setObject(1, owner);
                         ps.setObject(2, scanId);
-                        ps.setString(3, trigger);
-                        ps.setString(4, ACTIVE_LIBRARY_KEY);
-                        ps.setString(5, root);
-                        ps.setString(6, mode);
-                        ps.setInt(7, METADATA_POLICY_VERSION);
-                        ps.setInt(8, LEASE_SECONDS);
+                        ps.setString(3, rootIdentity);
+                        ps.setString(4, trigger);
+                        ps.setString(5, ACTIVE_LIBRARY_KEY);
+                        ps.setString(6, root);
+                        ps.setString(7, mode);
+                        ps.setInt(8, METADATA_POLICY_VERSION);
+                        ps.setString(9, rootIdentity);
+                        ps.setInt(10, LEASE_SECONDS);
                     }, (rs, row) -> new Claim(
                             rs.getObject("scan_id", UUID.class),
                             rs.getObject("owner_id", UUID.class),
-                    rs.getLong("generation"))).stream().findFirst();
+                            rs.getLong("generation"))).stream().findFirst();
     }
 
-    public void heartbeat(Claim claim, ScanSnapshot progress) {
-        jdbc.update("""
+    public boolean heartbeat(Claim claim, ScanSnapshot progress) {
+        return jdbc.update("""
                 UPDATE library_scan_state
                 SET phase = ?, discovered_files = ?, indexed_files = ?,
                     probe_completed_files = ?, probe_pending_files = ?,
@@ -84,49 +101,87 @@ public class LibraryScanStateStore {
                 WHERE library_key = ? AND owner_id = ? AND scan_id = ? AND generation = ?
                 """, progress.phase(), progress.discoveredFiles(), progress.indexedFiles(),
                 progress.probeCompletedFiles(), progress.probePendingFiles(),
-                ACTIVE_LIBRARY_KEY, claim.ownerId(), claim.scanId(), claim.generation());
+                ACTIVE_LIBRARY_KEY, claim.ownerId(), claim.scanId(), claim.generation()) == 1;
     }
 
-    public void markCompleted(Claim claim, LibraryScanService.ScanResult result,
-                              LibraryScanService.ScanProgress progress) {
+    public boolean markCompleted(Claim claim, LibraryScanService.ScanResult result,
+                                 LibraryScanService.ScanProgress progress) {
         ScanSnapshot snapshot = ScanSnapshot.from(result, progress);
-        jdbc.update("""
+        String state = progress == null || progress.state() == LibraryScanService.ScanState.COMPLETED
+                ? State.COMPLETED.name() : progress.state().name();
+        String errorCode = State.COMPLETED.name().equals(state)
+                ? null : safe(progress == null ? null : progress.errorCode(), "SCAN_INCOMPLETE");
+        String errorMessage = State.COMPLETED.name().equals(state)
+                ? null : safe(progress == null ? null : progress.errorMessage(), "扫描未完成");
+        return jdbc.update("""
                 UPDATE library_scan_state
                 SET state = ?, phase = ?, discovered_files = ?, indexed_files = ?,
                     probe_completed_files = ?, probe_pending_files = ?,
-                    finished_at = CURRENT_TIMESTAMP, last_successful_scan_at = CURRENT_TIMESTAMP,
-                    heartbeat_at = NULL, error_code = NULL, error_message = NULL,
+                    finished_at = CURRENT_TIMESTAMP,
+                    last_successful_scan_at = CASE
+                        WHEN ? = 'COMPLETED' THEN CURRENT_TIMESTAMP
+                        ELSE last_successful_scan_at END,
+                    heartbeat_at = NULL, error_code = ?, error_message = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE library_key = ? AND owner_id = ? AND scan_id = ? AND generation = ?
-                """, progress == null || progress.state() == LibraryScanService.ScanState.COMPLETED
-                        ? State.COMPLETED.name() : progress.state().name(),
-                snapshot.phase(), snapshot.discoveredFiles(), snapshot.indexedFiles(),
-                snapshot.probeCompletedFiles(), snapshot.probePendingFiles(),
-                ACTIVE_LIBRARY_KEY, claim.ownerId(), claim.scanId(), claim.generation());
+                """, state, snapshot.phase(), snapshot.discoveredFiles(), snapshot.indexedFiles(),
+                snapshot.probeCompletedFiles(), snapshot.probePendingFiles(), state,
+                errorCode, errorMessage,
+                ACTIVE_LIBRARY_KEY, claim.ownerId(), claim.scanId(), claim.generation()) == 1;
     }
 
-    public void markFailed(Claim claim, String code, String message) {
-        jdbc.update("""
+    public boolean markFailed(Claim claim, String code, String message) {
+        return jdbc.update("""
                 UPDATE library_scan_state
                 SET state = 'FAILED', phase = 'FAILED', finished_at = CURRENT_TIMESTAMP,
                     heartbeat_at = NULL, error_code = ?, error_message = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE library_key = ? AND owner_id = ? AND scan_id = ? AND generation = ?
                 """, safe(code, "SCAN_RUNTIME_ERROR"), safe(message, "扫描失败"),
-                ACTIVE_LIBRARY_KEY, claim.ownerId(), claim.scanId(), claim.generation());
+                ACTIVE_LIBRARY_KEY, claim.ownerId(), claim.scanId(), claim.generation()) == 1;
+    }
+
+    /**
+     * Explicitly accepts a new root identity after an administrator has reviewed
+     * the deployment. It fences any stale worker by incrementing generation.
+     */
+    public boolean rebind(AppProperties props) {
+        String root = normalizedRoot(props);
+        String mode = props.getLibraryMode().name();
+        String identity = LibraryIdentity.resolve(Path.of(root)).persistedValue();
+        jdbc.update("""
+                INSERT INTO library_scan_state(library_key, configured_root, root_identity, library_mode,
+                    metadata_policy_version, state, phase, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'IDLE', 'IDLE', CURRENT_TIMESTAMP)
+                ON CONFLICT (library_key) DO NOTHING
+                """, ACTIVE_LIBRARY_KEY, root, identity, mode, METADATA_POLICY_VERSION);
+        return jdbc.update("""
+                UPDATE library_scan_state
+                   SET configured_root = ?, root_identity = ?, library_mode = ?,
+                       metadata_policy_version = ?, owner_id = NULL, scan_id = NULL,
+                       generation = generation + 1, state = 'IDLE', phase = 'IDLE',
+                       heartbeat_at = NULL, started_at = NULL, finished_at = NULL,
+                       error_code = NULL, error_message = NULL,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE library_key = ?
+                   AND (state <> 'RUNNING' OR heartbeat_at IS NULL
+                        OR heartbeat_at < CURRENT_TIMESTAMP - (? * INTERVAL '1 second'))
+                """, root, identity, mode, METADATA_POLICY_VERSION,
+                ACTIVE_LIBRARY_KEY, LEASE_SECONDS) == 1;
     }
 
     public Optional<Snapshot> find() {
         try {
             return Optional.ofNullable(jdbc.queryForObject("""
-                    SELECT library_key, configured_root, library_mode, metadata_policy_version,
-                           state, phase, scan_id, owner_id, generation,
+                    SELECT library_key, configured_root, root_identity, library_mode,
+                           metadata_policy_version, state, phase, scan_id, owner_id, generation,
                            discovered_files, indexed_files, probe_completed_files,
                            probe_pending_files, error_code, error_message, updated_at
                     FROM library_scan_state WHERE library_key = ?
                     """, (rs, row) -> new Snapshot(
                     rs.getString("library_key"), rs.getString("configured_root"),
-                    rs.getString("library_mode"), rs.getInt("metadata_policy_version"),
+                    rs.getString("root_identity"), rs.getString("library_mode"),
+                    rs.getInt("metadata_policy_version"),
                     State.valueOf(rs.getString("state")), rs.getString("phase"),
                     rs.getObject("scan_id", UUID.class), rs.getObject("owner_id", UUID.class),
                     rs.getLong("generation"), rs.getLong("discovered_files"),
@@ -151,19 +206,30 @@ public class LibraryScanStateStore {
 
     public record Claim(UUID scanId, UUID ownerId, long generation) {}
 
-    public record Snapshot(String libraryKey, String configuredRoot, String libraryMode,
-                           int metadataPolicyVersion, State state, String phase,
-                           UUID scanId, UUID ownerId, long generation,
+    public record Snapshot(String libraryKey, String configuredRoot, String rootIdentity,
+                           String libraryMode, int metadataPolicyVersion, State state,
+                           String phase, UUID scanId, UUID ownerId, long generation,
                            long discoveredFiles, long indexedFiles, long probeCompletedFiles,
                            long probePendingFiles, String errorCode, String errorMessage,
-                           OffsetDateTime updatedAt) {}
+                           OffsetDateTime updatedAt) {
+        public Snapshot(String libraryKey, String configuredRoot, String libraryMode,
+                        int metadataPolicyVersion, State state, String phase,
+                        UUID scanId, UUID ownerId, long generation,
+                        long discoveredFiles, long indexedFiles, long probeCompletedFiles,
+                        long probePendingFiles, String errorCode, String errorMessage,
+                        OffsetDateTime updatedAt) {
+            this(libraryKey, configuredRoot, null, libraryMode, metadataPolicyVersion, state, phase,
+                    scanId, ownerId, generation, discoveredFiles, indexedFiles,
+                    probeCompletedFiles, probePendingFiles, errorCode, errorMessage, updatedAt);
+        }
+    }
 
     public enum State { IDLE, RUNNING, COMPLETED, PARTIAL, FAILED, INTERRUPTED }
 
     public record ScanSnapshot(String phase, long discoveredFiles, long indexedFiles,
                                long probeCompletedFiles, long probePendingFiles) {
         static ScanSnapshot from(LibraryScanService.ScanResult result,
-                                  LibraryScanService.ScanProgress progress) {
+                                 LibraryScanService.ScanProgress progress) {
             return new ScanSnapshot(progress == null ? "COMPLETED" : progress.phase(),
                     result == null ? 0 : result.scanned(),
                     result == null ? 0 : result.fastIndexed(),

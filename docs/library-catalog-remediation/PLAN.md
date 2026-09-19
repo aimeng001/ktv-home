@@ -1,12 +1,12 @@
 # PLAN：四段式曲库自动建库与安卓点歌闭环
 
 ## 当前目标与约束
-- 状态：审核和方案已交付；T1–T5 已实施并提交，T6 已完成 1000 文件外部扫描烟测和 200k PostgreSQL 搜索量测。源码切片当前为 fd3a874。
+- 状态：审核和方案已交付；T1–T5 已实施，当前租约 fencing、根身份、catalog revision 和 Android 根页面刷新增量已落在未提交工作树；T6 已完成 1000 文件外部扫描烟测和 200k PostgreSQL 搜索量测。
 - 从两个用户样例扩展到 20 万曲库：自动索引、歌手/拼音/语种/标签查询、就绪后点唱。
 - 保留 Spring Boot/PostgreSQL、Android 统一 Controller、H5、Windows 及现有音轨语义。
 - 外部曲库只读，不 rename/delete/move/overwrite，不触碰真实用户库作测试；所有扫描样本用临时目录，数据库用隔离 PostgreSQL。
 - 本目录是当前任务快照；根目录 PLAN/TASK_STATE 仍记录另一轮安卓整改，不覆盖其结果。
-- 新增 Java/Kotlin 类型和 V45 迁移已落地；真实部署数据库仍须按发布流程执行 Flyway。
+- 新增 Java/Kotlin 类型和 V45/V46 迁移已落地；V46 回填旧路径身份并创建 catalog revision，真实部署数据库仍须按发布流程执行 Flyway。
 - 每步执行 RED → GREEN → REFACTOR → REGRESSION → INTEGRATION；未得到预期失败原因前不写实现。已经正确的功能只加特征测试，不制造假失败。
 - 每个步骤独立提交评审；本轮不 push、不部署、不触碰真实 NAS/部署数据库；测试与状态文档按切片提交。
 
@@ -46,7 +46,7 @@
 1. 先持久化最小状态：logical library identity、规范化 root、mode、policy version、scan id、state/phase、heartbeat、last successful scan、错误码；进度定期批量写入，不每首歌更新一次任务行。
 2. ApplicationReadyEvent 仅提交任务，不同步等 20 万文件或 FFprobe；仅外部只读模式自动索引。识别“从未成功扫描”“上次 PARTIAL/FAILED/中断”“策略版本变化”。
 3. 不用 songs.count()==0 作唯一触发条件：MANAGED 数据、旧根目录、部分扫描均可能非零；成功扫描空库也要保存成功标记，防启动死循环。
-4. 启动、手动、监听统一互斥入口；保留 scanRunning 进程互斥，并给持久化任务原子 owner/scanId 认领。故障接管用租约 + heartbeat + fencing；旧 owner 不得把新任务写成完成。
+4. 启动、手动、监听统一互斥入口；保留 scanRunning 进程互斥，并给持久化任务原子 owner/scanId 认领。故障接管用租约 + heartbeat + fencing；旧 owner 不得把新任务写成完成。当前工作树已将心跳与批事务 ownership check 接入协调入口，失效任务不发布成功回调。
 5. 复用 scanAllInternal 两阶段、每批 500 和探测并发 2。先保持现有枚举后探测顺序；流水化并发另作性能决策。
 6. 恢复采用安全重枚举 + 已有 size/mtime/identity/sidecar 快照去重 + pending 队列；不用无序目录的 lastRelativePath 直接跳过前半库。
 7. 正常成功启动是否重枚举必须明确：本阶段成功同版本无需重扫；Watch 关闭时停机新增文件仍需手动扫描，若要求每次启动发现变化，增加独立轻量 reconcile-on-start 策略及测试，不能声称已经覆盖。
@@ -64,7 +64,7 @@
 3. rootState=READABLE/NOT_FOUND/NOT_READABLE/UNKNOWN；能访问目录不等于挂载已验证。客户端无法请求状态时独立显示 OFFLINE，服务端不靠 serverReady=false 描述断网。
 4. 新增列表 playable/unavailableReason，按 SongAvailabilityPolicy.playableSongIds 批量计算；不能按 duration>0/status=ok/mediaType!=pending 自行另造规则。
 5. 页面一批 50 首只增一条 readiness 查询；遍历单首 isPlayable 会 N+1，禁止采用。
-6. catalogRevision 只在已提交的目录数据变化时更新；statusRevision 反映任务状态变化。扫描进度不可每首触发目录整页刷新；摘要计数集中计算和缓存，不能每个客户端高频多次 COUNT 全表。
+6. catalogRevision 只在已提交的目录数据变化时更新；statusRevision 反映任务状态变化。扫描末尾批量递增 revision，人工元数据/音频语义写入按事务递增；扫描进度不可每首触发目录整页刷新。摘要计数集中计算和缓存，不能每个客户端高频多次 COUNT 全表。
 7. 公共 DTO 不泄漏 root 绝对路径、原始异常、SQL/凭据；管理员仍可查详细诊断。JSON 只增字段，旧 totalSongs 和旧端调用继续工作。
 - RED：旧响应兼容；状态重启恢复；多文件一歌只计一次 ready；pending 可见但不可点；批量 query 次数不随页大小增加；原始异常不进公共响应。
 - REGRESSION：LibraryStatusControllerTest、SongAvailabilityPolicyTest、SongDtoArtistAvatarTest、CategoryBrowseControllerTest、SongController 相关测试及 H5/Windows JSON 反序列化。
@@ -122,7 +122,7 @@
 ## 完成门禁与执行顺序
 - 顺序：T0 → T1 → T2 → T3 → T4 → T5 → T6；当前已完成代码切片和初始量测，现场网络/设备/真实 NAS 门禁仍待执行。
 - 每批记录 RED 失败原因、GREEN 结果、回归命令/计数、未验项；出现范围扩大或根因被推翻立即更新本快照。
-- G1：已有与新增单元测试通过；G2：1000 文件 Testcontainers 外部扫描通过，四首标准样本和存量 PostgreSQL 纵向集成仍待执行；G3：Android 单元测试和 debug 构建通过，UI 仪器测试待设备。
+- G1：后端全量 726 tests 通过、0 failures、0 errors、4 skipped；Flyway 空库与 V24 升级均验证到 V46。G2：1000 文件 Testcontainers 外部扫描通过，四首标准样本和存量 PostgreSQL 纵向集成仍待执行；G3：Android testDebugUnitTest 与 assembleDebug 通过，UI 仪器测试待设备。
 - G4：真实 20 万 NAS 上只读扫描与性能通过；G5：真实 Android 选择四首并播放，队列/音轨/进度/Range 正确；H5/Windows 未回归。
 - G4/G5 不能由 mock、空文件、单元测试、截图或 APK 构建替代。
 - 交付文档完成不等于整改已实施。当前状态及测试证据以 TASK_STATE.md 为准。

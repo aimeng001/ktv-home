@@ -53,4 +53,34 @@ class CatalogStatusPolicyTest {
         assertEquals(7L, status.revision)
         assertEquals("HTTP_503", status.code)
     }
+
+    @Test
+    fun completedCatalogWithUnknownOrMismatchedRootIdentityIsUnavailable() {
+        val mismatch = CatalogStatusPolicy.from(
+            LibraryStatus(
+                rootState = "READABLE",
+                rootIdentityState = "MISMATCH",
+                countsKnown = false,
+                scanState = "COMPLETED",
+                catalogRevision = 8,
+            ),
+            hasItems = true,
+            hasFilter = false,
+        )
+        val unknown = CatalogStatusPolicy.from(
+            LibraryStatus(
+                rootState = "READABLE",
+                rootIdentityState = "UNKNOWN",
+                countsKnown = false,
+                scanState = "COMPLETED",
+                catalogRevision = 8,
+            ),
+            hasItems = true,
+            hasFilter = false,
+        )
+
+        assertEquals(CatalogLoadState.ROOT_UNAVAILABLE, mismatch.state)
+        assertEquals(CatalogLoadState.ROOT_UNAVAILABLE, unknown.state)
+    }
+
 }

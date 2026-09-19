@@ -61,6 +61,7 @@ class ControllerViewModel(
     private val roomHostRequests = LatestRequestScope(viewModelScope)
     private val coverRequests = LatestRequestScope(viewModelScope)
     private var catalogQuery = CatalogQuery(CatalogKind.NONE)
+    private var catalogRoot = CatalogRoot.NONE
     private var registrationJob: Job? = null
     private var catalogStatusJob: Job? = null
     private var catalogPollingJob: Job? = null
@@ -143,8 +144,10 @@ class ControllerViewModel(
                 if (!CatalogStatusPolicy.acceptsRevision(current.catalogStatusRevision, next.revision)) return
                 val becameReady = current.catalogStatus.state == CatalogLoadState.SCANNING &&
                     next.state == CatalogLoadState.READY
+                val revisionChanged = current.catalogStatusRevision > 0L &&
+                    next.revision > current.catalogStatusRevision
                 _state.update { it.copy(catalogStatus = next, catalogStatusRevision = next.revision) }
-                if (becameReady) reloadCurrentCatalog()
+                if (becameReady || revisionChanged) reloadCurrentCatalog()
             }
             is KtvApiResult.Failure -> _state.update {
                 it.copy(catalogStatus = CatalogStatusPolicy.fromError(result.error, it.catalogStatusRevision))
@@ -158,12 +161,18 @@ class ControllerViewModel(
             state.languages.isNotEmpty() || state.tags.isNotEmpty()
 
     private fun reloadCurrentCatalog() {
-        when (catalogQuery.kind) {
-            CatalogKind.ARTISTS -> loadArtists(catalogQuery.value, catalogQuery.secondary, 0)
-            CatalogKind.ARTIST_SONGS -> loadArtistSongs(catalogQuery.value, 0)
-            CatalogKind.LANGUAGE_SONGS -> loadLanguageSongs(catalogQuery.value, 0)
-            CatalogKind.TAG_SONGS -> loadTagSongs(catalogQuery.value, 0)
-            CatalogKind.NONE -> Unit
+        when (catalogRoot) {
+            CatalogRoot.RANKING -> reloadRankingCatalog()
+            CatalogRoot.NEW_SONGS -> reloadNewSongsCatalog()
+            CatalogRoot.LANGUAGES -> reloadLanguagesCatalog()
+            CatalogRoot.TAGS -> reloadTagsCatalog()
+            CatalogRoot.NONE -> when (catalogQuery.kind) {
+                CatalogKind.ARTISTS -> loadArtists(catalogQuery.value, catalogQuery.secondary, 0)
+                CatalogKind.ARTIST_SONGS -> loadArtistSongs(catalogQuery.value, 0)
+                CatalogKind.LANGUAGE_SONGS -> loadLanguageSongs(catalogQuery.value, 0)
+                CatalogKind.TAG_SONGS -> loadTagSongs(catalogQuery.value, 0)
+                CatalogKind.NONE -> Unit
+            }
         }
     }
 
@@ -263,6 +272,7 @@ class ControllerViewModel(
 
     override fun loadRanking() {
         setCatalogVisible(true)
+        catalogRoot = CatalogRoot.RANKING
         catalogQuery = CatalogQuery(CatalogKind.NONE)
         resetCatalogView()
         catalogRequests.launch {
@@ -280,6 +290,7 @@ class ControllerViewModel(
 
     override fun loadNewSongs() {
         setCatalogVisible(true)
+        catalogRoot = CatalogRoot.NEW_SONGS
         catalogQuery = CatalogQuery(CatalogKind.NONE)
         resetCatalogView()
         catalogRequests.launch {
@@ -297,6 +308,7 @@ class ControllerViewModel(
 
     override fun loadArtists(gender: String, initial: String, restorePage: Int) {
         setCatalogVisible(true)
+        catalogRoot = CatalogRoot.NONE
         val safeGender = gender.trim().take(MAX_FILTER_LENGTH)
         val safeInitial = initial.trim().take(MAX_FILTER_LENGTH)
         catalogQuery = CatalogQuery(CatalogKind.ARTISTS, safeGender, safeInitial)
@@ -327,6 +339,7 @@ class ControllerViewModel(
 
     override fun loadArtistSongs(artistKey: String, restorePage: Int) {
         setCatalogVisible(true)
+        catalogRoot = CatalogRoot.NONE
         val safeArtistKey = artistKey.trim().take(MAX_FILTER_LENGTH)
         catalogQuery = CatalogQuery(CatalogKind.ARTIST_SONGS, safeArtistKey)
         _state.update {
@@ -350,6 +363,7 @@ class ControllerViewModel(
 
     override fun loadLanguageSongs(language: String, restorePage: Int) {
         setCatalogVisible(true)
+        catalogRoot = CatalogRoot.NONE
         val safeLanguage = language.trim().take(MAX_FILTER_LENGTH)
         catalogQuery = CatalogQuery(CatalogKind.LANGUAGE_SONGS, safeLanguage)
         _state.update {
@@ -372,6 +386,7 @@ class ControllerViewModel(
 
     override fun loadTagSongs(tag: String, restorePage: Int) {
         setCatalogVisible(true)
+        catalogRoot = CatalogRoot.NONE
         val safeTag = tag.trim().take(MAX_FILTER_LENGTH)
         catalogQuery = CatalogQuery(CatalogKind.TAG_SONGS, safeTag)
         _state.update {
@@ -428,6 +443,10 @@ class ControllerViewModel(
             it.copy(
                 artists = emptyList(),
                 catalogSongs = emptyList(),
+                ranking = emptyList(),
+                newSongs = emptyList(),
+                languages = emptyList(),
+                tags = emptyList(),
                 catalogPage = 0,
                 catalogHasMore = false,
                 catalogLoadingMore = false,
@@ -436,6 +455,74 @@ class ControllerViewModel(
                 error = null,
                 message = null,
             )
+        }
+    }
+
+    private fun reloadRankingCatalog() {
+        resetCatalogView()
+        catalogRequests.launch {
+            when (val result = songApi.ranking()) {
+                is KtvApiResult.Success -> _state.update {
+                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
+                        ranking = result.value.take(MAX_CATALOG_ITEMS),
+                        catalogDetail = false,
+                    )
+                }
+                is KtvApiResult.Failure -> _state.update {
+                    ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error)
+                }
+            }
+        }
+    }
+
+    private fun reloadNewSongsCatalog() {
+        resetCatalogView()
+        catalogRequests.launch {
+            when (val result = songApi.newSongs()) {
+                is KtvApiResult.Success -> _state.update {
+                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
+                        newSongs = result.value.take(MAX_CATALOG_ITEMS),
+                        catalogDetail = false,
+                    )
+                }
+                is KtvApiResult.Failure -> _state.update {
+                    ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error)
+                }
+            }
+        }
+    }
+
+    private fun reloadLanguagesCatalog() {
+        resetCatalogView()
+        catalogRequests.launch {
+            when (val result = songApi.languages()) {
+                is KtvApiResult.Success -> _state.update {
+                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
+                        languages = result.value.take(MAX_CATALOG_ITEMS),
+                        catalogDetail = false,
+                    )
+                }
+                is KtvApiResult.Failure -> _state.update {
+                    ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error)
+                }
+            }
+        }
+    }
+
+    private fun reloadTagsCatalog() {
+        resetCatalogView()
+        catalogRequests.launch {
+            when (val result = songApi.tags()) {
+                is KtvApiResult.Success -> _state.update {
+                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
+                        tags = result.value.take(MAX_CATALOG_ITEMS),
+                        catalogDetail = false,
+                    )
+                }
+                is KtvApiResult.Failure -> _state.update {
+                    ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error)
+                }
+            }
         }
     }
 
@@ -459,6 +546,7 @@ class ControllerViewModel(
 
     override fun loadLanguages() {
         setCatalogVisible(true)
+        catalogRoot = CatalogRoot.LANGUAGES
         catalogQuery = CatalogQuery(CatalogKind.NONE)
         resetCatalogView()
         catalogRequests.launch {
@@ -479,6 +567,7 @@ class ControllerViewModel(
 
     override fun loadTags() {
         setCatalogVisible(true)
+        catalogRoot = CatalogRoot.TAGS
         catalogQuery = CatalogQuery(CatalogKind.NONE)
         resetCatalogView()
         catalogRequests.launch {
@@ -1032,6 +1121,14 @@ class ControllerViewModelFactory(
         require(modelClass.isAssignableFrom(ControllerViewModel::class.java))
         return ControllerViewModel(application, realtimeEnabled) as T
     }
+}
+
+private enum class CatalogRoot {
+    NONE,
+    RANKING,
+    NEW_SONGS,
+    LANGUAGES,
+    TAGS,
 }
 
 private enum class CatalogKind {

@@ -28,6 +28,12 @@ public class AiClassificationApplier {
     private final SongRepository songRepository;
     private final AiConfigService configService;
     private final ArtistCreditService artistCreditService;
+    private com.homektv.library.CatalogRevisionService catalogRevisionService;
+
+    @Autowired(required = false)
+    void setCatalogRevisionService(com.homektv.library.CatalogRevisionService catalogRevisionService) {
+        this.catalogRevisionService = catalogRevisionService;
+    }
 
     /**
      * 通过构造注入 SongRepository。
@@ -70,6 +76,7 @@ public class AiClassificationApplier {
         if (changed) {
             Song saved = songRepository.save(before);
             syncArtistCredits(previousArtist, saved);
+            if (catalogRevisionService != null) catalogRevisionService.bumpIfChanged(true);
         }
         return changed;
     }
@@ -81,6 +88,7 @@ public class AiClassificationApplier {
         applyValues(song, result, reviewed);
         Song saved = songRepository.save(song);
         syncArtistCredits(previousArtist, saved);
+        if (catalogRevisionService != null) catalogRevisionService.bumpIfChanged(true);
         return saved;
     }
 

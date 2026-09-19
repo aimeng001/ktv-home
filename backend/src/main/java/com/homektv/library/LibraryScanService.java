@@ -113,6 +113,8 @@ public class LibraryScanService {
     private final TransactionTemplate batchTransaction;
     private final LibraryScanSeenPathStore seenPathStore;
     private CoverImageNormalizer coverImageNormalizer;
+    private CatalogRevisionService catalogRevisionService;
+
     @PersistenceContext
     private EntityManager entityManager;
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
@@ -158,6 +160,11 @@ public class LibraryScanService {
     @Autowired
     void setCoverImageNormalizer(CoverImageNormalizer coverImageNormalizer) {
         this.coverImageNormalizer = coverImageNormalizer;
+    }
+
+    @Autowired(required = false)
+    void setCatalogRevisionService(CatalogRevisionService catalogRevisionService) {
+        this.catalogRevisionService = catalogRevisionService;
     }
 
     public enum ScanState {
@@ -230,17 +237,21 @@ public class LibraryScanService {
 
     /** 全量/增量扫描曲库根目录。Fast Index 与数据库持久化 Media Probe Queue 分阶段执行。 */
     public ScanResult scanAll() {
+        return scanAllWithLease(LibraryScanLeaseGuard.noop());
+    }
+
+    public ScanResult scanAllWithLease(LibraryScanLeaseGuard leaseGuard) {
         if (!scanRunning.compareAndSet(false, true)) {
             throw new ApiException("SCAN_ALREADY_RUNNING", "曲库扫描正在进行中");
         }
         try {
-            return scanAllInternal();
+            return scanAllInternal(leaseGuard == null ? LibraryScanLeaseGuard.noop() : leaseGuard);
         } finally {
             scanRunning.set(false);
         }
     }
 
-    private ScanResult scanAllInternal() {
+    private ScanResult scanAllInternal(LibraryScanLeaseGuard leaseGuard) {
             OffsetDateTime startedAt = OffsetDateTime.now();
             publishProgress(true, 0, 0, null, new ScanTotals(), PHASE_DISCOVERING,
                     0, 0, 0, startedAt, null);
@@ -334,9 +345,11 @@ public class LibraryScanService {
                                 }
                                 processFastIndexBatch(batch, externalDefault, knownArtists, counters, totals,
                                         startedAt, discovered[0], activeRole,
-                                        scanId, maxIdAtScanStart);
+                                        scanId, maxIdAtScanStart, leaseGuard);
                                 batch.clear();
                             }
+                        } catch (LeaseLostException lost) {
+                            throw lost;
                         } catch (RuntimeException failure) {
                             enumerationComplete[0] = false;
                             counters.failedPaths++;
@@ -385,13 +398,13 @@ public class LibraryScanService {
                 }
                 processFastIndexBatch(batch, externalDefault, knownArtists, counters, totals,
                         startedAt, discovered[0], activeRole,
-                        scanId, maxIdAtScanStart);
+                        scanId, maxIdAtScanStart, leaseGuard);
                 batch.clear();
             }
 
             if (enumerationComplete[0]) {
                 reconcileMissingFiles(scanId, activeRole, counters,
-                        validFilesAtScanStart, discovered[0]);
+                        validFilesAtScanStart, discovered[0], leaseGuard);
             } else {
                 log.warn("曲库枚举未完整结束，本轮不标记消失文件，等待下次扫描重试：{}", root);
             }
@@ -403,7 +416,7 @@ public class LibraryScanService {
                     startedAt, null);
             processPendingProbes(rootContext, artistIndex, knownArtists, externalDefault,
                     activeRole, scanId, maxIdAtScanStart,
-                    counters, totals, startedAt, discovered[0]);
+                    counters, totals, startedAt, discovered[0], leaseGuard);
 
             if (artistProfileBootstrap != null) {
                 try {
@@ -434,6 +447,9 @@ public class LibraryScanService {
                     counters.fastIndexed, counters.probeQueued, totals.probeCompleted,
                     startedAt, OffsetDateTime.now(),
                     finalState, counters.failedPaths, finalErrorCode, finalErrorMsg);
+            if (catalogRevisionService != null && result.dbUpdates() > 0) {
+                catalogRevisionService.bumpIfChanged(true);
+            }
             return result;
             } finally {
                 cleanupSeenPaths(scanId);
@@ -444,8 +460,10 @@ public class LibraryScanService {
                                        Collection<String> knownArtists,
                                        ScanCounters counters, ScanTotals totals,
                                        OffsetDateTime startedAt, int discovered, String activeRole,
-                                       UUID scanId, long maxIdAtScanStart) {
+                                       UUID scanId, long maxIdAtScanStart,
+                                       LibraryScanLeaseGuard leaseGuard) {
         if (batch.isEmpty()) return;
+        leaseGuard.assertOwned();
         List<FastIndexEntry> resolvedBatch;
         try {
             resolvedBatch = resolveExistingEntries(batch, activeRole, scanId, maxIdAtScanStart);
@@ -491,13 +509,17 @@ public class LibraryScanService {
                 work.run();
             } else {
                 batchTransaction.executeWithoutResult(status -> {
+                    leaseGuard.assertOwned();
                     work.run();
+                    leaseGuard.assertOwned();
                     if (entityManager != null) {
                         entityManager.flush();
                         entityManager.clear();
                     }
                 });
             }
+        } catch (LeaseLostException lost) {
+            throw lost;
         } catch (RuntimeException failure) {
             // The batch is intentionally isolated. A failed batch is retried by the
             // next scan; do not turn a single bad file or a transient DB error into a
@@ -717,10 +739,12 @@ public class LibraryScanService {
                                       ScanCounters counters,
                                       ScanTotals totals,
                                       OffsetDateTime startedAt,
-                                      int discovered) {
+                                      int discovered,
+                                      LibraryScanLeaseGuard leaseGuard) {
         totals.probeStartedAt = OffsetDateTime.now();
         String afterPath = "";
         while (true) {
+            leaseGuard.assertOwned();
             Slice<SongFile> page;
             try {
                 page = fileRepo.findPendingForScan(activeRole, maxIdAtScanStart, scanId,
@@ -790,8 +814,23 @@ public class LibraryScanService {
                     }
                 } else {
                     try {
-                        outcome = ingestInternal(result.entry(), null, null, null, false,
-                                knownArtists, counters, externalDefault, result.probe()).outcome();
+                        leaseGuard.assertOwned();
+                        if (batchTransaction == null) {
+                            leaseGuard.assertOwned();
+                            outcome = ingestInternal(result.entry(), null, null, null, false,
+                                    knownArtists, counters, externalDefault, result.probe()).outcome();
+                        } else {
+                            IngestOutcome[] batchOutcome = {IngestOutcome.SKIPPED};
+                            batchTransaction.executeWithoutResult(status -> {
+                                leaseGuard.assertOwned();
+                                batchOutcome[0] = ingestInternal(result.entry(), null, null, null, false,
+                                        knownArtists, counters, externalDefault, result.probe()).outcome();
+                                leaseGuard.assertOwned();
+                            });
+                            outcome = batchOutcome[0];
+                        }
+                    } catch (LeaseLostException lost) {
+                        throw lost;
                     } catch (RuntimeException failure) {
                         log.warn("媒体结果入库失败，保留 pending：{} - {}",
                                 result.file(), failure.getMessage());
@@ -921,7 +960,7 @@ public class LibraryScanService {
         try {
             scanExecutor.submit(() -> {
                 try {
-                    scanAllInternal();
+                    scanAllInternal(LibraryScanLeaseGuard.noop());
                 } catch (RuntimeException exception) {
                     log.error("曲库扫描发生未捕获异常", exception);
                     ScanProgress failed = scanProgress.get();
@@ -1351,7 +1390,9 @@ public class LibraryScanService {
     }
 
     private void reconcileMissingFiles(UUID scanId, String activeRole, ScanCounters counters,
-                                       long validFilesAtScanStart, int currentSeenFiles) {
+                                       long validFilesAtScanStart, int currentSeenFiles,
+                                       LibraryScanLeaseGuard leaseGuard) {
+        leaseGuard.assertOwned();
         AppProperties.MissingGuard config = props.getScan().getMissingGuard();
         MissingFileGuard guard = new MissingFileGuard(
                 config.getMinimumPreviousFiles(), config.getMinimumSeenRatio());
@@ -1363,10 +1404,13 @@ public class LibraryScanService {
             return;
         }
         try {
+            leaseGuard.assertOwned();
             LibraryScanSeenPathStore.MissingFiles missing = seenPathStore.markMissing(scanId, activeRole,
                     LibraryModePolicy.activeLibraryRoot(props).toAbsolutePath().normalize().toString());
             counters.dbUpdates += missing.filesMarked() + missing.songsMarked();
             counters.missing += missing.filesMarked();
+        } catch (LeaseLostException lost) {
+            throw lost;
         } catch (RuntimeException failure) {
             log.warn("本轮缺失文件对账失败，保留现有数据库状态：{}", failure.getMessage());
         }
