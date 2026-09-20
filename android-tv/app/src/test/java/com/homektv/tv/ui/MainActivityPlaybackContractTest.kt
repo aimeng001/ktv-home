@@ -16,6 +16,15 @@ class MainActivityPlaybackContractTest {
     }
 
     @Test
+    fun videoMediaTypeRemainsDeclaredWithoutResolutionMetadata() {
+        val main = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+
+        assertTrue(main.contains("val hasVideoDeclared = !snapshot.playing?.song?.mediaType.equals(\"AUDIO\", ignoreCase = true)"))
+        assertTrue(!main.contains("&& !file.resolution.isNullOrBlank()"))
+        assertTrue(main.contains("error.code == \"FILE_NOT_FOUND\" || error.code == \"NO_VALID_FILE\""))
+    }
+
+    @Test
     fun sameQueueVocalChangeDoesNotReloadMedia() {
         val main = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
 

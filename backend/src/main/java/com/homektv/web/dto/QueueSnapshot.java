@@ -3,55 +3,62 @@ package com.homektv.web.dto;
 import java.util.List;
 
 /**
- * 队列 + 播放状态快照（详设§11.1 GET /queue，也用于 WS sync_full）。
- *
- * Queue and playback status snapshot (detailed design §11.1 GET /queue, also used for WS sync_full).
+ * Queue + playback status snapshot.  The playback descriptor is optional for
+ * old callers but present in new wire snapshots so every client sees the same
+ * native/preparing/ready/failed media decision.
  */
 public record QueueSnapshot(
         NowPlaying playing,
         List<QueueEntry> list,
-        String state,      // idle/playing/paused
+        String state,
         int volume,
         boolean muted,
-        String vocalMode,  // original/accompaniment
+        String vocalMode,
         AudioLayoutDto audioLayout,
-        boolean tvOnline,  // TV 是否在线（P2.13：H5 据此显示「电视未连接」横幅） / Whether TV is online (P2.13: H5 shows "TV not connected" banner based on this)
+        boolean tvOnline,
         long connectedPhones,
         long positionMs,
         long seekSequence,
-        long stateRevision
+        long stateRevision,
+        PlaybackDescriptor playback
 ) {
-    /** Source-compatible constructor retaining the original snapshot shape. */
     public QueueSnapshot(NowPlaying playing, List<QueueEntry> list, String state, int volume,
                          boolean muted, String vocalMode, boolean tvOnline, long connectedPhones) {
         this(playing, list, state, volume, muted, vocalMode, AudioLayoutDto.normalStereo(),
-                tvOnline, connectedPhones, 0, 0, 0);
+                tvOnline, connectedPhones, 0, 0, 0, PlaybackDescriptor.idle());
     }
 
-    /** Source-compatible constructor retaining the AudioLayout shape. */
     public QueueSnapshot(NowPlaying playing, List<QueueEntry> list, String state, int volume,
                          boolean muted, String vocalMode, AudioLayoutDto audioLayout,
                          boolean tvOnline, long connectedPhones) {
         this(playing, list, state, volume, muted, vocalMode, audioLayout,
-                tvOnline, connectedPhones, 0, 0, 0);
+                tvOnline, connectedPhones, 0, 0, 0, PlaybackDescriptor.idle());
     }
 
-    /** Source-compatible constructor retaining position and seek fields. */
     public QueueSnapshot(NowPlaying playing, List<QueueEntry> list, String state, int volume,
                          boolean muted, String vocalMode, AudioLayoutDto audioLayout,
                          boolean tvOnline, long connectedPhones, long positionMs,
                          long seekSequence) {
         this(playing, list, state, volume, muted, vocalMode, audioLayout,
-                tvOnline, connectedPhones, positionMs, seekSequence, 0);
+                tvOnline, connectedPhones, positionMs, seekSequence, 0, PlaybackDescriptor.idle());
+    }
+
+    /** Source-compatible constructor retaining the previous full shape. */
+    public QueueSnapshot(NowPlaying playing, List<QueueEntry> list, String state, int volume,
+                         boolean muted, String vocalMode, AudioLayoutDto audioLayout,
+                         boolean tvOnline, long connectedPhones, long positionMs,
+                         long seekSequence, long stateRevision) {
+        this(playing, list, state, volume, muted, vocalMode, audioLayout,
+                tvOnline, connectedPhones, positionMs, seekSequence, stateRevision,
+                PlaybackDescriptor.idle());
     }
 
     public QueueSnapshot {
         audioLayout = audioLayout == null ? AudioLayoutDto.normalStereo() : audioLayout;
+        playback = playback == null ? PlaybackDescriptor.idle() : playback;
     }
 
-    /** 正在播放 / Now playing */
     public record NowPlaying(Long queueId, SongDto song, String orderedByNick) {}
 
-    /** 队列条目 / Queue entry */
     public record QueueEntry(Long queueId, SongDto song, Long orderedBy, String orderedByNick, String status) {}
 }

@@ -4,17 +4,22 @@ import com.homektv.domain.AppUser;
 import com.homektv.domain.PlayerState;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.Song;
+import com.homektv.domain.SongFile;
 import com.homektv.repo.AppUserRepository;
 import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
+import com.homektv.repo.SongFileRepository;
 import com.homektv.ws.WsBroadcaster;
+import com.homektv.playback.PlaybackVariantService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -62,6 +67,48 @@ class SnapshotServiceTest {
         verify(userRepository, never()).findById(any());
     }
 
+    @Test
+    void ordinaryMp4SnapshotDoesNotResolveSidecar() {
+        PlayerStateRepository playerRepository = mock(PlayerStateRepository.class);
+        QueueItemRepository queueRepository = mock(QueueItemRepository.class);
+        SongRepository songRepository = mock(SongRepository.class);
+        AppUserRepository userRepository = mock(AppUserRepository.class);
+        WsBroadcaster broadcaster = mock(WsBroadcaster.class);
+        SongFileRepository fileRepository = mock(SongFileRepository.class);
+        PlaybackVariantService playbackVariants = mock(PlaybackVariantService.class);
+
+        PlayerState player = new PlayerState();
+        player.setCurrentQueueId(10L);
+        QueueItem current = queueItem(10L, 100L, 1L);
+        Song currentSong = song(100L, "当前歌曲");
+        SongFile source = new SongFile();
+        source.setId(700L);
+        source.setSongId(100L);
+        source.setFilePath("/source-music/song.mp4");
+        source.setFormat("mp4");
+        source.setMediaType("MV");
+        source.setValid(true);
+        source.setProbePending(false);
+
+        when(playerRepository.getSingleton()).thenReturn(player);
+        when(queueRepository.findByStatusOrderByOrderIndexAsc(QueueService.WAITING)).thenReturn(List.of());
+        when(queueRepository.findById(10L)).thenReturn(java.util.Optional.of(current));
+        when(songRepository.findAllById(any())).thenReturn(List.of(currentSong));
+        when(userRepository.findAllById(any())).thenReturn(List.of());
+        when(fileRepository.findBySongIdAndValidTrueOrderByPriorityDesc(100L)).thenReturn(List.of(source));
+        when(playbackVariants.requiresSidecar(source)).thenReturn(false);
+        when(broadcaster.isTvOnline()).thenReturn(false);
+        when(broadcaster.h5Count()).thenReturn(0L);
+
+        var snapshot = new SnapshotService(playerRepository, queueRepository, songRepository,
+                userRepository, broadcaster, fileRepository, playbackVariants).snapshot();
+
+        assertThat(snapshot.playback().kind()).isEqualTo("NATIVE");
+        assertThat(snapshot.playback().status()).isEqualTo("READY");
+        verify(playbackVariants).requiresSidecar(source);
+        verify(playbackVariants, never()).resolve(anyLong());
+        verify(playbackVariants, never()).resolve(anyLong(), anyBoolean());
+    }
     private static QueueItem queueItem(long id, long songId, long userId) {
         QueueItem item = new QueueItem();
         item.setId(id);

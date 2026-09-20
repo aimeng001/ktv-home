@@ -49,6 +49,10 @@ app:
   admin-password: ${KTV_ADMIN_PASSWORD:}
   player-credential: ${KTV_PLAYER_CREDENTIAL:}
   ffprobe-path: ${KTV_FFPROBE_PATH:ffprobe}
+  playback-cache:
+    max-bytes: ${KTV_PLAYBACK_CACHE_MAX_BYTES:21474836480}
+    cleanup-ms: ${KTV_PLAYBACK_CACHE_CLEANUP_MS:900000}
+    cleanup-initial-delay-ms: ${KTV_PLAYBACK_CACHE_CLEANUP_INITIAL_DELAY_MS:60000}
   transcode:
     ffmpeg-path: ${KTV_FFMPEG_PATH:ffmpeg}
     timeout-seconds: ${KTV_TRANSCODE_TIMEOUT_SECONDS:1800}

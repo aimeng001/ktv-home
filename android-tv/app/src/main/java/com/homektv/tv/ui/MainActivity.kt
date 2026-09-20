@@ -297,7 +297,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 if (playbackCoordinator.isCurrent(token)) {
                     val confirmedPlaybackFailure = error.code.startsWith("PLAYBACK_") ||
                         error.code.startsWith("TRANSCODE_") ||
-                        error.code.startsWith("OUTPUT_")
+                        error.code.startsWith("OUTPUT_") ||
+                        error.code == "FILE_NOT_FOUND" || error.code == "NO_VALID_FILE"
                     if (confirmedPlaybackFailure) {
                         onToast(error.message)
                         onPlayError(PlaybackErrorContext.missingSource(token.request.queueId))
@@ -1149,7 +1150,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             )
             eng.applyVolume(command.volume, command.muted)
             if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
-            val hasVideoDeclared = !snapshot.playing?.song?.mediaType.equals("AUDIO", ignoreCase = true) && !file.resolution.isNullOrBlank()
+            val hasVideoDeclared = !snapshot.playing?.song?.mediaType.equals("AUDIO", ignoreCase = true)
             eng.play(
                 command.fileId,
                 command.streamUrl,
@@ -1560,5 +1561,4 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         private const val VOCAL_CHANGED_EVENT = "vocal_changed"
     }
 }
-
 

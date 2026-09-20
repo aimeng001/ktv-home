@@ -55,6 +55,9 @@ class PersistenceIntegrationTest {
     private SongFileRepository songFileRepository;
 
     @Autowired
+    private PlaybackVariantRepository playbackVariantRepository;
+
+    @Autowired
     private PlayerStateRepository playerStateRepository;
 
     @Autowired
@@ -82,6 +85,13 @@ class PersistenceIntegrationTest {
         assertThat(ps.getState()).isEqualTo("idle");
         assertThat(ps.getVolume()).isEqualTo(60);
         assertThat(ps.getVocalMode()).isEqualTo("accompaniment");
+    }
+
+    @Test
+    void playbackVariantCreationLockExecutesAgainstPostgres() {
+        org.assertj.core.api.Assertions.assertThatCode(() ->
+                playbackVariantRepository.lockForCreation("persistence-integration-lock"))
+                .doesNotThrowAnyException();
     }
 
     @Test
