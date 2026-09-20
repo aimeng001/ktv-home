@@ -32,17 +32,14 @@ import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.SongDto
 import com.homektv.tv.player.EffectPlayer
 import com.homektv.tv.ui.kiosk.KtvSingerFilterPolicy
+import com.homektv.tv.ui.kiosk.KioskCategoryLoadPolicy
+import com.homektv.tv.ui.kiosk.KioskCategoryMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class KioskCategoryMode {
-    NEW,
-    LANGUAGES,
-    TAGS,
-}
 
 /**
  * 电视端商用 KTV 点歌台业务控制器。
@@ -149,7 +146,7 @@ class KtvKioskOverlayController(
     private var qrLoadJob: Job? = null
     private var artistsLoaded = false
     private var rankingsLoaded = false
-    private var categoriesLoaded = false
+    private val categoryLoadPolicy = KioskCategoryLoadPolicy()
     private var categoryMode = KioskCategoryMode.NEW
     private var categoryDetail = false
     private var playlistDetail = false
@@ -398,6 +395,13 @@ class KtvKioskOverlayController(
         val selectedArtist = presentationState.selectedArtist.value
 
         singerAdapter.submitList(state.artists)
+        overlay.txtSingerStatus.text = when {
+            state.catalogLoading -> "正在加载歌星..."
+            state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null ->
+                "歌星加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.CATALOG) ?: "请稍后重试"}"
+            state.artists.isEmpty() -> "暂无可用歌星，请先完成曲库扫描"
+            else -> "共 ${state.artists.size} 位歌星"
+        }
         updateSingerFilterButtons(state.artistGender)
         rankingAdapter.submitList(state.ranking)
         when (categoryMode) {
@@ -471,7 +475,9 @@ class KtvKioskOverlayController(
         }
         if (state.artists.isNotEmpty()) artistsLoaded = true
         if (state.ranking.isNotEmpty()) rankingsLoaded = true
-        if (state.newSongs.isNotEmpty()) categoriesLoaded = true
+        if (state.newSongs.isNotEmpty()) categoryLoadPolicy.markLoaded(KioskCategoryMode.NEW)
+        if (state.languages.isNotEmpty()) categoryLoadPolicy.markLoaded(KioskCategoryMode.LANGUAGES)
+        if (state.tags.isNotEmpty()) categoryLoadPolicy.markLoaded(KioskCategoryMode.TAGS)
 
         when {
             state.query.isNotBlank() -> {
@@ -567,7 +573,7 @@ class KtvKioskOverlayController(
             KioskTab.PINYIN -> Unit
             KioskTab.SINGERS -> if (!artistsLoaded) loadArtists()
             KioskTab.RANKINGS -> if (!rankingsLoaded) loadRankings()
-            KioskTab.CATEGORIES -> if (!categoriesLoaded) loadCategories()
+            KioskTab.CATEGORIES -> if (categoryLoadPolicy.shouldLoad(categoryMode)) loadCategories()
             KioskTab.FAVORITES -> loadFavorites()
             KioskTab.PLAYLISTS -> loadPlaylists()
             KioskTab.HISTORY -> loadHistory()

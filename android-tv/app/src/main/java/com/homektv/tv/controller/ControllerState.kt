@@ -52,6 +52,8 @@ data class ControllerUiState(
     val catalogPage: Int = 0,
     val catalogHasMore: Boolean = false,
     val catalogLoadingMore: Boolean = false,
+    /** True while the first page of a catalog root is loading. */
+    val catalogLoading: Boolean = false,
     val catalogDetail: Boolean = false,
     val catalogStatus: CatalogUiStatus = CatalogUiStatus(),
     val catalogStatusRevision: Long = 0,
@@ -198,6 +200,7 @@ object ControllerStateReducer {
     fun withDomainFailure(state: ControllerUiState, domain: UiDomain, error: KtvApiError): ControllerUiState =
         state.copy(
             catalogLoadingMore = if (domain == UiDomain.CATALOG) false else state.catalogLoadingMore,
+            catalogLoading = if (domain == UiDomain.CATALOG) false else state.catalogLoading,
             error = error,
             domainErrors = state.domainErrors + (domain to error),
             message = userMessage(error),

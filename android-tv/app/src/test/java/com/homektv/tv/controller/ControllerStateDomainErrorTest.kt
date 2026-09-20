@@ -67,4 +67,14 @@ class ControllerStateDomainErrorTest {
         // Favorites error must still exist
         assertEquals(favError, afterSearchStarted.errorFor(UiDomain.FAVORITES))
     }
+    @Test
+    fun testCatalogFailureStopsCatalogLoading() {
+        val initial = ControllerUiState(catalogLoading = true)
+        val error = KtvApiError(kind = KtvApiErrorKind.HTTP, code = "CATALOG_FAILED", message = "catalog")
+
+        val updated = ControllerStateReducer.withDomainFailure(initial, UiDomain.CATALOG, error)
+
+        assertEquals(false, updated.catalogLoading)
+        assertEquals(error, updated.errorFor(UiDomain.CATALOG))
+    }
 }

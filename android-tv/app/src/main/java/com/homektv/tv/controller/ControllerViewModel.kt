@@ -280,6 +280,7 @@ class ControllerViewModel(
                 is KtvApiResult.Success -> _state.update {
                     ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
                         ranking = result.value.take(MAX_CATALOG_ITEMS),
+                        catalogLoading = false,
                         catalogDetail = false,
                     )
                 }
@@ -298,6 +299,7 @@ class ControllerViewModel(
                 is KtvApiResult.Success -> _state.update {
                     ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
                         newSongs = result.value.take(MAX_CATALOG_ITEMS),
+                        catalogLoading = false,
                         catalogDetail = false,
                     )
                 }
@@ -322,6 +324,7 @@ class ControllerViewModel(
                 catalogPage = 0,
                 catalogHasMore = false,
                 catalogLoadingMore = false,
+                catalogLoading = true,
                 catalogDetail = false,
                 catalogValue = "",
                 error = null,
@@ -349,6 +352,7 @@ class ControllerViewModel(
                 catalogPage = 0,
                 catalogHasMore = false,
                 catalogLoadingMore = false,
+                catalogLoading = true,
                 catalogDetail = true,
                 catalogValue = safeArtistKey,
                 error = null,
@@ -372,6 +376,7 @@ class ControllerViewModel(
                 catalogPage = 0,
                 catalogHasMore = false,
                 catalogLoadingMore = false,
+                catalogLoading = true,
                 catalogDetail = true,
                 catalogValue = safeLanguage,
                 error = null,
@@ -395,6 +400,7 @@ class ControllerViewModel(
                 catalogPage = 0,
                 catalogHasMore = false,
                 catalogLoadingMore = false,
+                catalogLoading = true,
                 catalogDetail = true,
                 catalogValue = safeTag,
                 error = null,
@@ -432,7 +438,10 @@ class ControllerViewModel(
                 }
                 is KtvApiResult.Failure -> {
                     if (catalogQuery == expected) {
-                        _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error) }
+                        _state.update { state ->
+                            ControllerStateReducer.withDomainFailure(state, UiDomain.CATALOG, result.error)
+                                .copy(catalogLoading = state.catalogLoading)
+                        }
                     }
                 }
             }
@@ -450,6 +459,7 @@ class ControllerViewModel(
                 catalogPage = 0,
                 catalogHasMore = false,
                 catalogLoadingMore = false,
+                catalogLoading = true,
                 catalogDetail = false,
                 catalogValue = "",
                 error = null,
@@ -465,6 +475,7 @@ class ControllerViewModel(
                 is KtvApiResult.Success -> _state.update {
                     ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
                         ranking = result.value.take(MAX_CATALOG_ITEMS),
+                        catalogLoading = false,
                         catalogDetail = false,
                     )
                 }
@@ -482,6 +493,7 @@ class ControllerViewModel(
                 is KtvApiResult.Success -> _state.update {
                     ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
                         newSongs = result.value.take(MAX_CATALOG_ITEMS),
+                        catalogLoading = false,
                         catalogDetail = false,
                     )
                 }
@@ -499,6 +511,7 @@ class ControllerViewModel(
                 is KtvApiResult.Success -> _state.update {
                     ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
                         languages = result.value.take(MAX_CATALOG_ITEMS),
+                        catalogLoading = false,
                         catalogDetail = false,
                     )
                 }
@@ -516,6 +529,7 @@ class ControllerViewModel(
                 is KtvApiResult.Success -> _state.update {
                     ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
                         tags = result.value.take(MAX_CATALOG_ITEMS),
+                        catalogLoading = false,
                         catalogDetail = false,
                     )
                 }
@@ -611,6 +625,7 @@ class ControllerViewModel(
                                 loaded = artists.size,
                             ),
                             catalogLoadingMore = false,
+                            catalogLoading = false,
                         )
                     }
                 }
@@ -648,6 +663,7 @@ class ControllerViewModel(
                                 loaded = songs.size,
                             ),
                             catalogLoadingMore = false,
+                            catalogLoading = false,
                             catalogDetail = true,
                         )
                     }
