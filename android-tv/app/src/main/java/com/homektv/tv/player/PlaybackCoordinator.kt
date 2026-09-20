@@ -103,7 +103,6 @@ internal class PlaybackCoordinator(
         onBeginReplacement(request.queueId)
         val job = scope.launch {
             var attempt = 0
-            var preparingAttempt = 0
             var waitingReported = false
             while (isCurrent(token)) {
                 val result = try {
@@ -130,15 +129,10 @@ internal class PlaybackCoordinator(
                         return@launch
                     }
                     is PlaybackResolution.Preparing -> {
-                        if (preparingAttempt >= MAX_PLAYBACK_RETRIES) {
-                            onSourceExhausted(
-                                token,
-                                KtvApiError(KtvApiErrorKind.HTTP, "PLAYBACK_PREPARING_TIMEOUT", "MV 准备超时", status = 504),
-                            )
-                            return@launch
-                        }
+                        // A slow transcode is still a valid in-progress playback. Keep polling
+                        // while this queue item is current; only READY, FAILED, cancellation,
+                        // or an explicit queue replacement may end this wait.
                         onPlaybackPreparing(token, result.descriptor)
-                        preparingAttempt++
                         retryDelay(PLAYBACK_RETRY_DELAY_MS)
                     }
                     is PlaybackResolution.Failed -> {
@@ -214,7 +208,6 @@ internal class PlaybackCoordinator(
     companion object {
         val SOURCE_RETRY_DELAYS = longArrayOf(500L, 1_500L, 3_000L, 10_000L)
         const val MAX_SOURCE_RETRIES = 4
-        const val MAX_PLAYBACK_RETRIES = 120
         const val PLAYBACK_RETRY_DELAY_MS = 1_000L
     }
 }

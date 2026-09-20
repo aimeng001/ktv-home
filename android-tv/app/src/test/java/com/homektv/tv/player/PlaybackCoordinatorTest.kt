@@ -72,6 +72,64 @@ class PlaybackCoordinatorTest {    @Test
     }
 
     @Test
+    fun preparingPlaybackDoesNotFailWhenServerStillPreparingAfterTwoMinutes() = runBlocking {
+        val events = mutableListOf<String>()
+        val sourceFile = FileSource(id = 7L, format = "rmvb", audioTracks = 1)
+        var polls = 0
+        val desired = DesiredPlaybackState().also {
+            it.update(QueueSnapshot(playing = NowPlaying(queueId = 9L), state = "playing"))
+        }
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        val coordinator = PlaybackCoordinator(
+            source = object : PlaybackSource {
+                override suspend fun resolveFileSource(songId: Long): FileSourceResolution =
+                    error("resolvePlayback should be used")
+                override suspend fun resolvePlayback(songId: Long, forceTranscode: Boolean): com.homektv.tv.net.PlaybackResolution {
+                    polls++
+                    return if (polls <= 121) {
+                        com.homektv.tv.net.PlaybackResolution.Preparing(
+                            sourceFile,
+                            com.homektv.tv.net.PlaybackDescriptor(
+                                kind = "TRANSCODE",
+                                status = "PREPARING",
+                                sourceFileId = 7L,
+                                variantId = 88L,
+                            ),
+                        )
+                    } else {
+                        com.homektv.tv.net.PlaybackResolution.Ready(
+                            sourceFile,
+                            com.homektv.tv.net.PlaybackDescriptor(
+                                kind = "TRANSCODE",
+                                status = "READY",
+                                sourceFileId = 7L,
+                                variantId = 88L,
+                                streamUrl = "http://nas/api/playback/stream/88",
+                                audioTracks = 1,
+                                audioLayout = AudioLayout.normalStereo(),
+                            ),
+                        )
+                    }
+                }
+                override fun streamUrl(fileId: Long): String = "source://$fileId"
+            },
+            desiredState = desired,
+            scope = scope,
+            onBeginReplacement = {},
+            onFileReady = { _, file, _, _ -> events += "ready:${file.id}" },
+            onMissingSource = { events += "missing" },
+            onSourceExhausted = { _, error -> events += "exhausted:${error.code}" },
+            retryDelay = {},
+        )
+
+        val ticket = coordinator.replace(PlaybackReplacementRequest(9L, 7L))
+        ticket.job.join()
+
+        assertEquals(122, polls)
+        assertEquals(listOf("ready:88"), events)
+        scope.cancel()
+    }
+    @Test
     fun exhaustedSourceProducesQueueScopedRecoverableErrorContext() {
         val token = PlaybackReplacementToken(
             generation = 3L,
