@@ -33,6 +33,14 @@ class MainActivityPlaybackContractTest {
         assertTrue(main.contains("if (playbackSeekGate.shouldApply(snapshot.seekSequence))"))
     }
 
+    @Test
+    fun playbackPreparingDisplaysSingleStatusToastWithoutSpamming() {
+        val main = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+
+        assertTrue(main.contains("onPlaybackPreparing = { token, _ ->"))
+        assertTrue(main.contains("if (playbackCoordinator.isCurrent(token)) onToast(\"正在准备 MV，请稍候\")"))
+    }
+
     private fun locate(relativePath: String): File {
         val workingDirectory = File(System.getProperty("user.dir").orEmpty())
         val candidates = sequence {

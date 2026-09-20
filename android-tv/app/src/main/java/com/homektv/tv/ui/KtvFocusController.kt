@@ -28,7 +28,7 @@ class KtvFocusController {
     var hasInnerDetailBack: Boolean = false
 
     fun shouldInterceptBack(action: Int): Boolean {
-        return isDrawerOpen || hasInputText || (isKioskActive && hasInnerDetailBack) || isKioskActive
+        return isDrawerOpen || hasInputText || hasInnerDetailBack || isKioskActive
     }
 
     fun shouldInterceptMenu(): Boolean = isKioskActive || isDrawerOpen

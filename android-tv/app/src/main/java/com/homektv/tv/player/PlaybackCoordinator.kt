@@ -104,6 +104,7 @@ internal class PlaybackCoordinator(
         val job = scope.launch {
             var attempt = 0
             var waitingReported = false
+            var preparingReported = false
             while (isCurrent(token)) {
                 val result = try {
                     source.resolvePlayback(request.songId, request.forceTranscode)
@@ -132,7 +133,10 @@ internal class PlaybackCoordinator(
                         // A slow transcode is still a valid in-progress playback. Keep polling
                         // while this queue item is current; only READY, FAILED, cancellation,
                         // or an explicit queue replacement may end this wait.
-                        onPlaybackPreparing(token, result.descriptor)
+                        if (!preparingReported) {
+                            preparingReported = true
+                            onPlaybackPreparing(token, result.descriptor)
+                        }
                         retryDelay(PLAYBACK_RETRY_DELAY_MS)
                     }
                     is PlaybackResolution.Failed -> {
