@@ -221,7 +221,6 @@ class KtvKioskOverlayController(
                     overlay.categoryRecyclerView.adapter = categoryNameAdapter
                     overlay.txtCategoryHeader.text = "选择标签"
                     presentationState.selectTab(KioskTab.CATEGORIES)
-                    loadCategories()
                 }
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.LANGUAGE -> {
                     categoryMode = KioskCategoryMode.LANGUAGES
@@ -230,17 +229,10 @@ class KtvKioskOverlayController(
                     overlay.categoryRecyclerView.adapter = categoryNameAdapter
                     overlay.txtCategoryHeader.text = "选择语种"
                     presentationState.selectTab(KioskTab.CATEGORIES)
-                    catalogActionRouter.languages()
                 }
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.RANKING -> presentationState.selectTab(KioskTab.RANKINGS)
-                com.homektv.tv.ui.kiosk.KtvDashboardTile.FAVORITES -> {
-                    loadFavorites()
-                    presentationState.selectTab(KioskTab.FAVORITES)
-                }
-                com.homektv.tv.ui.kiosk.KtvDashboardTile.HISTORY -> {
-                    loadHistory()
-                    presentationState.selectTab(KioskTab.HISTORY)
-                }
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.FAVORITES -> presentationState.selectTab(KioskTab.FAVORITES)
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.HISTORY -> presentationState.selectTab(KioskTab.HISTORY)
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.ORDERED_QUEUE -> openQueueDrawer()
             }
         }
@@ -425,8 +417,8 @@ class KtvKioskOverlayController(
             KioskTab.FAVORITES -> {
                 overlay.personalRecyclerView.adapter = personalSongAdapter
                 personalSongAdapter.submitList(state.favorites)
-                overlay.txtPersonalHeader.text = if (state.error != null) {
-                    "收藏加载失败：${state.message ?: "请稍后重试"}"
+                overlay.txtPersonalHeader.text = if (state.errorFor(com.homektv.tv.controller.UiDomain.FAVORITES) != null) {
+                    "收藏加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.FAVORITES) ?: "请稍后重试"}"
                 } else {
                     "我的收藏（${state.favorites.size} 首）"
                 }
@@ -437,7 +429,7 @@ class KtvKioskOverlayController(
                     inDetail = playlistDetail,
                     loading = state.playlistDetailLoading,
                     hasDetail = state.playlistDetail != null,
-                    hasError = state.error != null,
+                    hasError = state.errorFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) != null,
                 )) {
                     KioskPersonalView.DETAIL_LOADING -> {
                         overlay.personalRecyclerView.adapter = personalSongAdapter
@@ -453,13 +445,13 @@ class KtvKioskOverlayController(
                     KioskPersonalView.DETAIL_ERROR -> {
                         overlay.personalRecyclerView.adapter = personalSongAdapter
                         personalSongAdapter.submitList(emptyList())
-                        overlay.txtPersonalHeader.text = "歌单加载失败：${state.message ?: "请稍后重试"}"
+                        overlay.txtPersonalHeader.text = "歌单加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) ?: "请稍后重试"}"
                     }
                     KioskPersonalView.LIST -> {
                         overlay.personalRecyclerView.adapter = playlistAdapter
                         playlistAdapter.submitList(state.playlists)
-                        overlay.txtPersonalHeader.text = if (state.error != null) {
-                            "歌单加载失败：${state.message ?: "请稍后重试"}"
+                        overlay.txtPersonalHeader.text = if (state.errorFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) != null) {
+                            "歌单加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) ?: "请稍后重试"}"
                         } else {
                             "主题歌单（${state.playlists.size} 个）"
                         }
@@ -469,8 +461,8 @@ class KtvKioskOverlayController(
             KioskTab.HISTORY -> {
                 overlay.personalRecyclerView.adapter = personalSongAdapter
                 personalSongAdapter.submitList(state.history.mapNotNull { it.song }.distinctBy { it.id })
-                overlay.txtPersonalHeader.text = if (state.error != null) {
-                    "历史加载失败：${state.message ?: "请稍后重试"}"
+                overlay.txtPersonalHeader.text = if (state.errorFor(com.homektv.tv.controller.UiDomain.HISTORY) != null) {
+                    "历史加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.HISTORY) ?: "请稍后重试"}"
                 } else {
                     "最近唱过（${state.history.size} 首）"
                 }
@@ -484,24 +476,27 @@ class KtvKioskOverlayController(
         when {
             state.query.isNotBlank() -> {
                 searchAdapter.submitList(state.results)
+                val searchError = state.errorFor(com.homektv.tv.controller.UiDomain.SEARCH)
                 overlay.txtSearchCount.text = when {
                     state.loading -> "正在检索: ${state.query} ..."
-                    state.error != null -> "检索失败：${state.message ?: "请稍后重试"}"
+                    searchError != null -> "检索失败：${state.messageFor(com.homektv.tv.controller.UiDomain.SEARCH) ?: "请稍后重试"}"
                     else -> "找到 ${state.results.size} 首歌曲"
                 }
             }
             selectedArtist != null -> {
                 searchAdapter.submitList(state.catalogSongs)
-                overlay.txtSearchCount.text = if (state.error != null) {
-                    "歌手【$selectedArtist】加载失败：${state.message ?: "请稍后重试"}"
+                val catalogError = state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG)
+                overlay.txtSearchCount.text = if (catalogError != null) {
+                    "歌手【$selectedArtist】加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.CATALOG) ?: "请稍后重试"}"
                 } else {
                     "歌手【$selectedArtist】共 ${state.catalogSongs.size} 首"
                 }
             }
             else -> {
                 searchAdapter.submitList(state.ranking)
-                if (state.error != null && presentationState.currentTab.value == KioskTab.PINYIN) {
-                    overlay.txtSearchCount.text = "推荐加载失败：${state.message ?: "请稍后重试"}"
+                val catalogError = state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG)
+                if (catalogError != null && presentationState.currentTab.value == KioskTab.PINYIN) {
+                    overlay.txtSearchCount.text = "推荐加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.CATALOG) ?: "请稍后重试"}"
                 }
             }
         }

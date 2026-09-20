@@ -673,7 +673,7 @@ class ControllerViewModel(
             page < target &&
             catalogQuery == expected &&
             _state.value.catalogHasMore &&
-            _state.value.error == null
+            _state.value.errorFor(UiDomain.CATALOG) == null
         ) {
             page++
             loadPage(page)

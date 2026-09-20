@@ -42,6 +42,18 @@ class ControllerStateDomainErrorTest {
     }
 
     @Test
+    fun testDomainMessageDoesNotLeakCatalogFailureIntoHistoryPresentation() {
+        val catalogError = KtvApiError(kind = KtvApiErrorKind.HTTP, code = "CATALOG_FAILED", message = "catalog")
+        val historyError = KtvApiError(kind = KtvApiErrorKind.NETWORK, code = "HISTORY_FAILED", message = "history")
+        val withCatalog = ControllerStateReducer.withDomainFailure(ControllerUiState(), UiDomain.CATALOG, catalogError)
+        val withBoth = ControllerStateReducer.withDomainFailure(withCatalog, UiDomain.HISTORY, historyError)
+
+        assertEquals("服务端暂时不可用", withBoth.messageFor(UiDomain.CATALOG))
+        assertEquals("无法连接点歌服务", withBoth.messageFor(UiDomain.HISTORY))
+        assertEquals(catalogError, withBoth.errorFor(UiDomain.CATALOG))
+        assertEquals(historyError, withBoth.errorFor(UiDomain.HISTORY))
+    }
+    @Test
     fun testSearchSuccessClearsSearchDomainErrorOnly() {
         val initial = ControllerUiState()
         val favError = KtvApiError(kind = KtvApiErrorKind.HTTP, code = "FAV_FAILED", message = "Favorites load failed")

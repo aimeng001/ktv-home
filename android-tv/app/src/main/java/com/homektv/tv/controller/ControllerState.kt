@@ -77,6 +77,14 @@ data class ControllerUiState(
 ) {
     fun errorFor(domain: UiDomain): KtvApiError? =
         domainErrors[domain] ?: if (domain == UiDomain.QUEUE && error != null && domainErrors.isEmpty()) error else null
+
+    /**
+     * Returns the user-facing message for one domain only. Callers rendering a
+     * panel must use this instead of the legacy global message: a failed catalog
+     * request must never make a successful history/favorites panel look failed.
+     */
+    fun messageFor(domain: UiDomain): String? =
+        errorFor(domain)?.let(ControllerStateReducer::userMessage)
 }
 
 object ControllerStateReducer {
