@@ -55,6 +55,16 @@ class SearchMigrationContractTest {
         assertThat(SongSearchRepository.SEARCH_SQL).doesNotContain("unnest(s.tags)");
     }
 
+    @Test
+    void shortSearchUsesBoundedTopNAndAvoidsSimilarityForHighHitKeywords() throws Exception {
+        assertThat(SongSearchRepository.SHORT_SEARCH_SQL)
+                .contains("LIMIT 2000")
+                .doesNotContain("similarity(");
+        assertThat(Files.readString(migrationPath("V47__short_search_covering_index.sql")))
+                .contains("value_lower, song_id")
+                .contains("INCLUDE (kind)");
+    }
+
     private Path migrationPath() throws IOException {
         return migrationPath("V36__song_search_hot_path_indexes.sql");
     }

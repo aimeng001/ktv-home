@@ -100,6 +100,14 @@ class SearchLargeLibraryPerformanceTest {
                 FROM songs
                 WHERE fingerprint LIKE ? AND title = '歌9'
                 UNION ALL
+                SELECT id, 'TITLE_PY', 'h', 'h'
+                FROM songs
+                WHERE fingerprint LIKE ?
+                UNION ALL
+                SELECT id, 'TITLE', '压', '压'
+                FROM songs
+                WHERE fingerprint LIKE ?
+                UNION ALL
                 SELECT id, 'TITLE', '压力', '压力'
                 FROM songs
                 WHERE fingerprint LIKE ? AND title LIKE '压力%'
@@ -114,7 +122,7 @@ class SearchLargeLibraryPerformanceTest {
                 WHERE songs.fingerprint LIKE ? AND songs.title = '压力曲199998'
                 ON CONFLICT DO NOTHING
                 """, fingerprintPrefix + "%", fingerprintPrefix + "%", fingerprintPrefix + "%",
-                fingerprintPrefix + "%");
+                fingerprintPrefix + "%", fingerprintPrefix + "%", fingerprintPrefix + "%");
     }
 
     @AfterEach
@@ -130,11 +138,13 @@ class SearchLargeLibraryPerformanceTest {
         List<SearchCase> cases = List.of(
                 new SearchCase("short-chinese-selective", "歌9", ""),
                 new SearchCase("short-chinese", "压力", ""),
+                new SearchCase("high-fanout-latin", "h", ""),
+                new SearchCase("high-fanout-chinese", "压", ""),
                 new SearchCase("pinyin-prefix", "qingtian", "KTV_VIDEO"),
                 new SearchCase("selective-title", "压力曲199999", "KTV_VIDEO"),
                 new SearchCase("tag-substring", "marker", "MV")
         );
-        long maxMillis = Long.getLong("searchMaxMillis", -1L);
+        long maxMillis = Long.getLong("searchMaxMillis", 8_000L);
 
         for (SearchCase searchCase : cases) {
             SearchKeyword keyword = SearchKeyword.of(

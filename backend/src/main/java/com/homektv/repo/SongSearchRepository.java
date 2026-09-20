@@ -32,33 +32,46 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
      */
     String SHORT_SEARCH_SQL = """
             WITH candidate_ids AS (
-                SELECT DISTINCT term.song_id
+                SELECT term.song_id,
+                       MIN(CASE
+                           WHEN term.kind IN ('TITLE', 'TITLE_PY', 'TITLE_INIT') THEN 0
+                           WHEN term.kind IN ('ARTIST', 'ARTIST_PY', 'ARTIST_INIT',
+                                               'ARTIST_CREDIT', 'ARTIST_CREDIT_PY', 'ARTIST_CREDIT_INIT') THEN 1
+                           WHEN term.kind = 'LANGUAGE' THEN 2
+                           ELSE 3
+                       END) AS term_rank
                 FROM song_search_terms term
                 JOIN songs s ON s.id = term.song_id
                 WHERE term.value_lower = :kw
-                  AND term.kind IN (
-                      'TITLE', 'ARTIST', 'LANGUAGE', 'TAG', 'ARTIST_CREDIT',
-                      'TITLE_PY', 'TITLE_INIT', 'ARTIST_PY', 'ARTIST_INIT',
-                      'ARTIST_CREDIT_PY', 'ARTIST_CREDIT_INIT'
-                  )
                   AND s.status = 'ok'
                   AND (:mediaType = '' OR s.media_type = :mediaType)
+                GROUP BY term.song_id
+            ), ranked_candidates AS (
+                SELECT c.song_id, c.term_rank
+                FROM candidate_ids c
+                JOIN songs s ON s.id = c.song_id
+                ORDER BY
+                  (LOWER(s.title) = :kw) DESC,
+                  (LOWER(s.artist) = :kw) DESC,
+                  (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
+                  c.term_rank ASC,
+                  (s.media_type = 'KTV_VIDEO') DESC,
+                  s.play_count DESC,
+                  s.id ASC
+                LIMIT 2000
             )
             SELECT s.*
-            FROM candidate_ids c
+            FROM ranked_candidates c
             JOIN songs s ON s.id = c.song_id
             ORDER BY
-              (s.title = :rawKw) DESC,
-              (s.artist = :rawKw) DESC,
               (LOWER(s.title) = :kw) DESC,
               (LOWER(s.artist) = :kw) DESC,
               (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
+              c.term_rank ASC,
               (s.media_type = 'KTV_VIDEO') DESC,
-              similarity(LOWER(s.title), :kw) DESC,
               s.play_count DESC,
               s.id ASC
             """;
-
     /** Shared native SQL used by the repository and opt-in PostgreSQL plan tests. */
     String SEARCH_SQL = """
             WITH candidate_ids AS (
