@@ -319,7 +319,9 @@ class PlaybackEngine(
         hasVideoDeclared: Boolean = false,
         format: String? = null,
         videoCodec: String? = null,
+        songDurationMs: Long = 0L,
     ) {
+        currentSongDurationMs = songDurationMs
         currentHasVideoDeclared = hasVideoDeclared
         currentFormat = format
         currentStreamUrl = streamUrl
@@ -633,12 +635,14 @@ class PlaybackEngine(
         Log.d(TAG, "vocal mode=$requestedVocalMode track=$index groupTrack=$localIndex groups=${audioGroups.map { it.length }} applied in ${elapsed}ms")
     }
 
-    /** 当前媒体时长，供 TV-02 进度条展示。 */
+    var currentSongDurationMs: Long = 0L
+
+    /** 当前媒体时长，供 TV-02 进度条展示。若管道流本身未提供时长则使用歌曲元数据兜底。 */
     val durationMs: Long
         get() = if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
             fallbackPlayer.durationMs
         } else {
-            player.duration.takeIf { it > 0 } ?: 0L
+            player.duration.takeIf { it > 0 } ?: currentSongDurationMs.takeIf { it > 0 } ?: 0L
         }
 
     val currentPositionMs: Long
@@ -740,7 +744,19 @@ class PlaybackEngine(
             val hasSupportedVideoTrack = videoGroups.any { it.isSupported }
 
             if (playbackRouter.shouldFallbackOnTracks(currentHasVideoDeclared, videoTrackCount, hasSupportedVideoTrack)) {
-                Log.w(TAG, "Media3 has no supported video tracks for declared video fileId=$currentFileId")
+                Log.w(TAG, "Media3 has no supported video tracks for declared video fileId=$currentFileId; falling back to fallback engine")
+                val fallbackFileId = currentFileId
+                val fallbackStreamUrl = currentStreamUrl
+                if (fallbackFileId != null && fallbackStreamUrl != null) {
+                    switchToFallbackEngine(
+                        fileId = fallbackFileId,
+                        streamUrl = fallbackStreamUrl,
+                        queueId = currentQueueId,
+                        playWhenReady = player.playWhenReady,
+                        initialPositionMs = player.currentPosition,
+                    )
+                    return
+                }
                 requestPlaybackResolution(currentQueueId, currentFileId)
                 return
             }
@@ -793,7 +809,19 @@ class PlaybackEngine(
         override fun onPlayerError(error: PlaybackException) {
             Log.w(TAG, "player error: ${error.errorCodeName} ${error.message}")
             if (isDecoderOrFormatError(error) && activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
-                Log.w(TAG, "Media3 decoder/format failure (${error.errorCodeName}); requesting server playback resolution")
+                Log.w(TAG, "Media3 decoder/format failure (${error.errorCodeName}); falling back to fallback engine")
+                val fallbackFileId = currentFileId
+                val fallbackStreamUrl = currentStreamUrl
+                if (fallbackFileId != null && fallbackStreamUrl != null) {
+                    switchToFallbackEngine(
+                        fileId = fallbackFileId,
+                        streamUrl = fallbackStreamUrl,
+                        queueId = currentQueueId,
+                        playWhenReady = player.playWhenReady,
+                        initialPositionMs = player.currentPosition,
+                    )
+                    return
+                }
                 if (currentHasVideoDeclared) {
                     requestPlaybackResolution(currentQueueId, currentFileId)
                 } else {

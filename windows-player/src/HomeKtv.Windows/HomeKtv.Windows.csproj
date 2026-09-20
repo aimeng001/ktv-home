@@ -11,4 +11,7 @@
     <EnableDefaultApplicationDefinition>true</EnableDefaultApplicationDefinition>
     <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="HomeKtv.Windows.Tests" />
+  </ItemGroup>
 </Project>

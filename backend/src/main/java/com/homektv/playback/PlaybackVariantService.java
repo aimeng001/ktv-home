@@ -144,52 +144,7 @@ public class PlaybackVariantService {
         if (!SongAvailabilityPolicy.isReadyMediaFile(source)) {
             throw new ApiException(SongAvailabilityPolicy.SONG_NOT_READY, "媒体探测尚未完成");
         }
-        if (!forceTranscode && !requiresVariant(source)) {
-            return PlaybackDescriptor.nativeSource(source);
-        }
-        Path input = readableSource(source);
-
-        String fingerprint = SourceFingerprint.from(source, input, fileSize(input), modifiedMillis(input));
-        String profile = PlaybackVariantProfile.H264_AAC_MP4_V1.name();
-        variants.lockForCreation(sourceFileId + "|" + fingerprint + "|" + profile);
-        PlaybackVariant variant = variants.findBySourceFileIdAndSourceFingerprintAndProfile(
-                sourceFileId, fingerprint, profile).orElse(null);
-        boolean submit = false;
-        if (variant == null) {
-            variant = new PlaybackVariant(sourceFileId, fingerprint, PlaybackVariantProfile.H264_AAC_MP4_V1);
-            variant.copyAudioSemanticsFrom(source);
-            variant.setSourceSnapshot(fileSize(input), fileMtime(input));
-            variant.markPreparing(workerId(), leaseUntil());
-            variant = variants.saveAndFlush(variant);
-            submit = true;
-        } else if (variant.getStatus() == PlaybackVariantStatus.READY) {
-            if (isCacheFileValid(variant)) return PlaybackDescriptor.ready(source, variant);
-            variant.setStatus(PlaybackVariantStatus.STALE);
-            variant.markPreparing(workerId(), leaseUntil());
-            variant = variants.saveAndFlush(variant);
-            submit = true;
-        } else if (variant.getStatus() == PlaybackVariantStatus.STALE) {
-            variant.copyAudioSemanticsFrom(source);
-            variant.markPreparing(workerId(), leaseUntil());
-            variant = variants.saveAndFlush(variant);
-            submit = true;
-        } else if (variant.getStatus() == PlaybackVariantStatus.FAILED && forceTranscode && retryFailed) {
-            variant.copyAudioSemanticsFrom(source);
-            variant.markPreparing(workerId(), leaseUntil());
-            variant = variants.saveAndFlush(variant);
-            submit = true;
-        } else if (variant.getStatus() == PlaybackVariantStatus.PREPARING
-                && (variant.getLeaseUntil() == null || variant.getLeaseUntil().isBefore(OffsetDateTime.now()))) {
-            variant.markPreparing(workerId(), leaseUntil());
-            variant = variants.saveAndFlush(variant);
-            submit = true;
-        }
-        if (submit) submitJobAfterCommit(variant.getId());
-        return switch (variant.getStatus()) {
-            case READY -> PlaybackDescriptor.ready(source, variant);
-            case FAILED -> PlaybackDescriptor.failed(source, variant);
-            default -> PlaybackDescriptor.preparing(source, variant);
-        };
+        return PlaybackDescriptor.nativeSource(source);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -473,7 +428,7 @@ public class PlaybackVariantService {
     }
 
     public boolean requiresSidecar(SongFile source) {
-        return requiresVariant(source);
+        return false;
     }
 
     private static boolean requiresVariant(SongFile source) {

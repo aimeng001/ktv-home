@@ -76,7 +76,7 @@ public sealed class MpvProcessSessionFactory : IMpvDisplaySessionFactory
         }
     }
 
-    private ProcessStartInfo CreateStartInfo(string pipeName)
+    internal ProcessStartInfo CreateStartInfo(string pipeName)
     {
         MpvLaunchOptions currentOptions;
         lock (optionsLock)
@@ -103,6 +103,7 @@ public sealed class MpvProcessSessionFactory : IMpvDisplaySessionFactory
         {
             startInfo.ArgumentList.Add("--border=no");
         }
+        startInfo.ArgumentList.Add("--hwdec=auto-safe");
         startInfo.ArgumentList.Add("--osd-level=0");
         return startInfo;
     }

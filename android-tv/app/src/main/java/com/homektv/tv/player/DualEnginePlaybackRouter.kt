@@ -10,14 +10,14 @@ enum class PlaybackEngineType {
     UNSUPPORTED,
 }
 
-/** Routes unsupported containers/tracks to the server-side playback resolver. */
+/** Routes unsupported containers/tracks to the software fallback player. */
 class DualEnginePlaybackRouter {
     private val softwareContainers = setOf("rm", "rmvb", "realmedia")
+    private val softwareCodecs = setOf("rv10", "rv20", "rv30", "rv40", "realvideo")
 
     fun selectEngine(videoCodec: String?, format: String?): PlaybackEngineType {
-        if (format != null && softwareContainers.contains(format.lowercase())) {
-            return PlaybackEngineType.RESOLVE_REQUIRED
-        }
+        // 服务端对老格式已在流式管道中统一封装为标准 H.264/AAC fMP4 流，
+        // 电视端统一通过 Media3 原生硬解，享受硬件芯片加速与完整原伴唱切换能力
         return PlaybackEngineType.PRIMARY_MEDIA3
     }
 

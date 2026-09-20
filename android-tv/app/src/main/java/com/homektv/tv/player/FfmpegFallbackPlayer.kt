@@ -197,27 +197,46 @@ class FfmpegFallbackPlayer(
     }
 
     override fun setVocalSelection(mode: String, trackIndex: Int?, audioLayout: AudioLayout) {
-        if (trackIndex != null && trackIndex >= 0) {
-            try {
-                mediaPlayer?.let { mp ->
-                    val tracks = mp.trackInfo
-                    var audioTrackCount = 0
-                    for (i in tracks.indices) {
-                        if (tracks[i].trackType == MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) {
-                            if (audioTrackCount == trackIndex) {
-                                mp.selectTrack(i)
-                                Log.i(TAG, "Selected audio track $trackIndex (internal index $i)")
-                                break
+        val layout = audioLayout.layout
+        if (layout.equals("DUAL_TRACK", ignoreCase = true)) {
+            if (trackIndex != null && trackIndex >= 0) {
+                try {
+                    mediaPlayer?.let { mp ->
+                        val tracks = mp.trackInfo
+                        var audioTrackCount = 0
+                        for (i in tracks.indices) {
+                            if (tracks[i].trackType == MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) {
+                                if (audioTrackCount == trackIndex) {
+                                    mp.selectTrack(i)
+                                    Log.i(TAG, "Selected audio track $trackIndex (internal index $i)")
+                                    break
+                                }
+                                audioTrackCount++
                             }
-                            audioTrackCount++
                         }
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "selectTrack failed: ${e.message}")
+                }
+            }
+            applyCurrentVolume()
+        } else if (layout.equals("DUAL_CHANNEL", ignoreCase = true)) {
+            val isAccompaniment = mode.equals("accompaniment", ignoreCase = true)
+            val channel = if (isAccompaniment) audioLayout.accompanimentChannel else audioLayout.originalChannel
+            val vol = if (isMuted) 0f else currentVolume
+            try {
+                if (channel?.equals("left", ignoreCase = true) == true || channel == "0") {
+                    mediaPlayer?.setVolume(vol, 0f)
+                } else if (channel?.equals("right", ignoreCase = true) == true || channel == "1") {
+                    mediaPlayer?.setVolume(0f, vol)
+                } else {
+                    if (isAccompaniment) mediaPlayer?.setVolume(0f, vol) else mediaPlayer?.setVolume(vol, 0f)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "selectTrack failed: ${e.message}")
+                Log.w(TAG, "setVolume failed: ${e.message}")
             }
         } else {
-            setChannelMode(mode)
+            applyCurrentVolume()
         }
     }
 

@@ -25,7 +25,7 @@ class PlaybackVariantServiceTest {
     private final Executor idleExecutor = runnable -> { };
 
     @Test
-    void rmvbResolvesToPreparingSidecarWithoutWritingSource() throws Exception {
+    void rmvbResolvesToNativeStreamWithoutDiskCaching() throws Exception {
         Path sourceRoot = Files.createTempDirectory("ktv-source-");
         Path dataRoot = Files.createTempDirectory("ktv-data-");
         Path sourcePath = Files.createFile(sourceRoot.resolve("song.rmvb"));
@@ -33,26 +33,20 @@ class PlaybackVariantServiceTest {
         SongFileRepository files = mock(SongFileRepository.class);
         PlaybackVariantRepository variants = mock(PlaybackVariantRepository.class);
         when(files.findById(7L)).thenReturn(Optional.of(source));
-        when(variants.findBySourceFileIdAndSourceFingerprintAndProfile(any(), any(), any()))
-                .thenReturn(Optional.empty());
-        when(variants.saveAndFlush(any(PlaybackVariant.class))).thenAnswer(invocation -> {
-            PlaybackVariant variant = invocation.getArgument(0);
-            variant.setId(99L);
-            return variant;
-        });
         AppProperties props = props(sourceRoot, dataRoot);
 
         PlaybackVariantService service = new PlaybackVariantService(files, variants, mock(FFprobeService.class),
-                props, "ffmpeg", idleExecutor, command -> { throw new AssertionError("job must be asynchronous"); },
+                props, "ffmpeg", idleExecutor, command -> { throw new AssertionError("must not transcode"); },
                 Duration.ofSeconds(5));
 
         PlaybackDescriptor descriptor = service.resolve(7L, false);
 
-        assertThat(descriptor.kind()).isEqualTo("TRANSCODE");
-        assertThat(descriptor.status()).isEqualTo("PREPARING");
-        assertThat(descriptor.variantId()).isEqualTo(99L);
+        assertThat(descriptor.kind()).isEqualTo("NATIVE");
+        assertThat(descriptor.status()).isEqualTo("READY");
+        assertThat(descriptor.streamUrl()).isEqualTo("/api/stream/7");
         assertThat(Files.size(sourcePath)).isZero();
         assertThat(Files.list(dataRoot).toList()).isEmpty();
+        verifyNoInteractions(variants);
     }
 
     @Test
@@ -78,7 +72,7 @@ class PlaybackVariantServiceTest {
     }
 
     @Test
-    void failedVariantIsReportedWithoutImplicitlyResubmittingWhenForced() throws Exception {
+    void forceTranscodeResolvesDirectlyToNativeStreamWithoutDiskCaching() throws Exception {
         Path sourceRoot = Files.createTempDirectory("ktv-source-");
         Path dataRoot = Files.createTempDirectory("ktv-data-");
         Path sourcePath = Files.createFile(sourceRoot.resolve("song.rmvb"));
@@ -86,22 +80,21 @@ class PlaybackVariantServiceTest {
         SongFileRepository files = mock(SongFileRepository.class);
         PlaybackVariantRepository variants = mock(PlaybackVariantRepository.class);
         when(files.findById(9L)).thenReturn(Optional.of(source));
-        PlaybackVariant failed = new PlaybackVariant(9L, "source-v1", PlaybackVariantProfile.H264_AAC_MP4_V1);
-        failed.setId(199L);
-        failed.markFailed("TRANSCODE_FAILED", "ffmpeg exit=1");
-        when(variants.findBySourceFileIdAndSourceFingerprintAndProfile(any(), any(), any()))
-                .thenReturn(Optional.of(failed));
+        AppProperties props = props(sourceRoot, dataRoot);
 
         PlaybackVariantService service = new PlaybackVariantService(files, variants, mock(FFprobeService.class),
-                props(sourceRoot, dataRoot), "ffmpeg", idleExecutor,
-                command -> { throw new AssertionError("failed variant must not implicitly restart"); },
+                props, "ffmpeg", idleExecutor,
+                command -> { throw new AssertionError("must not transcode even if forced"); },
                 Duration.ofSeconds(5));
 
         PlaybackDescriptor descriptor = service.resolve(9L, true);
 
-        assertThat(descriptor.status()).isEqualTo("FAILED");
-        assertThat(descriptor.errorCode()).isEqualTo("TRANSCODE_FAILED");
-        verify(variants, never()).saveAndFlush(any(PlaybackVariant.class));
+        assertThat(descriptor.kind()).isEqualTo("NATIVE");
+        assertThat(descriptor.status()).isEqualTo("READY");
+        assertThat(descriptor.streamUrl()).isEqualTo("/api/stream/9");
+        assertThat(Files.size(sourcePath)).isZero();
+        assertThat(Files.list(dataRoot).toList()).isEmpty();
+        verifyNoInteractions(variants);
     }
     private static SongFile source(Long id, Path path, String format) {
         SongFile source = new SongFile();

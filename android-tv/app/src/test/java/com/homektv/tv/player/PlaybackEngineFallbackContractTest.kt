@@ -76,4 +76,22 @@ class PlaybackEngineFallbackContractTest {
         val shouldBypass = currentEngine != PlaybackEngineType.PRIMARY_MEDIA3
         assertTrue("非主引擎状态必须短路拦截", shouldBypass)
     }
+
+    @Test
+    fun testFallbackPlayerSupportsDualChannelLeftAndRightAccompaniment() {
+        val mock = MockFallbackPlayer()
+        val dualChannel = AudioLayout(
+            layout = "DUAL_CHANNEL",
+            originalChannel = "left",
+            accompanimentChannel = "right",
+        )
+        mock.setVocalSelection("accompaniment", null, dualChannel)
+        assertEquals("accompaniment", mock.lastVocalMode)
+        assertEquals("DUAL_CHANNEL", mock.lastAudioLayout?.layout)
+        assertEquals("right", mock.lastAudioLayout?.accompanimentChannel)
+        assertEquals("left", mock.lastAudioLayout?.originalChannel)
+
+        mock.setVocalSelection("original", null, dualChannel)
+        assertEquals("original", mock.lastVocalMode)
+    }
 }

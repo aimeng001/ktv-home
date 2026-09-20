@@ -1159,6 +1159,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 command.positionMs,
                 hasVideoDeclared = hasVideoDeclared,
                 format = file.format,
+                songDurationMs = snapshot.playing?.song?.durationMs?.toLong() ?: 0L,
             )
             if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
             loadedQueueId = targetQueueId

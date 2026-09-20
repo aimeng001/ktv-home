@@ -26,7 +26,7 @@ class DualEnginePlaybackRouterTest {
     }
 
     @Test
-    fun testUnsupportedContainersRequestServerResolution() {
+    fun testAllContainersAndCodecsSelectPrimaryMedia3Engine() {
         assertEquals(
             PlaybackEngineType.PRIMARY_MEDIA3,
             router.selectEngine(videoCodec = "rv40", format = "mkv"),
@@ -36,11 +36,11 @@ class DualEnginePlaybackRouterTest {
             router.selectEngine(videoCodec = "rv30", format = "mkv"),
         )
         assertEquals(
-            PlaybackEngineType.RESOLVE_REQUIRED,
+            PlaybackEngineType.PRIMARY_MEDIA3,
             router.selectEngine(videoCodec = null, format = "rmvb"),
         )
         assertEquals(
-            PlaybackEngineType.RESOLVE_REQUIRED,
+            PlaybackEngineType.PRIMARY_MEDIA3,
             router.selectEngine(videoCodec = null, format = "rm"),
         )
     }

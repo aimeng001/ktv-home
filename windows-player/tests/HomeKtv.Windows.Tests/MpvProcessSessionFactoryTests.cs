@@ -18,4 +18,13 @@ public sealed class MpvProcessSessionFactoryTests
         Assert.Contains(configuredPath, exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Install", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void Start_arguments_include_hardware_decoding_with_safe_software_fallback()
+    {
+        var factory = new MpvProcessSessionFactory(new MpvLaunchOptions());
+        var startInfo = factory.CreateStartInfo("test-pipe");
+
+        Assert.Contains("--hwdec=auto-safe", startInfo.ArgumentList);
+    }
 }
