@@ -29,6 +29,7 @@ export const usePlayerStore = defineStore('player', {
     tvOnline: null,        // TV 状态在首次服务端快照前未知 | Unknown until the first server snapshot
     connectedPhones: 0,
     stateRevision: 0,
+    playback: { kind: 'NONE', status: 'IDLE' },
     roomHost: { claimed: false, hostUserId: null, hostNickname: null, revision: 0, isHost: false },
     lastEffect: null,
     historyRevision: 0
@@ -156,6 +157,7 @@ export const usePlayerStore = defineStore('player', {
       this.queue = snap.list ?? []
       if (typeof snap.tvOnline === 'boolean') this.tvOnline = snap.tvOnline
       this.connectedPhones = snap.connectedPhones ?? 0
+      this.playback = snap.playback ?? { kind: 'NONE', status: 'IDLE' }
       return true
     },
 

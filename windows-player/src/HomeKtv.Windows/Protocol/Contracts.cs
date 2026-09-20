@@ -59,7 +59,8 @@ public sealed record QueueSnapshot(
     [property: JsonPropertyName("connectedPhones")] long ConnectedPhones,
     [property: JsonPropertyName("positionMs")] long PositionMs = 0,
     [property: JsonPropertyName("seekSequence")] long SeekSequence = 0,
-    [property: JsonPropertyName("stateRevision")] long StateRevision = 0);
+    [property: JsonPropertyName("stateRevision")] long StateRevision = 0,
+    [property: JsonPropertyName("playback")] PlaybackDescriptor? Playback = null);
 
 public sealed record QueueSnapshotHeader(
     [property: JsonPropertyName("playing")] NowPlaying? Playing,
@@ -72,13 +73,33 @@ public sealed record QueueSnapshotHeader(
     [property: JsonPropertyName("connectedPhones")] long ConnectedPhones,
     [property: JsonPropertyName("positionMs")] long PositionMs,
     [property: JsonPropertyName("seekSequence")] long SeekSequence,
-    [property: JsonPropertyName("stateRevision")] long StateRevision = 0)
+    [property: JsonPropertyName("stateRevision")] long StateRevision = 0,
+    [property: JsonPropertyName("playback")] PlaybackDescriptor? Playback = null)
 {
     public QueueSnapshot ToSnapshot(IReadOnlyList<QueueEntry> entries) => new(
         Playing, entries, State, Volume, Muted, VocalMode, AudioLayout,
-        TvOnline, ConnectedPhones, PositionMs, SeekSequence, StateRevision);
+        TvOnline, ConnectedPhones, PositionMs, SeekSequence, StateRevision, Playback);
 }
 
+public sealed record PlaybackDescriptor(
+    [property: JsonPropertyName("kind")] string Kind = "NONE",
+    [property: JsonPropertyName("status")] string Status = "IDLE",
+    [property: JsonPropertyName("sourceFileId")] long? SourceFileId = null,
+    [property: JsonPropertyName("variantId")] long? VariantId = null,
+    [property: JsonPropertyName("streamUrl")] string? StreamUrl = null,
+    [property: JsonPropertyName("audioTracks")] int AudioTracks = 0,
+    [property: JsonPropertyName("vocalTrackIndex")] int? VocalTrackIndex = null,
+    [property: JsonPropertyName("audioLayout")] AudioLayoutDto? AudioLayout = null,
+    [property: JsonPropertyName("errorCode")] string? ErrorCode = null,
+    [property: JsonPropertyName("errorMessage")] string? ErrorMessage = null)
+{
+    public bool IsReady => string.Equals(Status, "READY", StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(StreamUrl);
+
+    public bool IsPreparing => string.Equals(Status, "PREPARING", StringComparison.OrdinalIgnoreCase);
+
+    public bool IsFailed => string.Equals(Status, "FAILED", StringComparison.OrdinalIgnoreCase);
+}
 public sealed record QueueSnapshotChunk(
     [property: JsonPropertyName("eventType")] string EventType,
     [property: JsonPropertyName("syncId")] string SyncId,

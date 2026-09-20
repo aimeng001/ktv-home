@@ -6,7 +6,7 @@ public static class PlaybackFailurePolicy
     {
         if (exception is PlaybackAttemptException
             {
-                FailureKind: PlaybackFailureKind.MediaMissing,
+                FailureKind: PlaybackFailureKind.MediaMissing or PlaybackFailureKind.TranscodeFailure,
                 FileId: var missingFileId,
             } attempt)
         {

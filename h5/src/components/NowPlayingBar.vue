@@ -47,9 +47,12 @@ const progressPct = computed(() => {
  *
  * Chinese display text for current playback state.
  */
-const stateText = computed(() => ({
-  playing: '演唱中', paused: '已暂停', idle: ''
-}[player.state] || ''))
+const stateText = computed(() => {
+  const playbackStatus = String(player.playback?.status || 'IDLE').toUpperCase()
+  if (playbackStatus === 'PREPARING') return '准备 MV 中'
+  if (playbackStatus === 'FAILED') return 'MV 准备失败'
+  return ({ playing: '演唱中', paused: '已暂停', idle: '' }[player.state] || '')
+})
 </script>
 
 <style scoped>

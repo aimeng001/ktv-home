@@ -5,6 +5,7 @@ public enum PlaybackFailureKind
     Unknown,
     MediaMissing,
     SourceUnavailable,
+    TranscodeFailure,
     OutputFailure,
 }
 

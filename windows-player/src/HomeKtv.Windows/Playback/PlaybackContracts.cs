@@ -17,6 +17,12 @@ public interface IPlaybackServerApi
     Task<SongDetail?> GetSongDetailAsync(long songId, CancellationToken cancellationToken = default);
 
     string StreamUrl(long fileId);
+
+    /** Returns the server-authoritative native/sidecar playback choice. */
+    Task<PlaybackDescriptor?> ResolvePlaybackAsync(
+        long fileId,
+        bool forceTranscode,
+        CancellationToken cancellationToken = default) => Task.FromResult<PlaybackDescriptor?>(null);
 }
 
 public interface IPlaybackOutput

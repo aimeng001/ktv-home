@@ -21,11 +21,15 @@ public sealed class PlaybackCoordinator
     private bool? lastMuted;
     private long lastSeekSequence = -1;
     private readonly SemaphoreSlim snapshotLock = new(1, 1);
+    private readonly TimeSpan playbackPollDelay;
+    private const int MaxPlaybackResolveAttempts = 120;
 
-    public PlaybackCoordinator(IPlaybackServerApi server, IPlaybackOutput output)
+    public PlaybackCoordinator(IPlaybackServerApi server, IPlaybackOutput output, TimeSpan? playbackPollDelay = null)
     {
         this.server = server;
         this.output = output;
+        this.playbackPollDelay = playbackPollDelay ?? TimeSpan.FromSeconds(1);
+        if (this.playbackPollDelay < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(playbackPollDelay));
     }
 
     public ActiveOutputIdentity? ActiveOutput
@@ -126,11 +130,11 @@ public sealed class PlaybackCoordinator
 
                 // The server may publish a higher-priority row that has not finished probing.
                 // Selecting purely on priority would then request a stream that cannot be served.
-                file = detail.Files
+                var source = detail.Files
                     .Where(item => item.Ready != false)
                     .OrderByDescending(item => item.Priority)
                     .FirstOrDefault();
-                if (file is null)
+                if (source is null)
                 {
                     throw new PlaybackAttemptException(
                         playing.QueueId.Value,
@@ -139,12 +143,17 @@ public sealed class PlaybackCoordinator
                         PlaybackFailureKind.SourceUnavailable);
                 }
 
+                var descriptor = await ResolvePlaybackDescriptorAsync(
+                        snapshot, source, playing.QueueId.Value, cancellationToken, isCurrent)
+                    .ConfigureAwait(false);
+                EnsureCurrent(cancellationToken, isCurrent);
+                file = ToPlayableFile(source, descriptor);
                 if (loadedQueueId is not null)
                 {
                     await output.PauseAsync(cancellationToken).ConfigureAwait(false);
                     EnsureCurrent(cancellationToken, isCurrent);
                 }
-                await output.LoadAsync(server.StreamUrl(file.Id), file.Id, cancellationToken)
+                await output.LoadAsync(descriptor.StreamUrl!, file.Id, cancellationToken)
                     .ConfigureAwait(false);
                 EnsureCurrent(cancellationToken, isCurrent);
             }
@@ -254,6 +263,105 @@ public sealed class PlaybackCoordinator
         }
     }
 
+    private async Task<PlaybackDescriptor> ResolvePlaybackDescriptorAsync(
+        QueueSnapshot snapshot,
+        FileSource source,
+        long queueId,
+        CancellationToken cancellationToken,
+        Func<bool> isCurrent)
+    {
+        var descriptor = snapshot.Playback;
+        if (descriptor is null
+            || descriptor.SourceFileId != source.Id
+            || string.Equals(descriptor.Status, "IDLE", StringComparison.OrdinalIgnoreCase))
+        {
+            descriptor = await server.ResolvePlaybackAsync(source.Id, false, cancellationToken)
+                .ConfigureAwait(false)
+                ?? NativeDescriptor(source);
+        }
+
+        for (var attempt = 0; descriptor.IsPreparing && attempt < MaxPlaybackResolveAttempts; attempt++)
+        {
+            EnsureCurrent(cancellationToken, isCurrent);
+            var next = await server.ResolvePlaybackAsync(source.Id, false, cancellationToken)
+                .ConfigureAwait(false);
+            if (next is null)
+            {
+                descriptor = NativeDescriptor(source);
+                break;
+            }
+
+            descriptor = next;
+            if (descriptor.IsPreparing && playbackPollDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(playbackPollDelay, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        EnsureCurrent(cancellationToken, isCurrent);
+        if (descriptor.IsFailed)
+        {
+            throw new PlaybackAttemptException(
+                queueId,
+                source.Id,
+                descriptor.ErrorMessage ?? "服务器未能生成可播放的 MV 变体。",
+                PlaybackFailureKind.TranscodeFailure);
+        }
+
+        if (!descriptor.IsReady)
+        {
+            throw new PlaybackAttemptException(
+                queueId,
+                source.Id,
+                descriptor.IsPreparing
+                    ? "MV 变体仍在准备，超过等待上限。"
+                    : "服务器没有返回可播放的媒体地址。",
+                PlaybackFailureKind.SourceUnavailable);
+        }
+
+        if (string.Equals(descriptor.Kind, "TRANSCODE", StringComparison.OrdinalIgnoreCase)
+            && descriptor.VariantId is null)
+        {
+            throw new PlaybackAttemptException(
+                queueId,
+                source.Id,
+                "MV 变体缺少播放标识。",
+                PlaybackFailureKind.TranscodeFailure);
+        }
+
+        return descriptor;
+    }
+
+    private PlaybackDescriptor NativeDescriptor(FileSource source) => new(
+        "NATIVE",
+        "READY",
+        source.Id,
+        null,
+        server.StreamUrl(source.Id),
+        source.AudioTracks,
+        source.VocalTrackIndex,
+        source.AudioLayout,
+        null,
+        null);
+
+    private static FileSource ToPlayableFile(FileSource source, PlaybackDescriptor descriptor)
+    {
+        if (!string.Equals(descriptor.Kind, "TRANSCODE", StringComparison.OrdinalIgnoreCase)
+            || descriptor.VariantId is not { } variantId)
+        {
+            return source;
+        }
+
+        return source with
+        {
+            Id = variantId,
+            Format = "mp4",
+            AudioTracks = descriptor.AudioTracks > 0 ? descriptor.AudioTracks : source.AudioTracks,
+            VocalTrackIndex = descriptor.VocalTrackIndex ?? source.VocalTrackIndex,
+            AudioLayout = descriptor.AudioLayout ?? source.AudioLayout,
+            Ready = true,
+        };
+    }
     private async Task ApplyAudioAsync(
         string vocalMode,
         AudioLayoutDto audioLayout,

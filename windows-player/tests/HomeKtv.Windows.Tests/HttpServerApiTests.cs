@@ -1,3 +1,4 @@
+using HomeKtv.Windows.Protocol;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -36,6 +37,39 @@ public sealed class HttpServerApiTests
         Assert.Equal("windows-token", body.RootElement.GetProperty("client_token").GetString());
     }
 
+    [Fact]
+    public async Task Playback_resolver_normalizes_relative_variant_stream_url()
+    {
+        HttpRequestMessage? request = null;
+        var handler = new RecordingHandler(message =>
+        {
+            request = message;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new
+                {
+                    kind = "TRANSCODE",
+                    status = "READY",
+                    sourceFileId = 7L,
+                    variantId = 88L,
+                    streamUrl = "/api/playback/stream/88",
+                    audioTracks = 2,
+                    vocalTrackIndex = 1,
+                    audioLayout = new { layout = "DUAL_TRACK", originalTrackIndex = 0, accompanimentTrackIndex = 1 },
+                }, options: ProtocolJson.Options),
+            };
+        });
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:54001/")), handler: handler);
+
+        var descriptor = await api.ResolvePlaybackAsync(7, false);
+
+        Assert.Equal("http://server:54001/api/playback/resolve/7", request!.RequestUri!.ToString());
+        Assert.Equal("TRANSCODE", descriptor!.Kind);
+        Assert.True(descriptor.IsReady);
+        Assert.Equal("http://server:54001/api/playback/stream/88", descriptor.StreamUrl);
+        Assert.Equal(1, descriptor.VocalTrackIndex);
+    }
     [Fact]
     public void Stream_url_stays_on_the_shared_api_path()
     {

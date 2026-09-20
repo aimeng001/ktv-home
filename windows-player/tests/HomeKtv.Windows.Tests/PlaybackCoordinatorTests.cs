@@ -8,6 +8,27 @@ namespace HomeKtv.Windows.Tests;
 public sealed class PlaybackCoordinatorTests
 {
     [Fact]
+    public async Task Preparing_playback_uses_ready_variant_identity_and_audio_semantics()
+    {
+        var output = new RecordingPlaybackOutput();
+        var source = FileSourceFor(AudioLayout.DUAL_TRACK, fileId: 10);
+        var api = new ResolvingServerApi(
+            source,
+            new PlaybackDescriptor(
+                "TRANSCODE", "READY", 10, 88,
+                "http://server/api/playback/stream/88", 2, 1,
+                new AudioLayoutDto(AudioLayout.DUAL_TRACK, 0, 1), null, null));
+        var coordinator = new PlaybackCoordinator(api, output, TimeSpan.Zero);
+        var preparing = new PlaybackDescriptor("TRANSCODE", "PREPARING", 10, 88);
+
+        await coordinator.ApplySnapshotAsync(
+            "sync_full", Snapshot("accompaniment", audioLayout: AudioLayout.DUAL_TRACK, playback: preparing));
+
+        Assert.Equal(new long[] { 88 }, output.LoadedFileIds);
+        Assert.Equal(new[] { 1 }, output.AudioTrackIndices);
+        Assert.Equal("http://server/api/playback/stream/88", output.LoadedStreamUrls.Single());
+    }
+    [Fact]
     public async Task Vocal_change_on_same_queue_does_not_reload_or_seek()
     {
         var output = new RecordingPlaybackOutput();
@@ -405,7 +426,7 @@ public sealed class PlaybackCoordinatorTests
         bool muted = false,
         long positionMs = 0,
         long seekSequence = 0,
-        AudioLayout audioLayout = AudioLayout.NORMAL_STEREO) => new(
+        AudioLayout audioLayout = AudioLayout.NORMAL_STEREO, PlaybackDescriptor? playback = null) => new(
         new NowPlaying(queueId, new SongDto(songId, $"Song {songId}", "Artist"), null),
         Array.Empty<QueueEntry>(),
         state,
@@ -419,7 +440,9 @@ public sealed class PlaybackCoordinatorTests
         true,
         0,
         positionMs,
-        seekSequence);
+        seekSequence,
+        0,
+        playback);
 
     private static FileSource FileSourceFor(AudioLayout layout, long fileId = 10, bool? ready = null) =>
         new(fileId, "matroska", layout == AudioLayout.DUAL_TRACK ? 2 : 1,
@@ -430,6 +453,21 @@ public sealed class PlaybackCoordinatorTests
                 AudioChannel.LEFT, AudioChannel.RIGHT),
             ready);
 
+    private sealed class ResolvingServerApi(
+        FileSource source,
+        PlaybackDescriptor readyDescriptor) : IPlaybackServerApi
+    {
+        public Task<SongDetail?> GetSongDetailAsync(long songId, CancellationToken cancellationToken = default)
+            => Task.FromResult<SongDetail?>(new SongDetail(
+                songId, "Song", "Artist", "AUDIO", false, 100_000, "none", null, null,
+                new[] { source }));
+
+        public string StreamUrl(long fileId) => $"http://server/api/stream/{fileId}";
+
+        public Task<PlaybackDescriptor?> ResolvePlaybackAsync(
+            long fileId, bool forceTranscode, CancellationToken cancellationToken = default)
+            => Task.FromResult<PlaybackDescriptor?>(readyDescriptor);
+    }
     private sealed class FakeServerApi(params FileSource[] files) : IPlaybackServerApi
     {
         public Task<SongDetail?> GetSongDetailAsync(long songId, CancellationToken cancellationToken = default)
@@ -485,6 +523,7 @@ public sealed class PlaybackCoordinatorTests
         public bool ThrowOnLoad { get; init; }
         public bool ThrowOnNextLoad { get; set; }
         public List<long> LoadedFileIds { get; } = new();
+        public List<string> LoadedStreamUrls { get; } = new();
         public List<long> SeekPositions { get; } = new();
         public List<int> AudioTrackIndices { get; } = new();
         public List<ChannelMapMode> ChannelModes { get; } = new();
@@ -499,6 +538,7 @@ public sealed class PlaybackCoordinatorTests
             }
             LoadCount++;
             LoadedFileIds.Add(fileId);
+            LoadedStreamUrls.Add(streamUrl);
             return Task.CompletedTask;
         }
 
@@ -552,6 +592,7 @@ public sealed class PlaybackCoordinatorTests
         public TaskCompletionSource<bool> ReleaseFirstLoad { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public List<long> LoadedFileIds { get; } = new();
+        public List<string> LoadedStreamUrls { get; } = new();
         public List<long> PlayedFileIds { get; } = new();
         public int PauseCount { get; private set; }
         public List<(int Volume, bool Muted)> VolumeChanges { get; } = new();
@@ -561,6 +602,7 @@ public sealed class PlaybackCoordinatorTests
         public async Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default)
         {
             LoadedFileIds.Add(fileId);
+            LoadedStreamUrls.Add(streamUrl);
             if (fileId == 10)
             {
                 FirstLoadStarted.TrySetResult(true);

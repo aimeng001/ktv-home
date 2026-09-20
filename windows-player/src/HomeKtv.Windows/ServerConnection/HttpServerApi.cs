@@ -92,6 +92,38 @@ public sealed class HttpServerApi : IPlaybackServerApi, IDisposable
     }
 
     public string StreamUrl(long fileId) => new Uri(endpoint.ApiBaseUri, $"stream/{fileId}").ToString();
+    public async Task<PlaybackDescriptor?> ResolvePlaybackAsync(
+        long fileId,
+        bool forceTranscode,
+        CancellationToken cancellationToken = default)
+    {
+        var suffix = forceTranscode ? $"playback/resolve/{fileId}?forceTranscode=true" : $"playback/resolve/{fileId}";
+        using var response = await http.GetAsync(
+                new Uri(endpoint.ApiBaseUri, suffix), HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken)
+            .ConfigureAwait(false);
+        // A legacy server has no resolver endpoint. Keep the old native stream
+        // path usable while upgraded servers return typed media failures.
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode)
+        {
+            throw await ReadApiExceptionAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+
+        var descriptor = await ReadJsonAsync<PlaybackDescriptor>(
+                response.Content, BoundedHttpContentReader.MaxJsonBytes, cancellationToken)
+            .ConfigureAwait(false);
+        if (descriptor is null || string.IsNullOrWhiteSpace(descriptor.StreamUrl)
+            || Uri.IsWellFormedUriString(descriptor.StreamUrl, UriKind.Absolute))
+        {
+            return descriptor;
+        }
+
+        return descriptor with
+        {
+            StreamUrl = new Uri(endpoint.BaseUri, descriptor.StreamUrl.TrimStart('/')).ToString(),
+        };
+    }
 
     /** Downloads a server-local image such as artistAvatarUrl; remote absolute URLs are rejected. */
     public async Task<byte[]?> GetAssetBytesAsync(string? path, CancellationToken cancellationToken = default)

@@ -6,6 +6,17 @@ namespace HomeKtv.Windows.Tests;
 public sealed class PlaybackFailurePolicyTests
 {
     [Fact]
+    public void Transcode_failure_reports_play_error_for_confirmed_unplayable_variant()
+    {
+        var attempt = new PlaybackAttemptException(
+            42L, 99L, "MV transcode failed", PlaybackFailureKind.TranscodeFailure);
+
+        var shouldReport = PlaybackFailurePolicy.ShouldReportPlayError(attempt, out var fileId);
+
+        Assert.True(shouldReport);
+        Assert.Equal(99L, fileId);
+    }
+    [Fact]
     public void MediaLoadFailure_DoesNotReportPlayError_WhenMediaExistenceIsUnconfirmed()
     {
         var attempt = new PlaybackAttemptException(42L, 99L, "Failed to load media file");

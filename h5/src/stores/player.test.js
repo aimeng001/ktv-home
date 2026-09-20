@@ -30,6 +30,19 @@ describe('usePlayerStore', () => {
     expect(p.audioLayout.layout).toBe('DUAL_CHANNEL')
   })
 
+  it('mirrors playback preparation status from the server snapshot', () => {
+    const p = usePlayerStore()
+    p.handleEvent('sync_full', {
+      ...snapshot,
+      playback: { kind: 'TRANSCODE', status: 'PREPARING', sourceFileId: 7, variantId: 88 }
+    })
+
+    expect(p.playback.status).toBe('PREPARING')
+    expect(p.playback.variantId).toBe(88)
+
+    p.handleEvent('player_state', { ...snapshot, playback: { kind: 'TRANSCODE', status: 'READY', streamUrl: '/api/playback/stream/88' } })
+    expect(p.playback.status).toBe('READY')
+  })
   it('queue_updated 刷新队列', () => {
     const p = usePlayerStore()
     p.handleEvent('sync_full', snapshot)
