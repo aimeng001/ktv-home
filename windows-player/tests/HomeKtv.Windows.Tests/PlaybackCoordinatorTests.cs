@@ -29,6 +29,20 @@ public sealed class PlaybackCoordinatorTests
         Assert.Equal("http://server/api/playback/stream/88", output.LoadedStreamUrls.Single());
     }
     [Fact]
+    public async Task Preparing_playback_waits_until_ready_beyond_two_minutes()
+    {
+        var output = new RecordingPlaybackOutput();
+        var source = FileSourceFor(AudioLayout.DUAL_TRACK, fileId: 10);
+        var api = new SlowPreparingServerApi(source, preparingResponses: 120);
+        var coordinator = new PlaybackCoordinator(api, output, TimeSpan.Zero);
+        var preparing = new PlaybackDescriptor("TRANSCODE", "PREPARING", 10, 88);
+
+        await coordinator.ApplySnapshotAsync(
+            "sync_full", Snapshot("accompaniment", audioLayout: AudioLayout.DUAL_TRACK, playback: preparing));
+
+        Assert.Equal(new long[] { 88 }, output.LoadedFileIds);
+        Assert.Equal(121, api.ResolveCalls);
+    }    [Fact]
     public async Task Vocal_change_on_same_queue_does_not_reload_or_seek()
     {
         var output = new RecordingPlaybackOutput();
@@ -453,6 +467,32 @@ public sealed class PlaybackCoordinatorTests
                 AudioChannel.LEFT, AudioChannel.RIGHT),
             ready);
 
+    private sealed class SlowPreparingServerApi(
+        FileSource source,
+        int preparingResponses) : IPlaybackServerApi
+    {
+        public int ResolveCalls { get; private set; }
+
+        public Task<SongDetail?> GetSongDetailAsync(long songId, CancellationToken cancellationToken = default)
+            => Task.FromResult<SongDetail?>(new SongDetail(
+                songId, "Song", "Artist", "AUDIO", false, 100_000, "none", null, null,
+                new[] { source }));
+
+        public string StreamUrl(long fileId) => $"http://server/api/stream/{fileId}";
+
+        public Task<PlaybackDescriptor?> ResolvePlaybackAsync(
+            long fileId, bool forceTranscode, CancellationToken cancellationToken = default)
+        {
+            ResolveCalls++;
+            var descriptor = ResolveCalls <= preparingResponses
+                ? new PlaybackDescriptor("TRANSCODE", "PREPARING", source.Id, 88)
+                : new PlaybackDescriptor(
+                    "TRANSCODE", "READY", source.Id, 88,
+                    "http://server/api/playback/stream/88", 2, 1,
+                    new AudioLayoutDto(AudioLayout.DUAL_TRACK, 0, 1), null, null);
+            return Task.FromResult<PlaybackDescriptor?>(descriptor);
+        }
+    }
     private sealed class ResolvingServerApi(
         FileSource source,
         PlaybackDescriptor readyDescriptor) : IPlaybackServerApi

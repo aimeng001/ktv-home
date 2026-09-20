@@ -22,7 +22,6 @@ public sealed class PlaybackCoordinator
     private long lastSeekSequence = -1;
     private readonly SemaphoreSlim snapshotLock = new(1, 1);
     private readonly TimeSpan playbackPollDelay;
-    private const int MaxPlaybackResolveAttempts = 120;
 
     public PlaybackCoordinator(IPlaybackServerApi server, IPlaybackOutput output, TimeSpan? playbackPollDelay = null)
     {
@@ -280,7 +279,7 @@ public sealed class PlaybackCoordinator
                 ?? NativeDescriptor(source);
         }
 
-        for (var attempt = 0; descriptor.IsPreparing && attempt < MaxPlaybackResolveAttempts; attempt++)
+        while (descriptor.IsPreparing)
         {
             EnsureCurrent(cancellationToken, isCurrent);
             var next = await server.ResolvePlaybackAsync(source.Id, false, cancellationToken)
