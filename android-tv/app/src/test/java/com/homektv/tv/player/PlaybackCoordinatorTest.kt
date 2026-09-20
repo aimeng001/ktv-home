@@ -2,6 +2,7 @@ package com.homektv.tv.player
 
 import com.homektv.tv.net.FileSource
 import com.homektv.tv.net.FileSourceResolution
+import com.homektv.tv.net.AudioLayout
 import com.homektv.tv.net.KtvApiError
 import com.homektv.tv.net.KtvApiErrorKind
 import com.homektv.tv.net.NowPlaying
@@ -16,7 +17,60 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class PlaybackCoordinatorTest {
+class PlaybackCoordinatorTest {    @Test
+    fun preparingPlaybackPollsUntilVariantReadyAndUsesVariantIdentity() = runBlocking {
+        val events = mutableListOf<String>()
+        val sourceFile = FileSource(id = 7L, format = "rmvb", audioTracks = 1, resolution = "720x480")
+        val results = ArrayDeque<com.homektv.tv.net.PlaybackResolution>(listOf(
+            com.homektv.tv.net.PlaybackResolution.Preparing(
+                sourceFile,
+                com.homektv.tv.net.PlaybackDescriptor(
+                    kind = "TRANSCODE",
+                    status = "PREPARING",
+                    sourceFileId = 7L,
+                    variantId = 88L,
+                ),
+            ),
+            com.homektv.tv.net.PlaybackResolution.Ready(
+                sourceFile,
+                com.homektv.tv.net.PlaybackDescriptor(
+                    kind = "TRANSCODE",
+                    status = "READY",
+                    sourceFileId = 7L,
+                    variantId = 88L,
+                    streamUrl = "http://nas/api/playback/stream/88",
+                    audioTracks = 1,
+                    audioLayout = AudioLayout.normalStereo(),
+                ),
+            ),
+        ))
+        val desired = DesiredPlaybackState().also {
+            it.update(QueueSnapshot(playing = NowPlaying(queueId = 9L), state = "playing"))
+        }
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        val coordinator = PlaybackCoordinator(
+            source = object : PlaybackSource {
+                override suspend fun resolveFileSource(songId: Long): FileSourceResolution =
+                    error("resolvePlayback should be used")
+                override suspend fun resolvePlayback(songId: Long, forceTranscode: Boolean) = results.removeFirst()
+                override fun streamUrl(fileId: Long): String = "source://$fileId"
+            },
+            desiredState = desired,
+            scope = scope,
+            onBeginReplacement = {},
+            onFileReady = { _, file, _, url -> events += "ready:${file.id}:${file.format}:$url" },
+            onMissingSource = { events += "missing" },
+            onPlaybackPreparing = { _, _ -> events += "preparing" },
+            retryDelay = { events += "poll" },
+        )
+
+        val ticket = coordinator.replace(PlaybackReplacementRequest(9L, 7L))
+        ticket.job.join()
+
+        assertEquals(listOf("preparing", "poll", "ready:88:mp4:http://nas/api/playback/stream/88"), events)
+        scope.cancel()
+    }
+
     @Test
     fun exhaustedSourceProducesQueueScopedRecoverableErrorContext() {
         val token = PlaybackReplacementToken(
@@ -259,3 +313,5 @@ class PlaybackCoordinatorTest {
         scope.cancel()
     }
 }
+
+

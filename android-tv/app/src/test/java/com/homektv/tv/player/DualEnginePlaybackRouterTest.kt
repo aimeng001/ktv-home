@@ -26,7 +26,7 @@ class DualEnginePlaybackRouterTest {
     }
 
     @Test
-    fun testRealVideoUsesMedia3FfmpegExtensionAndUnsupportedContainersFailClosed() {
+    fun testUnsupportedContainersRequestServerResolution() {
         assertEquals(
             PlaybackEngineType.PRIMARY_MEDIA3,
             router.selectEngine(videoCodec = "rv40", format = "mkv"),
@@ -36,11 +36,11 @@ class DualEnginePlaybackRouterTest {
             router.selectEngine(videoCodec = "rv30", format = "mkv"),
         )
         assertEquals(
-            PlaybackEngineType.UNSUPPORTED,
+            PlaybackEngineType.RESOLVE_REQUIRED,
             router.selectEngine(videoCodec = null, format = "rmvb"),
         )
         assertEquals(
-            PlaybackEngineType.UNSUPPORTED,
+            PlaybackEngineType.RESOLVE_REQUIRED,
             router.selectEngine(videoCodec = null, format = "rm"),
         )
     }
@@ -53,7 +53,7 @@ class DualEnginePlaybackRouterTest {
             videoTrackCount = 0,
             hasSupportedVideoTrack = false,
         )
-        assertTrue("Media3 解析出 0 视频轨且该文件声明有画面时，必须触发软解 Fallback", shouldFallback)
+        assertTrue("Media3 解析出 0 视频轨且该文件声明有画面时，必须触发服务端播放变体解析", shouldFallback)
     }
 
     @Test
@@ -76,3 +76,4 @@ class DualEnginePlaybackRouterTest {
         assertFalse("纯音频文件不应触发视频 Fallback", shouldFallback)
     }
 }
+

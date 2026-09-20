@@ -110,6 +110,20 @@ data class QueueEntry(
 )
 
 @Serializable
+data class PlaybackDescriptor(
+    val kind: String = "NONE",
+    val status: String = "IDLE",
+    val sourceFileId: Long? = null,
+    val variantId: Long? = null,
+    val streamUrl: String? = null,
+    val audioTracks: Int = 0,
+    val vocalTrackIndex: Int? = null,
+    val audioLayout: AudioLayout = AudioLayout.normalStereo(),
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+)
+
+@Serializable
 data class QueueSnapshot(
     val playing: NowPlaying? = null,
     val list: List<QueueEntry> = emptyList(),
@@ -124,6 +138,7 @@ data class QueueSnapshot(
     val seekSequence: Long = 0,
     /** Monotonic server snapshot revision; zero is the legacy/unversioned value. */
     val stateRevision: Long = 0,
+    val playback: PlaybackDescriptor = PlaybackDescriptor(),
 )
 
 @Serializable
@@ -139,6 +154,7 @@ data class QueueSnapshotHeader(
     val positionMs: Long = 0,
     val seekSequence: Long = 0,
     val stateRevision: Long = 0,
+    val playback: PlaybackDescriptor = PlaybackDescriptor(),
 ) {
     fun toSnapshot(entries: List<QueueEntry>): QueueSnapshot = QueueSnapshot(
         playing = playing,
@@ -153,6 +169,7 @@ data class QueueSnapshotHeader(
         positionMs = positionMs,
         seekSequence = seekSequence,
         stateRevision = stateRevision,
+        playback = playback,
     )
 }
 
@@ -303,3 +320,7 @@ data class RoomHostStatus(
     val revision: Long = 0,
     val isHost: Boolean = false,
 )
+
+
+
+

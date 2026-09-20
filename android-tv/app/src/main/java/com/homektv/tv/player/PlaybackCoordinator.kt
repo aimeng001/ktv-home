@@ -4,6 +4,8 @@ import com.homektv.tv.net.FileSource
 import com.homektv.tv.net.FileSourceResolution
 import com.homektv.tv.net.KtvApiError
 import com.homektv.tv.net.KtvApiErrorKind
+import com.homektv.tv.net.PlaybackDescriptor
+import com.homektv.tv.net.PlaybackResolution
 import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.PlaybackErrorContext
 import kotlinx.coroutines.CancellationException
@@ -15,11 +17,33 @@ import kotlinx.coroutines.launch
 internal data class PlaybackReplacementRequest(
     val queueId: Long?,
     val songId: Long,
+    val forceTranscode: Boolean = false,
 )
 
 internal interface PlaybackSource {
     suspend fun resolveFileSource(songId: Long): FileSourceResolution
     fun streamUrl(fileId: Long): String
+
+    /** Compatibility bridge for tests and old transports; MediaApi overrides it. */
+    suspend fun resolvePlayback(songId: Long, forceTranscode: Boolean = false): PlaybackResolution =
+        when (val result = resolveFileSource(songId)) {
+            is FileSourceResolution.Ready -> PlaybackResolution.Ready(
+                result.source,
+                PlaybackDescriptor(
+                    kind = "NATIVE",
+                    status = "READY",
+                    sourceFileId = result.source.id,
+                    streamUrl = streamUrl(result.source.id),
+                    audioTracks = result.source.audioTracks,
+                    vocalTrackIndex = result.source.audioLayout.accompanimentTrackIndex ?: result.source.vocalTrackIndex,
+                    audioLayout = result.source.audioLayout,
+                ),
+            )
+            is FileSourceResolution.Absent -> PlaybackResolution.Absent(result.reason)
+            is FileSourceResolution.Fatal -> PlaybackResolution.Fatal(result.error)
+            is FileSourceResolution.ConfigurationFailure -> PlaybackResolution.ConfigurationFailure(result.error)
+            is FileSourceResolution.Retryable -> PlaybackResolution.Retryable(result.error)
+        }
 }
 
 internal data class PlaybackReplacementToken(
@@ -56,6 +80,7 @@ internal class PlaybackCoordinator(
     ) -> Unit,
     private val onMissingSource: (token: PlaybackReplacementToken) -> Unit,
     private val onWaitingForSource: (token: PlaybackReplacementToken, error: KtvApiError) -> Unit = { _, _ -> },
+    private val onPlaybackPreparing: (token: PlaybackReplacementToken, descriptor: PlaybackDescriptor) -> Unit = { _, _ -> },
     private val onSourceFailure: (token: PlaybackReplacementToken, error: KtvApiError) -> Unit = { _, _ -> },
     private val onSourceExhausted: (token: PlaybackReplacementToken, error: KtvApiError) -> Unit = { _, _ -> },
     private val retryDelay: suspend (Long) -> Unit = { delay(it) },
@@ -78,14 +103,15 @@ internal class PlaybackCoordinator(
         onBeginReplacement(request.queueId)
         val job = scope.launch {
             var attempt = 0
+            var preparingAttempt = 0
             var waitingReported = false
             while (isCurrent(token)) {
                 val result = try {
-                    source.resolveFileSource(request.songId)
+                    source.resolvePlayback(request.songId, request.forceTranscode)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
-                    FileSourceResolution.Retryable(
+                    PlaybackResolution.Retryable(
                         KtvApiError(
                             kind = KtvApiErrorKind.NETWORK,
                             code = "FILE_SOURCE_RESOLUTION_FAILED",
@@ -95,25 +121,43 @@ internal class PlaybackCoordinator(
                 }
                 if (!isCurrent(token)) return@launch
                 when (result) {
-                    is FileSourceResolution.Ready -> {
+                    is PlaybackResolution.Ready -> {
                         val snapshot = desiredState.forQueue(request.queueId) ?: return@launch
                         if (!isCurrent(token)) return@launch
-                        onFileReady(token, result.source, snapshot, source.streamUrl(result.source.id))
+                        val streamUrl = result.descriptor.streamUrl
+                            ?: source.streamUrl(result.source.id)
+                        onFileReady(token, result.playableFile(), snapshot, streamUrl)
                         return@launch
                     }
-                    is FileSourceResolution.Absent -> {
+                    is PlaybackResolution.Preparing -> {
+                        if (preparingAttempt >= MAX_PLAYBACK_RETRIES) {
+                            onSourceExhausted(
+                                token,
+                                KtvApiError(KtvApiErrorKind.HTTP, "PLAYBACK_PREPARING_TIMEOUT", "MV 准备超时", status = 504),
+                            )
+                            return@launch
+                        }
+                        onPlaybackPreparing(token, result.descriptor)
+                        preparingAttempt++
+                        retryDelay(PLAYBACK_RETRY_DELAY_MS)
+                    }
+                    is PlaybackResolution.Failed -> {
+                        onSourceFailure(token, result.error)
+                        return@launch
+                    }
+                    is PlaybackResolution.Absent -> {
                         onMissingSource(token)
                         return@launch
                     }
-                    is FileSourceResolution.Fatal -> {
+                    is PlaybackResolution.Fatal -> {
                         onSourceFailure(token, result.error)
                         return@launch
                     }
-                    is FileSourceResolution.ConfigurationFailure -> {
+                    is PlaybackResolution.ConfigurationFailure -> {
                         onSourceFailure(token, result.error)
                         return@launch
                     }
-                    is FileSourceResolution.Retryable -> {
+                    is PlaybackResolution.Retryable -> {
                         if (attempt >= MAX_SOURCE_RETRIES) {
                             onSourceExhausted(token, result.error)
                             return@launch
@@ -152,8 +196,25 @@ internal class PlaybackCoordinator(
             generation == token.generation && activeRequest == token.request
         }
 
+    private fun PlaybackResolution.Ready.playableFile(): FileSource {
+        val descriptor = descriptor
+        if (!descriptor.kind.equals("TRANSCODE", ignoreCase = true) || descriptor.variantId == null) {
+            return source
+        }
+        return source.copy(
+            id = descriptor.variantId,
+            format = "mp4",
+            audioTracks = descriptor.audioTracks.coerceAtLeast(1),
+            vocalTrackIndex = descriptor.vocalTrackIndex,
+            audioLayout = descriptor.audioLayout,
+            ready = true,
+        )
+    }
+
     companion object {
         val SOURCE_RETRY_DELAYS = longArrayOf(500L, 1_500L, 3_000L, 10_000L)
         const val MAX_SOURCE_RETRIES = 4
+        const val MAX_PLAYBACK_RETRIES = 120
+        const val PLAYBACK_RETRY_DELAY_MS = 1_000L
     }
 }

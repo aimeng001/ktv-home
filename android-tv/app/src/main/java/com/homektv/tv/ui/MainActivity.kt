@@ -262,6 +262,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         playbackCoordinator = PlaybackCoordinator(
             source = object : PlaybackSource {
                 override suspend fun resolveFileSource(songId: Long) = mediaApi.resolveFileSource(songId)
+                override suspend fun resolvePlayback(songId: Long, forceTranscode: Boolean) =
+                    mediaApi.resolvePlayback(songId, forceTranscode)
                 override fun streamUrl(fileId: Long): String = mediaApi.streamUrl(fileId)
             },
             desiredState = desiredPlaybackState,
@@ -285,17 +287,28 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                     onPlayError(PlaybackErrorContext.missingSource(token.request.queueId))
                 }
             },
+            onPlaybackPreparing = { token, _ ->
+                if (playbackCoordinator.isCurrent(token)) onToast("正在准备 MV，请稍候")
+            },
             onWaitingForSource = { token, _ ->
                 if (playbackCoordinator.isCurrent(token)) onToast(getString(R.string.play_waiting_network))
             },
             onSourceFailure = { token, error ->
                 if (playbackCoordinator.isCurrent(token)) {
-                    val message = if (error.status == 401 || error.status == 403) {
-                        "点歌服务凭据无效，请重新配置"
+                    val confirmedPlaybackFailure = error.code.startsWith("PLAYBACK_") ||
+                        error.code.startsWith("TRANSCODE_") ||
+                        error.code.startsWith("OUTPUT_")
+                    if (confirmedPlaybackFailure) {
+                        onToast(error.message)
+                        onPlayError(PlaybackErrorContext.missingSource(token.request.queueId))
                     } else {
-                        "歌曲详情协议异常，已停止自动播放"
+                        val message = if (error.status == 401 || error.status == 403) {
+                            "点歌服务凭据无效，请重新配置"
+                        } else {
+                            "歌曲详情协议异常，已停止自动播放"
+                        }
+                        onToast(message)
                     }
-                    onToast(message)
                 }
             },
             onSourceExhausted = { token, _ ->
@@ -327,6 +340,17 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             },
             onFinished = { queueId -> socket?.sendFinished(queueId) },
             onError = { _, context -> onPlayError(context) },
+            onPlaybackResolutionRequired = { queueId, _ ->
+                val snapshot = desiredPlaybackState.forQueue(queueId)
+                val songId = snapshot?.playing?.song?.id
+                if (songId != null) {
+                    val loadTicket = beginPlaybackLoad(queueId)
+                    activePlaybackLoadTicket = loadTicket
+                    playbackReplacementJob = playbackCoordinator.replace(
+                        PlaybackReplacementRequest(queueId = queueId, songId = songId, forceTranscode = true),
+                    ).job
+                }
+            },
         ).also {
             it.attach(binding.playerView)
             // 遥控音量键在此 ROM 上直达系统媒体会话：监听系统音量变化上行同步服务端
@@ -1536,3 +1560,5 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         private const val VOCAL_CHANGED_EVENT = "vocal_changed"
     }
 }
+
+

@@ -49,6 +49,7 @@ class PlaybackEngine(
     private val onProgress: (positionMs: Long, queueId: Long?) -> Unit,
     private val onFinished: (queueId: Long?) -> Unit,
     private val onError: (message: String, context: PlaybackErrorContext) -> Unit,
+    private val onPlaybackResolutionRequired: (queueId: Long?, fileId: Long?) -> Unit = { _, _ -> },
     private val playbackRouter: DualEnginePlaybackRouter = DualEnginePlaybackRouter(),
     fallbackPlayerFactory: ((Context, (Boolean) -> Unit, (Long, Long) -> Unit, () -> Unit, (String) -> Unit) -> FallbackPlayer)? = null,
 ) {
@@ -119,6 +120,7 @@ class PlaybackEngine(
     private var currentStreamUrl: String? = null
     /** Prevents a missing/unsupported video track from being reported repeatedly. */
     private var videoFailureReportedFileId: Long? = null
+    private var resolutionRequestedFileId: Long? = null
 
     private val fallbackSurfaceCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {
@@ -322,10 +324,11 @@ class PlaybackEngine(
         currentFormat = format
         currentStreamUrl = streamUrl
         videoFailureReportedFileId = null
+        resolutionRequestedFileId = null
 
         val engineChoice = playbackRouter.selectEngine(videoCodec, format)
-        if (engineChoice == PlaybackEngineType.UNSUPPORTED) {
-            reportPlaybackFailure("UNSUPPORTED_VIDEO_CONTAINER", queueId, fileId)
+        if (engineChoice == PlaybackEngineType.RESOLVE_REQUIRED || engineChoice == PlaybackEngineType.UNSUPPORTED) {
+            requestPlaybackResolution(queueId, fileId)
             return
         }
         if (engineChoice == PlaybackEngineType.FALLBACK_FFMPEG) {
@@ -490,6 +493,7 @@ class PlaybackEngine(
         currentFileId = null
         currentStreamUrl = null
         videoFailureReportedFileId = null
+        resolutionRequestedFileId = null
         videoGeneration = videoWatchdog.onMediaChanged()
         identityGate.invalidate()
         playRequestAt = 0L
@@ -702,6 +706,18 @@ class PlaybackEngine(
         main.removeCallbacks(progressTicker)
     }
 
+    private fun requestPlaybackResolution(queueId: Long?, fileId: Long?) {
+        if (fileId != null && resolutionRequestedFileId == fileId) return
+        resolutionRequestedFileId = fileId
+        stopProgressTicker()
+        player.playWhenReady = false
+        if (activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
+            player.stop()
+            player.clearMediaItems()
+        }
+        identityGate.invalidate()
+        onPlaybackResolutionRequired(queueId, fileId)
+    }
     private fun reportPlaybackFailure(message: String, queueId: Long?, fileId: Long?) {
         if (videoFailureReportedFileId == fileId && fileId != null) return
         videoFailureReportedFileId = fileId
@@ -725,7 +741,7 @@ class PlaybackEngine(
 
             if (playbackRouter.shouldFallbackOnTracks(currentHasVideoDeclared, videoTrackCount, hasSupportedVideoTrack)) {
                 Log.w(TAG, "Media3 has no supported video tracks for declared video fileId=$currentFileId")
-                reportPlaybackFailure("VIDEO_TRACK_UNSUPPORTED", currentQueueId, currentFileId)
+                requestPlaybackResolution(currentQueueId, currentFileId)
                 return
             }
 
@@ -777,8 +793,12 @@ class PlaybackEngine(
         override fun onPlayerError(error: PlaybackException) {
             Log.w(TAG, "player error: ${error.errorCodeName} ${error.message}")
             if (isDecoderOrFormatError(error) && activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
-                Log.w(TAG, "Media3 decoder/format failure (${error.errorCodeName}); refusing audio-only fallback")
-                reportPlaybackFailure(error.errorCodeName, currentQueueId, currentFileId)
+                Log.w(TAG, "Media3 decoder/format failure (${error.errorCodeName}); requesting server playback resolution")
+                if (currentHasVideoDeclared) {
+                    requestPlaybackResolution(currentQueueId, currentFileId)
+                } else {
+                    reportPlaybackFailure(error.errorCodeName, currentQueueId, currentFileId)
+                }
                 return
             }
 
@@ -848,3 +868,7 @@ class PlaybackEngine(
     }
 
 }
+
+
+
+
