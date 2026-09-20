@@ -117,6 +117,8 @@ class PlaybackEngine(
     private var currentHasVideoDeclared: Boolean = false
     private var currentFormat: String? = null
     private var currentStreamUrl: String? = null
+    /** Prevents a missing/unsupported video track from being reported repeatedly. */
+    private var videoFailureReportedFileId: Long? = null
 
     private val fallbackSurfaceCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {
@@ -319,8 +321,13 @@ class PlaybackEngine(
         currentHasVideoDeclared = hasVideoDeclared
         currentFormat = format
         currentStreamUrl = streamUrl
+        videoFailureReportedFileId = null
 
         val engineChoice = playbackRouter.selectEngine(videoCodec, format)
+        if (engineChoice == PlaybackEngineType.UNSUPPORTED) {
+            reportPlaybackFailure("UNSUPPORTED_VIDEO_CONTAINER", queueId, fileId)
+            return
+        }
         if (engineChoice == PlaybackEngineType.FALLBACK_FFMPEG) {
             switchToFallbackEngine(fileId, streamUrl, queueId, playWhenReady, initialPositionMs)
             return
@@ -482,6 +489,7 @@ class PlaybackEngine(
         currentQueueId = null
         currentFileId = null
         currentStreamUrl = null
+        videoFailureReportedFileId = null
         videoGeneration = videoWatchdog.onMediaChanged()
         identityGate.invalidate()
         playRequestAt = 0L
@@ -694,6 +702,19 @@ class PlaybackEngine(
         main.removeCallbacks(progressTicker)
     }
 
+    private fun reportPlaybackFailure(message: String, queueId: Long?, fileId: Long?) {
+        if (videoFailureReportedFileId == fileId && fileId != null) return
+        videoFailureReportedFileId = fileId
+        stopProgressTicker()
+        player.playWhenReady = false
+        if (activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
+            player.stop()
+            player.clearMediaItems()
+        }
+        identityGate.invalidate()
+        onError(message, PlaybackErrorContext.forPlayback(queueId, fileId))
+    }
+
     private val playerListener = object : Player.Listener {
         override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
             if (activeEngineType != PlaybackEngineType.PRIMARY_MEDIA3) return
@@ -703,16 +724,9 @@ class PlaybackEngine(
             val hasSupportedVideoTrack = videoGroups.any { it.isSupported }
 
             if (playbackRouter.shouldFallbackOnTracks(currentHasVideoDeclared, videoTrackCount, hasSupportedVideoTrack)) {
-                Log.w(TAG, "Media3 has no supported video tracks for declared video fileId=$currentFileId, falling back to FFmpeg player")
-                val curFileId = currentFileId
-                val curStreamUrl = currentStreamUrl
-                val curQueueId = currentQueueId
-                val curPos = player.currentPosition
-                val playWhenReady = player.playWhenReady
-                if (curFileId != null && curStreamUrl != null) {
-                    switchToFallbackEngine(curFileId, curStreamUrl, curQueueId, playWhenReady, curPos)
-                    return
-                }
+                Log.w(TAG, "Media3 has no supported video tracks for declared video fileId=$currentFileId")
+                reportPlaybackFailure("VIDEO_TRACK_UNSUPPORTED", currentQueueId, currentFileId)
+                return
             }
 
             videoWatchdog.onTracksChanged(
@@ -763,16 +777,9 @@ class PlaybackEngine(
         override fun onPlayerError(error: PlaybackException) {
             Log.w(TAG, "player error: ${error.errorCodeName} ${error.message}")
             if (isDecoderOrFormatError(error) && activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
-                val curFileId = currentFileId
-                val curStreamUrl = currentStreamUrl
-                val curQueueId = currentQueueId
-                val curPos = player.currentPosition
-                val playWhenReady = player.playWhenReady
-                if (curFileId != null && curStreamUrl != null) {
-                    Log.w(TAG, "Media3 decoder/format failure (${error.errorCodeName}), triggering fallback to FFmpeg player")
-                    switchToFallbackEngine(curFileId, curStreamUrl, curQueueId, playWhenReady, curPos)
-                    return
-                }
+                Log.w(TAG, "Media3 decoder/format failure (${error.errorCodeName}); refusing audio-only fallback")
+                reportPlaybackFailure(error.errorCodeName, currentQueueId, currentFileId)
+                return
             }
 
             val retryTicket = currentRetryTicket

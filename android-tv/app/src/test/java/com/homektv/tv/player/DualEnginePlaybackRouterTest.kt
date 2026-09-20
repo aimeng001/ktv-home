@@ -26,21 +26,21 @@ class DualEnginePlaybackRouterTest {
     }
 
     @Test
-    fun testRealVideoAndRmvbFormatsSelectFallbackFfmpegEngine() {
+    fun testRealVideoUsesMedia3FfmpegExtensionAndUnsupportedContainersFailClosed() {
         assertEquals(
-            PlaybackEngineType.FALLBACK_FFMPEG,
+            PlaybackEngineType.PRIMARY_MEDIA3,
             router.selectEngine(videoCodec = "rv40", format = "mkv"),
         )
         assertEquals(
-            PlaybackEngineType.FALLBACK_FFMPEG,
+            PlaybackEngineType.PRIMARY_MEDIA3,
             router.selectEngine(videoCodec = "rv30", format = "mkv"),
         )
         assertEquals(
-            PlaybackEngineType.FALLBACK_FFMPEG,
+            PlaybackEngineType.UNSUPPORTED,
             router.selectEngine(videoCodec = null, format = "rmvb"),
         )
         assertEquals(
-            PlaybackEngineType.FALLBACK_FFMPEG,
+            PlaybackEngineType.UNSUPPORTED,
             router.selectEngine(videoCodec = null, format = "rm"),
         )
     }

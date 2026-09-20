@@ -2,24 +2,24 @@ package com.homektv.tv.player
 
 enum class PlaybackEngineType {
     PRIMARY_MEDIA3,
+    /** Legacy injected fallback kept for test doubles; production routing never uses it for video. */
     FALLBACK_FFMPEG,
+    UNSUPPORTED,
 }
 
 /**
  * 播放双引擎路由器。
  * - 99% 的现代视频（H.264 / HEVC / MPEG-2 等）：走系统 Media3 + 芯片级硬解，保持零发热、极低功耗与原伴唱音频链路；
- * - 老旧生僻视频（rv40 / rv30 / rmvb / wmv 等）：在解封装或解码受阻时，自动调度端侧 FFmpeg 全格式软解备选引擎。
+ * - rv40/rv30 等 MKV 视频走已打包的 Media3 FFmpeg 扩展；真正不支持的容器失败关闭，禁止仅播音频。
  */
 class DualEnginePlaybackRouter {
-    private val softwareVideoCodecs = setOf("rv40", "rv30", "rv20", "rmvb", "wmv2", "cook", "flv")
     private val softwareContainers = setOf("rm", "rmvb")
 
     fun selectEngine(videoCodec: String?, format: String?): PlaybackEngineType {
-        if (videoCodec != null && softwareVideoCodecs.contains(videoCodec.lowercase())) {
-            return PlaybackEngineType.FALLBACK_FFMPEG
-        }
+        // The app packages Media3 FFmpeg extension renderers (including rv40/rv30).
+        // Sending these files to Android MediaPlayer silently drops the video track.
         if (format != null && softwareContainers.contains(format.lowercase())) {
-            return PlaybackEngineType.FALLBACK_FFMPEG
+            return PlaybackEngineType.UNSUPPORTED
         }
         return PlaybackEngineType.PRIMARY_MEDIA3
     }
