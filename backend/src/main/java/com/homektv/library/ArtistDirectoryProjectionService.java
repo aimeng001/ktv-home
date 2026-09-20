@@ -94,6 +94,7 @@ public class ArtistDirectoryProjectionService {
     });
     private final AtomicBoolean refreshRequested = new AtomicBoolean();
     private final AtomicBoolean refreshRunning = new AtomicBoolean();
+    private final Object refreshLock = new Object();
 
     public ArtistDirectoryProjectionService(JdbcTemplate jdbc) {
         this(jdbc, null);
@@ -142,10 +143,12 @@ public class ArtistDirectoryProjectionService {
         }
     }
     public void refresh() {
-        if (refreshTransaction == null) {
-            refreshInternal();
-        } else {
-            refreshTransaction.executeWithoutResult(status -> refreshInternal());
+        synchronized (refreshLock) {
+            if (refreshTransaction == null) {
+                refreshInternal();
+            } else {
+                refreshTransaction.executeWithoutResult(status -> refreshInternal());
+            }
         }
     }
 
