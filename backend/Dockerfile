@@ -50,10 +50,14 @@ LABEL org.opencontainers.image.version="${KTV_RELEASE_VERSION}" \
       org.opencontainers.image.revision="${KTV_GIT_SHA}" \
       org.opencontainers.image.created="${KTV_BUILD_TIME}"
 
+ARG APK_MIRROR=""
+
 # 打包 FFmpeg（含 ffprobe），供曲库扫描解析媒体。
 # Intel VAAPI requires the userspace iHD driver in addition to FFmpeg's VAAPI encoders.
 # intel-media-driver is x86_64-only, so keep the multi-architecture ARM64 image unchanged.
-RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/apk/repositories \
+RUN if [ -n "$APK_MIRROR" ]; then \
+      sed -i "s#https://dl-cdn.alpinelinux.org#${APK_MIRROR}#g" /etc/apk/repositories; \
+    fi \
     && for attempt in 1 2 3; do \
       apk add --no-cache ffmpeg su-exec && break; \
       if [ "$attempt" -eq 3 ]; then exit 1; fi; \

@@ -364,7 +364,7 @@ jobs:
     name: Publish image with TV APKs
     runs-on: ubuntu-latest
     needs: [release-meta, backend-release-gate, large-scan-gate, docker-runtime-test, android-tv, windows-player]
-    timeout-minutes: 30
+    timeout-minutes: 45
     outputs:
       image_digest: ${{ steps.publish_image.outputs.digest }}
     steps:
@@ -401,6 +401,8 @@ jobs:
           file: backend/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
             KTV_RELEASE_VERSION=${{ needs.release-meta.outputs.version_name }}
             KTV_RELEASE_VERSION_CODE=${{ needs.release-meta.outputs.version_code }}

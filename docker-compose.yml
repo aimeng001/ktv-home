@@ -32,6 +32,7 @@ services:
       dockerfile: backend/Dockerfile
       args:
         BASE_REGISTRY: ${KTV_IMAGE_REGISTRY:-docker.m.daocloud.io}
+        APK_MIRROR: ${KTV_APK_MIRROR:-}
     image: ${KTV_APP_IMAGE:-home-ktv:latest}
     container_name: ${KTV_APP_CONTAINER_NAME:-ktv-app}
     environment:
