@@ -176,6 +176,23 @@ class CategoryBrowseServiceTest {
     }
 
     @Test
+    void projectionPageIsUsedBeforeLegacyFullAggregate() {
+        SongRepository repository = mock(SongRepository.class);
+        ArtistDirectoryProjectionService projection = mock(ArtistDirectoryProjectionService.class);
+        when(projection.page("男歌手", "Z", 0, 30)).thenReturn(java.util.Optional.of(
+                new ArtistDirectoryProjectionService.ProjectionPage(
+                        List.of(new ArtistDirectoryProjectionService.ArtistRow(
+                                "zhou", "周杰伦", "Z", "男歌手", 7285L, false, "PERSON", null)),
+                        1L)));
+
+        CategoryBrowseService service = new CategoryBrowseService(repository, null, projection);
+        CategoryBrowseService.ArtistPage result = service.artistsPage("男歌手", "Z", 0, 30);
+
+        assertThat(result.total()).isEqualTo(1L);
+        assertThat(result.items().getFirst()).containsEntry("name", "周杰伦");
+        verify(repository, never()).pagePublicArtistDirectory(any(), any(), any(), any());
+    }
+    @Test
     void tags_delegatesToRepositoryAggregationWithoutIteration() {
         SongRepository repository = mock(SongRepository.class);
         SongRepository.TagCountProjection p1 = mock(SongRepository.TagCountProjection.class);

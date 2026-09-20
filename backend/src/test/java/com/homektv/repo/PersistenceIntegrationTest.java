@@ -5,6 +5,7 @@ import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.library.JdbcLibraryScanSeenPathStore;
 import com.homektv.library.CategoryBrowseService;
+import com.homektv.library.ArtistDirectoryProjectionService;
 import com.homektv.library.SongMergeService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -67,6 +68,12 @@ class PersistenceIntegrationTest {
 
     @Autowired
     private CategoryBrowseService categoryBrowseService;
+
+    @Autowired
+    private ArtistDirectoryProjectionService artistDirectoryProjection;
+
+    @Autowired
+    private com.homektv.library.LibraryCatalogStatsService catalogStats;
 
     @Test
     void playerStateSingletonInitialized() {
@@ -304,6 +311,44 @@ class PersistenceIntegrationTest {
                 .containsExactly(collaborative.getId());
     }
 
+    @Test
+    void artistDirectoryProjectionInfersSingleCreditGenderAndServesIndexedPage() {
+        String suffix = String.valueOf(System.nanoTime());
+        String artist = "投影歌手-" + suffix;
+        Song song = song("投影歌曲-" + suffix, artist, "projection-" + suffix);
+        song.setArtistInit("zz");
+        song.setArtistGender("男歌手");
+        song.setStatus("ok");
+        songRepository.save(song);
+
+        artistDirectoryProjection.refresh();
+
+        var page = artistDirectoryProjection.page("男歌手", "Z", 0, 100).orElseThrow();
+        assertThat(page.rows()).anySatisfy(row -> {
+            assertThat(row.name()).isEqualTo(artist);
+            assertThat(row.gender()).isEqualTo("男歌手");
+            assertThat(row.songCount()).isGreaterThanOrEqualTo(1L);
+        });
+    }
+    @Test
+    void libraryCatalogStatsRefreshUsesRoleScopedReadyCounts() {
+        String suffix = String.valueOf(System.nanoTime());
+        Song song = song("状态统计歌曲-" + suffix, "状态统计歌手", "stats-" + suffix);
+        song.setStatus("ok");
+        Song saved = songRepository.save(song);
+        SongFile file = songFile("/stats-" + suffix + ".mkv", saved.getId(), true);
+        file.setMediaType("KTV_VIDEO");
+        file.setProbePending(false);
+        songFileRepository.save(file);
+
+        catalogStats.refresh();
+
+        var stats = catalogStats.find().orElseThrow();
+        assertThat(stats.totalSongs()).isGreaterThanOrEqualTo(1L);
+        assertThat(stats.indexedSongs()).isGreaterThanOrEqualTo(1L);
+        assertThat(stats.readySongs()).isGreaterThanOrEqualTo(1L);
+        assertThat(stats.probePendingFiles()).isGreaterThanOrEqualTo(0L);
+    }
     @Test
     void scanSeenPathStoreKeepsReconciliationBoundedAndPendingQueueScanScoped() {
         String suffix = String.valueOf(System.nanoTime());

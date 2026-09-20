@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FlywayMigrationIntegrityTest {
 
     private static final Pattern MIGRATION_FILE_PATTERN = Pattern.compile("^V(\\d+)__(.+)\\.sql$");
-    private static final int CURRENT_LATEST_VERSION = 46;
+    private static final int CURRENT_LATEST_VERSION = 49;
 
     @Test
     void allMigrationVersionsFromOneToLatestArePresentAndContiguous() throws Exception {

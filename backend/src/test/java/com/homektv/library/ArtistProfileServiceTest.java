@@ -107,4 +107,15 @@ class ArtistProfileServiceTest {
         assertThatThrownBy(() -> new ArtistProfileService(jdbc).find("zhoujielun"))
                 .isInstanceOf(DataAccessResourceFailureException.class);
     }
+
+    @Test
+    void manualGenderUpdateRefreshesDirectoryProjection() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistDirectoryProjectionService projection = mock(ArtistDirectoryProjectionService.class);
+        when(jdbc.update(anyString(), org.mockito.ArgumentMatchers.any(Object[].class))).thenReturn(1);
+
+        new ArtistProfileService(jdbc, projection).setGender("周杰伦", "男歌手");
+
+        verify(projection).requestRefreshAfterCommit();
+    }
 }

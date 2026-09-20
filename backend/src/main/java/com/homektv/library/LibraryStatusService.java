@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
+import java.util.Optional;
 
 /** Builds the small public catalogue/status contract without exposing filesystem diagnostics. */
 @Service
@@ -18,14 +19,23 @@ public class LibraryStatusService {
     private final SongRepository songs;
     private final SongFileRepository files;
     private final LibraryScanStateStore stateStore;
+    private final LibraryCatalogStatsService catalogStats;
     private CatalogRevisionService catalogRevisionService;
 
     public LibraryStatusService(AppProperties props, SongRepository songs,
                                 SongFileRepository files, LibraryScanStateStore stateStore) {
+        this(props, songs, files, stateStore, null);
+    }
+
+    @Autowired
+    public LibraryStatusService(AppProperties props, SongRepository songs,
+                                SongFileRepository files, LibraryScanStateStore stateStore,
+                                LibraryCatalogStatsService catalogStats) {
         this.props = props;
         this.songs = songs;
         this.files = files;
         this.stateStore = stateStore;
+        this.catalogStats = catalogStats;
     }
 
     @Autowired(required = false)
@@ -37,10 +47,15 @@ public class LibraryStatusService {
         LibraryScanStateStore.Snapshot snapshot = stateStore.find().orElse(null);
         String role = LibraryModePolicy.isExternalReadOnly(props)
                 ? LibraryModePolicy.EXTERNAL_FILE_ROLE : "LIBRARY";
-        long totalSongs = songs.count();
-        long indexedSongs = songs.countIndexedSongs("ok", role);
-        long readySongs = songs.countReadySongs("ok", role);
-        long pendingFiles = files.countByFileRoleAndProbePendingTrue(role);
+        Optional<LibraryCatalogStatsService.Stats> cached = catalogStats == null
+                ? Optional.empty() : catalogStats.find();
+        long totalSongs = cached.map(LibraryCatalogStatsService.Stats::totalSongs).orElseGet(songs::count);
+        long indexedSongs = cached.map(LibraryCatalogStatsService.Stats::indexedSongs)
+                .orElseGet(() -> songs.countIndexedSongs("ok", role));
+        long readySongs = cached.map(LibraryCatalogStatsService.Stats::readySongs)
+                .orElseGet(() -> songs.countReadySongs("ok", role));
+        long pendingFiles = cached.map(LibraryCatalogStatsService.Stats::probePendingFiles)
+                .orElseGet(() -> files.countByFileRoleAndProbePendingTrue(role));
         long statusRevision = snapshot == null ? 0 : snapshot.generation();
         long catalogRevision = catalogRevisionService == null
                 ? snapshot != null && snapshot.state() == LibraryScanStateStore.State.COMPLETED
@@ -75,8 +90,7 @@ public class LibraryStatusService {
         if (snapshot == null || props == null) return "UNKNOWN";
         Path root = LibraryModePolicy.activeLibraryRoot(props);
         return LibraryIdentity.compare(
-                snapshot.rootIdentity(),
-                LibraryIdentity.resolve(root)).name();
+                snapshot.rootIdentity(), LibraryIdentity.resolve(root)).name();
     }
 
     private String rootState() {

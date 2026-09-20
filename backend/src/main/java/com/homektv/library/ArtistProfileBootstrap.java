@@ -20,6 +20,7 @@ public class ArtistProfileBootstrap {
     private final ArtistCreditReconciliationService creditReconciliation;
     private final ArtistAvatarJobService avatarJobs;
     private final Executor executor;
+    private final ArtistDirectoryProjectionService directoryProjection;
     private final AtomicBoolean refreshRequested = new AtomicBoolean(false);
     private final AtomicBoolean refreshRunning = new AtomicBoolean(false);
     private final AtomicBoolean creditsReconciled = new AtomicBoolean(false);
@@ -29,11 +30,22 @@ public class ArtistProfileBootstrap {
                                   ArtistAvatarJobService avatarJobs,
                                   @org.springframework.beans.factory.annotation.Qualifier("artistProfileExecutor")
                                   Executor executor) {
+        this(profiles, localAvatarResolver, creditReconciliation, avatarJobs, executor, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ArtistProfileBootstrap(ArtistProfileService profiles, LocalAvatarResolver localAvatarResolver,
+                                  ArtistCreditReconciliationService creditReconciliation,
+                                  ArtistAvatarJobService avatarJobs,
+                                  @org.springframework.beans.factory.annotation.Qualifier("artistProfileExecutor")
+                                  Executor executor,
+                                  ArtistDirectoryProjectionService directoryProjection) {
         this.profiles = profiles;
         this.localAvatarResolver = localAvatarResolver;
         this.creditReconciliation = creditReconciliation;
         this.avatarJobs = avatarJobs;
         this.executor = executor;
+        this.directoryProjection = directoryProjection;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -80,6 +92,7 @@ public class ArtistProfileBootstrap {
             int count = profiles.backfillFromSongs();
             int matched = localAvatarResolver.resolveAllCandidates();
             avatarJobs.enqueuePendingProfilesAfterCommit();
+            if (directoryProjection != null) directoryProjection.refresh();
             log.info("artist profile backfill completed: {} source names, {} local avatars resolved", count, matched);
             if (!creditsCompleted) refreshRequested.set(true);
             return creditsCompleted;

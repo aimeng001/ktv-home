@@ -2,6 +2,7 @@ package com.homektv.library;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -19,9 +20,16 @@ public class ArtistProfileService {
     private static final Logger log = LoggerFactory.getLogger(ArtistProfileService.class);
     private static final int PROFILE_PAGE_SIZE = 500;
     private final JdbcTemplate jdbc;
+    private final ArtistDirectoryProjectionService directoryProjection;
 
     public ArtistProfileService(JdbcTemplate jdbc) {
+        this(jdbc, null);
+    }
+
+    @Autowired
+    public ArtistProfileService(JdbcTemplate jdbc, ArtistDirectoryProjectionService directoryProjection) {
         this.jdbc = jdbc;
+        this.directoryProjection = directoryProjection;
     }
 
     /** Creates missing profiles only; reviewed metadata is never overwritten by a scan. */
@@ -175,11 +183,14 @@ public class ArtistProfileService {
         String artistKey = ArtistCreditParser.key(displayName);
         if (artistKey.isBlank() || gender == null || gender.isBlank()) return;
         ensureProfiles(List.of(displayName));
-        jdbc.update("""
+        int updated = jdbc.update("""
                 UPDATE artist_profiles
                 SET gender=?, gender_status='MANUAL', updated_at=now()
                 WHERE artist_key=?
                 """, gender, artistKey);
+        if (updated > 0 && directoryProjection != null) {
+            directoryProjection.requestRefreshAfterCommit();
+        }
     }
 
     @Transactional

@@ -2,6 +2,7 @@ package com.homektv.ai;
 
 import com.homektv.domain.Song;
 import com.homektv.library.ArtistCreditService;
+import com.homektv.library.ArtistDirectoryProjectionService;
 import com.homektv.library.MediaClassifier;
 import com.homektv.library.PinyinUtil;
 import com.homektv.repo.SongRepository;
@@ -28,6 +29,7 @@ public class AiClassificationApplier {
     private final SongRepository songRepository;
     private final AiConfigService configService;
     private final ArtistCreditService artistCreditService;
+    private final ArtistDirectoryProjectionService directoryProjection;
     private com.homektv.library.CatalogRevisionService catalogRevisionService;
 
     @Autowired(required = false)
@@ -43,17 +45,23 @@ public class AiClassificationApplier {
      * @param songRepository 歌曲数据访问接口 / song data access interface
      */
     public AiClassificationApplier(SongRepository songRepository, AiConfigService configService) {
-        this(songRepository, configService, null);
+        this(songRepository, configService, null, null);
+    }
+
+    public AiClassificationApplier(SongRepository songRepository, AiConfigService configService,
+                                   ArtistCreditService artistCreditService) {
+        this(songRepository, configService, artistCreditService, null);
     }
 
     @Autowired
     public AiClassificationApplier(SongRepository songRepository, AiConfigService configService,
-                                   ArtistCreditService artistCreditService) {
+                                   ArtistCreditService artistCreditService,
+                                   ArtistDirectoryProjectionService directoryProjection) {
         this.songRepository = songRepository;
         this.configService = configService;
         this.artistCreditService = artistCreditService;
+        this.directoryProjection = directoryProjection;
     }
-
     /**
      * 将 AI 分类结果应用到指定歌曲：归一化各分类字段，合并标签，并回写数据库。
      *
@@ -77,6 +85,7 @@ public class AiClassificationApplier {
             Song saved = songRepository.save(before);
             syncArtistCredits(previousArtist, saved);
             if (catalogRevisionService != null) catalogRevisionService.bumpIfChanged(true);
+            requestDirectoryRefresh();
         }
         return changed;
     }
@@ -89,7 +98,12 @@ public class AiClassificationApplier {
         Song saved = songRepository.save(song);
         syncArtistCredits(previousArtist, saved);
         if (catalogRevisionService != null) catalogRevisionService.bumpIfChanged(true);
+        requestDirectoryRefresh();
         return saved;
+    }
+
+    private void requestDirectoryRefresh() {
+        if (directoryProjection != null) directoryProjection.requestRefreshAfterCommit();
     }
 
     private void syncArtistCredits(String previousArtist, Song saved) {

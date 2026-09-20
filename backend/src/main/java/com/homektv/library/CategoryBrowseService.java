@@ -21,15 +21,22 @@ public class CategoryBrowseService {
     private static final int MAX_PUBLIC_SONG_PAGE_SIZE = 100;
     private final SongRepository songRepository;
     private final SongAvailabilityPolicy availabilityPolicy;
+    private final ArtistDirectoryProjectionService artistDirectoryProjection;
 
     public CategoryBrowseService(SongRepository songRepository) {
-        this(songRepository, null);
+        this(songRepository, null, null);
+    }
+
+    public CategoryBrowseService(SongRepository songRepository, SongAvailabilityPolicy availabilityPolicy) {
+        this(songRepository, availabilityPolicy, null);
     }
 
     @Autowired
-    public CategoryBrowseService(SongRepository songRepository, SongAvailabilityPolicy availabilityPolicy) {
+    public CategoryBrowseService(SongRepository songRepository, SongAvailabilityPolicy availabilityPolicy,
+                                 ArtistDirectoryProjectionService artistDirectoryProjection) {
         this.songRepository = songRepository;
         this.availabilityPolicy = availabilityPolicy;
+        this.artistDirectoryProjection = artistDirectoryProjection;
     }
 
     public List<Map<String, Object>> artists() {
@@ -73,6 +80,18 @@ public class CategoryBrowseService {
         String safeInitial = normalize(initial).toUpperCase(Locale.ROOT);
         if ("热门".equals(safeInitial)) safeInitial = "";
 
+        if (artistDirectoryProjection != null) {
+            Optional<ArtistDirectoryProjectionService.ProjectionPage> projected =
+                    artistDirectoryProjection.page(safeGender, safeInitial, safePage, safeSize);
+            if (projected.isPresent()) {
+                ArtistDirectoryProjectionService.ProjectionPage pageData = projected.get();
+                List<Map<String, Object>> items = pageData.rows().stream()
+                        .map(CategoryBrowseService::publicArtistValue)
+                        .toList();
+                return new ArtistPage(items, pageData.total(), safePage, safeSize);
+            }
+        }
+
         Page<SongRepository.PublicArtistDirectoryProjection> rows = songRepository.pagePublicArtistDirectory(
                 "ok", safeGender, safeInitial, PageRequest.of(safePage, safeSize));
         List<SongRepository.PublicArtistDirectoryProjection> content = rows == null || rows.getContent() == null
@@ -87,8 +106,13 @@ public class CategoryBrowseService {
 
     /** Returns only the small initial-letter index needed by the public UI. */
     public List<String> artistInitials(String gender) {
+        String safeGender = normalize(gender);
+        if (artistDirectoryProjection != null) {
+            Optional<List<String>> projected = artistDirectoryProjection.initials(safeGender);
+            if (projected.isPresent()) return projected.get();
+        }
         List<SongRepository.ArtistInitialProjection> rows = songRepository.findPublicArtistInitials(
-                "ok", normalize(gender));
+                "ok", safeGender);
         if (rows == null) return List.of();
         return rows.stream()
                 .filter(Objects::nonNull)
@@ -179,23 +203,35 @@ public class CategoryBrowseService {
     }
 
     private static Map<String, Object> publicArtistValue(SongRepository.PublicArtistDirectoryProjection row) {
-        String name = row.getName() == null || row.getName().isBlank() ? "未知歌手" : row.getName().trim();
-        String artistKey = row.getArtistKey() == null || row.getArtistKey().isBlank()
-                ? ArtistCreditParser.key(name) : row.getArtistKey();
-        String initial = row.getInitial() == null || row.getInitial().isBlank()
-                ? PinyinUtil.initials(name) : row.getInitial();
+        return publicArtistValue(row.getArtistKey(), row.getName(), row.getInitial(), row.getGender(),
+                row.getSongCount(), row.getArtistKind(), row.getAvatarPath());
+    }
+
+    private static Map<String, Object> publicArtistValue(ArtistDirectoryProjectionService.ArtistRow row) {
+        return publicArtistValue(row.artistKey(), row.name(), row.initial(), row.gender(),
+                row.songCount(), row.artistKind(), row.avatarPath());
+    }
+
+    private static Map<String, Object> publicArtistValue(String rawArtistKey, String rawName, String rawInitial,
+                                                          String gender, Long songCount, String artistKind,
+                                                          String avatarPath) {
+        String name = rawName == null || rawName.isBlank() ? "未知歌手" : rawName.trim();
+        String artistKey = rawArtistKey == null || rawArtistKey.isBlank()
+                ? ArtistCreditParser.key(name) : rawArtistKey;
+        String initial = rawInitial == null || rawInitial.isBlank()
+                ? PinyinUtil.initials(name) : rawInitial;
         initial = initial == null || initial.isBlank() ? "#" : initial.substring(0, 1).toUpperCase(Locale.ROOT);
-        String kind = effectiveArtistKind(name, row.getArtistKind());
-        long count = row.getSongCount() == null ? 0L : row.getSongCount();
+        String kind = effectiveArtistKind(name, artistKind);
+        long count = songCount == null ? 0L : songCount;
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("artistKey", artistKey);
         value.put("name", name);
         value.put("initial", initial);
-        value.put("gender", row.getGender() == null || row.getGender().isBlank() ? "未知" : row.getGender());
+        value.put("gender", gender == null || gender.isBlank() ? "未知" : gender);
         value.put("songCount", (int) Math.min(Integer.MAX_VALUE, Math.max(0L, count)));
         value.put("artistKind", kind);
         value.put("avatarUrl", ArtistKindClassifier.isPlaceholder(name)
-                ? null : ArtistAvatarUrl.forCachedKey(artistKey, row.getAvatarPath()));
+                ? null : ArtistAvatarUrl.forCachedKey(artistKey, avatarPath));
         return value;
     }
 
