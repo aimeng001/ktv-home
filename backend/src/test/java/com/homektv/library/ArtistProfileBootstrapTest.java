@@ -14,6 +14,35 @@ import java.util.concurrent.atomic.AtomicBoolean;
 class ArtistProfileBootstrapTest {
 
     @Test
+    void scanRefreshAppliesOfflineGenderDictionaryBeforeAvatarQueue() {
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        LocalAvatarResolver localAvatarResolver = mock(LocalAvatarResolver.class);
+        ArtistCreditReconciliationService credits = mock(ArtistCreditReconciliationService.class);
+        ArtistAvatarJobService avatarJobs = mock(ArtistAvatarJobService.class);
+        ArtistDirectoryProjectionService projection = mock(ArtistDirectoryProjectionService.class);
+        ArtistGenderDictionaryService dictionary = mock(ArtistGenderDictionaryService.class);
+        ArtistGenderMatcher matcher = mock(ArtistGenderMatcher.class);
+        when(credits.reconcileValidSongs()).thenReturn(1);
+        when(profiles.backfillFromSongs()).thenReturn(2);
+        when(localAvatarResolver.resolveAllCandidates()).thenReturn(3);
+        when(matcher.applyDictionary()).thenReturn(4);
+
+        ArtistProfileBootstrap bootstrap = new ArtistProfileBootstrap(
+                profiles, localAvatarResolver, credits, avatarJobs, Runnable::run,
+                projection, dictionary, matcher);
+        bootstrap.refreshAfterScan();
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(
+                profiles, dictionary, matcher, localAvatarResolver, avatarJobs, projection);
+        order.verify(profiles).backfillFromSongs();
+        order.verify(dictionary).seedBuiltin();
+        order.verify(matcher).applyDictionary();
+        order.verify(localAvatarResolver).resolveAllCandidates();
+        order.verify(avatarJobs).enqueuePendingProfilesAfterCommit();
+        order.verify(projection).refresh();
+    }
+
+    @Test
     void startupBackfillRepairsCreditsBeforeBuildingProfilesAndResolvesLocalAvatars() {
         ArtistProfileService profiles = mock(ArtistProfileService.class);
         LocalAvatarResolver localAvatarResolver = mock(LocalAvatarResolver.class);

@@ -2,6 +2,8 @@ package com.homektv.web;
 
 import com.homektv.library.ArtistLibraryService;
 import com.homektv.library.ArtistAvatarJobService;
+import com.homektv.library.ArtistGenderDictionaryService;
+import com.homektv.library.ArtistGenderMatcher;
 import com.homektv.library.ArtistProfileService;
 import com.homektv.library.AssetWriter;
 import com.homektv.library.LocalAvatarResolver;
@@ -23,6 +25,8 @@ public class ArtistLibraryController {
     private final AssetWriter assetWriter;
     private final ArtistProfileService profileService;
     private final ArtistAvatarJobService avatarJobs;
+    private final ArtistGenderDictionaryService genderDictionary;
+    private final ArtistGenderMatcher genderMatcher;
     private CoverImageNormalizer coverImageNormalizer;
 
     public ArtistLibraryController(ArtistLibraryService service,
@@ -30,11 +34,23 @@ public class ArtistLibraryController {
                                    AssetWriter assetWriter,
                                    ArtistProfileService profileService,
                                    ArtistAvatarJobService avatarJobs) {
+        this(service, localAvatarResolver, assetWriter, profileService, avatarJobs, null, null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public ArtistLibraryController(ArtistLibraryService service,
+                                   LocalAvatarResolver localAvatarResolver,
+                                   AssetWriter assetWriter,
+                                   ArtistProfileService profileService,
+                                   ArtistAvatarJobService avatarJobs,
+                                   ArtistGenderDictionaryService genderDictionary,
+                                   ArtistGenderMatcher genderMatcher) {
         this.service = service;
         this.localAvatarResolver = localAvatarResolver;
         this.assetWriter = assetWriter;
         this.profileService = profileService;
         this.avatarJobs = avatarJobs;
+        this.genderDictionary = genderDictionary;
+        this.genderMatcher = genderMatcher;
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -103,6 +119,25 @@ public class ArtistLibraryController {
         return avatarJobs.resetAndEnqueueMissingProfiles();
     }
 
+    @PostMapping("/gender-dictionary/import")
+    public Map<String, Object> importGenderDictionary(@RequestBody DictionaryImportRequest request) {
+        List<ArtistGenderDictionaryService.DictionaryEntry> entries = request == null || request.entries() == null
+                ? List.of()
+                : request.entries().stream()
+                .map(entry -> entry == null ? null
+                        : new ArtistGenderDictionaryService.DictionaryEntry(
+                                entry.displayName(), entry.gender(), entry.aliases()))
+                .toList();
+        int imported = genderDictionary.importEntries(entries);
+        return Map.of("success", true, "imported", imported);
+    }
+
+    @PostMapping("/gender-dictionary/apply")
+    public Map<String, Object> applyGenderDictionary() {
+        int changed = genderMatcher.applyDictionary();
+        return Map.of("success", true, "changed", changed);
+    }
+
     @PostMapping("/analyze")
     public Map<String, Object> analyze(@RequestBody AnalyzeRequest request) { return service.analyze(request.artist()); }
 
@@ -115,6 +150,8 @@ public class ArtistLibraryController {
     public Map<String, Object> apply(@RequestBody ApplyRequest request) { return service.apply(request.artist(), request.gender()); }
 
     public record AnalyzeRequest(String artist) {}
+    public record DictionaryImportRequest(List<DictionaryEntryRequest> entries) {}
+    public record DictionaryEntryRequest(String displayName, String gender, List<String> aliases) {}
     public record BatchAnalyzeRequest(List<String> artists) {}
     public record ApplyRequest(String artist, String gender) {}
 }

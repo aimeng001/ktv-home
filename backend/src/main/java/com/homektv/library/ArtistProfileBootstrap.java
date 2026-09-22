@@ -21,6 +21,8 @@ public class ArtistProfileBootstrap {
     private final ArtistAvatarJobService avatarJobs;
     private final Executor executor;
     private final ArtistDirectoryProjectionService directoryProjection;
+    private final ArtistGenderDictionaryService genderDictionary;
+    private final ArtistGenderMatcher genderMatcher;
     private final AtomicBoolean refreshRequested = new AtomicBoolean(false);
     private final AtomicBoolean refreshRunning = new AtomicBoolean(false);
     private final AtomicBoolean creditsReconciled = new AtomicBoolean(false);
@@ -30,22 +32,35 @@ public class ArtistProfileBootstrap {
                                   ArtistAvatarJobService avatarJobs,
                                   @org.springframework.beans.factory.annotation.Qualifier("artistProfileExecutor")
                                   Executor executor) {
-        this(profiles, localAvatarResolver, creditReconciliation, avatarJobs, executor, null);
+        this(profiles, localAvatarResolver, creditReconciliation, avatarJobs, executor, null, null, null);
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
     public ArtistProfileBootstrap(ArtistProfileService profiles, LocalAvatarResolver localAvatarResolver,
                                   ArtistCreditReconciliationService creditReconciliation,
                                   ArtistAvatarJobService avatarJobs,
                                   @org.springframework.beans.factory.annotation.Qualifier("artistProfileExecutor")
                                   Executor executor,
                                   ArtistDirectoryProjectionService directoryProjection) {
+        this(profiles, localAvatarResolver, creditReconciliation, avatarJobs, executor,
+                directoryProjection, null, null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public ArtistProfileBootstrap(ArtistProfileService profiles, LocalAvatarResolver localAvatarResolver,
+                                  ArtistCreditReconciliationService creditReconciliation,
+                                  ArtistAvatarJobService avatarJobs,
+                                  @org.springframework.beans.factory.annotation.Qualifier("artistProfileExecutor")
+                                  Executor executor,
+                                  ArtistDirectoryProjectionService directoryProjection,
+                                  ArtistGenderDictionaryService genderDictionary,
+                                  ArtistGenderMatcher genderMatcher) {
         this.profiles = profiles;
         this.localAvatarResolver = localAvatarResolver;
         this.creditReconciliation = creditReconciliation;
         this.avatarJobs = avatarJobs;
         this.executor = executor;
         this.directoryProjection = directoryProjection;
+        this.genderDictionary = genderDictionary;
+        this.genderMatcher = genderMatcher;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -90,10 +105,16 @@ public class ArtistProfileBootstrap {
         boolean creditsCompleted = reconcileCreditsOnce();
         try {
             int count = profiles.backfillFromSongs();
+            int classified = 0;
+            if (genderDictionary != null && genderMatcher != null) {
+                genderDictionary.seedBuiltin();
+                classified = genderMatcher.applyDictionary();
+            }
             int matched = localAvatarResolver.resolveAllCandidates();
             avatarJobs.enqueuePendingProfilesAfterCommit();
             if (directoryProjection != null) directoryProjection.refresh();
-            log.info("artist profile backfill completed: {} source names, {} local avatars resolved", count, matched);
+            log.info("artist profile backfill completed: {} source names, {} database classifications, {} local avatars resolved",
+                    count, classified, matched);
             if (!creditsCompleted) refreshRequested.set(true);
             return creditsCompleted;
         } catch (RuntimeException failure) {

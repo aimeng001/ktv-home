@@ -2,9 +2,9 @@
   <AdminLayout active="artists">
     <header class="page-head">
       <div class="title-block"><div class="title-mark"><UsersRound :size="19" /></div><div><h1>歌手库</h1><p>按歌手聚合歌曲，AI 提供类型建议，确认后再批量写回。</p></div></div>
-      <div class="head-actions"><button class="secondary action-button" :disabled="loading || refreshing || matchingAvatars || backfillingAvatars" title="扫描本地头像目录并自动匹配" @click="scanLocalAvatars"><ImageIcon :size="15" :class="{spin: matchingAvatars}" />匹配本地头像</button><button class="secondary action-button" :disabled="loading || refreshing || matchingAvatars || backfillingAvatars" title="低频补全本地缺失的歌手头像" @click="backfillMissingAvatars"><ImageIcon :size="15" :class="{spin: backfillingAvatars}" />补全缺失头像</button><button class="secondary action-button" :disabled="loading || refreshing" title="刷新歌手列表" @click="load"><RefreshCw :size="15" :class="{spin: loading || refreshing}" />刷新</button><button class="primary action-button" :disabled="loading || refreshing || !artists.length || batchAnalyzing" :title="selectedKeys.size ? '批量分析已选择的歌手' : '批量分析当前筛选中的待复核歌手'" @click="openBatch"><Sparkles :size="15" />批量 AI 分析<span v-if="selectedKeys.size">({{ selectedKeys.size }})</span></button></div>
+      <div class="head-actions"><button class="secondary action-button" :disabled="loading || refreshing || matchingAvatars || backfillingAvatars || matchingGender" title="扫描本地头像目录并自动匹配" @click="scanLocalAvatars"><ImageIcon :size="15" :class="{spin: matchingAvatars}" />匹配本地头像</button><button class="secondary action-button" :disabled="loading || refreshing || matchingAvatars || backfillingAvatars || matchingGender" title="低频补全本地缺失的歌手头像" @click="backfillMissingAvatars"><ImageIcon :size="15" :class="{spin: backfillingAvatars}" />补全缺失头像</button><button class="secondary action-button" :disabled="loading || refreshing || matchingGender" title="应用离线数据库歌手分类" @click="applyDatabaseGender"><UsersRound :size="15" :class="{spin: matchingGender}" />应用数据库分类</button><button class="secondary action-button" :disabled="loading || refreshing" title="刷新歌手列表" @click="load"><RefreshCw :size="15" :class="{spin: loading || refreshing}" />刷新</button><button class="primary action-button" :disabled="loading || refreshing || !artists.length || batchAnalyzing" :title="selectedKeys.size ? '批量分析已选择的歌手' : '批量分析当前筛选中的待复核歌手'" @click="openBatch"><Sparkles :size="15" />批量 AI 分析<span v-if="selectedKeys.size">({{ selectedKeys.size }})</span></button></div>
     </header>
-    <p v-if="avatarBackfillMessage" class="avatar-backfill-status" role="status">{{ avatarBackfillMessage }}</p>
+    <p v-if="avatarBackfillMessage" class="avatar-backfill-status" role="status">{{ avatarBackfillMessage }}</p><p v-if="genderClassificationMessage" class="avatar-backfill-status" role="status">{{ genderClassificationMessage }}</p>
 
     <section class="stats-row"><article><span>歌手总数</span><strong>{{ total }}</strong><small>当前筛选结果</small></article><article><span>待复核</span><strong>{{ pendingCount }}</strong><small>当前页类型尚未确认</small></article><article><span>已选择</span><strong>{{ selectedKeys.size }}</strong><small>可批量分析</small></article></section>
 
@@ -38,7 +38,7 @@ import AdminLayout from './AdminLayout.vue'
 import { alertDialog } from '../../composables/useDialog'
 import { resolveAiConfiguration } from './artistAiState'
 
-const artists = ref([]), loading = ref(false), refreshing = ref(false), matchingAvatars = ref(false), backfillingAvatars = ref(false), avatarBackfillMessage = ref(''), selectedKeys = ref(new Set())
+const artists = ref([]), loading = ref(false), refreshing = ref(false), matchingAvatars = ref(false), backfillingAvatars = ref(false), matchingGender = ref(false), avatarBackfillMessage = ref(''), genderClassificationMessage = ref(''), selectedKeys = ref(new Set())
 const router = useRouter()
 const reviewOpen = ref(false), selected = ref(null), suggestion = ref(null), analyzing = ref(false), saving = ref(false), uploadingAvatar = ref(false), reviewGender = ref('未知')
 const batchOpen = ref(false), batchAnalyzing = ref(false), batchSaving = ref(false), batchRows = ref([]), batchProgress = ref(0), batchTotal = ref(0), batchSaveProgress = ref(0)
@@ -132,6 +132,20 @@ async function backfillMissingAvatars() {
   } finally {
     if (avatarBackfillController === controller) avatarBackfillController = null
     backfillingAvatars.value = false
+  }
+}
+async function applyDatabaseGender() {
+  if (matchingGender.value) return
+  matchingGender.value = true
+  genderClassificationMessage.value = ''
+  try {
+    const result = await api.adminApplyArtistGenderDictionary()
+    genderClassificationMessage.value = `数据库分类已应用：${Number(result?.changed) || 0} 位歌手更新。`
+    await load({ resetPage: true })
+  } catch (e) {
+    genderClassificationMessage.value = e.message || '数据库分类执行失败'
+  } finally {
+    matchingGender.value = false
   }
 }
 function toggleArtist(artist, checked) { const key = artist.artistKey || artist.name; const next = new Set(selectedKeys.value); checked ? next.add(key) : next.delete(key); selectedKeys.value = next }

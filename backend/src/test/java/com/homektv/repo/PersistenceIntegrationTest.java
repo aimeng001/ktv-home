@@ -6,6 +6,8 @@ import com.homektv.domain.SongFile;
 import com.homektv.library.JdbcLibraryScanSeenPathStore;
 import com.homektv.library.CategoryBrowseService;
 import com.homektv.library.ArtistDirectoryProjectionService;
+import com.homektv.library.ArtistGenderDictionaryService;
+import com.homektv.library.ArtistGenderMatcher;
 import com.homektv.library.SongMergeService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -74,6 +76,12 @@ class PersistenceIntegrationTest {
 
     @Autowired
     private ArtistDirectoryProjectionService artistDirectoryProjection;
+
+    @Autowired
+    private ArtistGenderDictionaryService artistGenderDictionary;
+
+    @Autowired
+    private ArtistGenderMatcher artistGenderMatcher;
 
     @Autowired
     private com.homektv.library.LibraryCatalogStatsService catalogStats;
@@ -340,6 +348,132 @@ class PersistenceIntegrationTest {
             assertThat(row.songCount()).isGreaterThanOrEqualTo(1L);
         });
     }
+
+    @Test
+    void databaseDictionaryMatchesAliasesKeepsUnknownAndNeverOverwritesManualProfiles() {
+        String suffix = String.valueOf(System.nanoTime());
+        String maleName = "数据库男歌手-" + suffix;
+        String aliasName = "数据库男别名-" + suffix;
+        String manualName = "数据库人工歌手-" + suffix;
+        String unknownName = "数据库未知歌手-" + suffix;
+        jdbc.update("""
+                INSERT INTO artist_profiles(artist_key, display_name, gender, gender_status, artist_kind)
+                VALUES (?, ?, '未知', 'UNREVIEWED', 'PERSON'),
+                       (?, ?, '未知', 'UNREVIEWED', 'PERSON'),
+                       (?, ?, '男歌手', 'MANUAL', 'PERSON'),
+                       (?, ?, '未知', 'UNREVIEWED', 'PERSON')
+                """,
+                com.homektv.library.ArtistCreditParser.key(maleName), maleName,
+                com.homektv.library.ArtistCreditParser.key(aliasName), aliasName,
+                com.homektv.library.ArtistCreditParser.key(manualName), manualName,
+                com.homektv.library.ArtistCreditParser.key(unknownName), unknownName);
+        artistGenderDictionary.importEntries(List.of(
+                new ArtistGenderDictionaryService.DictionaryEntry(maleName, "男歌手", List.of(aliasName)),
+                new ArtistGenderDictionaryService.DictionaryEntry(manualName, "女歌手", List.of())
+        ));
+        int changed = artistGenderMatcher.applyDictionary();
+
+        assertThat(changed).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
+                String.class, com.homektv.library.ArtistCreditParser.key(maleName))).isEqualTo("男歌手");
+        assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
+                String.class, com.homektv.library.ArtistCreditParser.key(aliasName))).isEqualTo("男歌手");
+        assertThat(jdbc.queryForObject("SELECT gender_status FROM artist_profiles WHERE artist_key = ?",
+                String.class, com.homektv.library.ArtistCreditParser.key(manualName))).isEqualTo("MANUAL");
+        assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
+                String.class, com.homektv.library.ArtistCreditParser.key(unknownName))).isEqualTo("未知");
+    }
+@Test
+    void consistentSongGenderClassifiesProfilesAndUpdatesPublicProjection() {
+        String suffix = String.valueOf(System.nanoTime());
+        String consistentArtist = "一致女歌手-" + suffix;
+        String mixedArtist = "冲突分类歌手-" + suffix;
+        Song consistent = song("一致歌曲-" + suffix, consistentArtist, "gender-fallback-consistent-" + suffix);
+        consistent.setArtistGender("女歌手");
+        consistent.setArtistInit("C");
+        consistent.setStatus("ok");
+        songRepository.save(consistent);
+
+        Song mixedMale = song("冲突男歌曲-" + suffix, mixedArtist, "gender-fallback-male-" + suffix);
+        mixedMale.setArtistGender("男歌手");
+        mixedMale.setStatus("ok");
+        songRepository.save(mixedMale);
+        Song mixedFemale = song("冲突女歌曲-" + suffix, mixedArtist, "gender-fallback-female-" + suffix);
+        mixedFemale.setArtistGender("女歌手");
+        mixedFemale.setStatus("ok");
+        songRepository.save(mixedFemale);
+
+        jdbc.update("""
+                INSERT INTO artist_profiles(artist_key, display_name, gender, gender_status, artist_kind)
+                VALUES (?, ?, '未知', 'UNREVIEWED', 'PERSON'),
+                       (?, ?, '未知', 'UNREVIEWED', 'PERSON')
+                """,
+                com.homektv.library.ArtistCreditParser.key(consistentArtist), consistentArtist,
+                com.homektv.library.ArtistCreditParser.key(mixedArtist), mixedArtist);
+
+        int changed = artistGenderMatcher.applyDictionary();
+
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*)
+                FROM artist_profiles
+                WHERE artist_key IN (?, ?)
+                  AND gender = '女歌手'
+                  AND gender_status = 'AUTO_DB'
+                """, Long.class,
+                com.homektv.library.ArtistCreditParser.key(consistentArtist),
+                com.homektv.library.ArtistCreditParser.key(mixedArtist))).isEqualTo(1L);
+        assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
+                String.class, com.homektv.library.ArtistCreditParser.key(consistentArtist))).isEqualTo("女歌手");
+        assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
+                String.class, com.homektv.library.ArtistCreditParser.key(mixedArtist))).isEqualTo("未知");
+
+        artistDirectoryProjection.refresh();
+        var page = artistDirectoryProjection.page("女歌手", "C", 0, 100).orElseThrow();
+        assertThat(page.rows()).anySatisfy(row -> assertThat(row.name()).isEqualTo(consistentArtist));
+    }
+    @Test
+    void collaborationCreditsDoNotInferGroupGender() {
+        String suffix = String.valueOf(System.nanoTime());
+        String linkedMale = "合作甲-" + suffix;
+        String linkedFemale = "合作乙-" + suffix;
+        String legacyCredit = linkedMale + "_" + linkedFemale;
+
+        Song linkedSong = song("合作歌曲-" + suffix, legacyCredit, "gender-collaboration-linked-" + suffix);
+        linkedSong.setArtistGender("组合");
+        linkedSong.setStatus("ok");
+        Song savedLinked = songRepository.save(linkedSong);
+        jdbc.update("""
+                INSERT INTO song_artists(song_id, artist_name, artist_key, artist_order)
+                VALUES (?, ?, ?, 0), (?, ?, ?, 1)
+                """,
+                savedLinked.getId(), linkedMale, com.homektv.library.ArtistCreditParser.key(linkedMale),
+                savedLinked.getId(), linkedFemale, com.homektv.library.ArtistCreditParser.key(linkedFemale));
+
+        Song legacySong = song("遗留合作歌曲-" + suffix, legacyCredit, "gender-collaboration-legacy-" + suffix);
+        legacySong.setArtistGender("组合");
+        legacySong.setStatus("ok");
+        songRepository.save(legacySong);
+
+        jdbc.update("""
+                INSERT INTO artist_profiles(artist_key, display_name, gender, gender_status, artist_kind)
+                VALUES (?, ?, '未知', 'UNREVIEWED', 'PERSON'),
+                       (?, ?, '未知', 'UNREVIEWED', 'PERSON'),
+                       (?, ?, '未知', 'UNREVIEWED', 'PERSON')
+                """,
+                com.homektv.library.ArtistCreditParser.key(linkedMale), linkedMale,
+                com.homektv.library.ArtistCreditParser.key(linkedFemale), linkedFemale,
+                com.homektv.library.ArtistCreditParser.key(legacyCredit), legacyCredit);
+
+        artistGenderMatcher.applyDictionary();
+
+        assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
+                String.class, com.homektv.library.ArtistCreditParser.key(linkedMale))).isEqualTo("未知");
+        assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
+                String.class, com.homektv.library.ArtistCreditParser.key(linkedFemale))).isEqualTo("未知");
+        assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
+                String.class, com.homektv.library.ArtistCreditParser.key(legacyCredit))).isEqualTo("未知");
+    }
+
     @Test
     void libraryCatalogStatsRefreshUsesRoleScopedReadyCounts() {
         String suffix = String.valueOf(System.nanoTime());

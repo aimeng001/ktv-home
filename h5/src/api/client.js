@@ -225,6 +225,7 @@ export const api = {
   adminArtistPage: (params = {}, options = {}) => request('/admin/artists/page?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString(), options),
   adminScanLocalAvatars: () => request('/admin/artists/local-avatars/scan', { method: 'POST' }),
   adminRetryMissingAvatars: (options = {}) => request('/admin/artists/avatars/retry', { method: 'POST', ...options }),
+  adminApplyArtistGenderDictionary: (options = {}) => request('/admin/artists/gender-dictionary/apply', { method: 'POST', ...options }),
   adminUploadArtistAvatar: (artistKey, file) => {
     const body = new FormData()
     body.append('file', file)

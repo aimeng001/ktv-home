@@ -9,6 +9,7 @@ import com.homektv.repo.SongSearchRepository;
 import com.homektv.web.ApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.Pageable;
 import org.slf4j.LoggerFactory;
@@ -21,6 +22,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+@Isolated
 class SongSearchServiceTest {
 
     private SongSearchRepository searchRepo;
@@ -119,16 +121,16 @@ class SongSearchServiceTest {
     void slowSearchLogContainsDiagnosticsWithoutRawKeyword() {
         String secretKeyword = "机密关键词";
         when(searchRepo.search(any(), any(), any(), any(), any())).thenAnswer(invocation -> {
-            try {
-                Thread.sleep(550L);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
+            long deadline = System.nanoTime() + 550_000_000L;
+            while (System.nanoTime() < deadline) {
+                Thread.onSpinWait();
             }
             return List.of();
         });
 
         Logger logger = (Logger) LoggerFactory.getLogger(SongSearchService.class);
         Level previousLevel = logger.getLevel();
+        logger.setLevel(Level.WARN);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
         logger.addAppender(appender);
