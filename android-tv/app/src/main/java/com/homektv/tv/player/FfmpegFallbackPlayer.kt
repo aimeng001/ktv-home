@@ -18,7 +18,13 @@ import com.homektv.tv.net.AudioLayout
  */
 interface FallbackPlayer {
     fun setSurface(surface: Surface?)
-    fun prepareAndPlay(fileId: Long, streamUrl: String, initialPositionMs: Long = 0L)
+    fun prepareAndPlay(
+        fileId: Long,
+        streamUrl: String,
+        initialPositionMs: Long = 0L,
+        requestToken: Long = 0L,
+        playWhenReady: Boolean = true,
+    )
     fun pause()
     fun resume()
     fun stop()
@@ -32,12 +38,46 @@ interface FallbackPlayer {
     val durationMs: Long
 }
 
+/** Keeps pause/resume intent ordered with MediaPlayer's asynchronous prepare callback. */
+internal class FallbackPlaybackIntent {
+    private var generation = 0L
+    private var prepared = false
+    private var playWhenReady = true
+
+    fun begin(playWhenReady: Boolean): Long {
+        generation += 1L
+        prepared = false
+        this.playWhenReady = playWhenReady
+        return generation
+    }
+
+    fun onPrepared(generation: Long): Boolean? {
+        if (!isCurrent(generation)) return null
+        prepared = true
+        return playWhenReady
+    }
+
+    fun isCurrent(generation: Long): Boolean = this.generation == generation
+
+    /** Returns null until prepared; otherwise returns the desired playing state. */
+    fun setPlayWhenReady(playWhenReady: Boolean): Boolean? {
+        this.playWhenReady = playWhenReady
+        return if (prepared) playWhenReady else null
+    }
+
+    fun reset() {
+        generation += 1L
+        prepared = false
+        playWhenReady = false
+    }
+}
+
 class FfmpegFallbackPlayer(
     private val context: Context,
     private val onStateChanged: (isPlaying: Boolean) -> Unit = {},
     private val onProgress: (positionMs: Long, durationMs: Long) -> Unit = { _, _ -> },
     private val onFinished: () -> Unit = {},
-    private val onError: (message: String) -> Unit = {},
+    private val onError: (requestToken: Long, failure: FallbackPlaybackFailure) -> Unit = { _, _ -> },
 ) : FallbackPlayer {
 
     companion object {
@@ -51,6 +91,7 @@ class FfmpegFallbackPlayer(
     private var currentVolume: Float = 1.0f
     private var isMuted: Boolean = false
     private var requestedPositionMs: Long = 0L
+    private val playbackIntent = FallbackPlaybackIntent()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val progressRunnable = object : Runnable {
@@ -78,11 +119,18 @@ class FfmpegFallbackPlayer(
         }
     }
 
-    override fun prepareAndPlay(fileId: Long, streamUrl: String, initialPositionMs: Long) {
+    override fun prepareAndPlay(
+        fileId: Long,
+        streamUrl: String,
+        initialPositionMs: Long,
+        requestToken: Long,
+        playWhenReady: Boolean,
+    ) {
         stop()
         currentFileId = fileId
         currentStreamUrl = streamUrl
         requestedPositionMs = initialPositionMs.coerceAtLeast(0L)
+        val attempt = playbackIntent.begin(playWhenReady)
 
         try {
             val player = MediaPlayer().apply {
@@ -97,23 +145,39 @@ class FfmpegFallbackPlayer(
                 }
                 setDataSource(streamUrl)
                 setOnPreparedListener { mp ->
+                    val shouldPlay = playbackIntent.onPrepared(attempt)
+                        ?: return@setOnPreparedListener
                     Log.i(TAG, "MediaPlayer prepared for fileId=$fileId")
                     if (requestedPositionMs > 0L) {
                         mp.seekTo(requestedPositionMs.toInt())
                     }
-                    mp.start()
                     applyCurrentVolume()
-                    onStateChanged(true)
-                    mainHandler.post(progressRunnable)
+                    if (shouldPlay) {
+                        mp.start()
+                        onStateChanged(true)
+                        mainHandler.post(progressRunnable)
+                    } else {
+                        onStateChanged(false)
+                    }
                 }
                 setOnCompletionListener {
+                    if (!playbackIntent.isCurrent(attempt)) return@setOnCompletionListener
                     Log.i(TAG, "MediaPlayer playback completed for fileId=$fileId")
                     stop()
                     onFinished()
                 }
                 setOnErrorListener { _, what, extra ->
+                    if (!playbackIntent.isCurrent(attempt)) return@setOnErrorListener true
                     Log.w(TAG, "MediaPlayer error what=$what extra=$extra for fileId=$fileId")
-                    onError("FALLBACK_ERROR_${what}_$extra")
+                    onError(
+                        requestToken,
+                        FallbackPlaybackFailure(
+                            message = "FALLBACK_ERROR_" + what + "_" + extra,
+                            decoderOrFormatFailure = FallbackPlaybackErrorPolicy.shouldRequestLiveTranscode(what, extra),
+                            platformWhat = what,
+                            platformExtra = extra,
+                        ),
+                    )
                     true
                 }
                 prepareAsync()
@@ -121,11 +185,22 @@ class FfmpegFallbackPlayer(
             mediaPlayer = player
         } catch (e: Exception) {
             Log.e(TAG, "prepareAndPlay exception for fileId=$fileId: ${e.message}", e)
-            onError(e.message ?: "FALLBACK_INIT_FAILED")
+            onError(
+                requestToken,
+                FallbackPlaybackFailure(
+                    message = e.message ?: "FALLBACK_INIT_FAILED",
+                    decoderOrFormatFailure = false,
+                ),
+            )
         }
     }
 
     override fun pause() {
+        val shouldPause = playbackIntent.setPlayWhenReady(false) ?: return
+        if (!shouldPause) {
+            // The player's async prepare completed while the requested state is paused.
+            mainHandler.removeCallbacks(progressRunnable)
+        }
         try {
             mediaPlayer?.let {
                 if (it.isPlaying) {
@@ -140,6 +215,8 @@ class FfmpegFallbackPlayer(
     }
 
     override fun resume() {
+        val shouldPlay = playbackIntent.setPlayWhenReady(true) ?: return
+        if (!shouldPlay) return
         try {
             mediaPlayer?.let {
                 if (!it.isPlaying) {
@@ -155,6 +232,7 @@ class FfmpegFallbackPlayer(
 
     override fun stop() {
         mainHandler.removeCallbacks(progressRunnable)
+        playbackIntent.reset()
         mediaPlayer?.let {
             try {
                 if (it.isPlaying) it.stop()

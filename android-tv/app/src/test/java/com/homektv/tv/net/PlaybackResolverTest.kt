@@ -343,6 +343,32 @@ class PlaybackResolverTest {
         assertTrue(requestedPaths.contains("/playback/resolve/11?forceTranscode=true"))
     }
 
+    @Test
+    fun liveTranscodeDescriptorWithoutVariantIsAcceptedAsReady() = runBlocking {
+        val transport = RouteTransport(
+            routes = mapOf(
+                "/songs/7" to KtvApiResult.Success(
+                    """{"id":7,"files":[{"id":11,"priority":1,"ready":true,"audioTracks":2}]}""",
+                ),
+                "/playback/resolve/11?forceTranscode=true" to KtvApiResult.Success(
+                    """{"kind":"LIVE_TRANSCODE","status":"READY","sourceFileId":11,"variantId":null,"streamUrl":"/api/stream/11?transcode=true","audioTracks":2,"audioLayout":{"layout":"DUAL_TRACK","accompanimentTrackIndex":1}}""",
+                ),
+            ),
+        )
+        val resolver = PlaybackResolver(transport, json, { apiBase })
+
+        val result = resolver.resolve(7L, forceTranscode = true)
+
+        assertTrue(result is PlaybackResolution.Ready)
+        val ready = result as PlaybackResolution.Ready
+        assertEquals("LIVE_TRANSCODE", ready.descriptor.kind)
+        assertEquals(11L, ready.descriptor.sourceFileId)
+        assertEquals(null, ready.descriptor.variantId)
+        assertEquals("http://192.168.1.10:8080/api/stream/11?transcode=true", ready.descriptor.streamUrl)
+        assertEquals("DUAL_TRACK", ready.descriptor.audioLayout.layout)
+        assertEquals(1, ready.descriptor.audioLayout.accompanimentTrackIndex)
+    }
+
     private class RouteTransport(
         private val routes: Map<String, KtvApiResult<String>>,
     ) : KtvTransport {

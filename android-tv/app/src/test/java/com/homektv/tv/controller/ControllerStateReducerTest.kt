@@ -14,6 +14,106 @@ import org.junit.Test
 
 class ControllerStateReducerTest {
     @Test
+    fun queueLoadStateDistinguishesLoadingSuccessfulEmptyAndFailure() {
+        val loading = ControllerUiState()
+        assertTrue(loading.queueLoading)
+
+        val emptySuccess = ControllerStateReducer.withSnapshot(loading, QueueSnapshot())
+        assertFalse(emptySuccess.queueLoading)
+        assertTrue(emptySuccess.queue.list.isEmpty())
+        assertNull(emptySuccess.errorFor(UiDomain.QUEUE))
+
+        val readSuccess = ControllerStateReducer.withSuccessfulRead(loading, UiDomain.QUEUE)
+        assertFalse(readSuccess.queueLoading)
+
+        val failed = ControllerStateReducer.withDomainFailure(
+            loading,
+            UiDomain.QUEUE,
+            KtvApiError(KtvApiErrorKind.NETWORK, "NETWORK_ERROR", "network"),
+        )
+        assertFalse(failed.queueLoading)
+        assertTrue(failed.errorFor(UiDomain.QUEUE) != null)
+
+        val retrying = ControllerStateReducer.withQueueLoadStarted(failed)
+        assertTrue(retrying.queueLoading)
+        assertNull(retrying.errorFor(UiDomain.QUEUE))
+    }
+
+    @Test
+    fun staleQueueSnapshotDoesNotEndCurrentQueueLoad() {
+        val current = ControllerUiState(
+            queueLoading = true,
+            queue = QueueSnapshot(stateRevision = 12L),
+        )
+
+        val updated = ControllerStateReducer.withSnapshot(
+            current,
+            QueueSnapshot(stateRevision = 11L),
+        )
+
+        assertTrue(updated.queueLoading)
+        assertEquals(12L, updated.queue.stateRevision)
+    }
+
+    @Test
+    fun personalReadLoadingTracksTheLatestFavoritesOrHistoryRequestAndClearsOnFailure() {
+        val favorites = ControllerStateReducer.withPersonalLoadStarted(
+            ControllerUiState(),
+            UiDomain.FAVORITES,
+        )
+        assertTrue(favorites.favoritesLoading)
+        assertFalse(favorites.historyLoading)
+
+        val history = ControllerStateReducer.withPersonalLoadStarted(favorites, UiDomain.HISTORY)
+        assertFalse(history.favoritesLoading)
+        assertTrue(history.historyLoading)
+
+        val failed = ControllerStateReducer.withPersonalLoadFinished(
+            ControllerStateReducer.withDomainFailure(
+                history,
+                UiDomain.HISTORY,
+                KtvApiError(KtvApiErrorKind.NETWORK, "NETWORK_ERROR", "network"),
+            ),
+            UiDomain.HISTORY,
+        )
+        assertFalse(failed.historyLoading)
+        assertTrue(failed.errorFor(UiDomain.HISTORY) != null)
+    }
+
+    @Test
+    fun successfulEmptyPersonalReadEndsLoadingWithoutInventingItems() {
+        val loading = ControllerStateReducer.withPersonalLoadStarted(
+            ControllerUiState(),
+            UiDomain.FAVORITES,
+        )
+        val completed = ControllerStateReducer.withPersonalLoadFinished(
+            ControllerStateReducer.withSuccessfulRead(loading, UiDomain.FAVORITES),
+            UiDomain.FAVORITES,
+        )
+
+        assertFalse(completed.favoritesLoading)
+        assertTrue(completed.favorites.isEmpty())
+        assertNull(completed.errorFor(UiDomain.FAVORITES))
+    }
+
+    @Test
+    fun successfulCatalogRootRequestEndsLoadingEvenWhenTheDirectoryIsEmpty() {
+        val loading = ControllerUiState(
+            catalogLoading = true,
+            domainErrors = mapOf(
+                UiDomain.CATALOG to KtvApiError(KtvApiErrorKind.NETWORK, "NETWORK_ERROR", "network"),
+            ),
+        )
+
+        val loaded = ControllerStateReducer.withCatalogRootSuccess(loading)
+
+        assertFalse(loaded.catalogLoading)
+        assertNull(loaded.errorFor(UiDomain.CATALOG))
+        assertTrue(loaded.languages.isEmpty())
+        assertTrue(loaded.tags.isEmpty())
+    }
+
+    @Test
     fun websocketSnapshotReplacesQueueAndMarksOnline() {
         val state = ControllerUiState(
             connection = ControllerConnection.CONNECTING,

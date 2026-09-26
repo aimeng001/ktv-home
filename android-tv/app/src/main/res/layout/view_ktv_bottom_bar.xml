@@ -1,44 +1,53 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="68dp"
+    android:layout_height="56dp"
     android:orientation="horizontal"
+    android:baselineAligned="false"
     android:gravity="center_vertical"
-    android:background="@drawable/player_glass"
-    android:paddingHorizontal="20dp"
-    android:paddingVertical="8dp">
+    android:background="@drawable/ktv_dashboard_footer"
+    android:paddingHorizontal="26dp"
+    android:paddingVertical="2dp">
 
     <!-- 左侧：正在播放歌曲信息 -->
-    <LinearLayout
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/nowPlayingInfoContainer"
-        android:layout_width="0dp"
+        android:layout_width="156dp"
         android:layout_height="wrap_content"
-        android:layout_weight="1.2"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:layout_weight="0"
+        android:layout_marginEnd="14dp">
 
         <ImageView
             android:id="@+id/imgNowPlayingDisc"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:src="@drawable/vinyl_disc"
-            android:contentDescription="正在播放" />
+            android:contentDescription="@string/now_playing_label"
+            android:background="@drawable/bg_avatar_circle"
+            android:scaleType="centerCrop"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent" />
 
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:layout_marginStart="12dp"
-            android:orientation="vertical">
+            android:layout_marginEnd="8dp"
+            android:orientation="vertical"
+            app:layout_constraintStart_toEndOf="@id/imgNowPlayingDisc"
+            app:layout_constraintEnd_toStartOf="@id/txtVocalBadge"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent">
 
             <TextView
                 android:id="@+id/txtNowPlayingTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="暂无播放"
+                android:text="@string/playback_none"
                 android:textColor="@android:color/white"
-                android:textSize="17sp"
-                android:textStyle="bold"
+                android:textSize="15sp"
                 android:singleLine="true"
                 android:ellipsize="end" />
 
@@ -47,131 +56,175 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="请先点歌"
+                android:text="@string/please_order_song"
                 android:textColor="@color/dim"
                 android:textSize="12sp"
                 android:singleLine="true"
-                android:ellipsize="end" />
+                android:ellipsize="end"
+                android:visibility="gone" />
         </LinearLayout>
 
         <TextView
             android:id="@+id/txtVocalBadge"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
             android:background="@drawable/karaoke_label"
             android:paddingHorizontal="8dp"
             android:paddingVertical="3dp"
-            android:text="伴唱"
+            android:text="@string/vocal_backing"
             android:textColor="@android:color/white"
             android:textSize="11sp"
-            android:textStyle="bold" />
-    </LinearLayout>
+            android:textStyle="bold"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- 中间：核心快捷播控按键 -->
+    <ProgressBar
+        android:id="@+id/playbackProgress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="0dp"
+        android:layout_height="3dp"
+        android:layout_weight="1"
+        android:layout_marginEnd="18dp"
+        android:max="1000"
+        android:progress="0"
+        android:indeterminate="false"
+        android:progressTint="@color/ktv_dashboard_gold"
+        android:progressBackgroundTint="@color/ktv_dashboard_progress_track"
+        android:contentDescription="@string/playback_progress_accessibility" />
+
+    <!-- 先显示参考图中的四个主操作；其余既有操作可横向移焦访问。 -->
+    <HorizontalScrollView
+        android:id="@+id/footerActionScroll"
+        android:layout_width="340dp"
+        android:layout_height="match_parent"
+        android:scrollbars="none"
+        android:fillViewport="false"
+        android:focusable="false"
+        android:clipToPadding="false">
+
     <LinearLayout
         android:id="@+id/playbackControls"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <Button
+        <Button style="?android:attr/buttonBarButtonStyle"
             android:id="@+id/btnPlayPause"
             android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:background="@drawable/btn_keyboard_key"
-            android:textColor="@color/color_keyboard_key_text"
-            android:text="暂停"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_kiosk_player_control"
+            android:textColor="@color/ktv_dashboard_gold"
+            android:text="@string/pause_action"
             android:textSize="13sp"
+            android:drawablePadding="5dp"
+            android:paddingHorizontal="5dp"
+            android:nextFocusRight="@id/btnNext"
+            android:nextFocusUp="@id/tileFavorites"
             android:focusable="true" />
 
-        <Button
+        <View android:layout_width="1dp" android:layout_height="20dp" android:layout_marginHorizontal="5dp" android:background="@color/ktv_dashboard_card_border" />
+
+        <Button style="?android:attr/buttonBarButtonStyle"
             android:id="@+id/btnNext"
             android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/btn_keyboard_key"
-            android:textColor="@color/color_keyboard_key_text"
-            android:text="切歌"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_kiosk_player_control"
+            android:textColor="@color/text"
+            android:text="@string/skip_track_action"
             android:textSize="13sp"
+            android:drawableStart="@drawable/ic_player_next"
+            android:drawablePadding="5dp"
+            android:paddingHorizontal="5dp"
+            android:nextFocusLeft="@id/btnPlayPause"
+            android:nextFocusRight="@id/btnVocalToggle"
             android:focusable="true" />
 
-        <Button
-            android:id="@+id/btnRestart"
-            android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/btn_keyboard_key"
-            android:textColor="@color/color_keyboard_key_text"
-            android:text="重唱"
-            android:textSize="13sp"
-            android:focusable="true" />
+        <View android:layout_width="1dp" android:layout_height="20dp" android:layout_marginHorizontal="5dp" android:background="@color/ktv_dashboard_card_border" />
 
-        <Button
+        <Button style="?android:attr/buttonBarButtonStyle"
             android:id="@+id/btnVocalToggle"
             android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/btn_keyboard_key"
-            android:textColor="@color/color_keyboard_key_text"
-            android:text="原唱/伴唱"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_kiosk_player_control"
+            android:textColor="@color/text"
+            android:text="@string/vocal_toggle_description"
             android:textSize="13sp"
+            android:drawableStart="@drawable/ic_player_vocal"
+            android:drawablePadding="5dp"
+            android:paddingHorizontal="5dp"
+            android:nextFocusLeft="@id/btnNext"
+            android:nextFocusRight="@id/btnQueueBadge"
             android:focusable="true" />
 
-        <Button
-            android:id="@+id/btnEffectApplause"
-            android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/btn_keyboard_key"
-            android:textColor="@color/color_keyboard_key_text"
-            android:text="👏 鼓掌"
-            android:textSize="13sp"
-            android:focusable="true" />
+        <View android:layout_width="1dp" android:layout_height="20dp" android:layout_marginHorizontal="5dp" android:background="@color/ktv_dashboard_card_border" />
 
-        <Button
-            android:id="@+id/btnEffectCheer"
-            android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/btn_keyboard_key"
-            android:textColor="@color/color_keyboard_key_text"
-            android:text="🎉 喝彩"
-            android:textSize="13sp"
-            android:focusable="true" />
-    </LinearLayout>
-
-    <!-- 右侧：扫码点歌与已点队列入口抽屉按钮 -->
-    <LinearLayout
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="16dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
-        <Button
-            android:id="@+id/btnQrCode"
-            android:layout_width="wrap_content"
-            android:layout_height="46dp"
-            android:layout_marginEnd="10dp"
-            android:background="@drawable/btn_keyboard_key"
-            android:textColor="@color/color_keyboard_key_text"
-            android:text="📱 扫码"
-            android:textSize="13sp"
-            android:paddingHorizontal="14dp"
-            android:focusable="true" />
-
-        <Button
+        <Button style="?android:attr/buttonBarButtonStyle"
             android:id="@+id/btnQueueBadge"
             android:layout_width="wrap_content"
-            android:layout_height="46dp"
-            android:background="@drawable/btn_gold"
-            android:textColor="#111317"
-            android:text="已点 0 首"
-            android:textStyle="bold"
-            android:textSize="14sp"
-            android:paddingHorizontal="16dp"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_kiosk_player_control"
+            android:textColor="@color/text"
+            android:text="@string/kiosk_queue_action"
+            android:textSize="13sp"
+            android:drawableStart="@drawable/ic_player_queue"
+            android:drawablePadding="5dp"
+            android:paddingHorizontal="5dp"
+            android:nextFocusLeft="@id/btnVocalToggle"
+            android:nextFocusRight="@id/btnRestart"
+            android:focusable="true" />
+
+        <View android:layout_width="1dp" android:layout_height="20dp" android:layout_marginHorizontal="5dp" android:background="@color/ktv_dashboard_card_border" />
+
+        <Button style="?android:attr/buttonBarButtonStyle"
+            android:id="@+id/btnRestart"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_kiosk_player_control"
+            android:textColor="@color/text"
+            android:text="@string/replay_track_action"
+            android:textSize="13sp"
+            android:nextFocusLeft="@id/btnQueueBadge"
+            android:nextFocusRight="@id/btnEffectApplause"
+            android:focusable="true" />
+
+        <Button style="?android:attr/buttonBarButtonStyle"
+            android:id="@+id/btnEffectApplause"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_kiosk_player_control"
+            android:textColor="@color/text"
+            android:text="@string/cheer_applause_action"
+            android:textSize="13sp"
+            android:nextFocusLeft="@id/btnRestart"
+            android:nextFocusRight="@id/btnEffectCheer"
+            android:focusable="true" />
+
+        <Button style="?android:attr/buttonBarButtonStyle"
+            android:id="@+id/btnEffectCheer"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_kiosk_player_control"
+            android:textColor="@color/text"
+            android:text="@string/cheer_action"
+            android:textSize="13sp"
+            android:nextFocusLeft="@id/btnEffectApplause"
+            android:nextFocusRight="@id/btnQrCode"
+            android:focusable="true" />
+        <Button style="?android:attr/buttonBarButtonStyle"
+            android:id="@+id/btnQrCode"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_kiosk_player_control"
+            android:textColor="@color/text"
+            android:text="@string/qr_short_action"
+            android:textSize="13sp"
+            android:paddingHorizontal="14dp"
+            android:nextFocusLeft="@id/btnEffectCheer"
+            android:nextFocusRight="@id/btnQrCode"
             android:focusable="true" />
     </LinearLayout>
+    </HorizontalScrollView>
 </LinearLayout>

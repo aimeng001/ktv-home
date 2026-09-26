@@ -21,10 +21,19 @@ class KioskPresentationStateTest {
         assertEquals(KioskTab.SINGERS, state.currentTab.value)
 
         state.selectTab(KioskTab.RANKINGS)
-        assertEquals(KioskTab.RANKINGS, state.currentTab.value)
+        assertEquals(KioskTab.DASHBOARD, state.currentTab.value)
+
+        state.selectTab(KioskTab.PLAYLISTS)
+        assertEquals(KioskTab.DASHBOARD, state.currentTab.value)
 
         state.selectTab(KioskTab.CATEGORIES)
         assertEquals(KioskTab.CATEGORIES, state.currentTab.value)
+    }
+
+    @Test
+    fun constructorRestoresHiddenLegacyTabsToDashboard() {
+        assertEquals(KioskTab.DASHBOARD, KioskPresentationState(KioskTab.RANKINGS).currentTab.value)
+        assertEquals(KioskTab.DASHBOARD, KioskPresentationState(KioskTab.PLAYLISTS).currentTab.value)
     }
 
     @Test

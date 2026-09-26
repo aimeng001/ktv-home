@@ -10,9 +10,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <uses-permission
-        android:name="android.permission.BLUETOOTH_CONNECT"
-        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <!-- TV 无触摸屏，声明为可选，兼容普通手机/盒子安装 -->
     <uses-feature
@@ -47,9 +45,8 @@
             android:name=".ui.MainActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden|navigation|uiMode"
-            android:screenOrientation="landscape"
             android:launchMode="singleTop"
-            android:theme="@style/Theme.HomeKtvTv" />
+            android:theme="@style/Theme.HomeKtvTv.MainActivity" />
 
         <activity
             android:name=".ui.ControllerActivity"
@@ -61,7 +58,6 @@
             android:name=".ui.SetupActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden|navigation|uiMode"
-            android:screenOrientation="landscape"
             android:theme="@style/Theme.HomeKtvTv">
             <!-- 普通启动器入口 -->
             <intent-filter>

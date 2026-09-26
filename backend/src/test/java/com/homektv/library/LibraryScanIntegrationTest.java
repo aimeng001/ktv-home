@@ -8,6 +8,7 @@ import com.homektv.repo.SongArtistRepository;
 import com.homektv.repo.SongRepository;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -34,6 +35,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  */
 @SpringBootTest
 @Testcontainers
+@Isolated("Testcontainers JUnit extension does not support parallel test execution")
 class LibraryScanIntegrationTest {
 
     @Container

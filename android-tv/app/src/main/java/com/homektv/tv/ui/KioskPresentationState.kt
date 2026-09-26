@@ -22,7 +22,7 @@ enum class KioskTab {
  */
 class KioskPresentationState(initialTab: KioskTab = KioskTab.PINYIN) {
 
-    private val _currentTab = MutableStateFlow(initialTab)
+    private val _currentTab = MutableStateFlow(visibleTabOrDashboard(initialTab))
     val currentTab: StateFlow<KioskTab> = _currentTab.asStateFlow()
 
     private val _selectedArtist = MutableStateFlow<String?>(null)
@@ -38,7 +38,7 @@ class KioskPresentationState(initialTab: KioskTab = KioskTab.PINYIN) {
     val newSongs: StateFlow<List<SongDto>> = _newSongs.asStateFlow()
 
     fun selectTab(tab: KioskTab) {
-        _currentTab.value = tab
+        _currentTab.value = visibleTabOrDashboard(tab)
     }
 
     fun selectArtist(artistName: String) {
@@ -60,5 +60,10 @@ class KioskPresentationState(initialTab: KioskTab = KioskTab.PINYIN) {
 
     fun updateAudioLayout(layout: AudioLayout, audioTracks: Int = 1) {
         _isVocalToggleEnabled.value = VocalTogglePolicy.resolve(layout.layout, audioTracks).isEnabled
+    }
+
+    private fun visibleTabOrDashboard(tab: KioskTab): KioskTab = when (tab) {
+        KioskTab.RANKINGS, KioskTab.PLAYLISTS -> KioskTab.DASHBOARD
+        else -> tab
     }
 }

@@ -145,6 +145,7 @@ jobs:
           ./mvnw --batch-mode -T 1C
           -DrunLargeLibraryScanTest=true
           -DscanRows=10000
+          -DscanBootstrapTimeoutSeconds=600
           -DargLine="-Xms128m -Xmx512m"
           -Dtest=LargeExternalLibraryScanTest
           test

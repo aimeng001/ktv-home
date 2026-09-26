@@ -46,19 +46,45 @@ class DualEnginePlaybackRouterTest {
     }
 
     @Test
-    fun testMedia3ZeroVideoTrackAnomalyTriggersFallback() {
-        // 当文件为有画面的视频（如 720x480 分辨率），但 Media3 解封装器将老格式（如 V_REAL/RVD4）静默过滤掉导致视频轨数为 0 时
-        val shouldFallback = router.shouldFallbackOnTracks(
+    fun testMedia3ZeroVideoTrackAnomalyRequiresLiveDecodeResolution() {
+        // A declared video with no Media3-supported video track is a decoder failure,
+        // not proof that Android MediaPlayer will render it. Escalate to server decode.
+        val shouldResolve = router.shouldResolveMissingOrUnsupportedVideoTracks(
             hasVideoDeclared = true,
             videoTrackCount = 0,
             hasSupportedVideoTrack = false,
         )
-        assertTrue("Media3 解析出 0 视频轨且该文件声明有画面时，必须触发服务端播放变体解析", shouldFallback)
+        assertTrue("declared video with no supported track must request bounded live transcode", shouldResolve)
+    }
+
+    @Test
+    fun unsupportedTrackRequestsResolutionButSupportedAndAudioOnlyDoNot() {
+        assertTrue(
+            router.shouldResolveMissingOrUnsupportedVideoTracks(
+                hasVideoDeclared = true,
+                videoTrackCount = 1,
+                hasSupportedVideoTrack = false,
+            ),
+        )
+        assertFalse(
+            router.shouldResolveMissingOrUnsupportedVideoTracks(
+                hasVideoDeclared = true,
+                videoTrackCount = 1,
+                hasSupportedVideoTrack = true,
+            ),
+        )
+        assertFalse(
+            router.shouldResolveMissingOrUnsupportedVideoTracks(
+                hasVideoDeclared = false,
+                videoTrackCount = 0,
+                hasSupportedVideoTrack = false,
+            ),
+        )
     }
 
     @Test
     fun testMedia3NormalVideoTrackDoesNotTriggerFallback() {
-        val shouldFallback = router.shouldFallbackOnTracks(
+        val shouldFallback = router.shouldResolveMissingOrUnsupportedVideoTracks(
             hasVideoDeclared = true,
             videoTrackCount = 1,
             hasSupportedVideoTrack = true,
@@ -68,7 +94,7 @@ class DualEnginePlaybackRouterTest {
 
     @Test
     fun testAudioOnlyTrackDoesNotTriggerFallback() {
-        val shouldFallback = router.shouldFallbackOnTracks(
+        val shouldFallback = router.shouldResolveMissingOrUnsupportedVideoTracks(
             hasVideoDeclared = false,
             videoTrackCount = 0,
             hasSupportedVideoTrack = false,

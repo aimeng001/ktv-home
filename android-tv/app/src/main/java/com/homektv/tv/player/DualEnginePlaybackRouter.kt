@@ -21,7 +21,7 @@ class DualEnginePlaybackRouter {
         return PlaybackEngineType.PRIMARY_MEDIA3
     }
 
-    fun shouldFallbackOnTracks(
+    fun shouldResolveMissingOrUnsupportedVideoTracks(
         hasVideoDeclared: Boolean,
         videoTrackCount: Int,
         hasSupportedVideoTrack: Boolean,

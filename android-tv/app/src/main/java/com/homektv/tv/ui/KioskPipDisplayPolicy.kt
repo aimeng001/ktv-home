@@ -16,7 +16,7 @@ internal object KioskPipDisplayPolicy {
             return State(videoVisible = false, label = "视频正在外接屏播放")
         }
         return State(
-            videoVisible = true,
+            videoVisible = hasPlaying && playbackState != "idle",
             label = PipLabelPolicy.resolve(playbackState, hasPlaying),
         )
     }

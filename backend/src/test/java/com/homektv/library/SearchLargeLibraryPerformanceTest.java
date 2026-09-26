@@ -7,6 +7,7 @@ import com.homektv.repo.SongSearchRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -33,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest
 @Testcontainers
+@Isolated("Testcontainers JUnit extension does not support parallel test execution")
 @EnabledIfSystemProperty(named = "runSearchPerformanceTest", matches = "true")
 class SearchLargeLibraryPerformanceTest {
 

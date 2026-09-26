@@ -39,6 +39,8 @@ DOCKER_BACKEND_TEST_CLASSES: tuple[str, ...] = (
     "PartyLoadIntegrationTest",
     "PersistenceIntegrationTest",
     "WebSocketIntegrationTest",
+    "FlywaySpringBootUpgradeIntegrationTest",
+    "FlywayUpgradeCompatibilityTest",
 )
 
 

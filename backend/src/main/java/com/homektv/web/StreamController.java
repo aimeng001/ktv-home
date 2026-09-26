@@ -5,6 +5,7 @@ import com.homektv.domain.SongFile;
 import com.homektv.library.LibraryModePolicy;
 import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.repo.SongFileRepository;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -18,6 +19,8 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedInputStream;
 import java.io.File;
@@ -30,6 +33,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 媒体流（P1.17，详设§11.1）。
@@ -69,7 +73,10 @@ import java.util.concurrent.Semaphore;
 public class StreamController {
 
     private static final int BUF = 64 * 1024;
+    private static final double MAX_TRANSCODE_START_SECONDS = 24 * 60 * 60;
+    private static final long TRANSCODE_PROCESS_EXIT_TIMEOUT_SECONDS = 5;
     private static final Set<String> TRANSCODE_FORMATS = Set.of("rm", "rmvb", "realmedia");
+    private static final Logger log = LoggerFactory.getLogger(StreamController.class);
     private final Semaphore transcodeSemaphore = new Semaphore(4);
 
     private final SongFileRepository fileRepo;
@@ -116,7 +123,7 @@ public class StreamController {
     }
 
     public ResponseEntity<StreamingResponseBody> stream(Long fileId, String rangeHeader) {
-        return stream(fileId, rangeHeader, null);
+        return streamInternal(fileId, rangeHeader, null, false);
     }
 
     /**
@@ -136,7 +143,28 @@ public class StreamController {
     public ResponseEntity<StreamingResponseBody> stream(
             @PathVariable Long fileId,
             @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader,
-            @org.springframework.web.bind.annotation.RequestParam(value = "start", required = false) Double startSeconds) {
+            @org.springframework.web.bind.annotation.RequestParam(value = "start", required = false) Double startSeconds,
+            @org.springframework.web.bind.annotation.RequestParam(value = "transcode", defaultValue = "false") boolean forceTranscode,
+            HttpServletRequest request) {
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, request);
+    }
+
+    public ResponseEntity<StreamingResponseBody> stream(
+            Long fileId, String rangeHeader, Double startSeconds) {
+        return streamInternal(fileId, rangeHeader, startSeconds, false);
+    }
+
+    ResponseEntity<StreamingResponseBody> streamInternal(
+            Long fileId, String rangeHeader, Double startSeconds, boolean forceTranscode) {
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null);
+    }
+
+    private ResponseEntity<StreamingResponseBody> streamInternal(
+            Long fileId,
+            String rangeHeader,
+            Double startSeconds,
+            boolean forceTranscode,
+            HttpServletRequest request) {
 
         SongFile sf = fileRepo.findById(fileId).orElse(null);
         if (sf == null) {
@@ -161,9 +189,17 @@ public class StreamController {
             return ResponseEntity.notFound().build();
         }
 
-        // 1. 判定是否需要管道流实时转码
-        if (isTranscodeRequired(sf)) {
-            return serveOnTheFlyTranscodeStream(file, sf, startSeconds);
+        // 1. 显式回退仅适用于已就绪视频；RM/RMVB 自动路径保持兼容。
+        boolean legacyTranscode = isTranscodeRequired(sf);
+        if (forceTranscode && !isVideo(sf)) {
+            return ResponseEntity.badRequest().build();
+        }
+        if (forceTranscode || legacyTranscode) {
+            if (startSeconds != null && (!Double.isFinite(startSeconds)
+                    || startSeconds < 0 || startSeconds > MAX_TRANSCODE_START_SECONDS)) {
+                return ResponseEntity.badRequest().build();
+            }
+            return serveOnTheFlyTranscodeStream(fileId, file, sf, startSeconds, request);
         }
 
         // 2. 99% 普通格式快路径：继续走 RandomAccessFile HTTP Range 流
@@ -176,8 +212,13 @@ public class StreamController {
         return TRANSCODE_FORMATS.stream().anyMatch(fmt -> format.contains(fmt) || path.endsWith("." + fmt));
     }
 
+    private boolean isVideo(SongFile sf) {
+        return "MV".equalsIgnoreCase(sf.getMediaType())
+                || "KTV_VIDEO".equalsIgnoreCase(sf.getMediaType());
+    }
+
     private ResponseEntity<StreamingResponseBody> serveOnTheFlyTranscodeStream(
-            File file, SongFile sf, Double startSeconds) {
+            Long fileId, File file, SongFile sf, Double startSeconds, HttpServletRequest request) {
         List<String> cmd = new ArrayList<>();
         cmd.add(this.ffmpegPath);
         cmd.add("-hide_banner");
@@ -231,31 +272,97 @@ public class StreamController {
         cmd.add("frag_keyframe+empty_moov+default_base_moof");
         cmd.add("pipe:1");
 
-        return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType("video/mp4"))
-                .header(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate")
-                .body(outputStream -> {
-                    if (!transcodeSemaphore.tryAcquire()) {
-                        throw new IOException("Transcode concurrency limit reached");
-                    }
+        // 在提交 HTTP 响应前占用名额；在 StreamingResponseBody 内拒绝会太晚，客户端已收到 200。
+        if (!transcodeSemaphore.tryAcquire()) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).build();
+        }
+        TranscodeLease lease = new TranscodeLease(transcodeSemaphore);
+        if (request != null) {
+            request.setAttribute(TranscodeAsyncLifecycleInterceptor.LEASE_ATTRIBUTE, lease);
+        }
+        try {
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType("video/mp4"))
+                    .header(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+                    .body(outputStream -> {
+                    if (!lease.beginStreaming()) return;
                     Process process = null;
                     try {
                         ProcessBuilder pb = new ProcessBuilder(cmd);
                         pb.redirectError(ProcessBuilder.Redirect.DISCARD);
                         process = processLauncher.start(pb);
-                        try (InputStream in = new BufferedInputStream(process.getInputStream(), BUF)) {
-                            in.transferTo(outputStream);
-                            outputStream.flush();
+                        try (InputStream in = process.getInputStream()) {
+                            copyTranscodeOutput(in, outputStream);
                         }
-                    } catch (Exception ignored) {
-                        // 客户端断开连接、切歌或快进定位
+                        if (!process.waitFor(TRANSCODE_PROCESS_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                            throw new IOException("FFmpeg did not exit before the stream completion timeout");
+                        }
+                        int exitCode = process.exitValue();
+                        if (exitCode != 0) {
+                            throw new TranscodeProcessExitException(exitCode);
+                        }
+                    } catch (ClientDisconnectedException disconnected) {
+                        log.debug("Live transcode client disconnected: fileId={}", fileId);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        log.warn("Live transcode interrupted: fileId={}, startSeconds={}", fileId, startSeconds);
+                        throw new IOException("Live transcode interrupted for fileId=" + fileId);
+                    } catch (IOException failure) {
+                        Integer exitCode = failure instanceof TranscodeProcessExitException exitFailure
+                                ? exitFailure.exitCode
+                                : null;
+                        log.error("Live transcode failed: fileId={}, startSeconds={}, failureType={}, exitCode={}",
+                                fileId, startSeconds, failure.getClass().getSimpleName(), exitCode);
+                        // 响应已提交为 200；以流异常结束，避免客户端把截断媒体当作正常 EOF。
+                        throw new IOException("Live transcode failed for fileId=" + fileId);
                     } finally {
-                        if (process != null && process.isAlive()) {
-                            process.destroyForcibly();
+                        try {
+                            if (process != null && process.isAlive()) {
+                                process.destroyForcibly();
+                            }
+                        } finally {
+                            lease.close();
                         }
-                        transcodeSemaphore.release();
                     }
                 });
+        } catch (RuntimeException | Error error) {
+            lease.close();
+            throw error;
+        }
+    }
+
+    private static void copyTranscodeOutput(InputStream processOutput, java.io.OutputStream responseOutput)
+            throws IOException {
+        InputStream input = new BufferedInputStream(processOutput, BUF);
+        byte[] buffer = new byte[BUF];
+        int read;
+        while ((read = input.read(buffer)) != -1) {
+            try {
+                responseOutput.write(buffer, 0, read);
+            } catch (IOException clientDisconnected) {
+                throw new ClientDisconnectedException(clientDisconnected);
+            }
+        }
+        try {
+            responseOutput.flush();
+        } catch (IOException clientDisconnected) {
+            throw new ClientDisconnectedException(clientDisconnected);
+        }
+    }
+
+    private static final class ClientDisconnectedException extends IOException {
+        private ClientDisconnectedException(IOException cause) {
+            super(cause);
+        }
+    }
+
+    private static final class TranscodeProcessExitException extends IOException {
+        private final int exitCode;
+
+        private TranscodeProcessExitException(int exitCode) {
+            super("FFmpeg exited with non-zero status");
+            this.exitCode = exitCode;
+        }
     }
 
     private ResponseEntity<StreamingResponseBody> serveStaticRangeStream(

@@ -10,10 +10,12 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.view.WindowManager
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import com.homektv.tv.R
 import com.homektv.tv.controller.ActionKey
 import com.homektv.tv.controller.QueueDrawerActionPolicy
 import com.homektv.tv.controller.QueuePermissionPolicy
@@ -61,15 +63,28 @@ class KtvQueueDrawerAdapter(
 
     fun updateActor(currentUserId: Long?, isHost: Boolean) {
         if (actorUserId == currentUserId && actorIsHost == isHost) return
+        val changedPositions = currentList.mapIndexedNotNull { index, entry ->
+            val wasManageable = QueuePermissionPolicy.canManage(entry, actorUserId, actorIsHost)
+            val willBeManageable = QueuePermissionPolicy.canManage(entry, currentUserId, isHost)
+            index.takeIf { wasManageable != willBeManageable }
+        }
         actorUserId = currentUserId
         actorIsHost = isHost
-        notifyDataSetChanged()
+        changedPositions.forEach(::notifyItemChanged)
     }
 
     fun updatePendingActions(actions: Set<ActionKey>) {
         if (pendingActions == actions) return
+        val changedQueueIds = (pendingActions union actions)
+            .asSequence()
+            .filter { it.kind == "control:top" || it.kind == "control:cancel" }
+            .filter { (it in pendingActions) != (it in actions) }
+            .map { it.resourceId }
+            .toSet()
         pendingActions = actions
-        notifyDataSetChanged()
+        currentList.forEachIndexed { index, entry ->
+            if (entry.queueId in changedQueueIds) notifyItemChanged(index)
+        }
     }
 
     class QueueViewHolder(
@@ -83,10 +98,15 @@ class KtvQueueDrawerAdapter(
 
         fun bind(entry: QueueEntry, index: Int) {
             val qId = entry.queueId
-            binding.txtQueueIndex.text = index.toString()
-            binding.txtQueueTitle.text = entry.song?.title ?: "未知歌曲"
-            val nick = entry.orderedByNick?.ifEmpty { "匿名" } ?: "匿名"
-            binding.txtQueueSubtitle.text = "${entry.song?.artist ?: ""} · 点歌人: $nick"
+        binding.txtQueueIndex.text = binding.root.context.getString(R.string.queue_row_index, index)
+        binding.txtQueueTitle.text = entry.song?.title ?: binding.root.context.getString(R.string.unknown_song)
+        val nick = entry.orderedByNick?.takeIf { it.isNotBlank() }
+            ?: binding.root.context.getString(R.string.anonymous_user)
+        binding.txtQueueSubtitle.text = binding.root.context.getString(
+            R.string.queue_row_subtitle,
+            entry.song?.artist.orEmpty(),
+            nick,
+        )
 
             val canManage = qId != null && QueuePermissionPolicy.canManage(entry, currentUserId(), isHost())
             val topPending = qId != null && ActionKey("control:top", qId) in pendingActions()
@@ -151,6 +171,8 @@ class KtvQueueDrawerDialog(
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             setGravity(Gravity.END)
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(136f / 255f)
         }
 
         adapter = KtvQueueDrawerAdapter(currentUserId, isHost, onTop, onCancel)
@@ -173,7 +195,7 @@ class KtvQueueDrawerDialog(
     }
 
     fun submitQueue(nowPlayingText: String, waitingList: List<QueueEntry>) {
-        binding.txtDrawerTitle.text = "已点歌曲 (${waitingList.size})"
+        binding.txtDrawerTitle.text = context.getString(R.string.queue_drawer_title_count, waitingList.size)
         binding.txtDrawerNowPlaying.text = nowPlayingText
         adapter.submitList(waitingList)
 

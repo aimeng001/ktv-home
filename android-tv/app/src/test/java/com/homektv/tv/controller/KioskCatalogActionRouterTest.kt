@@ -25,7 +25,6 @@ class KioskCatalogActionRouterTest {
             listOf(
                 "query:zjl",
                 "query:",
-                "ranking",
                 "artists",
                 "ranking",
                 "new-songs",

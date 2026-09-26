@@ -8,7 +8,9 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.lifecycle.lifecycleScope
+import androidx.media3.common.Player
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.homektv.tv.controller.ControllerActions
@@ -24,6 +26,7 @@ import com.homektv.tv.controller.KioskPersonalView
 import com.homektv.tv.controller.KioskQueueActionRouter
 import com.homektv.tv.R
 import com.homektv.tv.databinding.ActivityMainBinding
+import com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
 import com.homektv.tv.net.AppConfig
 import com.homektv.tv.net.ArtistItem
 import com.homektv.tv.net.KtvApiResult
@@ -32,6 +35,7 @@ import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.SongDto
 import com.homektv.tv.player.EffectPlayer
 import com.homektv.tv.ui.kiosk.KtvSingerFilterPolicy
+import com.homektv.tv.ui.kiosk.KtvDashboardBackground
 import com.homektv.tv.ui.kiosk.KioskCategoryLoadPolicy
 import com.homektv.tv.ui.kiosk.KioskCategoryMode
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +43,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 
 /**
@@ -51,6 +56,7 @@ import kotlinx.coroutines.withContext
 class KtvKioskOverlayController(
     private val activity: AppCompatActivity,
     private val binding: ActivityMainBinding,
+    private val kioskOverlayBinding: ViewKtvKioskOverlayBinding,
     private val coordinator: KioskModeCoordinator,
     private val focusController: KtvFocusController,
     private val effectPlayer: EffectPlayer?,
@@ -64,11 +70,32 @@ class KtvKioskOverlayController(
     initialExternalDisplayActive: Boolean = false,
 ) {
 
+    private val ActivityMainBinding.kioskOverlay: ViewKtvKioskOverlayBinding
+        get() = this@KtvKioskOverlayController.kioskOverlayBinding
+
     private val config = AppConfig(activity)
     private val transport = KtvHttpTransport(config)
     private val catalogActionRouter = KioskCatalogActionRouter(catalogActions)
     private val personalActionRouter = KioskPersonalActionRouter(personalActions)
     private val queueActionRouter = KioskQueueActionRouter(controllerActions)
+    private val pipObservedPlayer = binding.playerView.player
+    private var pipSpaceAvailable = false
+    private val pipPlaybackListener = object : Player.Listener {
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            renderPipState()
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            renderPipState()
+        }
+    }
+    private val pipLayoutChangeListener = View.OnLayoutChangeListener {
+            _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom,
+        ->
+        if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+            updatePipResponsiveSize()
+        }
+    }
 
     val presentationState = KioskPresentationState(initialTab = KioskTab.DASHBOARD)
     private val dashboardPolicy = com.homektv.tv.ui.kiosk.KtvDashboardPolicy()
@@ -147,18 +174,22 @@ class KtvKioskOverlayController(
     private var artistsLoaded = false
     private var rankingsLoaded = false
     private val categoryLoadPolicy = KioskCategoryLoadPolicy()
-    private var categoryMode = KioskCategoryMode.NEW
+    private var categoryMode = KioskCategoryMode.TAGS
     private var categoryDetail = false
+    private var categoryFocusRestorePending = false
     private var playlistDetail = false
     private var externalDisplayActive = initialExternalDisplayActive
 
     init {
+        KtvDashboardBackground.applyTo(kioskOverlayBinding.kioskRootOverlay)
+        pipObservedPlayer?.addListener(pipPlaybackListener)
         setupViews()
         observeState()
     }
 
     private fun setupViews() {
         val overlay = binding.kioskOverlay
+        overlay.kioskContentStage.addOnLayoutChangeListener(pipLayoutChangeListener)
 
         // 1. 列表布局绑定
         overlay.searchRecyclerView.layoutManager = LinearLayoutManager(activity)
@@ -172,12 +203,55 @@ class KtvKioskOverlayController(
         overlay.btnSingerMale.setOnClickListener { loadSingerGender(singerFilters[1].gender) }
         overlay.btnSingerFemale.setOnClickListener { loadSingerGender(singerFilters[2].gender) }
         overlay.btnSingerGroup.setOnClickListener { loadSingerGender(singerFilters[3].gender) }
+        overlay.btnSingerRetry.setOnClickListener {
+            coordinator.resetIdleTimer()
+            focusController.hasInnerDetailBack = false
+            presentationState.clearArtistSelection()
+            catalogActions.loadArtists(
+                gender = controllerState.artistGender,
+                initial = controllerState.artistInitial,
+                restorePage = controllerState.catalogPage,
+            )
+        }
 
         overlay.rankingRecyclerView.layoutManager = LinearLayoutManager(activity)
         overlay.rankingRecyclerView.adapter = rankingAdapter
 
-        overlay.categoryRecyclerView.layoutManager = LinearLayoutManager(activity)
+        val categoryGridLayoutManager = GridLayoutManager(activity, 4)
+        categoryGridLayoutManager.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+            override fun getSpanSize(position: Int): Int =
+                if (overlay.categoryRecyclerView.adapter === categoryNameAdapter) 1
+                else categoryGridLayoutManager.spanCount
+        }
+        overlay.categoryRecyclerView.layoutManager = categoryGridLayoutManager
         overlay.categoryRecyclerView.adapter = categoryAdapter
+        overlay.btnCategoryRetry.setOnClickListener {
+            coordinator.resetIdleTimer()
+            when (categoryMode) {
+                KioskCategoryMode.LANGUAGES -> {
+                    catalogActionRouter.languages()
+                    overlay.btnCategoryLanguages.requestFocus()
+                }
+                KioskCategoryMode.TAGS -> {
+                    catalogActionRouter.tags()
+                    overlay.btnCategoryTags.requestFocus()
+                }
+                KioskCategoryMode.NEW -> loadCategories()
+            }
+        }
+        overlay.btnPersonalRetry.setOnClickListener {
+            when (presentationState.currentTab.value) {
+                KioskTab.FAVORITES -> {
+                    loadFavorites()
+                    overlay.tabFavorites.requestFocus()
+                }
+                KioskTab.HISTORY -> {
+                    loadHistory()
+                    overlay.tabHistory.requestFocus()
+                }
+                else -> Unit
+            }
+        }
 
         overlay.personalRecyclerView.layoutManager = LinearLayoutManager(activity)
         overlay.personalRecyclerView.adapter = personalSongAdapter
@@ -208,26 +282,10 @@ class KtvKioskOverlayController(
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.PINYIN -> presentationState.selectTab(KioskTab.PINYIN)
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.SINGER -> presentationState.selectTab(KioskTab.SINGERS)
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.CATEGORY -> {
-                    categoryMode = when (com.homektv.tv.ui.kiosk.KtvCategoryRoutePolicy.dashboardCategory()) {
-                        com.homektv.tv.ui.kiosk.KtvCategoryRoute.TAGS -> KioskCategoryMode.TAGS
-                        com.homektv.tv.ui.kiosk.KtvCategoryRoute.LANGUAGES -> KioskCategoryMode.LANGUAGES
-                        com.homektv.tv.ui.kiosk.KtvCategoryRoute.NEW -> KioskCategoryMode.NEW
-                    }
-                    categoryDetail = false
-                    focusController.hasInnerDetailBack = false
-                    overlay.categoryRecyclerView.adapter = categoryNameAdapter
-                    overlay.txtCategoryHeader.text = "选择标签"
-                    presentationState.selectTab(KioskTab.CATEGORIES)
+                    openCategoryRoot(KioskCategoryMode.TAGS)
                 }
-                com.homektv.tv.ui.kiosk.KtvDashboardTile.LANGUAGE -> {
-                    categoryMode = KioskCategoryMode.LANGUAGES
-                    categoryDetail = false
-                    focusController.hasInnerDetailBack = false
-                    overlay.categoryRecyclerView.adapter = categoryNameAdapter
-                    overlay.txtCategoryHeader.text = "选择语种"
-                    presentationState.selectTab(KioskTab.CATEGORIES)
-                }
-                com.homektv.tv.ui.kiosk.KtvDashboardTile.RANKING -> presentationState.selectTab(KioskTab.RANKINGS)
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.LANGUAGE -> openCategoryRoot(KioskCategoryMode.LANGUAGES)
+                com.homektv.tv.ui.kiosk.KtvDashboardTile.RANKING -> presentationState.selectTab(KioskTab.DASHBOARD)
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.FAVORITES -> presentationState.selectTab(KioskTab.FAVORITES)
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.HISTORY -> presentationState.selectTab(KioskTab.HISTORY)
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.ORDERED_QUEUE -> openQueueDrawer()
@@ -245,7 +303,8 @@ class KtvKioskOverlayController(
         }
         overlay.tabSingers.setOnClickListener { presentationState.selectTab(KioskTab.SINGERS) }
         overlay.tabRankings.setOnClickListener { presentationState.selectTab(KioskTab.RANKINGS) }
-        overlay.tabCategories.setOnClickListener { presentationState.selectTab(KioskTab.CATEGORIES) }
+        overlay.tabCategories.setOnClickListener { openCategoryRoot(KioskCategoryMode.TAGS) }
+        overlay.tabLanguages.setOnClickListener { openCategoryRoot(KioskCategoryMode.LANGUAGES) }
         overlay.tabFavorites.setOnClickListener { presentationState.selectTab(KioskTab.FAVORITES) }
         overlay.tabPlaylists.setOnClickListener { presentationState.selectTab(KioskTab.PLAYLISTS) }
         overlay.tabHistory.setOnClickListener { presentationState.selectTab(KioskTab.HISTORY) }
@@ -260,6 +319,7 @@ class KtvKioskOverlayController(
             categoryMode = KioskCategoryMode.LANGUAGES
             categoryDetail = false
             focusController.hasInnerDetailBack = false
+            categoryNameAdapter.setIconResource(R.drawable.ic_language)
             overlay.categoryRecyclerView.adapter = categoryNameAdapter
             overlay.txtCategoryHeader.text = "选择语种"
             catalogActionRouter.languages()
@@ -268,6 +328,7 @@ class KtvKioskOverlayController(
             categoryMode = KioskCategoryMode.TAGS
             categoryDetail = false
             focusController.hasInnerDetailBack = false
+            categoryNameAdapter.setIconResource(R.drawable.ic_category)
             overlay.categoryRecyclerView.adapter = categoryNameAdapter
             overlay.txtCategoryHeader.text = "选择标签"
             catalogActionRouter.tags()
@@ -365,8 +426,17 @@ class KtvKioskOverlayController(
                 queueDialog?.updatePendingActions(state.pendingActions)
 
                 val feedback = state.message
-                if (!feedback.isNullOrBlank() && feedback != lastControllerFeedback) {
-                    Toast.makeText(activity, feedback, Toast.LENGTH_SHORT).show()
+                val inlineFeedback = inlineFeedbackForCurrentPage(state)
+                when (KioskFeedbackRoutingPolicy.resolve(
+                    message = feedback,
+                    inlineErrorMessage = inlineFeedback?.first,
+                    inlineErrorIsLatest = inlineFeedback?.second == true,
+                )) {
+                    KioskFeedbackDestination.TRANSIENT -> if (feedback != lastControllerFeedback) {
+                        Toast.makeText(activity, feedback, Toast.LENGTH_SHORT).show()
+                    }
+                    KioskFeedbackDestination.NONE,
+                    KioskFeedbackDestination.INLINE -> Unit
                 }
                 lastControllerFeedback = feedback
             }
@@ -390,6 +460,40 @@ class KtvKioskOverlayController(
         })
     }
 
+    private fun inlineFeedbackForCurrentPage(state: ControllerUiState): Pair<String, Boolean>? {
+        val overlay = binding.kioskOverlay
+        val tab = presentationState.currentTab.value
+        val domain = when (tab) {
+            KioskTab.CATEGORIES -> if (!categoryDetail && categoryMode != KioskCategoryMode.NEW &&
+                overlay.categoryErrorPanel.visibility == View.VISIBLE
+            ) com.homektv.tv.controller.UiDomain.CATALOG else null
+            KioskTab.SINGERS -> if (overlay.txtSingerStatus.visibility == View.VISIBLE) {
+                com.homektv.tv.controller.UiDomain.CATALOG
+            } else null
+            KioskTab.PINYIN -> when {
+                presentationState.selectedArtist.value != null && overlay.txtSearchCount.visibility == View.VISIBLE ->
+                    com.homektv.tv.controller.UiDomain.CATALOG
+                state.query.isNotBlank() && overlay.txtSearchCount.visibility == View.VISIBLE ->
+                    com.homektv.tv.controller.UiDomain.SEARCH
+                else -> null
+            }
+            KioskTab.FAVORITES -> if (overlay.personalStatusPanel.visibility == View.VISIBLE) {
+                com.homektv.tv.controller.UiDomain.FAVORITES
+            } else null
+            KioskTab.HISTORY -> if (overlay.personalStatusPanel.visibility == View.VISIBLE) {
+                com.homektv.tv.controller.UiDomain.HISTORY
+            } else null
+            KioskTab.PLAYLISTS -> {
+                com.homektv.tv.controller.UiDomain.PLAYLISTS
+            }
+            else -> null
+        } ?: return null
+
+        val domainError = state.errorFor(domain) ?: return null
+        val message = state.messageFor(domain)?.takeIf(String::isNotBlank) ?: return null
+        return message to (state.error === domainError)
+    }
+
     private fun renderCatalogState(state: ControllerUiState) {
         val overlay = binding.kioskOverlay
         val selectedArtist = presentationState.selectedArtist.value
@@ -399,30 +503,59 @@ class KtvKioskOverlayController(
             state.catalogLoading -> "正在加载歌星..."
             state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null ->
                 "歌星加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.CATALOG) ?: "请稍后重试"}"
-            state.artists.isEmpty() -> "暂无可用歌星，请先完成曲库扫描"
+            state.artists.isEmpty() -> when (state.catalogStatus.state) {
+                com.homektv.tv.controller.CatalogLoadState.SCANNING -> "曲库正在扫描，歌手目录暂不可用"
+                com.homektv.tv.controller.CatalogLoadState.OFFLINE -> "点歌服务离线，无法加载歌手目录"
+                else -> "暂无歌手"
+            }
             else -> "共 ${state.artists.size} 位歌星"
+        }
+        val singerFailure = state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null ||
+            state.catalogStatus.state in setOf(
+                com.homektv.tv.controller.CatalogLoadState.OFFLINE,
+                com.homektv.tv.controller.CatalogLoadState.HTTP_ERROR,
+                com.homektv.tv.controller.CatalogLoadState.ROOT_UNAVAILABLE,
+                com.homektv.tv.controller.CatalogLoadState.PARTIAL_FAILURE,
+            )
+        val wasSingerRetryVisible = overlay.btnSingerRetry.visibility == View.VISIBLE
+        overlay.btnSingerRetry.visibility = if (!state.catalogLoading && singerFailure) View.VISIBLE else View.GONE
+        if (!wasSingerRetryVisible && overlay.btnSingerRetry.visibility == View.VISIBLE) {
+            overlay.btnSingerRetry.post {
+                if (presentationState.currentTab.value == KioskTab.SINGERS &&
+                    overlay.btnSingerRetry.visibility == View.VISIBLE
+                ) overlay.btnSingerRetry.requestFocus()
+            }
         }
         updateSingerFilterButtons(state.artistGender)
         rankingAdapter.submitList(state.ranking)
         when (categoryMode) {
-            KioskCategoryMode.NEW -> categoryAdapter.submitList(state.newSongs)
+            KioskCategoryMode.NEW -> categoryAdapter.submitList(state.newSongs) {
+                restoreCategoryModeFocusIfReady(state)
+            }
             KioskCategoryMode.LANGUAGES -> if (categoryDetail) {
                 categoryAdapter.submitList(state.catalogSongs)
             } else {
-                categoryNameAdapter.submitList(state.languages)
+                categoryNameAdapter.submitList(state.languages) {
+                    restoreCategoryModeFocusIfReady(state)
+                }
             }
             KioskCategoryMode.TAGS -> if (categoryDetail) {
                 categoryAdapter.submitList(state.catalogSongs)
             } else {
-                categoryNameAdapter.submitList(state.tags)
+                categoryNameAdapter.submitList(state.tags) {
+                    restoreCategoryModeFocusIfReady(state)
+                }
             }
         }
         when (presentationState.currentTab.value) {
             KioskTab.FAVORITES -> {
                 overlay.personalRecyclerView.adapter = personalSongAdapter
                 personalSongAdapter.submitList(state.favorites)
-                overlay.txtPersonalHeader.text = if (state.errorFor(com.homektv.tv.controller.UiDomain.FAVORITES) != null) {
-                    "收藏加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.FAVORITES) ?: "请稍后重试"}"
+                val favoritesError = state.errorFor(com.homektv.tv.controller.UiDomain.FAVORITES)
+                overlay.txtPersonalHeader.text = if (state.favoritesLoading) {
+                    "正在加载收藏..."
+                } else if (favoritesError != null) {
+                    "我的收藏暂不可用"
                 } else {
                     "我的收藏（${state.favorites.size} 首）"
                 }
@@ -443,13 +576,20 @@ class KtvKioskOverlayController(
                     KioskPersonalView.DETAIL -> {
                         overlay.personalRecyclerView.adapter = personalSongAdapter
                         personalSongAdapter.submitList(state.playlistDetail?.songs.orEmpty())
-                        overlay.txtPersonalHeader.text =
-                            "歌单 · ${state.playlistDetail?.name.orEmpty()}（${state.playlistDetail?.songs?.size ?: 0} 首）"
+                        overlay.txtPersonalHeader.text = activity.getString(
+                            R.string.playlist_detail_header,
+                            state.playlistDetail?.name.orEmpty(),
+                            state.playlistDetail?.songs?.size ?: 0,
+                        )
                     }
                     KioskPersonalView.DETAIL_ERROR -> {
                         overlay.personalRecyclerView.adapter = personalSongAdapter
                         personalSongAdapter.submitList(emptyList())
-                        overlay.txtPersonalHeader.text = "歌单加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) ?: "请稍后重试"}"
+                        overlay.txtPersonalHeader.text = activity.getString(
+                            R.string.playlist_detail_error,
+                            state.messageFor(com.homektv.tv.controller.UiDomain.PLAYLISTS)
+                                ?: activity.getString(R.string.common_try_again_later),
+                        )
                     }
                     KioskPersonalView.LIST -> {
                         overlay.personalRecyclerView.adapter = playlistAdapter
@@ -464,16 +604,23 @@ class KtvKioskOverlayController(
             }
             KioskTab.HISTORY -> {
                 overlay.personalRecyclerView.adapter = personalSongAdapter
-                personalSongAdapter.submitList(state.history.mapNotNull { it.song }.distinctBy { it.id })
-                overlay.txtPersonalHeader.text = if (state.errorFor(com.homektv.tv.controller.UiDomain.HISTORY) != null) {
-                    "历史加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.HISTORY) ?: "请稍后重试"}"
+                val visibleHistory = state.history.mapNotNull { it.song }.distinctBy { it.id }
+                personalSongAdapter.submitList(visibleHistory)
+                val historyError = state.errorFor(com.homektv.tv.controller.UiDomain.HISTORY)
+                overlay.txtPersonalHeader.text = if (state.historyLoading) {
+                    "正在加载最近唱过..."
+                } else if (historyError != null) {
+                    "最近唱过暂不可用"
                 } else {
-                    "最近唱过（${state.history.size} 首）"
+                    "最近唱过（${visibleHistory.size} 首）"
                 }
             }
             else -> Unit
         }
-        if (state.artists.isNotEmpty()) artistsLoaded = true
+        renderPersonalStatus()
+        if (state.artists.isNotEmpty() && presentationState.currentTab.value == KioskTab.SINGERS) {
+            artistsLoaded = true
+        }
         if (state.ranking.isNotEmpty()) rankingsLoaded = true
         if (state.newSongs.isNotEmpty()) categoryLoadPolicy.markLoaded(KioskCategoryMode.NEW)
         if (state.languages.isNotEmpty()) categoryLoadPolicy.markLoaded(KioskCategoryMode.LANGUAGES)
@@ -499,11 +646,42 @@ class KtvKioskOverlayController(
                 }
             }
             else -> {
-                searchAdapter.submitList(state.ranking)
-                val catalogError = state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG)
-                if (catalogError != null && presentationState.currentTab.value == KioskTab.PINYIN) {
-                    overlay.txtSearchCount.text = "推荐加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.CATALOG) ?: "请稍后重试"}"
+                searchAdapter.submitList(emptyList())
+                overlay.txtSearchCount.text = "支持歌名/歌手、中文、全拼和首字母搜索"
+            }
+        }
+
+        renderSearchEmptyState()
+
+        if (presentationState.currentTab.value == KioskTab.CATEGORIES && !categoryDetail) {
+            val isLanguage = categoryMode == KioskCategoryMode.LANGUAGES
+            val label = if (isLanguage) "语种" else "分类"
+            val count = if (isLanguage) state.languages.size else state.tags.size
+            val catalogError = state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG)
+            val showError = categoryMode != KioskCategoryMode.NEW && !state.catalogLoading &&
+                (catalogError != null || state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.OFFLINE)
+            val wasErrorVisible = overlay.categoryErrorPanel.visibility == View.VISIBLE
+            overlay.categoryErrorPanel.visibility = if (showError) View.VISIBLE else View.GONE
+            overlay.categoryRecyclerView.visibility = if (showError) View.GONE else View.VISIBLE
+            if (showError) {
+                overlay.txtCategoryErrorDetail.text = state.messageFor(com.homektv.tv.controller.UiDomain.CATALOG)
+                    ?.takeIf(String::isNotBlank)
+                    ?: "点歌服务离线，无法加载$label；请检查连接后重试"
+                if (!wasErrorVisible) {
+                    overlay.btnCategoryRetry.post {
+                        if (presentationState.currentTab.value == KioskTab.CATEGORIES &&
+                            overlay.categoryErrorPanel.visibility == View.VISIBLE
+                        ) overlay.btnCategoryRetry.requestFocus()
+                    }
                 }
+            }
+            overlay.txtCategoryHeader.text = when {
+                state.catalogLoading -> "正在加载$label…"
+                showError -> "选择$label"
+                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.SCANNING -> "曲库正在扫描，暂时没有可用$label"
+                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.OFFLINE -> "点歌服务离线，无法加载$label"
+                count == 0 -> "暂无$label"
+                else -> "选择$label（$count 项）"
             }
         }
     }
@@ -520,19 +698,27 @@ class KtvKioskOverlayController(
             btn.setTextColor(if (active) activeColor else inactiveColor)
         }
 
-        updateTabBtn(overlay.tabDashboard, tab == KioskTab.DASHBOARD)
-        updateTabBtn(overlay.tabPinyin, tab == KioskTab.PINYIN)
-        updateTabBtn(overlay.tabSingers, tab == KioskTab.SINGERS)
-        updateTabBtn(overlay.tabRankings, tab == KioskTab.RANKINGS)
-        updateTabBtn(overlay.tabCategories, tab == KioskTab.CATEGORIES)
-        updateTabBtn(overlay.tabFavorites, tab == KioskTab.FAVORITES)
-        updateTabBtn(overlay.tabPlaylists, tab == KioskTab.PLAYLISTS)
-        updateTabBtn(overlay.tabHistory, tab == KioskTab.HISTORY)
+        fun updateNavTab(btn: android.widget.Button, selected: Boolean) {
+            btn.setBackgroundResource(R.drawable.bg_kiosk_nav_tab)
+            btn.isSelected = selected
+            btn.setTextColor(
+                activity.resources.getColor(if (selected) R.color.ktv_dashboard_gold else R.color.dim, null),
+            )
+        }
+
+        updateNavTab(overlay.tabDashboard, tab == KioskTab.DASHBOARD)
+        updateNavTab(overlay.tabPinyin, tab == KioskTab.PINYIN)
+        updateNavTab(overlay.tabSingers, tab == KioskTab.SINGERS)
+        updateNavTab(overlay.tabRankings, tab == KioskTab.RANKINGS)
+        updateCategoryNavSelection(tab)
+        updateNavTab(overlay.tabFavorites, tab == KioskTab.FAVORITES)
+        updateNavTab(overlay.tabPlaylists, tab == KioskTab.PLAYLISTS)
+        updateNavTab(overlay.tabHistory, tab == KioskTab.HISTORY)
         updateTabBtn(overlay.btnCategoryNew, categoryMode == KioskCategoryMode.NEW && !categoryDetail)
         updateTabBtn(overlay.btnCategoryLanguages, categoryMode == KioskCategoryMode.LANGUAGES)
         updateTabBtn(overlay.btnCategoryTags, categoryMode == KioskCategoryMode.TAGS)
 
-        overlay.kioskNavTabs.visibility = if (tab == KioskTab.DASHBOARD) View.GONE else View.VISIBLE
+        overlay.kioskNavTabs.visibility = View.VISIBLE
         overlay.kioskDashboardView.visibility = if (tab == KioskTab.DASHBOARD) View.VISIBLE else View.GONE
         overlay.panelPinyin.visibility = if (tab == KioskTab.PINYIN) View.VISIBLE else View.GONE
         overlay.panelSingers.visibility = if (tab == KioskTab.SINGERS) View.VISIBLE else View.GONE
@@ -550,6 +736,7 @@ class KtvKioskOverlayController(
             categoryDetail = false
             focusController.hasInnerDetailBack = false
         }
+        if (tab != KioskTab.CATEGORIES) categoryFocusRestorePending = false
         if (tab != KioskTab.PLAYLISTS && playlistDetail) {
             playlistDetail = false
             personalActionRouter.clearPlaylistDetail()
@@ -571,24 +758,52 @@ class KtvKioskOverlayController(
         when (tab) {
             KioskTab.DASHBOARD -> Unit
             KioskTab.PINYIN -> Unit
-            KioskTab.SINGERS -> if (!artistsLoaded) loadArtists()
+            KioskTab.SINGERS -> if (!artistsLoaded || controllerState.artists.isEmpty()) loadArtists()
             KioskTab.RANKINGS -> if (!rankingsLoaded) loadRankings()
             KioskTab.CATEGORIES -> if (categoryLoadPolicy.shouldLoad(categoryMode)) loadCategories()
             KioskTab.FAVORITES -> loadFavorites()
             KioskTab.PLAYLISTS -> loadPlaylists()
             KioskTab.HISTORY -> loadHistory()
         }
+        renderSearchEmptyState()
     }
 
     private fun onKeywordInput(keyword: String) {
         if (keyword.isBlank()) {
-            binding.kioskOverlay.txtSearchCount.text = "输入首字母检索曲目"
+            binding.kioskOverlay.txtSearchCount.text = "支持歌名/歌手、中文、全拼和首字母搜索"
             loadDefaultSongs()
             return
         }
 
-        binding.kioskOverlay.txtSearchCount.text = "正在检索: $keyword ..."
+        binding.kioskOverlay.txtSearchCount.text = activity.getString(R.string.searching_keyword, keyword)
         catalogActionRouter.search(keyword)
+    }
+
+    private fun renderSearchEmptyState() {
+        val overlay = binding.kioskOverlay
+        val state = controllerState
+        val selectedArtist = presentationState.selectedArtist.value
+        val isEmptySearchPrompt = presentationState.currentTab.value == KioskTab.PINYIN &&
+            selectedArtist == null && !state.loading &&
+            (state.query.isBlank() || state.results.isEmpty())
+        overlay.searchEmptyState.visibility = if (isEmptySearchPrompt) View.VISIBLE else View.GONE
+        overlay.txtSearchCount.visibility = if (
+            isEmptySearchPrompt && state.query.isBlank()
+        ) View.GONE else View.VISIBLE
+        if (isEmptySearchPrompt) {
+            val searchError = state.errorFor(com.homektv.tv.controller.UiDomain.SEARCH)
+            overlay.txtSearchEmptyTitle.text = when {
+                state.query.isBlank() -> "开始搜索"
+                searchError != null -> "搜索暂时失败"
+                else -> "没有找到匹配歌曲"
+            }
+            overlay.txtSearchEmptyMessage.text = when {
+                state.query.isBlank() -> "输入歌名、歌手或首字母"
+                searchError != null -> state.messageFor(com.homektv.tv.controller.UiDomain.SEARCH)
+                    ?: "请稍后重试"
+                else -> "换个歌名、歌手或首字母试试"
+            }
+        }
     }
 
     private fun loadDefaultSongs() {
@@ -647,12 +862,51 @@ class KtvKioskOverlayController(
         }
     }
 
+    private fun updateCategoryNavSelection(tab: KioskTab) {
+        val overlay = binding.kioskOverlay
+        val categoryActive = tab == KioskTab.CATEGORIES && categoryMode == KioskCategoryMode.TAGS
+        val languageActive = tab == KioskTab.CATEGORIES && categoryMode == KioskCategoryMode.LANGUAGES
+
+        listOf(
+            overlay.tabCategories to categoryActive,
+            overlay.tabLanguages to languageActive,
+        ).forEach { (button, selected) ->
+            button.setBackgroundResource(R.drawable.bg_kiosk_nav_tab)
+            button.isSelected = selected
+            button.setTextColor(
+                activity.resources.getColor(if (selected) R.color.gold else R.color.dim, null),
+            )
+        }
+    }
+
+    private fun openCategoryRoot(mode: KioskCategoryMode) {
+        val alreadyOnCategories = presentationState.currentTab.value == KioskTab.CATEGORIES
+        categoryMode = mode
+        categoryDetail = false
+        focusController.hasInnerDetailBack = false
+        categoryNameAdapter.setIconResource(
+            if (mode == KioskCategoryMode.LANGUAGES) R.drawable.ic_language else R.drawable.ic_category,
+        )
+        binding.kioskOverlay.categoryRecyclerView.adapter = categoryNameAdapter
+        binding.kioskOverlay.txtCategoryHeader.text =
+            if (mode == KioskCategoryMode.LANGUAGES) "选择语种" else "选择分类"
+        categoryNameAdapter.submitList(
+            if (mode == KioskCategoryMode.LANGUAGES) controllerState.languages else controllerState.tags,
+        )
+        if (alreadyOnCategories) {
+            updateCategoryNavSelection(KioskTab.CATEGORIES)
+            if (categoryLoadPolicy.shouldLoad(mode)) loadCategories()
+        } else {
+            presentationState.selectTab(KioskTab.CATEGORIES)
+        }
+    }
+
     private fun onArtistSelected(artist: ArtistItem) {
         coordinator.resetIdleTimer()
         focusController.hasInnerDetailBack = true
         presentationState.selectArtist(artist.name)
         binding.kioskOverlay.kioskKeyboard.clear()
-        binding.kioskOverlay.txtSearchCount.text = "正在加载【${artist.name}】的歌曲..."
+        binding.kioskOverlay.txtSearchCount.text = activity.getString(R.string.loading_artist_songs, artist.name)
         binding.kioskOverlay.tabPinyin.post {
             binding.kioskOverlay.searchRecyclerView.requestFocus()
         }
@@ -681,6 +935,8 @@ class KtvKioskOverlayController(
     private fun loadFavorites() {
         playlistDetail = false
         binding.kioskOverlay.personalRecyclerView.adapter = personalSongAdapter
+        binding.kioskOverlay.personalStatusPanel.visibility = View.GONE
+        binding.kioskOverlay.personalRecyclerView.visibility = View.VISIBLE
         binding.kioskOverlay.txtPersonalHeader.text = "正在加载收藏..."
         personalActionRouter.favorites()
     }
@@ -695,8 +951,59 @@ class KtvKioskOverlayController(
     private fun loadHistory() {
         playlistDetail = false
         binding.kioskOverlay.personalRecyclerView.adapter = personalSongAdapter
+        binding.kioskOverlay.personalStatusPanel.visibility = View.GONE
+        binding.kioskOverlay.personalRecyclerView.visibility = View.VISIBLE
         binding.kioskOverlay.txtPersonalHeader.text = "正在加载最近唱过..."
         personalActionRouter.history()
+    }
+
+    private fun renderPersonalStatus() {
+        val overlay = binding.kioskOverlay
+        val tab = presentationState.currentTab.value
+        val isFavorites = tab == KioskTab.FAVORITES
+        val isHistory = tab == KioskTab.HISTORY
+        if (!isFavorites && !isHistory) {
+            overlay.personalStatusPanel.visibility = View.GONE
+            overlay.personalRecyclerView.visibility = View.VISIBLE
+            return
+        }
+
+        val domain = if (isFavorites) {
+            com.homektv.tv.controller.UiDomain.FAVORITES
+        } else {
+            com.homektv.tv.controller.UiDomain.HISTORY
+        }
+        val itemCount = if (isFavorites) controllerState.favorites.size else controllerState.history.count { it.song != null }
+        val error = controllerState.errorFor(domain)
+        val isLoading = if (isFavorites) controllerState.favoritesLoading else controllerState.historyLoading
+        val hasEmptyResult = itemCount == 0 && !isLoading
+        val showStatus = isLoading || error != null || hasEmptyResult
+        overlay.personalStatusPanel.visibility = if (showStatus) View.VISIBLE else View.GONE
+        overlay.personalRecyclerView.visibility = if (showStatus) View.GONE else View.VISIBLE
+        if (showStatus) {
+            overlay.txtPersonalStatusTitle.text = when {
+                isLoading && isFavorites -> "正在加载收藏..."
+                isLoading -> "正在加载最近唱过..."
+                error != null -> "暂时无法加载"
+                isFavorites -> "还没有收藏歌曲"
+                else -> "还没有点唱记录"
+            }
+            overlay.txtPersonalStatusMessage.text = when {
+                isLoading -> "正在连接点歌服务，请稍候"
+                error != null -> controllerState.messageFor(domain)?.takeIf(String::isNotBlank) ?: "请稍后重试"
+                isFavorites -> "收藏喜欢的歌曲后会显示在这里"
+                else -> "点唱过的歌曲会显示在这里"
+            }
+            overlay.btnPersonalRetry.visibility = if (!isLoading && error != null) View.VISIBLE else View.GONE
+            if (error != null && overlay.btnPersonalRetry.hasFocus().not()) {
+                overlay.btnPersonalRetry.post {
+                    if ((presentationState.currentTab.value == KioskTab.FAVORITES ||
+                            presentationState.currentTab.value == KioskTab.HISTORY) &&
+                        overlay.btnPersonalRetry.visibility == View.VISIBLE
+                    ) overlay.btnPersonalRetry.requestFocus()
+                }
+            }
+        }
     }
 
     private fun openPlaylist(playlist: com.homektv.tv.net.PlaylistSummary) {
@@ -704,7 +1011,10 @@ class KtvKioskOverlayController(
         playlistDetail = true
         focusController.hasInnerDetailBack = true
         binding.kioskOverlay.personalRecyclerView.adapter = personalSongAdapter
-        binding.kioskOverlay.txtPersonalHeader.text = "正在加载歌单 · ${playlist.name}..."
+        binding.kioskOverlay.txtPersonalHeader.text = activity.getString(
+            R.string.loading_playlist_detail,
+            playlist.name,
+        )
         personalActionRouter.playlistDetail(playlist.id)
         binding.kioskOverlay.personalRecyclerView.requestFocus()
     }
@@ -820,6 +1130,8 @@ class KtvKioskOverlayController(
             audioTracks = if (snapshot.audioLayout.layout == "DUAL_TRACK") 2 else 1,
             isPlaying = snapshot.state == "playing",
             vocalMode = snapshot.vocalMode,
+            positionMs = snapshot.positionMs,
+            durationMs = snapshot.playing?.song?.durationMs?.toLong() ?: 0L,
         )
 
         presentationState.updateAudioLayout(
@@ -857,7 +1169,11 @@ class KtvKioskOverlayController(
                 KioskTab.PINYIN -> binding.kioskOverlay.tabPinyin.requestFocus()
                 KioskTab.SINGERS -> binding.kioskOverlay.tabSingers.requestFocus()
                 KioskTab.RANKINGS -> binding.kioskOverlay.tabRankings.requestFocus()
-                KioskTab.CATEGORIES -> binding.kioskOverlay.tabCategories.requestFocus()
+                KioskTab.CATEGORIES -> (if (categoryMode == KioskCategoryMode.LANGUAGES) {
+                    binding.kioskOverlay.tabLanguages
+                } else {
+                    binding.kioskOverlay.tabCategories
+                }).requestFocus()
                 KioskTab.FAVORITES -> binding.kioskOverlay.tabFavorites.requestFocus()
                 KioskTab.PLAYLISTS -> binding.kioskOverlay.tabPlaylists.requestFocus()
                 KioskTab.HISTORY -> binding.kioskOverlay.tabHistory.requestFocus()
@@ -875,16 +1191,53 @@ class KtvKioskOverlayController(
     }
 
     private fun renderPipState() {
+        val locallyBuffering = pipObservedPlayer?.let {
+            it.playbackState == Player.STATE_BUFFERING && it.playWhenReady
+        } == true
         val state = KioskPipDisplayPolicy.resolve(
             externalDisplayActive = externalDisplayActive,
-            playbackState = currentSnapshot?.state,
+            playbackState = if (locallyBuffering) "buffering" else currentSnapshot?.state,
             hasPlaying = currentSnapshot?.playing != null,
         )
-        binding.kioskOverlay.pipVideoFrame.visibility = if (state.videoVisible) View.VISIBLE else View.GONE
-        binding.kioskOverlay.txtPipLabel.text = state.label
+        if (!state.videoVisible && binding.kioskOverlay.btnKioskExit.hasFocus()) {
+            binding.kioskOverlay.tabHistory.requestFocus()
+        }
+        binding.kioskOverlay.btnKioskExit.visibility =
+            if (state.videoVisible) View.VISIBLE else View.GONE
+        binding.kioskOverlay.tabHistory.nextFocusRightId =
+            if (state.videoVisible) R.id.btnKioskExit else R.id.tabDashboard
+        binding.kioskOverlay.pipVideoFrame.visibility =
+            if (state.videoVisible && pipSpaceAvailable) View.VISIBLE else View.GONE
+        val playingTitle = currentSnapshot?.playing?.song?.let { song ->
+            listOfNotNull(song.title, song.artist?.takeIf(String::isNotBlank)).joinToString(" · ")
+        }.orEmpty()
+        binding.kioskOverlay.txtPipLabel.text = listOf(state.label, playingTitle)
+            .filter(String::isNotBlank)
+            .joinToString("  ")
+    }
+
+    private fun updatePipResponsiveSize() {
+        val stage = binding.kioskOverlay.kioskContentStage
+        if (stage.width <= 0 || stage.height <= 0) return
+
+        val density = activity.resources.displayMetrics.density
+        val size = KioskPipResponsivePolicy.resolve(
+            availableWidthDp = ((stage.width - stage.paddingLeft - stage.paddingRight) / density).roundToInt(),
+            availableHeightDp = ((stage.height - stage.paddingTop - stage.paddingBottom) / density).roundToInt(),
+        )
+        val frame = binding.kioskOverlay.pipVideoFrame
+        val params = frame.layoutParams as? ConstraintLayout.LayoutParams ?: return
+        val widthPx = (size.widthDp * density).roundToInt()
+        params.matchConstraintMinWidth = widthPx
+        params.matchConstraintMaxWidth = widthPx
+        frame.layoutParams = params
+        pipSpaceAvailable = size.visible
+        renderPipState()
     }
 
     fun destroy() {
+        pipObservedPlayer?.removeListener(pipPlaybackListener)
+        binding.kioskOverlay.kioskContentStage.removeOnLayoutChangeListener(pipLayoutChangeListener)
         queueDialog?.dismiss()
         queueDialog = null
         qrDialog?.dismiss()
@@ -911,20 +1264,27 @@ class KtvKioskOverlayController(
     }
 
     private fun resetToSingersTab() {
+        val wasAlreadyOnSingersTab = presentationState.currentTab.value == KioskTab.SINGERS
+        artistsLoaded = false
         focusController.hasInnerDetailBack = false
         presentationState.clearArtistSelection()
         presentationState.selectTab(KioskTab.SINGERS)
         binding.kioskOverlay.kioskKeyboard.clear()
         binding.kioskOverlay.txtSearchCount.text = "输入首字母检索曲目"
         loadDefaultSongs()
-        binding.kioskOverlay.singerRecyclerView.post {
-            binding.kioskOverlay.singerRecyclerView.requestFocus()
+        if (wasAlreadyOnSingersTab) loadArtists()
+        binding.kioskOverlay.btnSingerAll.post {
+            binding.kioskOverlay.btnSingerAll.requestFocus()
         }
     }
 
     private fun resetCategoryDetail() {
         categoryDetail = false
+        categoryFocusRestorePending = true
         focusController.hasInnerDetailBack = false
+        categoryNameAdapter.setIconResource(
+            if (categoryMode == KioskCategoryMode.LANGUAGES) R.drawable.ic_language else R.drawable.ic_category,
+        )
         binding.kioskOverlay.categoryRecyclerView.adapter = categoryNameAdapter
         binding.kioskOverlay.txtCategoryHeader.text = when (categoryMode) {
             KioskCategoryMode.LANGUAGES -> "选择语种"
@@ -937,6 +1297,23 @@ class KtvKioskOverlayController(
             KioskCategoryMode.NEW -> {
                 binding.kioskOverlay.categoryRecyclerView.adapter = categoryAdapter
                 loadCategories()
+            }
+        }
+    }
+
+    private fun restoreCategoryModeFocusIfReady(state: ControllerUiState) {
+        if (!categoryFocusRestorePending || state.catalogLoading || categoryDetail) return
+        if (presentationState.currentTab.value != KioskTab.CATEGORIES) return
+
+        categoryFocusRestorePending = false
+        val target = if (categoryMode == KioskCategoryMode.LANGUAGES) {
+            binding.kioskOverlay.btnCategoryLanguages
+        } else {
+            binding.kioskOverlay.btnCategoryTags
+        }
+        target.post {
+            if (presentationState.currentTab.value == KioskTab.CATEGORIES && !categoryDetail) {
+                target.requestFocus()
             }
         }
     }

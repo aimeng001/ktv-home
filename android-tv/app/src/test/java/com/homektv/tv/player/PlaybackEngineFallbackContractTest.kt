@@ -19,7 +19,13 @@ class PlaybackEngineFallbackContractTest {
 
         override fun setSurface(surface: android.view.Surface?) {}
 
-        override fun prepareAndPlay(fileId: Long, streamUrl: String, initialPositionMs: Long) {
+        override fun prepareAndPlay(
+            fileId: Long,
+            streamUrl: String,
+            initialPositionMs: Long,
+            requestToken: Long,
+            playWhenReady: Boolean,
+        ) {
             prepareCalled++
         }
 
@@ -66,15 +72,24 @@ class PlaybackEngineFallbackContractTest {
     }
 
     @Test
-    fun testRouterReentrancyPreventionLogic() {
+    fun testMissingVideoTrackRequiresBoundedResolutionInsteadOfSilentFallback() {
         val router = DualEnginePlaybackRouter()
-        // 第一次检测：声明有视频，但轨道为 0 -> 触发 fallback
-        assertTrue(router.shouldFallbackOnTracks(hasVideoDeclared = true, videoTrackCount = 0, hasSupportedVideoTrack = false))
-
-        // 当已经处于软解状态时，外部应当检查 activeEngineType != PRIMARY_MEDIA3 并直接拦截，不再调用 shouldFallbackOnTracks
-        val currentEngine = PlaybackEngineType.FALLBACK_FFMPEG
-        val shouldBypass = currentEngine != PlaybackEngineType.PRIMARY_MEDIA3
-        assertTrue("非主引擎状态必须短路拦截", shouldBypass)
+        assertTrue(
+            router.shouldResolveMissingOrUnsupportedVideoTracks(
+                hasVideoDeclared = true,
+                videoTrackCount = 0,
+                hasSupportedVideoTrack = false,
+            ),
+        )
+        assertFalse(
+            "the same source must not request live decode twice",
+            PlaybackDecodeRecoveryPolicy.shouldRequestLiveTranscode(
+                isVideo = true,
+                isAlreadyLiveTranscoded = false,
+                fileId = 11L,
+                requestedFileId = 11L,
+            ),
+        )
     }
 
     @Test

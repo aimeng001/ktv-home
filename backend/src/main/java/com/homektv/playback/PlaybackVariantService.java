@@ -144,7 +144,12 @@ public class PlaybackVariantService {
         if (!SongAvailabilityPolicy.isReadyMediaFile(source)) {
             throw new ApiException(SongAvailabilityPolicy.SONG_NOT_READY, "媒体探测尚未完成");
         }
-        return PlaybackDescriptor.nativeSource(source);
+        if (!forceTranscode) return PlaybackDescriptor.nativeSource(source);
+        if (!"MV".equalsIgnoreCase(source.getMediaType())
+                && !"KTV_VIDEO".equalsIgnoreCase(source.getMediaType())) {
+            throw new ApiException("LIVE_TRANSCODE_VIDEO_REQUIRED", "仅视频媒体支持实时转码回退");
+        }
+        return PlaybackDescriptor.liveTranscode(source);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

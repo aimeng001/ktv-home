@@ -3,7 +3,7 @@
     android:id="@+id/queueDrawerRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#88000000">
+    android:background="@android:color/transparent">
 
     <!-- 右侧抽屉主体 -->
     <LinearLayout
@@ -27,7 +27,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="已点歌曲 (0)"
+                android:text="@string/queue_drawer_title_initial"
                 android:textColor="@color/gold"
                 android:textSize="22sp"
                 android:textStyle="bold" />
@@ -38,7 +38,7 @@
                 android:layout_height="40dp"
                 android:background="@drawable/btn_keyboard_key"
                 android:textColor="@color/color_keyboard_key_text"
-                android:text="🔀 智能打散"
+                android:text="@string/queue_shuffle_action"
                 android:textSize="12sp"
                 android:focusable="true" />
 
@@ -49,7 +49,7 @@
                 android:layout_marginStart="8dp"
                 android:background="@drawable/btn_gold"
                 android:textColor="#111317"
-                android:text="关闭"
+                android:text="@string/common_close"
                 android:textStyle="bold"
                 android:textSize="13sp"
                 android:focusable="true" />
@@ -61,15 +61,15 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:background="@drawable/karaoke_label"
+            android:background="@drawable/bg_queue_now_playing"
             android:orientation="vertical"
             android:padding="12dp">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="正在演唱"
-                android:textColor="@color/gold2"
+                android:text="@string/queue_now_singing_label"
+                android:textColor="@color/gold"
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
@@ -78,7 +78,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="暂无播放"
+                android:text="@string/playback_none"
                 android:textColor="@android:color/white"
                 android:textSize="16sp"
                 android:textStyle="bold"
@@ -91,7 +91,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:layout_marginBottom="8dp"
-            android:text="待播列表"
+            android:text="@string/queue_waiting_list_label"
             android:textColor="@color/dim"
             android:textSize="13sp" />
 
@@ -105,14 +105,14 @@
                 android:id="@+id/drawerRecyclerView"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:contentDescription="已点歌曲列表" />
+                android:contentDescription="@string/queue_ordered_list_label" />
 
             <TextView
                 android:id="@+id/txtDrawerEmpty"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:gravity="center"
-                android:text="暂无排队歌曲，快去点歌吧~"
+                android:text="@string/queue_empty_hint"
                 android:textColor="@color/dim2"
                 android:textSize="15sp"
                 android:visibility="gone" />

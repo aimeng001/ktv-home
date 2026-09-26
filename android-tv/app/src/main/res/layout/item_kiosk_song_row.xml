@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="62dp"
     android:background="@drawable/btn_keyboard_key"
@@ -21,7 +22,7 @@
             android:id="@+id/txtSongTitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="歌曲名称"
+            tools:text="歌曲名称"
             android:textColor="@android:color/white"
             android:textSize="16sp"
             android:textStyle="bold"
@@ -33,7 +34,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:text="歌手名称"
+            tools:text="歌手名称"
             android:textColor="@color/dim"
             android:textSize="13sp"
             android:maxLines="1"
@@ -49,7 +50,7 @@
         android:background="@drawable/standby_chip"
         android:paddingHorizontal="8dp"
         android:paddingVertical="3dp"
-        android:text="原/伴"
+        android:text="@string/vocal_tracks_short"
         android:textColor="@color/gold"
         android:textSize="11sp"
         android:visibility="gone" />
@@ -61,7 +62,7 @@
         android:layout_height="38dp"
         android:background="@drawable/btn_gold"
         android:textColor="#111317"
-        android:text="点歌"
+        android:text="@string/order_song_action"
         android:textSize="13sp"
         android:textStyle="bold"
         android:focusable="true" />
@@ -74,7 +75,7 @@
         android:layout_marginStart="8dp"
         android:background="@drawable/btn_ghost"
         android:textColor="@color/color_keyboard_key_text"
-        android:text="优先"
+        android:text="@string/priority_song_action"
         android:textSize="12sp"
         android:focusable="true" />
 </LinearLayout>

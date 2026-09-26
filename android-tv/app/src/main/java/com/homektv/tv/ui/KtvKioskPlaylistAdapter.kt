@@ -9,6 +9,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import com.homektv.tv.R
 import com.homektv.tv.controller.ActionKey
 import com.homektv.tv.net.PlaylistSummary
 
@@ -26,8 +27,12 @@ class KtvKioskPlaylistAdapter(
             .map { it.resourceId }
             .toSet()
         if (nextPendingOrderIds == pendingOrderIds) return
+        val changedPlaylistIds = (pendingOrderIds union nextPendingOrderIds)
+            .filterTo(mutableSetOf()) { (it in pendingOrderIds) != (it in nextPendingOrderIds) }
         pendingOrderIds = nextPendingOrderIds
-        notifyDataSetChanged()
+        currentList.forEachIndexed { index, playlist ->
+            if (playlist.id in changedPlaylistIds) notifyItemChanged(index)
+        }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -69,7 +74,9 @@ class KtvKioskPlaylistAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val playlist = getItem(position)
-        holder.title.text = "${playlist.name.ifBlank { "未命名歌单" }} · ${playlist.songCount} 首"
+        val context = holder.itemView.context
+        val playlistName = playlist.name.ifBlank { context.getString(R.string.unnamed_playlist) }
+        holder.title.text = context.getString(R.string.playlist_count_line, playlistName, playlist.songCount)
         holder.title.contentDescription = playlist.description.ifBlank { playlist.name }
         holder.open.setOnClickListener { onOpen(playlist) }
         val orderState = KtvKioskPlaylistOrderPolicy.resolve(playlist.id in pendingOrderIds)

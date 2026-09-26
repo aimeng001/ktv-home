@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/remoteMenu"
+    android:layout_width="560dp"
+    android:layout_height="wrap_content"
+    android:background="@drawable/player_glass"
+    android:orientation="vertical"
+    android:padding="18dp"
+    android:visibility="gone">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/playback_controls_heading"
+        android:textColor="@color/gold"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <GridLayout
+        android:id="@+id/remoteGrid"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:columnCount="4"
+        android:rowCount="3"
+        android:useDefaultMargins="true">
+
+        <Button android:id="@+id/remotePlay" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/play_pause_description" />
+        <Button android:id="@+id/remoteNext" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/skip_track_action" />
+        <Button android:id="@+id/remoteRestart" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/replay_track_action" />
+        <Button android:id="@+id/remoteVocal" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/vocal_toggle_description" />
+        <Button android:id="@+id/remoteVolUp" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/volume_up_action" />
+        <Button android:id="@+id/remoteVolDown" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/volume_down_action" />
+        <Button android:id="@+id/remoteMute" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/mute_action" />
+        <Button android:id="@+id/remoteQueue" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/queue_label" />
+        <Button android:id="@+id/remoteOrder" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/kiosk_label" />
+        <Button android:id="@+id/remoteMicrophone" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/microphone_off" />
+        <Button android:id="@+id/remoteSettings" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/server_mode_label" />
+    </GridLayout>
+</LinearLayout>

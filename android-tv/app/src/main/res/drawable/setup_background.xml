@@ -1,18 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item>
-        <shape android:shape="rectangle">
-            <solid android:color="@color/bg" />
-        </shape>
-    </item>
-    <item android:gravity="top|start" android:width="760dp" android:height="520dp">
-        <shape android:shape="rectangle">
-            <gradient android:angle="135" android:startColor="#1A54D6E2" android:endColor="#000B0D12" />
-        </shape>
-    </item>
-    <item android:gravity="bottom|end" android:width="820dp" android:height="560dp">
-        <shape android:shape="rectangle">
-            <gradient android:angle="315" android:startColor="#00100F16" android:endColor="#20FF6B61" />
-        </shape>
-    </item>
+    <item android:drawable="@drawable/ktv_screen_background" />
 </layer-list>

@@ -9,6 +9,7 @@ import com.homektv.repo.PlaylistRepository;
 import com.homektv.repo.PlaylistSongRepository;
 import com.homektv.repo.SongRepository;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -25,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Testcontainers
+@Isolated("Testcontainers JUnit extension does not support parallel test execution")
 class AiPlaylistIntegrationTest {
 
     @Container

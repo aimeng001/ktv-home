@@ -1,100 +1,102 @@
 <?xml version="1.0" encoding="utf-8"?>
-<GridLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/dashboardGrid"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/dashboardRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:columnCount="4"
-    android:rowCount="2"
-    android:padding="8dp"
-    android:alignmentMode="alignMargins">
+    android:paddingHorizontal="2dp"
+    android:paddingTop="4dp"
+    android:paddingBottom="4dp">
 
-    <!-- 第一排：拼音、歌星、分类、语种 -->
-    <include
-        android:id="@+id/tilePinyin"
-        layout="@layout/item_kiosk_dashboard_tile"
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/dashboardMiddleGuideline"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        app:layout_constraintGuide_percent="0.505" />
+
+    <LinearLayout
+        android:id="@+id/dashboardTopRow"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_columnWeight="1"
-        android:layout_rowWeight="1"
-        android:nextFocusDown="@+id/tileRanking"
-        android:nextFocusRight="@+id/tileSinger" />
+        android:baselineAligned="false"
+        android:orientation="horizontal"
+        android:layout_marginBottom="5dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/dashboardMiddleGuideline"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
 
-    <include
-        android:id="@+id/tileSinger"
-        layout="@layout/item_kiosk_dashboard_tile"
+        <include
+            android:id="@+id/tilePinyin"
+            layout="@layout/item_kiosk_dashboard_tile"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginHorizontal="6dp"
+            android:layout_weight="1" />
+
+        <include
+            android:id="@+id/tileSinger"
+            layout="@layout/item_kiosk_dashboard_tile"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginHorizontal="6dp"
+            android:layout_weight="1" />
+
+        <include
+            android:id="@+id/tileCategory"
+            layout="@layout/item_kiosk_dashboard_tile"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginHorizontal="6dp"
+            android:layout_weight="1" />
+
+        <include
+            android:id="@+id/tileLanguage"
+            layout="@layout/item_kiosk_dashboard_tile"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginHorizontal="6dp"
+            android:layout_weight="1" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/dashboardBottomRow"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_columnWeight="1"
-        android:layout_rowWeight="1"
-        android:nextFocusDown="@+id/tileFavorites"
-        android:nextFocusLeft="@+id/tilePinyin"
-        android:nextFocusRight="@+id/tileCategory" />
+        android:baselineAligned="false"
+        android:orientation="horizontal"
+        android:layout_marginTop="5dp"
+        android:layout_marginBottom="2dp"
+        app:layout_constraintWidth_percent="0.835"
+        app:layout_constraintHorizontal_bias="0.5"
+        app:layout_constraintTop_toBottomOf="@id/dashboardMiddleGuideline"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
 
-    <include
-        android:id="@+id/tileCategory"
-        layout="@layout/item_kiosk_dashboard_tile"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_columnWeight="1"
-        android:layout_rowWeight="1"
-        android:nextFocusDown="@+id/tileHistory"
-        android:nextFocusLeft="@+id/tileSinger"
-        android:nextFocusRight="@+id/tileLanguage" />
+        <include
+            android:id="@+id/tileFavorites"
+            layout="@layout/item_kiosk_dashboard_tile"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginHorizontal="6dp"
+            android:layout_weight="1" />
 
-    <include
-        android:id="@+id/tileLanguage"
-        layout="@layout/item_kiosk_dashboard_tile"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_columnWeight="1"
-        android:layout_rowWeight="1"
-        android:nextFocusDown="@+id/tileQueue"
-        android:nextFocusLeft="@+id/tileCategory" />
+        <include
+            android:id="@+id/tileHistory"
+            layout="@layout/item_kiosk_dashboard_tile"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginHorizontal="6dp"
+            android:layout_weight="1" />
 
-    <!-- 第二排：榜单、收藏、历史、已点 -->
-    <include
-        android:id="@+id/tileRanking"
-        layout="@layout/item_kiosk_dashboard_tile"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_columnWeight="1"
-        android:layout_rowWeight="1"
-        android:nextFocusUp="@+id/tilePinyin"
-        android:nextFocusRight="@+id/tileFavorites"
-        android:nextFocusDown="@+id/kioskBottomBar" />
-
-    <include
-        android:id="@+id/tileFavorites"
-        layout="@layout/item_kiosk_dashboard_tile"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_columnWeight="1"
-        android:layout_rowWeight="1"
-        android:nextFocusUp="@+id/tileSinger"
-        android:nextFocusLeft="@+id/tileRanking"
-        android:nextFocusRight="@+id/tileHistory"
-        android:nextFocusDown="@+id/kioskBottomBar" />
-
-    <include
-        android:id="@+id/tileHistory"
-        layout="@layout/item_kiosk_dashboard_tile"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_columnWeight="1"
-        android:layout_rowWeight="1"
-        android:nextFocusUp="@+id/tileCategory"
-        android:nextFocusLeft="@+id/tileFavorites"
-        android:nextFocusRight="@+id/tileQueue"
-        android:nextFocusDown="@+id/kioskBottomBar" />
-
-    <include
-        android:id="@+id/tileQueue"
-        layout="@layout/item_kiosk_dashboard_tile"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_columnWeight="1"
-        android:layout_rowWeight="1"
-        android:nextFocusUp="@+id/tileLanguage"
-        android:nextFocusLeft="@+id/tileHistory"
-        android:nextFocusDown="@+id/kioskBottomBar" />
-</GridLayout>
+        <include
+            android:id="@+id/tileQueue"
+            layout="@layout/item_kiosk_dashboard_tile"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginHorizontal="6dp"
+            android:layout_weight="1" />
+    </LinearLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>

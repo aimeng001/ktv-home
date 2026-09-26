@@ -26,6 +26,7 @@ import com.homektv.tv.net.LanDiscovery
 import com.homektv.tv.net.LanScanner
 import com.homektv.tv.net.SavedServer
 import com.homektv.tv.session.DeviceMode
+import com.homektv.tv.ui.kiosk.KtvDashboardBackground
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -48,6 +49,7 @@ class SetupActivity : AppCompatActivity() {
     private var initialMode = DeviceMode.COMBINED
     private var initialServer: SavedServer? = null
     private var recoveryCandidate: DiscoveredServer? = null
+    private var setupPage = SetupPage.DISCOVERY
     private val rhythmAnimators = mutableListOf<ObjectAnimator>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,6 +69,8 @@ class SetupActivity : AppCompatActivity() {
         applyRecommendedOrientation()
         binding = ActivitySetupBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        KtvDashboardBackground.applyTo(binding.root)
+        applyResponsiveLayout()
         recoveryCandidate = intent.getStringExtra(EXTRA_CANDIDATE_HOST)?.let { host ->
             DiscoveredServer(
                 hostPort = host,
@@ -94,11 +98,17 @@ class SetupActivity : AppCompatActivity() {
 
         binding.btnRefresh.setOnClickListener { startScan() }
         binding.btnConnect.setOnClickListener { submitManual() }
+        binding.btnOpenManualSetup.setOnClickListener { showSetupPage(SetupPage.MANUAL) }
+        binding.btnSetupBackToDiscovery.setOnClickListener { showSetupPage(SetupPage.DISCOVERY) }
         binding.inputHost.setOnEditorActionListener { _, _, _ ->
             submitManual()
             true
         }
 
+        setupPage = savedInstanceState?.getString(KEY_SETUP_PAGE)
+            ?.let { runCatching { SetupPage.valueOf(it) }.getOrNull() }
+            ?: SetupPage.DISCOVERY
+        showSetupPage(setupPage, requestFocus = false)
         renderHistory()
         if (SetupAutoScanPolicy.shouldAutoScan(config.savedServers.isEmpty())) {
             startScan()
@@ -106,6 +116,22 @@ class SetupActivity : AppCompatActivity() {
         startRhythm()
         rebuildFocusChain()
         binding.root.post { firstFocusableView()?.requestFocus() }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(KEY_SETUP_PAGE, setupPage.name)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun showSetupPage(page: SetupPage, requestFocus: Boolean = true) {
+        setupPage = page
+        val showingDiscovery = page == SetupPage.DISCOVERY
+        binding.setupDiscoveryPage.visibility = if (showingDiscovery) View.VISIBLE else View.GONE
+        binding.setupManualPage.visibility = if (showingDiscovery) View.GONE else View.VISIBLE
+        rebuildFocusChain()
+        if (requestFocus) {
+            binding.root.post { firstFocusableView()?.requestFocus() }
+        }
     }
 
     private fun startRhythm() {
@@ -124,6 +150,39 @@ class SetupActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun applyResponsiveLayout() {
+        val isTelevision = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+            (resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+            Configuration.UI_MODE_TYPE_TELEVISION
+        if (!SetupResponsiveLayoutPolicy.useCompactLayout(
+                isTelevision,
+                resources.configuration.smallestScreenWidthDp,
+            )
+        ) return
+
+        val density = resources.displayMetrics.density
+        fun dp(value: Int) = (value * density).toInt()
+
+        binding.setupPage.setPadding(dp(16), dp(12), dp(16), dp(12))
+        binding.setupIntroPanel.visibility = View.GONE
+        binding.setupHeroPanel.visibility = View.GONE
+        binding.setupContent.orientation = android.widget.LinearLayout.VERTICAL
+        (binding.setupContent.layoutParams as androidx.constraintlayout.widget.ConstraintLayout.LayoutParams).apply {
+            width = 0
+            height = 0
+            topMargin = dp(12)
+        }.also { binding.setupContent.layoutParams = it }
+        (binding.setupFormScroll.layoutParams as android.widget.LinearLayout.LayoutParams).apply {
+            width = ViewGroup.LayoutParams.MATCH_PARENT
+            height = 0
+            weight = 1f
+        }.also { binding.setupFormScroll.layoutParams = it }
+        binding.txtScanStatus.maxWidth = dp(132)
+        binding.txtScanStatus.maxLines = 1
+        binding.txtScanStatus.ellipsize = android.text.TextUtils.TruncateAt.END
+        binding.txtScanStatus.textSize = 12f
     }
 
     override fun onDestroy() {
@@ -146,7 +205,7 @@ class SetupActivity : AppCompatActivity() {
         }
         binding.txtScanStatus.setText(R.string.setup_scanning)
         // Keep refresh enabled and focused while scanning so the DPAD focus never disappears.
-        binding.btnRefresh.requestFocus()
+        if (setupPage == SetupPage.DISCOVERY) binding.btnRefresh.requestFocus()
 
         scanJob = lifecycleScope.launch {
             val servers = discovery.discoverAll(
@@ -341,17 +400,23 @@ class SetupActivity : AppCompatActivity() {
 
     private fun rebuildFocusChain() {
         val focusables = mutableListOf<View>()
-        binding.historyContainer.children.forEach { row ->
-            focusables += (row as ViewGroup).descendants.filterIsInstance<Button>().toList()
+        if (setupPage == SetupPage.DISCOVERY) {
+            binding.historyContainer.children.forEach { row ->
+                focusables += (row as ViewGroup).descendants.filterIsInstance<Button>().toList()
+            }
+            focusables += binding.btnRefresh
+            binding.lanContainer.children.forEach { row ->
+                focusables += (row as ViewGroup).descendants.filterIsInstance<Button>().toList()
+            }
+            focusables += binding.btnOpenManualSetup
+        } else {
+            focusables += binding.btnSetupBackToDiscovery
+            focusables += binding.inputHost
+            focusables += binding.inputNickname
+            focusables += binding.inputCredential
+            focusables += binding.modeGroup.children.toList()
+            focusables += binding.btnConnect
         }
-        focusables += binding.btnRefresh
-        binding.lanContainer.children.forEach { row ->
-            focusables += (row as ViewGroup).descendants.filterIsInstance<Button>().toList()
-        }
-        focusables += binding.inputHost
-        focusables += binding.inputNickname
-        focusables += binding.modeGroup.children.toList()
-        focusables += binding.btnConnect
 
         focusables.forEachIndexed { index, view ->
             view.nextFocusUpId = focusables.getOrNull(index - 1)?.id ?: view.id
@@ -362,9 +427,12 @@ class SetupActivity : AppCompatActivity() {
         }
     }
 
-    private fun firstFocusableView(): View? =
+    private fun firstFocusableView(): View? = if (setupPage == SetupPage.DISCOVERY) {
         binding.historyContainer.descendants.filterIsInstance<Button>().firstOrNull()
             ?: binding.btnRefresh
+    } else {
+        binding.btnSetupBackToDiscovery
+    }
 
     private fun scrollIntoView(view: View) {
         binding.setupScroll.post {
@@ -407,12 +475,15 @@ class SetupActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val KEY_SETUP_PAGE = "setup_connection_page"
         const val EXTRA_FORCE_SETUP = "force_setup"
         const val EXTRA_RETURN_TO_CALLER = "return_to_caller"
         const val EXTRA_CANDIDATE_HOST = "candidate_host"
         const val EXTRA_CANDIDATE_NAME = "candidate_name"
         const val EXTRA_CANDIDATE_INSTANCE_ID = "candidate_instance_id"
     }
+
+    private enum class SetupPage { DISCOVERY, MANUAL }
 }
 
 object SetupAutoScanPolicy {

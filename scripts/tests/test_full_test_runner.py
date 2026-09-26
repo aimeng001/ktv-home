@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -12,12 +13,24 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class FullTestRunnerPlanTest(unittest.TestCase):
+    def test_local_exclude_set_matches_all_testcontainers_classes(self):
+        discovered = set()
+        test_root = ROOT / "backend" / "src" / "test" / "java"
+        for source in test_root.rglob("*.java"):
+            text = source.read_text(encoding="utf-8")
+            if "@Testcontainers" not in text:
+                continue
+            match = re.search(r"\bclass\s+(\w+)", text)
+            self.assertIsNotNone(match, str(source))
+            discovered.add(match.group(1))
+
+        self.assertEqual(discovered, set(DOCKER_BACKEND_TEST_CLASSES))
+
     def test_local_backend_scope_excludes_only_known_testcontainers_classes(self):
         tasks = build_task_specs(ROOT, backend_scope="local")
         backend = next(task for task in tasks if task.name == "backend")
         command_text = " ".join(backend.commands[0].argv)
 
-        self.assertEqual(len(DOCKER_BACKEND_TEST_CLASSES), 13)
         for class_name in DOCKER_BACKEND_TEST_CLASSES:
             self.assertIn(class_name, command_text)
         self.assertIn("-Dtest=", command_text)

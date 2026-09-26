@@ -30,9 +30,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.homektv.tv.R
+import com.homektv.tv.ui.kiosk.KtvDashboardBackground
 import com.homektv.tv.controller.ActionKey
 import com.homektv.tv.controller.ControllerBackNavigationPolicy
 import com.homektv.tv.controller.ControllerBackTarget
+import com.homektv.tv.controller.CatalogLoadState
 import com.homektv.tv.controller.ControllerConnection
 import com.homektv.tv.controller.ControllerUiState
 import com.homektv.tv.controller.ControllerViewModel
@@ -84,12 +86,12 @@ class ControllerFragment : Fragment() {
     private lateinit var volumeSeek: SeekBar
     private lateinit var seekBar: SeekBar
     private lateinit var contentScroll: ScrollView
-    private val phonePanelViews = mutableMapOf<PhonePanel, List<View>>()
+    private val phonePanelViews = mutableMapOf<ControllerPhonePanel, List<View>>()
     private var rootView: ViewGroup? = null
     private var renderedQuery: String? = null
     private var personalMode = PersonalMode.FAVORITES
-    private var catalogMode = CatalogMode.RANKING
-    private var phonePanel = PhonePanel.CATALOG
+    private var catalogMode = CatalogMode.ARTISTS
+    private var phonePanel = ControllerPhonePanel.CATALOG
     private var lastRenderedState: ControllerUiState? = null
     private var restoredArtistGender = ""
     private var restoredArtistInitial = ""
@@ -104,6 +106,7 @@ class ControllerFragment : Fragment() {
     private lateinit var personalAdapter: ControllerListAdapter<PanelRow>
     private lateinit var queueAdapter: ControllerListAdapter<PanelRow>
     private lateinit var rowBinder: ControllerPanelRowBinder
+    private val phoneNavButtons = mutableMapOf<ControllerPhonePanel, Button>()
     private var isUserAdjustingSeekBar = false
     private var lastUserSeekAdjustMs = 0L
     private val seekDebounceHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -127,14 +130,21 @@ class ControllerFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentControllerBinding.bind(view)
+        KtvDashboardBackground.applyTo(binding.root)
         savedInstanceState?.getString(KEY_PERSONAL_MODE)?.let {
-            personalMode = runCatching { PersonalMode.valueOf(it) }.getOrDefault(PersonalMode.FAVORITES)
+            personalMode = runCatching {
+                PersonalMode.valueOf(ControllerSavedStatePolicy.personalMode(it, isPhoneLayout()))
+            }.getOrDefault(PersonalMode.FAVORITES)
         }
         savedInstanceState?.getString(KEY_CATALOG_MODE)?.let {
-            catalogMode = runCatching { CatalogMode.valueOf(it) }.getOrDefault(CatalogMode.RANKING)
+            catalogMode = runCatching {
+                CatalogMode.valueOf(ControllerSavedStatePolicy.catalogMode(it))
+            }.getOrDefault(CatalogMode.ARTISTS)
         }
         savedInstanceState?.getString(KEY_PHONE_PANEL)?.let {
-            phonePanel = runCatching { PhonePanel.valueOf(it) }.getOrDefault(PhonePanel.CATALOG)
+            phonePanel = runCatching {
+                ControllerPhonePanel.valueOf(ControllerSavedStatePolicy.phonePanel(it))
+            }.getOrDefault(ControllerPhonePanel.CATALOG)
         }
         restoredArtistGender = savedInstanceState?.getString(KEY_ARTIST_GENDER).orEmpty()
         restoredArtistInitial = savedInstanceState?.getString(KEY_ARTIST_INITIAL).orEmpty()
@@ -194,7 +204,6 @@ class ControllerFragment : Fragment() {
                 viewModel.state.collect(::render)
             }
         }
-        viewModel.loadFavorites()
         viewModel.loadRoomHost()
         restorePanelData()
         contentScroll.post { contentScroll.scrollTo(0, restoredScrollY) }
@@ -234,6 +243,7 @@ class ControllerFragment : Fragment() {
         playlistCoverJob?.cancel()
         playlistCoverJob = null
         phonePanelViews.clear()
+        phoneNavButtons.clear()
         rootView = null
         super.onDestroyView()
     }
@@ -251,10 +261,10 @@ class ControllerFragment : Fragment() {
         val tablet = !television && !phone
         contentScroll = binding.contentScroll
         binding.controllerContent.setPadding(
-            dp(20), dp(20), dp(20), if (phone) dp(88) else dp(20),
+            dp(20), dp(20), dp(20), if (phone) dp(128) else dp(20),
         )
         (contentScroll.layoutParams as? android.widget.FrameLayout.LayoutParams)?.let { params ->
-            params.bottomMargin = if (phone) dp(68) else 0
+            params.bottomMargin = if (phone) dp(116) else 0
             contentScroll.layoutParams = params
         }
         binding.columns.orientation = if (tablet) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
@@ -286,6 +296,13 @@ class ControllerFragment : Fragment() {
         listOf(catalogList, resultList, personalList, queueList).forEach(::configurePanelRecycler)
         setupPanelAdapters()
 
+        fun openServerSetup() {
+            startActivity(Intent(requireContext(), SetupActivity::class.java).apply {
+                putExtra(SetupActivity.EXTRA_FORCE_SETUP, true)
+                putExtra(SetupActivity.EXTRA_RETURN_TO_CALLER, true)
+            })
+        }
+
         binding.headerActions.removeAllViews()
         binding.headerActions.addView(button("重新连接") { viewModel.refreshQueue() }, wrapParams())
         binding.headerActions.addView(button("房主") {
@@ -296,55 +313,52 @@ class ControllerFragment : Fragment() {
             }
         }, wrapParams())
         binding.headerActions.addView(button("服务器") {
-            startActivity(Intent(requireContext(), SetupActivity::class.java).apply {
-                putExtra(SetupActivity.EXTRA_FORCE_SETUP, true)
-                putExtra(SetupActivity.EXTRA_RETURN_TO_CALLER, true)
-            })
+            openServerSetup()
         }, wrapParams())
+        binding.btnMyServerSetup.setOnClickListener { openServerSetup() }
 
         binding.catalogTabsContainer.removeViews(1, (binding.catalogTabsContainer.childCount - 1).coerceAtLeast(0))
-        listOf(
-            "热歌" to {
-                catalogMode = CatalogMode.RANKING
-                catalogTitle.text = "热歌"
-                viewModel.loadRanking()
-            },
-            "新歌" to {
-                catalogMode = CatalogMode.NEW
-                catalogTitle.text = "新歌"
-                viewModel.loadNewSongs()
-            },
-            "歌手" to {
-                catalogMode = CatalogMode.ARTISTS
-                catalogTitle.text = "歌手"
-                viewModel.loadArtists()
-            },
-            "语种" to {
-                catalogMode = CatalogMode.LANGUAGES
-                catalogTitle.text = "语种"
-                viewModel.loadLanguages()
-            },
-            "标签" to {
-                catalogMode = CatalogMode.TAGS
-                catalogTitle.text = "标签"
-                viewModel.loadTags()
-            },
-        ).forEach { (title, action) ->
-            binding.catalogTabsContainer.addView(button(title, action), wrapParams())
+        fun selectCatalog(mode: CatalogMode) {
+            catalogMode = mode
+            when (mode) {
+                CatalogMode.ARTISTS -> {
+                    catalogTitle.text = "歌手"
+                    viewModel.loadArtists()
+                }
+                CatalogMode.LANGUAGES -> {
+                    catalogTitle.text = "语种"
+                    viewModel.loadLanguages()
+                }
+                CatalogMode.TAGS -> {
+                    catalogTitle.text = "分类"
+                    viewModel.loadTags()
+                }
+                else -> Unit
+            }
+        }
+        binding.btnPhoneCatalogArtists.setOnClickListener { selectCatalog(CatalogMode.ARTISTS) }
+        binding.btnPhoneCatalogLanguages.setOnClickListener { selectCatalog(CatalogMode.LANGUAGES) }
+        binding.btnPhoneCatalogCategories.setOnClickListener { selectCatalog(CatalogMode.TAGS) }
+        if (phone) {
+            binding.catalogPhoneEntries.visibility = View.VISIBLE
+        } else {
+            binding.catalogPhoneEntries.visibility = View.GONE
+            listOf(
+                "歌手" to { selectCatalog(CatalogMode.ARTISTS) },
+                "语种" to { selectCatalog(CatalogMode.LANGUAGES) },
+                "分类" to { selectCatalog(CatalogMode.TAGS) },
+            ).forEach { (title, action) ->
+                binding.catalogTabsContainer.addView(button(title, action), wrapParams())
+            }
         }
 
         binding.personalTabsContainer.removeViews(1, (binding.personalTabsContainer.childCount - 1).coerceAtLeast(0))
-        listOf(
+        val personalTabs = mutableListOf(
             "收藏" to {
                 personalMode = PersonalMode.FAVORITES
                 personalTitle.text = "收藏"
                 viewModel.clearPlaylistDetail()
                 viewModel.loadFavorites()
-            },
-            "主题歌单" to {
-                personalMode = PersonalMode.PLAYLISTS
-                personalTitle.text = "主题歌单"
-                viewModel.loadPlaylists()
             },
             "最近唱过" to {
                 personalMode = PersonalMode.HISTORY
@@ -352,7 +366,13 @@ class ControllerFragment : Fragment() {
                 viewModel.clearPlaylistDetail()
                 viewModel.loadHistory()
             },
-        ).forEach { (title, action) ->
+        )
+        if (!phone) personalTabs.add(1, "主题歌单" to {
+            personalMode = PersonalMode.PLAYLISTS
+            personalTitle.text = "主题歌单"
+            viewModel.loadPlaylists()
+        })
+        personalTabs.forEach { (title, action) ->
             binding.personalTabsContainer.addView(button(title, action), wrapParams())
         }
 
@@ -434,31 +454,51 @@ class ControllerFragment : Fragment() {
             } else false
         }
         messageText.setOnClickListener { viewModel.clearMessage() }
+        binding.miniPlayerToggle.setOnClickListener {
+            val action = if (viewModel.state.value.queue.state == "playing") "pause" else "play"
+            viewModel.control(action)
+        }
+        binding.miniPlayerQueue.setOnClickListener {
+            showPhonePanel(ControllerPhonePanel.QUEUE)
+        }
 
         phonePanelViews.clear()
-        phonePanelViews[PhonePanel.CATALOG] = listOf(binding.catalogTabsContainer, artistFilterContainer, catalogContainer)
-        phonePanelViews[PhonePanel.SEARCH] = listOf(searchInput, binding.resultTitle, resultContainer)
-        phonePanelViews[PhonePanel.PERSONAL] = listOf(binding.personalTabsContainer, personalContainer)
-        phonePanelViews[PhonePanel.QUEUE] = listOf(binding.queueTitle, queueNowText, queueContainer)
-        phonePanelViews[PhonePanel.REMOTE] = listOf(
-            binding.remoteTitle, binding.remoteControlsContainer, binding.volumeTitle, volumeSeek,
+        phonePanelViews[ControllerPhonePanel.CATALOG] = listOf(
+            binding.catalogTabsContainer, binding.catalogPhoneEntries, artistFilterContainer, catalogContainer,
+        )
+        phonePanelViews[ControllerPhonePanel.SEARCH] = listOf(searchInput, binding.resultTitle, resultContainer)
+        if (phone) binding.myConnectionCard.visibility = View.VISIBLE
+        phonePanelViews[ControllerPhonePanel.PERSONAL] = listOf(
+            binding.myConnectionCard, binding.personalTabsContainer, personalContainer,
+        )
+        phonePanelViews[ControllerPhonePanel.QUEUE] = listOf(binding.queueTitle, queueNowText, queueContainer)
+        if (phone) binding.remoteNowPlayingCard.visibility = View.VISIBLE
+        phonePanelViews[ControllerPhonePanel.REMOTE] = listOf(
+            binding.remoteNowPlayingCard, binding.remoteTitle, binding.remoteControlsContainer, binding.volumeTitle, volumeSeek,
             binding.progressTitle, seekBar, messageText,
         )
         binding.phoneNav.removeAllViews()
+        phoneNavButtons.clear()
+        binding.phoneBottomBar.visibility = if (phone) View.VISIBLE else View.GONE
         if (phone) {
             binding.phoneNav.visibility = View.VISIBLE
-            listOf(
-                "首页" to { showPhonePanel(PhonePanel.CATALOG) },
-                "搜索" to { showPhonePanel(PhonePanel.SEARCH); searchInput.requestFocus(); Unit },
-                "队列" to { showPhonePanel(PhonePanel.QUEUE) },
-                "遥控" to { showPhonePanel(PhonePanel.REMOTE) },
-                "我的" to { showPhonePanel(PhonePanel.PERSONAL) },
-            ).forEach { (title, action) ->
-                binding.phoneNav.addView(button(title, action), LinearLayout.LayoutParams(0, -1, 1f))
+            ControllerPhoneNavigationPolicy.tabs.forEach { tab ->
+                val navButton = button(tab.title) {
+                    showPhonePanel(tab.panel)
+                    if (tab.panel == ControllerPhonePanel.SEARCH) searchInput.requestFocus()
+                }.apply {
+                    textSize = 12f
+                    setPadding(dp(2), 0, dp(2), 0)
+                }
+                phoneNavButtons[tab.panel] = navButton
+                binding.phoneNav.addView(navButton, LinearLayout.LayoutParams(0, -1, 1f).apply {
+                    setMargins(dp(2), dp(4), dp(2), dp(4))
+                })
             }
         } else {
             binding.phoneNav.visibility = View.GONE
         }
+        updatePhoneNavigationSelection()
         applyPhonePanelVisibility()
     }
 
@@ -520,10 +560,22 @@ class ControllerFragment : Fragment() {
         }
     }
 
-    private fun showPhonePanel(panel: PhonePanel) {
+    private fun showPhonePanel(panel: ControllerPhonePanel) {
         phonePanel = panel
+        updatePhoneNavigationSelection()
         applyPhonePanelVisibility()
         contentScroll.scrollTo(0, 0)
+    }
+
+    private fun updatePhoneNavigationSelection() {
+        phoneNavButtons.forEach { (panel, navButton) ->
+            val selected = panel == phonePanel
+            navButton.setBackgroundResource(if (selected) R.drawable.btn_gold else R.drawable.btn_keyboard_key)
+            navButton.setTextColor(
+                if (selected) requireContext().getColor(R.color.bg)
+                else requireContext().getColor(android.R.color.white),
+            )
+        }
     }
 
     private fun applyPhonePanelVisibility() {
@@ -555,11 +607,9 @@ class ControllerFragment : Fragment() {
             return
         }
         lastRenderedState = state
-        statusText.text = when (state.connection) {
-            ControllerConnection.CONNECTING -> "连接中…"
-            ControllerConnection.ONLINE -> if (state.queue.tvOnline) "电视在线" else "服务在线 · 电视未连接"
-            ControllerConnection.OFFLINE -> "服务离线"
-        }
+        val connectionSummary = ControllerConnectionSummaryPolicy.label(state.connection, state.queue.tvOnline)
+        statusText.text = connectionSummary
+        binding.myConnectionStatus.text = connectionSummary
         statusText.setTextColor(
             if (state.connection == ControllerConnection.ONLINE) requireContext().getColor(R.color.tag_mv)
             else requireContext().getColor(R.color.dim),
@@ -572,7 +622,39 @@ class ControllerFragment : Fragment() {
         catalogAdapter.submitList(catalogRows(state))
         renderPersonalPanel(state)
         updateQueueProgress(state)
-        queueAdapter.submitList(state.queue.list.mapIndexed { index, entry ->
+        queueAdapter.submitList(queueRows(state))
+        applyPhonePanelVisibility()
+        messageText.visibility = if (!state.message.isNullOrBlank() &&
+            (!isPhoneLayout() || phonePanel == ControllerPhonePanel.REMOTE)) View.VISIBLE else View.GONE
+        rootView?.post { rebuildFocusChain() }
+    }
+
+    /** Progress broadcasts are frequent; do not rebuild every bounded row for them. */
+    private fun updateQueueProgress(state: ControllerUiState) {
+        val now = state.queue.playing
+        val currentSong = now?.song
+        queueNowText.text = now?.song?.let { "正在演唱：${it.title} · ${it.artist}" } ?: "正在演唱：暂无"
+        binding.miniPlayerTitle.text = now?.song?.let { "${it.title} · ${it.artist}" } ?: "暂无歌曲播放"
+        binding.miniPlayerToggle.text = if (state.queue.state == "playing") "暂停" else "播放"
+        binding.miniPlayerToggle.isEnabled = now != null || state.queue.list.isNotEmpty()
+        binding.remoteNowPlayingTitle.text = currentSong?.let { "${it.title} · ${it.artist}" }
+            ?: getString(R.string.controller_now_playing_empty)
+        binding.remoteNowPlayingState.text = ControllerRemoteStatusPolicy.label(
+            connection = state.connection,
+            tvOnline = state.queue.tvOnline,
+            hasSong = currentSong != null,
+            playbackState = state.queue.state,
+        )
+        volumeSeek.progress = state.queue.volume.coerceIn(0, 100)
+        val duration = now?.song?.durationMs ?: 0
+        if (!isUserAdjustingSeekBar && (android.os.SystemClock.elapsedRealtime() - lastUserSeekAdjustMs > 500L)) {
+            seekBar.progress = if (duration <= 0) 0
+            else ((state.queue.positionMs.coerceIn(0, duration.toLong()) * 1000L) / duration).toInt()
+        }
+    }
+
+    private fun queueRows(state: ControllerUiState): List<PanelRow> {
+        val rows = state.queue.list.mapIndexed { index, entry ->
             QueuePanelRow(
                 index,
                 entry,
@@ -580,23 +662,35 @@ class ControllerFragment : Fragment() {
                 isPending(state, "control:cancel", entry.queueId ?: Long.MIN_VALUE),
                 QueuePermissionPolicy.canManage(entry, state.currentUser?.id, state.roomHost.isHost),
             )
-        })
-        applyPhonePanelVisibility()
-        messageText.visibility = if (!state.message.isNullOrBlank() &&
-            (!isPhoneLayout() || phonePanel == PhonePanel.REMOTE)) View.VISIBLE else View.GONE
-        rootView?.post { rebuildFocusChain() }
-    }
-
-    /** Progress broadcasts are frequent; do not rebuild every bounded row for them. */
-    private fun updateQueueProgress(state: ControllerUiState) {
-        val now = state.queue.playing
-        queueNowText.text = now?.song?.let { "正在演唱：${it.title} · ${it.artist}" } ?: "正在演唱：暂无"
-        volumeSeek.progress = state.queue.volume.coerceIn(0, 100)
-        val duration = now?.song?.durationMs ?: 0
-        if (!isUserAdjustingSeekBar && (android.os.SystemClock.elapsedRealtime() - lastUserSeekAdjustMs > 500L)) {
-            seekBar.progress = if (duration <= 0) 0
-            else ((state.queue.positionMs.coerceIn(0, duration.toLong()) * 1000L) / duration).toInt()
+        }.toMutableList<PanelRow>()
+        val queueError = state.errorFor(UiDomain.QUEUE)
+        when {
+            queueError != null -> {
+                rows.add(0, MessagePanelRow(-100L, "队列加载失败：${state.messageFor(UiDomain.QUEUE) ?: "请重试"}"))
+                rows.add(1, ActionPanelRow(
+                    id = -101L,
+                    text = "重试队列",
+                    enabled = true,
+                    contentDescription = "重新加载已点歌曲队列",
+                    actionKey = "retry_queue",
+                ) { viewModel.refreshQueue() })
+            }
+            state.queueLoading -> rows.add(0, MessagePanelRow(-100L, "正在加载队列…"))
+            rows.isEmpty() -> rows += MessagePanelRow(-100L, "队列里还没有歌曲")
         }
+        if (!state.queueLoading && state.queue.list.isEmpty()) {
+            rows += ActionPanelRow(
+                id = -102L,
+                text = "去选歌",
+                enabled = true,
+                contentDescription = "打开搜索选择歌曲",
+                actionKey = "queue_empty_search",
+            ) {
+                showPhonePanel(ControllerPhonePanel.SEARCH)
+                searchInput.requestFocus()
+            }
+        }
+        return rows
     }
 
     private fun setupPanelAdapters() {
@@ -634,7 +728,9 @@ class ControllerFragment : Fragment() {
 
     private fun searchRows(state: ControllerUiState): List<PanelRow> {
         if (state.loading) return listOf(MessagePanelRow(-1L, "搜索中…"))
-        if (state.query.isBlank()) return emptyList()
+        if (state.query.isBlank()) return listOf(
+            MessagePanelRow(-5L, "支持歌名/歌手、中文、全拼和首字母搜索"),
+        )
         if (state.results.isEmpty()) {
             val searchError = state.errorFor(UiDomain.SEARCH)
             val isWish = searchError == null
@@ -681,7 +777,7 @@ class ControllerFragment : Fragment() {
                 state.catalogSongs.map { songPanelRow(state, it) }
             } else state.artists.map { artist ->
                 ArtistPanelRow(artist) {
-                    catalogTitle.text = "歌手 · ${artist.name}"
+                    catalogTitle.text = getString(R.string.controller_artist_title, artist.name)
                     viewModel.loadArtistSongs(artist.artistKey)
                 }
             }
@@ -689,7 +785,7 @@ class ControllerFragment : Fragment() {
                 state.catalogSongs.map { songPanelRow(state, it) }
             } else state.languages.map { item ->
                 NamedCountPanelRow(item) {
-                    catalogTitle.text = "语种 · ${item.name}"
+                    catalogTitle.text = getString(R.string.controller_language_title, item.name)
                     viewModel.loadLanguageSongs(item.name)
                 }
             }
@@ -697,20 +793,41 @@ class ControllerFragment : Fragment() {
                 state.catalogSongs.map { songPanelRow(state, it) }
             } else state.tags.map { item ->
                 NamedCountPanelRow(item) {
-                    catalogTitle.text = "标签 · ${item.name}"
+                    catalogTitle.text = getString(R.string.controller_tag_title, item.name)
                     viewModel.loadTagSongs(item.name)
                 }
             }
         }.toMutableList<PanelRow>()
-        if (rows.isEmpty()) {
-            val catError = state.errorFor(UiDomain.CATALOG)
+        val catError = state.errorFor(UiDomain.CATALOG)
+        val catalogRetryAvailable = ControllerCatalogRetryPolicy.shouldOfferRetry(
+            hasDomainError = catError != null,
+            status = state.catalogStatus.state,
+        )
+        if (catalogRetryAvailable) {
+            val retryMessage = when (state.catalogStatus.state) {
+                CatalogLoadState.OFFLINE -> "点歌服务离线，请检查网络后重试"
+                CatalogLoadState.HTTP_ERROR -> "曲库目录请求失败，请重试"
+                CatalogLoadState.ROOT_UNAVAILABLE -> "曲库目录暂不可用，可重新检查"
+                CatalogLoadState.PARTIAL_FAILURE -> "部分目录内容加载失败，可重试"
+                else -> "分类内容加载失败：${state.messageFor(UiDomain.CATALOG) ?: "请重试"}"
+            }
+            rows.add(0, MessagePanelRow(-20L, retryMessage))
+            rows.add(1, ActionPanelRow(
+                id = -21L,
+                text = "重试当前目录",
+                enabled = !state.catalogLoading && !state.catalogLoadingMore,
+                contentDescription = "重新加载当前目录",
+                actionKey = "retry_catalog:$catalogMode:${state.catalogValue}:${state.catalogPage}",
+            ) { retryCurrentCatalog(state) })
+        } else if (rows.isEmpty()) {
             rows += MessagePanelRow(-10L, when {
                 catError != null -> "分类内容加载失败，请检查服务连接"
-                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.OFFLINE -> "点歌服务离线，请检查网络"
-                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.HTTP_ERROR -> "曲库状态获取失败，请重试"
-                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.ROOT_UNAVAILABLE -> "曲库目录暂不可用"
-                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.SCANNING -> "曲库正在扫描，歌曲准备好后会自动刷新"
-                state.catalogStatus.state == com.homektv.tv.controller.CatalogLoadState.FILTER_EMPTY -> "当前筛选没有匹配歌曲"
+                state.catalogLoading -> "正在加载目录…"
+                state.catalogStatus.state == CatalogLoadState.OFFLINE -> "点歌服务离线，请检查网络"
+                state.catalogStatus.state == CatalogLoadState.HTTP_ERROR -> "曲库状态获取失败，请重试"
+                state.catalogStatus.state == CatalogLoadState.ROOT_UNAVAILABLE -> "曲库目录暂不可用"
+                state.catalogStatus.state == CatalogLoadState.SCANNING -> "曲库正在扫描，歌曲准备好后会自动刷新"
+                state.catalogStatus.state == CatalogLoadState.FILTER_EMPTY -> "当前筛选没有匹配歌曲"
                 catalogMode == CatalogMode.ARTISTS && !state.catalogDetail -> "暂无歌手"
                 catalogMode == CatalogMode.LANGUAGES && !state.catalogDetail -> "暂无语种"
                 catalogMode == CatalogMode.TAGS && !state.catalogDetail -> "暂无标签"
@@ -727,6 +844,28 @@ class ControllerFragment : Fragment() {
             ) { viewModel.loadMoreCatalog() }
         }
         return rows
+    }
+
+    private fun retryCurrentCatalog(state: ControllerUiState) {
+        when (catalogMode) {
+            CatalogMode.RANKING -> viewModel.loadRanking()
+            CatalogMode.NEW -> viewModel.loadNewSongs()
+            CatalogMode.ARTISTS -> if (state.catalogDetail) {
+                viewModel.loadArtistSongs(state.catalogValue, state.catalogPage)
+            } else {
+                viewModel.loadArtists(state.artistGender, state.artistInitial, state.catalogPage)
+            }
+            CatalogMode.LANGUAGES -> if (state.catalogDetail) {
+                viewModel.loadLanguageSongs(state.catalogValue, state.catalogPage)
+            } else {
+                viewModel.loadLanguages()
+            }
+            CatalogMode.TAGS -> if (state.catalogDetail) {
+                viewModel.loadTagSongs(state.catalogValue, state.catalogPage)
+            } else {
+                viewModel.loadTags()
+            }
+        }
     }
 
     private fun renderPersonalPanel(state: ControllerUiState) {
@@ -805,7 +944,7 @@ class ControllerFragment : Fragment() {
 
     private fun renderArtistFilters(state: ControllerUiState) {
         val visible = catalogMode == CatalogMode.ARTISTS && !state.catalogDetail &&
-            (!isPhoneLayout() || phonePanel == PhonePanel.CATALOG)
+            (!isPhoneLayout() || phonePanel == ControllerPhonePanel.CATALOG)
         artistFilterContainer.visibility = if (visible) View.VISIBLE else View.GONE
         if (!visible) return
         artistFilterContainer.removeAllViews()
@@ -963,5 +1102,4 @@ class ControllerFragment : Fragment() {
 
     private enum class PersonalMode { FAVORITES, PLAYLISTS, HISTORY }
     private enum class CatalogMode { RANKING, NEW, ARTISTS, LANGUAGES, TAGS }
-    private enum class PhonePanel { CATALOG, SEARCH, QUEUE, REMOTE, PERSONAL }
 }

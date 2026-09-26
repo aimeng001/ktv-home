@@ -77,7 +77,7 @@ internal class ControllerPanelRowBinder(
 
     private fun bindSong(view: View, row: SongPanelRow) {
         val tag = view.tag as? SongViewHolderTag ?: return
-        tag.label.text = "${row.song.title} · ${row.song.artist}"
+        tag.label.text = view.context.getString(R.string.song_artist_line, row.song.title, row.song.artist)
         val orderText = when {
             !row.song.playable -> "准备中"
             row.orderPending -> "点歌中…"
@@ -105,8 +105,13 @@ internal class ControllerPanelRowBinder(
 
     private fun bindArtist(view: View, row: ArtistPanelRow) {
         val btn = view as? Button ?: return
-        btn.text = "${row.artist.name} · ${row.artist.songCount} 首 · ${row.artist.gender}"
-        btn.contentDescription = "查看歌手 ${row.artist.name} 的歌曲"
+        btn.text = view.context.getString(
+            R.string.artist_count_gender_line,
+            row.artist.name,
+            row.artist.songCount,
+            row.artist.gender,
+        )
+        btn.contentDescription = view.context.getString(R.string.view_artist_songs_description, row.artist.name)
         btn.setOnClickListener { row.action() }
     }
 
@@ -118,8 +123,8 @@ internal class ControllerPanelRowBinder(
 
     private fun bindNamedCount(view: View, row: NamedCountPanelRow) {
         val btn = view as? Button ?: return
-        btn.text = "${row.item.name} · ${row.item.songCount} 首"
-        btn.contentDescription = "查看${row.item.name}歌曲"
+        btn.text = view.context.getString(R.string.named_count_line, row.item.name, row.item.songCount)
+        btn.contentDescription = view.context.getString(R.string.view_named_songs_description, row.item.name)
         btn.setOnClickListener { row.action() }
     }
 
@@ -141,9 +146,16 @@ internal class ControllerPanelRowBinder(
 
     private fun bindPlaylist(view: View, row: PlaylistPanelRow) {
         val tag = view.tag as? PlaylistViewHolderTag ?: return
-        tag.label.text = "${row.playlist.name} · ${row.playlist.songCount} 首"
+        tag.label.text = view.context.getString(
+            R.string.playlist_count_line,
+            row.playlist.name,
+            row.playlist.songCount,
+        )
         tag.orderBtn.isEnabled = !row.orderPending
-        tag.orderBtn.contentDescription = "整单点歌 ${row.playlist.name}"
+        tag.orderBtn.contentDescription = view.context.getString(
+            R.string.order_playlist_description,
+            row.playlist.name,
+        )
         tag.orderBtn.setOnClickListener { actions.orderPlaylist(row.playlist.id) }
         tag.detailBtn.contentDescription = "查看歌单 ${row.playlist.name} 的歌曲"
         tag.detailBtn.setOnClickListener { actions.loadPlaylistDetail(row.playlist.id) }
@@ -166,9 +178,17 @@ internal class ControllerPanelRowBinder(
     private fun bindHistory(view: View, row: HistoryPanelRow) {
         val tag = view.tag as? HistoryViewHolderTag ?: return
         val song = row.item.song
-        tag.label.text = "${song?.title.orEmpty()} · ${song?.artist.orEmpty()} · ${row.item.playedByNick}"
+        tag.label.text = view.context.getString(
+            R.string.history_song_line,
+            song?.title.orEmpty(),
+            song?.artist.orEmpty(),
+            row.item.playedByNick,
+        )
         tag.repeatBtn.isEnabled = !row.repeatPending
-        tag.repeatBtn.contentDescription = "再次点歌 ${song?.title.orEmpty()}"
+        tag.repeatBtn.contentDescription = view.context.getString(
+            R.string.repeat_song_description,
+            song?.title.orEmpty(),
+        )
         tag.repeatBtn.setOnClickListener { actions.repeatHistory(row.item.historyId) }
     }
 
@@ -191,11 +211,12 @@ internal class ControllerPanelRowBinder(
     private fun bindQueue(view: View, row: QueuePanelRow) {
         val tag = view.tag as? QueueViewHolderTag ?: return
         val song = row.entry.song
-        tag.label.text = "%02d  %s · %s  %s".format(
+        tag.label.text = view.context.getString(
+            R.string.queue_row_line,
             row.index + 1,
             song?.title.orEmpty(),
             song?.artist.orEmpty(),
-            row.entry.orderedByNick ?: "",
+            row.entry.orderedByNick.orEmpty(),
         )
         val queueId = row.entry.queueId
         if (row.canManage && queueId != null) {

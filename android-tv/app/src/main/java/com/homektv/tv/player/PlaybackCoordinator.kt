@@ -8,6 +8,7 @@ import com.homektv.tv.net.PlaybackDescriptor
 import com.homektv.tv.net.PlaybackResolution
 import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.PlaybackErrorContext
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -18,6 +19,10 @@ internal data class PlaybackReplacementRequest(
     val queueId: Long?,
     val songId: Long,
     val forceTranscode: Boolean = false,
+    val recoveryPositionMs: Long? = null,
+    val recoverySeekSequence: Long? = null,
+    val recoveryPlayWhenReady: Boolean? = null,
+    val stateAtFailure: String? = null,
 )
 
 internal interface PlaybackSource {
@@ -124,9 +129,14 @@ internal class PlaybackCoordinator(
                     is PlaybackResolution.Ready -> {
                         val snapshot = desiredState.forQueue(request.queueId) ?: return@launch
                         if (!isCurrent(token)) return@launch
-                        val streamUrl = result.descriptor.streamUrl
+                        val liveTranscode = result.descriptor.kind.equals("LIVE_TRANSCODE", ignoreCase = true)
+                        val playbackSnapshot = snapshot.withRecoveryState(request, liveTranscode)
+                        val resolvedUrl = result.descriptor.streamUrl
                             ?: source.streamUrl(result.source.id)
-                        onFileReady(token, result.playableFile(), snapshot, streamUrl)
+                        val streamUrl = if (liveTranscode && playbackSnapshot.positionMs > 0L) {
+                            LiveTranscodeStreamUrl.withStart(resolvedUrl, playbackSnapshot.positionMs)
+                        } else resolvedUrl
+                        onFileReady(token, result.playableFile(), playbackSnapshot, streamUrl)
                         return@launch
                     }
                     is PlaybackResolution.Preparing -> {
@@ -196,6 +206,15 @@ internal class PlaybackCoordinator(
 
     private fun PlaybackResolution.Ready.playableFile(): FileSource {
         val descriptor = descriptor
+        if (descriptor.kind.equals("LIVE_TRANSCODE", ignoreCase = true)) {
+            return source.copy(
+                format = "mp4",
+                audioTracks = descriptor.audioTracks.coerceAtLeast(1),
+                vocalTrackIndex = descriptor.vocalTrackIndex,
+                audioLayout = descriptor.audioLayout,
+                ready = true,
+            )
+        }
         if (!descriptor.kind.equals("TRANSCODE", ignoreCase = true) || descriptor.variantId == null) {
             return source
         }
@@ -209,9 +228,69 @@ internal class PlaybackCoordinator(
         )
     }
 
+    private fun QueueSnapshot.withRecoveryState(
+        request: PlaybackReplacementRequest,
+        liveTranscode: Boolean,
+    ): QueueSnapshot {
+        if (!liveTranscode || !request.forceTranscode) return this
+        val seekUnchanged = request.recoverySeekSequence == null ||
+            request.recoverySeekSequence == seekSequence
+        val stateUnchanged = request.stateAtFailure == null ||
+            request.stateAtFailure.equals(state, ignoreCase = true)
+        return copy(
+            positionMs = if (seekUnchanged && request.recoveryPositionMs != null) {
+                maxOf(positionMs, request.recoveryPositionMs.coerceAtLeast(0L))
+            } else positionMs,
+            state = if (stateUnchanged && request.recoveryPlayWhenReady != null) {
+                if (request.recoveryPlayWhenReady) "playing" else "paused"
+            } else state,
+        )
+    }
+
     companion object {
         val SOURCE_RETRY_DELAYS = longArrayOf(500L, 1_500L, 3_000L, 10_000L)
         const val MAX_SOURCE_RETRIES = 4
         const val PLAYBACK_RETRY_DELAY_MS = 1_000L
     }
+}
+
+/** Utilities for the server's no-disk-cache, seekable live fMP4 pipe. */
+internal object LiveTranscodeStreamUrl {
+    fun withStart(streamUrl: String, positionMs: Long): String {
+        val withoutOldStart = withoutStart(streamUrl)
+        if (positionMs <= 0L) return withoutOldStart
+        val separator = if ('?' in withoutOldStart) '&' else '?'
+        val seconds = String.format(Locale.US, "%.3f", positionMs.coerceAtLeast(0L) / 1_000.0)
+        return "$withoutOldStart${separator}start=$seconds"
+    }
+
+    fun isLiveTranscode(streamUrl: String?): Boolean =
+        streamUrl?.substringAfter('?', "")?.split('&')?.any { it == "transcode=true" } == true
+
+    fun startPositionMs(streamUrl: String?): Long {
+        val start = streamUrl?.substringAfter('?', "")?.split('&')
+            ?.firstOrNull { it.substringBefore('=') == "start" }
+            ?.substringAfter('=')
+            ?.toDoubleOrNull()
+            ?: return 0L
+        if (!start.isFinite() || start <= 0.0) return 0L
+        return (start * 1_000.0).toLong()
+    }
+
+    private fun withoutStart(streamUrl: String): String {
+        val path = streamUrl.substringBefore('?')
+        val query = streamUrl.substringAfter('?', "")
+            .split('&')
+            .filter(String::isNotBlank)
+            .filterNot { it.substringBefore('=') == "start" }
+        return if (query.isEmpty()) path else "$path?${query.joinToString("&")}"
+    }
+}
+
+internal object LiveTranscodePosition {
+    fun absolutePositionMs(pipePositionMs: Long, basePositionMs: Long): Long =
+        pipePositionMs.coerceAtLeast(0L) + basePositionMs.coerceAtLeast(0L)
+
+    fun pipePositionMs(absolutePositionMs: Long, basePositionMs: Long): Long =
+        (absolutePositionMs.coerceAtLeast(0L) - basePositionMs.coerceAtLeast(0L)).coerceAtLeast(0L)
 }

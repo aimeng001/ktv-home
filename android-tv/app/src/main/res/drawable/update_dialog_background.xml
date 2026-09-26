@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/ktv_panel_surface" />
+    <corners android:radius="@dimen/ktv_radius_panel" />
+    <stroke android:width="@dimen/ktv_border_width" android:color="@color/ktv_border_subtle" />
+</shape>

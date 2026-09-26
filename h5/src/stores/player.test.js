@@ -43,6 +43,25 @@ describe('usePlayerStore', () => {
     p.handleEvent('player_state', { ...snapshot, playback: { kind: 'TRANSCODE', status: 'READY', streamUrl: '/api/playback/stream/88' } })
     expect(p.playback.status).toBe('READY')
   })
+
+  it('keeps a live-transcode resolver descriptor as protocol data without changing the queue projection', () => {
+    const p = usePlayerStore()
+    const livePipe = {
+      kind: 'LIVE_TRANSCODE',
+      status: 'READY',
+      sourceFileId: 7,
+      variantId: null,
+      streamUrl: '/api/stream/7?transcode=true',
+      audioTracks: 2
+    }
+
+    p.handleEvent('sync_full', { ...snapshot, playback: livePipe })
+
+    expect(p.playback).toEqual(livePipe)
+    expect(p.nowPlaying.song.id).toBe(10)
+    expect(p.positionMs).toBe(0)
+    expect(p.state).toBe('playing')
+  })
   it('queue_updated 刷新队列', () => {
     const p = usePlayerStore()
     p.handleEvent('sync_full', snapshot)

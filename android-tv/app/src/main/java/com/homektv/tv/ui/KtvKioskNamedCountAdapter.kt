@@ -1,10 +1,13 @@
 package com.homektv.tv.ui
 
+import android.view.LayoutInflater
 import android.view.ViewGroup
-import android.widget.Button
+import androidx.annotation.DrawableRes
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import com.homektv.tv.R
+import com.homektv.tv.databinding.ItemKioskNamedCountBinding
 import com.homektv.tv.net.NamedCount
 
 /** Focusable TV row for language/tag category entries. */
@@ -12,29 +15,41 @@ class KtvKioskNamedCountAdapter(
     private val onSelect: (NamedCount) -> Unit,
 ) : ListAdapter<NamedCount, KtvKioskNamedCountAdapter.ViewHolder>(DIFF_CALLBACK) {
 
+    @DrawableRes
+    private var iconResource = R.drawable.ic_category
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder =
-        ViewHolder(Button(parent.context).apply {
-            layoutParams = RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
-            minHeight = 56
-            isAllCaps = false
-            isFocusable = true
-            setOnClickListener {
-                val item = tag as? NamedCount ?: return@setOnClickListener
+        ViewHolder(
+            ItemKioskNamedCountBinding.inflate(LayoutInflater.from(parent.context), parent, false),
+        ).apply {
+            binding.namedCountRoot.setOnClickListener {
+                val item = it.tag as? NamedCount ?: return@setOnClickListener
                 onSelect(item)
             }
-        })
+        }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val item = getItem(position)
-        holder.button.tag = item
-        holder.button.text = "${item.name}（${item.songCount} 首）"
-        holder.button.contentDescription = "选择${item.name}"
+        holder.binding.namedCountRoot.tag = item
+        holder.binding.imgNamedCountIcon.setImageResource(iconResource)
+        holder.binding.txtNamedCountName.text = item.name
+        holder.binding.txtNamedCountSongs.text = holder.binding.root.context.getString(
+            R.string.named_count_songs,
+            item.songCount,
+        )
+        holder.binding.namedCountRoot.contentDescription = holder.binding.root.context.getString(
+            R.string.named_count_selection_description,
+            item.name,
+        )
     }
 
-    class ViewHolder(val button: Button) : RecyclerView.ViewHolder(button)
+    fun setIconResource(@DrawableRes iconRes: Int) {
+        if (iconResource == iconRes) return
+        iconResource = iconRes
+        if (itemCount > 0) notifyItemRangeChanged(0, itemCount)
+    }
+
+    class ViewHolder(val binding: ItemKioskNamedCountBinding) : RecyclerView.ViewHolder(binding.root)
 
     companion object {
         private val DIFF_CALLBACK = object : DiffUtil.ItemCallback<NamedCount>() {

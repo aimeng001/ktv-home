@@ -41,10 +41,10 @@ class KtvKeyboardView @JvmOverloads constructor(
         grid.removeAllViews()
 
         if (session.mode == KeyboardLayoutMode.T9) {
-            binding.btnToggleT9.text = "切换全键盘(26键)"
+            binding.btnToggleT9.setText(R.string.keyboard_switch_full)
             renderT9Keys(grid)
         } else {
-            binding.btnToggleT9.text = "切换九宫格(9键)"
+            binding.btnToggleT9.setText(R.string.keyboard_switch_t9)
             renderQwertyKeys(grid)
         }
     }
@@ -101,7 +101,7 @@ class KtvKeyboardView @JvmOverloads constructor(
     }
 
     private fun renderQwertyKeys(grid: GridLayout) {
-        grid.columnCount = 6
+        grid.columnCount = 7
         val marginPx = dpToPx(3f)
         val heightPx = dpToPx(46f)
 

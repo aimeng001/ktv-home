@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import com.homektv.tv.R
 import com.homektv.tv.databinding.ItemSingerCardBinding
 import com.homektv.tv.net.ArtistItem
 
@@ -38,7 +39,10 @@ class SingerCardAdapter(
 
         fun bind(item: ArtistItem) {
             binding.txtSingerName.text = item.name
-            binding.txtSingerSongCount.text = "${item.songCount} 首"
+            binding.txtSingerSongCount.text = binding.root.context.getString(
+                R.string.song_count_only,
+                item.songCount,
+            )
             binding.txtSingerInitial.text = ArtistInitialResolver.resolve(item.name)
             binding.txtSingerInitial.visibility = View.VISIBLE
             binding.imgSingerAvatar.setImageDrawable(null)

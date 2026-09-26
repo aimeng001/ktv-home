@@ -10,6 +10,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.view.WindowManager
+import com.homektv.tv.R
 import com.homektv.tv.databinding.DialogKtvQrBinding
 
 /**
@@ -36,10 +38,12 @@ class KtvQrDialog(
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             setGravity(Gravity.CENTER)
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(170f / 255f)
         }
 
         if (portalUrl.isNotBlank()) {
-            binding.txtQrAddress.text = "局域网访问地址：$portalUrl"
+            binding.txtQrAddress.text = context.getString(R.string.qr_lan_address, portalUrl)
         } else {
             binding.txtQrAddress.visibility = View.GONE
         }

@@ -31,20 +31,24 @@ class KtvKeyboardIntegrationTest {
     @Test
     fun testKeyboardInputSession_handlesT9AndQwertyModeSwitch() {
         val session = KtvKeyboardInputSession()
-        assertEquals(KeyboardLayoutMode.T9, session.mode)
+        assertEquals(KeyboardLayoutMode.QWERTY, session.mode)
 
+        session.onLetterPressed('A')
+        assertEquals("A", session.currentKeyword)
+        session.toggleMode()
+        assertEquals(KeyboardLayoutMode.T9, session.mode)
         session.onDigitPressed('2', 1000L) // 'A'
         session.onDigitPressed('2', 1200L) // 'B'
-        assertEquals("B", session.currentKeyword)
+        assertEquals("AB", session.currentKeyword)
 
         session.toggleMode()
         assertEquals(KeyboardLayoutMode.QWERTY, session.mode)
 
         session.onLetterPressed('C')
-        assertEquals("BC", session.currentKeyword)
+        assertEquals("ABC", session.currentKeyword)
 
         session.backspace()
-        assertEquals("B", session.currentKeyword)
+        assertEquals("AB", session.currentKeyword)
 
         session.clear()
         assertEquals("", session.currentKeyword)

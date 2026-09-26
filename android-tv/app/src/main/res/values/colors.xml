@@ -4,19 +4,37 @@
     <!-- 复用原型 design/prototype/style.css 深色主题变量 -->
     <color name="bg">#08090d</color>
     <color name="panel">#12141c</color>
+    <!-- Shared palette sampled from KTV_ANDROID_UI_MOCKUPS_CINEMATIC/07_dashboard_focused.png. -->
+    <color name="ktv_screen_bg">#151719</color>
+    <color name="ktv_panel_surface">#1A1E21</color>
+    <color name="ktv_card_surface">#272A2E</color>
+    <color name="ktv_card_focused">#35383C</color>
+    <color name="ktv_input_surface">#202327</color>
+    <color name="ktv_border">#43484D</color>
+    <color name="ktv_border_subtle">#33383D</color>
+    <color name="ktv_surface_tint">#221A1E21</color>
+    <color name="ktv_gold_tint">#1AF0C742</color>
+    <!-- Opaque colors sampled from the reference RGBA image after compositing over black. -->
+    <color name="ktv_dashboard_bg_top">#222226</color>
+    <color name="ktv_dashboard_bg_400">#121718</color>
+    <color name="ktv_dashboard_bg_800">#0A0B0D</color>
+    <color name="ktv_dashboard_card_surface">#31353B</color>
+    <color name="ktv_dashboard_card_surface_bottom">#1A1F23</color>
+    <color name="ktv_dashboard_card_focused">#4B453D</color>
+    <color name="ktv_dashboard_card_focused_bottom">#2B2723</color>
+    <color name="ktv_dashboard_card_border">#444950</color>
+    <color name="ktv_dashboard_gold">#E8C999</color>
+    <color name="ktv_dashboard_gold_glow">#38E8C999</color>
+    <color name="ktv_dashboard_footer">#131519</color>
+    <color name="ktv_dashboard_progress_track">#292B31</color>
+    <color name="ktv_dashboard_control_focus">#4DE8C999</color>
     <color name="gold">#f0c742</color>
     <color name="gold2">#ffe17a</color>
-    <color name="karaoke_red">#ff5b68</color>
     <color name="karaoke_pink">#ff9aa7</color>
-    <color name="audio_accent">#ff647c</color>
-    <color name="purple">#a78bfa</color>
-    <color name="red">#f87171</color>
-    <color name="green">#34d399</color>
+    <color name="audio_accent">#f0c742</color>
     <color name="text">#f0f2f7</color>
     <color name="dim">#a3b0c2</color>
     <color name="dim2">#768398</color>
-    <color name="tag_ktv">#f0c742</color>
     <color name="tag_mv">#38bdf8</color>
-    <color name="tag_audio">#94a3b8</color>
     <color name="glass_border">#22ffffff</color>
 </resources>

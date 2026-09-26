@@ -3,7 +3,7 @@
     android:id="@+id/qrDialogRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#AA000000">
+    android:background="@android:color/transparent">
 
     <ScrollView
         android:id="@+id/qrDialogPanel"
@@ -26,7 +26,7 @@
                 android:id="@+id/txtQrTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="📱 手机扫码点歌"
+                android:text="@string/qr_dialog_phone_title"
                 android:textColor="@color/gold"
                 android:textSize="22sp"
                 android:textStyle="bold" />
@@ -36,7 +36,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="支持微信、系统相机或手机浏览器直接扫码"
+                android:text="@string/qr_dialog_phone_help"
                 android:textColor="@color/dim"
                 android:textSize="13sp" />
 
@@ -52,7 +52,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:scaleType="fitCenter"
-                    android:contentDescription="点歌二维码" />
+                    android:contentDescription="@string/qr_dialog_image_description" />
 
                 <ProgressBar
                     android:id="@+id/qrDialogProgress"
@@ -74,7 +74,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="💡 手机连接同 Wi-Fi 即可直接访问，按【确定】或【返回】关闭"
+                android:text="@string/qr_dialog_close_help"
                 android:textColor="@color/dim"
                 android:textSize="12sp" />
 
@@ -84,7 +84,7 @@
                 android:layout_height="42dp"
                 android:layout_marginTop="16dp"
                 android:background="@drawable/btn_gold"
-                android:text="关闭"
+                android:text="@string/common_close"
                 android:textColor="#111317"
                 android:textSize="14sp"
                 android:textStyle="bold"

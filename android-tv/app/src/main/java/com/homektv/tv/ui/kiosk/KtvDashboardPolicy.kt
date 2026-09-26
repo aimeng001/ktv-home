@@ -19,16 +19,22 @@ class KtvDashboardPolicy {
         private set
 
     fun onTileClicked(tile: KtvDashboardTile) {
-        lastActiveTile = tile
-        currentMode = when (tile) {
+        val selectedTile = KtvDashboardTile.restoreDashboardFocus(tile)
+        lastActiveTile = selectedTile
+        if (tile == KtvDashboardTile.RANKING || selectedTile == KtvDashboardTile.ORDERED_QUEUE) {
+            // Legacy rankings return home; the queue opens a drawer and is not a page route.
+            currentMode = KtvKioskViewMode.DASHBOARD
+            return
+        }
+        currentMode = when (selectedTile) {
             KtvDashboardTile.PINYIN -> KtvKioskViewMode.PINYIN_SEARCH
             KtvDashboardTile.SINGER -> KtvKioskViewMode.SINGER_CATALOG
             KtvDashboardTile.CATEGORY -> KtvKioskViewMode.CATEGORY_LIST
             KtvDashboardTile.LANGUAGE -> KtvKioskViewMode.LANGUAGE_LIST
-            KtvDashboardTile.RANKING -> KtvKioskViewMode.RANKING_LIST
+            KtvDashboardTile.RANKING -> KtvKioskViewMode.DASHBOARD
             KtvDashboardTile.FAVORITES -> KtvKioskViewMode.FAVORITES_LIST
             KtvDashboardTile.HISTORY -> KtvKioskViewMode.HISTORY_LIST
-            KtvDashboardTile.ORDERED_QUEUE -> KtvKioskViewMode.ORDERED_QUEUE_DRAWER
+            KtvDashboardTile.ORDERED_QUEUE -> KtvKioskViewMode.DASHBOARD
         }
     }
 

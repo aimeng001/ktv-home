@@ -37,8 +37,8 @@ class KtvDashboardResponsivePolicyTest {
             tilePaddingHorizontalDp = KtvDashboardResponsivePolicy.DEFAULT_TILE_PADDING_HORIZONTAL_DP,
         )
 
-        // 验证 8 个一级大厅磁贴标题在手机上均完整显示，无一截断
-        val tiles = KtvDashboardTile.values()
+        // 验证当前七个首页入口标题均完整显示，无一截断
+        val tiles = KtvDashboardTile.dashboardEntries
         for (tile in tiles) {
             val fits = KtvDashboardResponsivePolicy.canFitTitleWithoutTruncation(
                 title = tile.title,

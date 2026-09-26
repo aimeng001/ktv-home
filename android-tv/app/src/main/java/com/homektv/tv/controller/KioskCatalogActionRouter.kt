@@ -8,7 +8,6 @@ class KioskCatalogActionRouter(
 
     fun defaultSongs() {
         actions.setQuery("")
-        actions.loadRanking()
     }
 
     fun artists() = actions.loadArtists(gender = "", initial = "", restorePage = 0)

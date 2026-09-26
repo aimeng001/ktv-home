@@ -137,6 +137,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("/api/admin/scan/start", runtime)
         self.assertIn("/api/admin/diagnostics/memory", runtime)
 
+    def test_large_scan_gate_allows_measured_bootstrap_time(self) -> None:
+        large_scan = job_block(self.workflow, "large-scan-gate")
+        self.assertIn("-DscanBootstrapTimeoutSeconds=600", large_scan)
+
     def test_android_release_gate_pins_the_signer_certificate(self) -> None:
         android_tv = job_block(self.workflow, "android-tv")
 

@@ -1,15 +1,21 @@
 package com.homektv.tv.ui
 
-import android.app.AlertDialog
 import android.content.Intent
+import android.content.DialogInterface
+import android.view.ContextThemeWrapper
+import android.view.ViewGroup
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.widget.TextView
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
 import com.homektv.tv.BuildConfig
 import com.homektv.tv.net.ApkPackageInfo
 import com.homektv.tv.net.MediaApi
@@ -98,22 +104,19 @@ class AndroidUpdateManager(
     private fun showUpdateDialog(version: String, versionCode: Long, apk: ApkPackageInfo, scope: CoroutineScope) {
         if (!isActivityAlive()) return
         val size = if (apk.size > 0) " · %.1f MB".format(Locale.US, apk.size / 1024.0 / 1024.0) else ""
-        AlertDialog.Builder(activity)
+        showStyledUpdateDialog(updateDialogBuilder()
             .setTitle("发现新版本")
             .setMessage("当前版本 ${BuildConfig.VERSION_NAME}\n服务端版本 $version\n安装包 ${apk.abi}$size")
             .setNegativeButton("暂不更新", null)
-            .setPositiveButton("去下载") { _, _ -> downloadAndInstallUpdate(version, versionCode, apk, scope) }
-            .show()
+            .setPositiveButton("去下载") { _, _ -> downloadAndInstallUpdate(version, versionCode, apk, scope) })
     }
 
     private fun downloadAndInstallUpdate(version: String, versionCode: Long, apk: ApkPackageInfo, scope: CoroutineScope) {
         if (!isActivityAlive()) return
-        val progress = AlertDialog.Builder(activity)
+        val progress = showStyledUpdateDialog(updateDialogBuilder()
             .setTitle("正在下载 $version")
             .setMessage("安装包下载完成后将打开系统安装界面。")
-            .setCancelable(false)
-            .create()
-        progress.show()
+            .setCancelable(false))
         scope.launch {
             val destination = File(activity.cacheDir, "updates/home-ktv-${apk.abi}.apk")
             val downloaded = mediaApi.downloadApk(apk.url, destination, apk.size)
@@ -127,12 +130,11 @@ class AndroidUpdateManager(
             if (!downloaded) {
                 checkedReleaseVersion = null
                 promptedReleaseVersion = null
-                AlertDialog.Builder(activity)
+                showStyledUpdateDialog(updateDialogBuilder()
                     .setTitle("安装包下载失败")
                     .setMessage("请检查服务端连接后重试。")
                     .setNegativeButton("取消", null)
-                    .setPositiveButton("重试") { _, _ -> downloadAndInstallUpdate(version, versionCode, apk, scope) }
-                    .show()
+                    .setPositiveButton("重试") { _, _ -> downloadAndInstallUpdate(version, versionCode, apk, scope) })
                 return@launch
             }
             val verified = ApkArchiveVerifier.verifyApk(activity, destination, versionCode)
@@ -169,5 +171,50 @@ class AndroidUpdateManager(
         }
         runCatching { activity.startActivity(intent) }
             .onFailure { onToast("无法打开系统安装程序") }
+    }
+
+    private fun updateDialogBuilder(): AlertDialog.Builder =
+        AlertDialog.Builder(ContextThemeWrapper(activity, com.homektv.tv.R.style.Theme_HomeKtvTv_UpdateDialog))
+
+    private fun showStyledUpdateDialog(builder: AlertDialog.Builder): AlertDialog = builder.create().also { dialog ->
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(com.homektv.tv.R.drawable.update_dialog_background)
+            val metrics = activity.resources.displayMetrics
+            val widthFraction = if (metrics.widthPixels >= metrics.heightPixels) 0.39f else 0.90f
+            setLayout((metrics.widthPixels * widthFraction).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        dialog.findViewById<TextView>(androidx.appcompat.R.id.alertTitle)?.setTextColor(
+            ContextCompat.getColor(activity, com.homektv.tv.R.color.gold),
+        )
+        dialog.findViewById<TextView>(android.R.id.message)?.setTextColor(
+            ContextCompat.getColor(activity, com.homektv.tv.R.color.dim),
+        )
+        styleUpdateDialogActionButtons(dialog)
+    }
+
+    private fun styleUpdateDialogActionButtons(dialog: AlertDialog) {
+        val negative = dialog.getButton(DialogInterface.BUTTON_NEGATIVE) ?: return
+        val positive = dialog.getButton(DialogInterface.BUTTON_POSITIVE) ?: return
+        val negativeParams = negative.layoutParams as? LinearLayout.LayoutParams ?: return
+        val positiveParams = positive.layoutParams as? LinearLayout.LayoutParams ?: return
+        val gap = (activity.resources.displayMetrics.density * 8).toInt()
+        negativeParams.width = 0
+        negativeParams.weight = 1f
+        negativeParams.marginEnd = gap
+        positiveParams.width = 0
+        positiveParams.weight = 1f
+        positiveParams.marginStart = gap
+        negative.layoutParams = negativeParams
+        positive.layoutParams = positiveParams
+        listOf(negative, positive).forEach { button ->
+            button.minHeight = (activity.resources.displayMetrics.density * 48).toInt()
+            button.gravity = android.view.Gravity.CENTER
+            button.isAllCaps = false
+        }
+        negative.setBackgroundResource(com.homektv.tv.R.drawable.bg_update_button_muted)
+        negative.setTextColor(ContextCompat.getColor(activity, com.homektv.tv.R.color.dim))
+        positive.setBackgroundResource(com.homektv.tv.R.drawable.bg_update_button_gold)
+        positive.setTextColor(ContextCompat.getColor(activity, com.homektv.tv.R.color.gold))
     }
 }

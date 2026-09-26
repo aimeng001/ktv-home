@@ -51,11 +51,28 @@ internal class PlaybackLoadProjection(private val desiredState: DesiredPlaybackS
         accompanimentTrackIndex: Int?,
         audioTrackCount: Int,
         audioLayout: AudioLayout,
+        recovery: PlaybackReplacementRequest? = null,
     ): PlaybackLoadCommand? {
         val snapshot = desiredState.forQueue(queueId) ?: return null
+        val recoveryApplies = recovery?.takeIf {
+            it.forceTranscode && LiveTranscodeStreamUrl.isLiveTranscode(streamUrl)
+        }
+        val recoverySeekIsCurrent = recoveryApplies?.recoverySeekSequence == null ||
+            recoveryApplies.recoverySeekSequence == snapshot.seekSequence
+        val positionMs = if (recoveryApplies?.recoveryPositionMs != null && recoverySeekIsCurrent) {
+            maxOf(snapshot.positionMs, recoveryApplies.recoveryPositionMs.coerceAtLeast(0L))
+        } else snapshot.positionMs.coerceAtLeast(0L)
+        val stateUnchanged = recoveryApplies?.stateAtFailure == null ||
+            recoveryApplies.stateAtFailure.equals(snapshot.state, ignoreCase = true)
+        val state = if (stateUnchanged && recoveryApplies?.recoveryPlayWhenReady != null) {
+            if (recoveryApplies.recoveryPlayWhenReady) "playing" else "paused"
+        } else snapshot.state
+        val effectiveStreamUrl = if (LiveTranscodeStreamUrl.isLiveTranscode(streamUrl)) {
+            LiveTranscodeStreamUrl.withStart(streamUrl, positionMs)
+        } else streamUrl
         return PlaybackLoadCommand(
             fileId = fileId,
-            streamUrl = streamUrl,
+            streamUrl = effectiveStreamUrl,
             queueId = queueId,
             vocalMode = snapshot.vocalMode,
             accompanimentTrackIndex = accompanimentTrackIndex,
@@ -63,8 +80,8 @@ internal class PlaybackLoadProjection(private val desiredState: DesiredPlaybackS
             audioLayout = audioLayout,
             volume = snapshot.volume,
             muted = snapshot.muted,
-            state = snapshot.state,
-            positionMs = snapshot.positionMs.coerceAtLeast(0L),
+            state = state,
+            positionMs = positionMs,
             seekSequence = snapshot.seekSequence,
         )
     }

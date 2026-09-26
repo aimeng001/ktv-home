@@ -8,6 +8,5 @@ package com.homektv.tv.ui
 object LegacyQueuePolicy {
     fun shouldAllowMutations(canOpenKiosk: Boolean): Boolean = false
 
-    fun shouldOpenKioskDrawer(canOpenKiosk: Boolean, isKioskInitialized: Boolean): Boolean =
-        canOpenKiosk && isKioskInitialized
+    fun shouldOpenKioskDrawer(canOpenKiosk: Boolean): Boolean = canOpenKiosk
 }

@@ -60,16 +60,20 @@ data class ControllerUiState(
     /** Stable artist key/language/tag used to restore a detail screen. */
     val catalogValue: String = "",
     val queue: QueueSnapshot = QueueSnapshot(),
+    /** True until the first queue snapshot resolves and while an explicit refresh is in flight. */
+    val queueLoading: Boolean = true,
     val queueProjection: Map<Long, com.homektv.tv.ui.SongQueueState> = emptyMap(),
     /** Only in-flight writes live here; queuedSongIds is derived from queue. */
     val pendingActions: Set<ActionKey> = emptySet(),
     val favoriteIds: Set<Long> = emptySet(),
     val favorites: List<SongDto> = emptyList(),
+    val favoritesLoading: Boolean = false,
     val playlists: List<PlaylistSummary> = emptyList(),
     val playlistDetail: PlaylistDetail? = null,
     val playlistDetailLoading: Boolean = false,
     val playlistCoverBytes: ByteArray? = null,
     val history: List<RecentHistoryItem> = emptyList(),
+    val historyLoading: Boolean = false,
     val roomHost: RoomHostStatus = RoomHostStatus(),
     val loading: Boolean = false,
     val writing: Boolean = false,
@@ -107,6 +111,7 @@ object ControllerStateReducer {
         return state.copy(
             connection = ControllerConnection.ONLINE,
             queue = snapshot,
+            queueLoading = false,
             queueProjection = com.homektv.tv.ui.SongQueueProjection.from(
                 snapshot,
                 state.currentUser?.id,
@@ -180,8 +185,41 @@ object ControllerStateReducer {
             error = nextError,
             domainErrors = nextDomainErrors,
             message = if (state.registration == RegistrationStatus.RETRY_REQUIRED) state.message else null,
+            favoritesLoading = if (domain == UiDomain.FAVORITES) false else state.favoritesLoading,
+            historyLoading = if (domain == UiDomain.HISTORY) false else state.historyLoading,
+            queueLoading = if (domain == UiDomain.QUEUE) false else state.queueLoading,
         )
     }
+
+    fun withQueueLoadStarted(state: ControllerUiState): ControllerUiState =
+        withSuccessfulRead(state, UiDomain.QUEUE).copy(queueLoading = true)
+
+    fun withPersonalLoadStarted(state: ControllerUiState, domain: UiDomain): ControllerUiState = when (domain) {
+        UiDomain.FAVORITES -> withSuccessfulRead(state, domain).copy(
+            favoritesLoading = true,
+            historyLoading = false,
+        )
+        UiDomain.HISTORY -> withSuccessfulRead(state, domain).copy(
+            favoritesLoading = false,
+            historyLoading = true,
+        )
+        else -> state
+    }
+
+    fun withPersonalLoadFinished(state: ControllerUiState, domain: UiDomain): ControllerUiState = when (domain) {
+        UiDomain.FAVORITES -> state.copy(favoritesLoading = false)
+        UiDomain.HISTORY -> state.copy(historyLoading = false)
+        else -> state
+    }
+
+    fun withPersonalLoadCancelled(state: ControllerUiState): ControllerUiState =
+        state.copy(favoritesLoading = false, historyLoading = false)
+
+    fun withCatalogRootSuccess(state: ControllerUiState): ControllerUiState =
+        withSuccessfulRead(state, UiDomain.CATALOG).copy(
+            catalogLoading = false,
+            catalogLoadingMore = false,
+        )
 
     fun withRoomHost(state: ControllerUiState, status: RoomHostStatus): ControllerUiState {
         if (status.revision < state.roomHost.revision) return state
@@ -201,6 +239,9 @@ object ControllerStateReducer {
         state.copy(
             catalogLoadingMore = if (domain == UiDomain.CATALOG) false else state.catalogLoadingMore,
             catalogLoading = if (domain == UiDomain.CATALOG) false else state.catalogLoading,
+            favoritesLoading = if (domain == UiDomain.FAVORITES) false else state.favoritesLoading,
+            historyLoading = if (domain == UiDomain.HISTORY) false else state.historyLoading,
+            queueLoading = if (domain == UiDomain.QUEUE) false else state.queueLoading,
             error = error,
             domainErrors = state.domainErrors + (domain to error),
             message = userMessage(error),

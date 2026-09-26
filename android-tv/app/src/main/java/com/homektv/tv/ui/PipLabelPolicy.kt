@@ -8,6 +8,7 @@ object PipLabelPolicy {
         return when {
             !hasPlaying || state == "idle" -> "待机中"
             state == "paused" -> "已暂停"
+            state == "buffering" -> "缓冲中"
             else -> "正在播放"
         }
     }

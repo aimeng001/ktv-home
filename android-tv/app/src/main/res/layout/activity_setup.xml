@@ -1,24 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/setupScroll"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/setup_background">
 
-    <LinearLayout
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/setupPage"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
         android:paddingStart="72dp"
         android:paddingTop="38dp"
         android:paddingEnd="72dp"
         android:paddingBottom="28dp">
 
         <LinearLayout
-            android:layout_width="match_parent"
+            android:id="@+id/setupHeaderRow"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
             <ImageView
                 android:layout_width="58dp"
                 android:layout_height="44dp"
@@ -27,32 +32,37 @@
                 android:scaleType="fitCenter"
                 android:src="@drawable/home_ktv_logo" />
             <LinearLayout
+                android:id="@+id/setupIntroPanel"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:orientation="vertical">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Home KTV" android:textColor="@color/text" android:textSize="20sp" android:textStyle="bold" />
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="SET UP YOUR ROOM" android:textColor="@color/dim2" android:textSize="10sp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/brand_home_ktv" android:textColor="@color/text" android:textSize="20sp" android:textStyle="bold" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="@string/setup_tagline" android:textColor="@color/dim2" android:textSize="11sp" />
             </LinearLayout>
             <TextView
                 android:id="@+id/txtScanStatus"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="正在检查上次连接"
+                android:text="@string/setup_checking_previous"
                 android:textColor="@color/dim"
                 android:textSize="15sp" />
         </LinearLayout>
 
         <LinearLayout
             android:id="@+id/setupContent"
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="@dimen/ktv_spacing_xl"
             android:baselineAligned="false"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            app:layout_constraintTop_toBottomOf="@id/setupHeaderRow"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
 
             <LinearLayout
+                android:id="@+id/setupHeroPanel"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="0.78"
@@ -60,18 +70,19 @@
                 android:orientation="vertical"
                 android:paddingStart="8dp"
                 android:paddingEnd="34dp">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/karaoke_label" android:paddingHorizontal="12dp" android:paddingVertical="6dp" android:text="连接点歌服务" android:textColor="@android:color/white" android:textSize="13sp" android:textStyle="bold" />
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="回到熟悉的\n客厅 KTV" android:textColor="@color/text" android:textSize="34sp" android:textStyle="bold" />
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:maxWidth="360dp" android:text="优先连接最近使用的服务端。也可以扫描附近设备，或手动输入新的地址。" android:textColor="@color/dim" android:textSize="15sp" android:lineSpacingExtra="3dp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/gold_label" android:paddingHorizontal="12dp" android:paddingVertical="6dp" android:text="@string/setup_title" android:textColor="@color/bg" android:textSize="13sp" android:textStyle="bold" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="@string/setup_hero_title" android:textColor="@color/text" android:textSize="34sp" android:textStyle="bold" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:maxWidth="360dp" android:text="@string/setup_hero_description" android:textColor="@color/dim" android:textSize="15sp" android:lineSpacingExtra="3dp" />
                 <LinearLayout android:layout_width="wrap_content" android:layout_height="38dp" android:layout_marginTop="24dp" android:gravity="bottom" android:orientation="horizontal">
-                    <View android:id="@+id/rhythmBar1" android:layout_width="10dp" android:layout_height="10dp" android:layout_marginEnd="5dp" android:background="@color/tag_mv" />
-                    <View android:id="@+id/rhythmBar2" android:layout_width="10dp" android:layout_height="19dp" android:layout_marginEnd="5dp" android:background="@color/tag_mv" />
-                    <View android:id="@+id/rhythmBar3" android:layout_width="10dp" android:layout_height="28dp" android:layout_marginEnd="5dp" android:background="@color/tag_mv" />
-                    <View android:id="@+id/rhythmBar4" android:layout_width="10dp" android:layout_height="38dp" android:background="@color/tag_mv" />
+                    <View android:id="@+id/rhythmBar1" android:layout_width="10dp" android:layout_height="10dp" android:layout_marginEnd="5dp" android:background="@color/gold" />
+                    <View android:id="@+id/rhythmBar2" android:layout_width="10dp" android:layout_height="19dp" android:layout_marginEnd="5dp" android:background="@color/gold" />
+                    <View android:id="@+id/rhythmBar3" android:layout_width="10dp" android:layout_height="28dp" android:layout_marginEnd="5dp" android:background="@color/gold" />
+                    <View android:id="@+id/rhythmBar4" android:layout_width="10dp" android:layout_height="38dp" android:background="@color/gold" />
                 </LinearLayout>
             </LinearLayout>
 
             <ScrollView
+                android:id="@+id/setupFormScroll"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="1.22"
@@ -80,42 +91,88 @@
                 android:paddingBottom="18dp"
                 android:scrollbars="none">
                 <LinearLayout
+                    android:id="@+id/setupPagesContainer"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:background="@drawable/setup_card"
-                    android:orientation="vertical"
-                    android:padding="20dp">
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="上次连接" android:textColor="@color/karaoke_pink" android:textSize="11sp" android:textStyle="bold" />
-                    <TextView android:id="@+id/setupHistoryHeading" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="继续使用最近的设备" android:textColor="@color/text" android:textSize="18sp" android:textStyle="bold" />
-                    <LinearLayout android:id="@+id/historyContainer" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
-                    <TextView android:id="@+id/txtHistoryEmpty" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="暂无历史设备" android:textColor="@color/dim" android:textSize="14sp" />
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:gravity="center_vertical" android:orientation="horizontal">
-                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="局域网设备" android:textColor="@color/text" android:textSize="14sp" android:textStyle="bold" />
-                        <Button android:id="@+id/btnRefresh" android:layout_width="126dp" android:layout_height="42dp" android:background="@drawable/btn_ghost" android:backgroundTint="@null" android:focusable="true" android:text="重新扫描" android:textColor="@color/tag_mv" android:textSize="13sp" />
-                    </LinearLayout>
-                    <ProgressBar android:id="@+id/progressScan" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:indeterminate="true" android:visibility="gone" />
-                    <TextView android:id="@+id/txtLanEmpty" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="尚未扫描附近设备" android:textColor="@color/dim" android:textSize="14sp" />
-                    <LinearLayout android:id="@+id/lanContainer" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
-                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="或输入服务器地址，例如 192.168.1.88:8080" android:textColor="@color/dim" android:textSize="13sp" />
-                    <EditText android:id="@+id/inputHost" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="8dp" android:background="@drawable/bg_input" android:hint="@string/setup_host_example" android:imeOptions="actionDone" android:inputType="textUri" android:paddingHorizontal="14dp" android:singleLine="true" android:textColor="@color/text" android:textColorHint="@color/dim2" android:textSize="17sp" />
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="点歌昵称（可选）" android:textColor="@color/dim" android:textSize="13sp" />
-                    <EditText android:id="@+id/inputNickname" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="6dp" android:background="@drawable/bg_input" android:hint="例如：小明" android:imeOptions="actionNext" android:inputType="textPersonName" android:maxLength="32" android:paddingHorizontal="14dp" android:singleLine="true" android:textColor="@color/text" android:textColorHint="@color/dim2" android:textSize="17sp" />
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="电视连接密钥（可选）" android:textColor="@color/dim" android:textSize="13sp" />
-                    <EditText android:id="@+id/inputCredential" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="6dp" android:background="@drawable/bg_input" android:hint="服务器启用 KTV_PLAYER_CREDENTIAL 时填写" android:inputType="textPassword|textNoSuggestions" android:paddingHorizontal="14dp" android:singleLine="true" android:textColor="@color/text" android:textColorHint="@color/dim2" android:textSize="17sp" />
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="设备使用模式" android:textColor="@color/dim" android:textSize="13sp" />
-                    <RadioGroup
-                        android:id="@+id/modeGroup"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:id="@+id/setupDiscoveryPage"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:orientation="horizontal">
-                        <RadioButton android:id="@+id/modePlayer" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="播放器" android:textColor="@color/text" />
-                        <RadioButton android:id="@+id/modeController" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="控制器" android:textColor="@color/text" />
-                        <RadioButton android:id="@+id/modeCombined" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="组合" android:textColor="@color/text" />
-                    </RadioGroup>
-                    <Button android:id="@+id/btnConnect" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="10dp" android:background="@drawable/btn_gold" android:backgroundTint="@null" android:text="@string/setup_connect" android:textColor="@color/bg" android:textSize="16sp" android:textStyle="bold" />
+                        android:background="@drawable/setup_card"
+                        android:orientation="vertical"
+                        android:padding="20dp"
+                        android:visibility="visible">
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/setup_history_title" android:textColor="@color/gold" android:textSize="11sp" android:textStyle="bold" />
+                        <TextView android:id="@+id/setupHistoryHeading" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="@string/setup_recent_device_heading" android:textColor="@color/text" android:textSize="18sp" android:textStyle="bold" />
+                        <LinearLayout android:id="@+id/historyContainer" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+                        <TextView android:id="@+id/txtHistoryEmpty" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/setup_history_empty" android:textColor="@color/dim" android:textSize="14sp" />
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:gravity="center_vertical" android:orientation="horizontal">
+                            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/setup_lan_title" android:textColor="@color/text" android:textSize="14sp" android:textStyle="bold" />
+                            <Button android:id="@+id/btnRefresh" android:layout_width="126dp" android:layout_height="42dp" android:background="@drawable/btn_ghost" android:backgroundTint="@null" android:focusable="true" android:text="@string/setup_refresh" android:textColor="@color/gold" android:textSize="13sp" />
+                        </LinearLayout>
+                        <ProgressBar android:id="@+id/progressScan" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:indeterminate="true" android:visibility="gone" />
+                        <TextView android:id="@+id/txtLanEmpty" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="@string/setup_lan_idle" android:textColor="@color/dim" android:textSize="14sp" />
+                        <LinearLayout android:id="@+id/lanContainer" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+                        <Button
+                            android:id="@+id/btnOpenManualSetup"
+                            android:layout_width="match_parent"
+                            android:layout_height="48dp"
+                            android:layout_marginTop="18dp"
+                            android:background="@drawable/btn_ghost"
+                            android:backgroundTint="@null"
+                            android:text="@string/setup_manual_entry"
+                            android:textColor="@color/gold"
+                            android:textSize="15sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/setupManualPage"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/setup_card"
+                        android:orientation="vertical"
+                        android:padding="20dp"
+                        android:visibility="gone">
+                        <Button
+                            android:id="@+id/btnSetupBackToDiscovery"
+                            android:layout_width="wrap_content"
+                            android:layout_height="42dp"
+                            android:background="@drawable/btn_ghost"
+                            android:backgroundTint="@null"
+                            android:text="@string/setup_back_to_discovery"
+                            android:textColor="@color/gold"
+                            android:textSize="13sp" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp"
+                            android:text="@string/setup_manual_title"
+                            android:textColor="@color/text"
+                            android:textSize="20sp"
+                            android:textStyle="bold" />
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/setup_server_address_prompt" android:textColor="@color/dim" android:textSize="13sp" />
+                        <EditText android:id="@+id/inputHost" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="8dp" android:autofillHints="url" android:background="@drawable/bg_input" android:hint="@string/setup_host_example" android:imeOptions="actionDone" android:inputType="textUri" android:paddingHorizontal="14dp" android:singleLine="true" android:textColor="@color/text" android:textColorHint="@color/dim2" android:textSize="17sp" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="@string/setup_nickname_label" android:textColor="@color/dim" android:textSize="13sp" />
+                        <EditText android:id="@+id/inputNickname" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="6dp" android:autofillHints="personName" android:background="@drawable/bg_input" android:hint="@string/setup_nickname_example" android:imeOptions="actionNext" android:inputType="textPersonName" android:maxLength="32" android:paddingHorizontal="14dp" android:singleLine="true" android:textColor="@color/text" android:textColorHint="@color/dim2" android:textSize="17sp" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="@string/setup_credential_label" android:textColor="@color/dim" android:textSize="13sp" />
+                        <EditText android:id="@+id/inputCredential" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="6dp" android:autofillHints="password" android:background="@drawable/bg_input" android:hint="@string/setup_credential_hint" android:inputType="textPassword|textNoSuggestions" android:paddingHorizontal="14dp" android:singleLine="true" android:textColor="@color/text" android:textColorHint="@color/dim2" android:textSize="17sp" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="@string/setup_device_mode_label" android:textColor="@color/dim" android:textSize="13sp" />
+                        <RadioGroup
+                            android:id="@+id/modeGroup"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:orientation="horizontal">
+                            <RadioButton android:id="@+id/modePlayer" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/setup_mode_player" android:textColor="@color/text" />
+                            <RadioButton android:id="@+id/modeController" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/setup_mode_controller" android:textColor="@color/text" />
+                            <RadioButton android:id="@+id/modeCombined" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/setup_mode_combined" android:textColor="@color/text" />
+                        </RadioGroup>
+                        <Button android:id="@+id/btnConnect" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="10dp" android:background="@drawable/btn_gold" android:backgroundTint="@null" android:text="@string/setup_connect" android:textColor="@color/bg" android:textSize="16sp" android:textStyle="bold" />
+                    </LinearLayout>
                 </LinearLayout>
             </ScrollView>
         </LinearLayout>
-    </LinearLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 </FrameLayout>

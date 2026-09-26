@@ -17,7 +17,7 @@ class KtvKeyboardInputSession(
     val state: KtvKeyboardState = KtvKeyboardState(),
     val multiTapPolicy: KtvKeyboardMultiTapPolicy = KtvKeyboardMultiTapPolicy(),
 ) {
-    var mode: KeyboardLayoutMode = KeyboardLayoutMode.T9
+    var mode: KeyboardLayoutMode = KeyboardLayoutMode.QWERTY
         private set
 
     val currentKeyword: String get() = state.currentKeyword

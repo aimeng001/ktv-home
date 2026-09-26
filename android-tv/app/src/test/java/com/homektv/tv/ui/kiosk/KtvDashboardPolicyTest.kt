@@ -69,4 +69,42 @@ class KtvDashboardPolicyTest {
         assertEquals(KtvKioskViewMode.DASHBOARD, policy.currentMode)
         assertEquals(KtvDashboardTile.ORDERED_QUEUE, policy.lastActiveTile)
     }
+
+    @Test
+    fun legacyRankingTileFallsBackToVisibleSearchEntry() {
+        val policy = KtvDashboardPolicy()
+
+        policy.onTileClicked(KtvDashboardTile.RANKING)
+
+        assertEquals(KtvKioskViewMode.DASHBOARD, policy.currentMode)
+        assertEquals(KtvDashboardTile.PINYIN, policy.lastActiveTile)
+        assertEquals("搜索点歌", KtvDashboardTile.PINYIN.title)
+    }
+
+    @Test
+    fun queueTileOpensDrawerWithoutCreatingAnotherPageRoute() {
+        val policy = KtvDashboardPolicy()
+
+        policy.onTileClicked(KtvDashboardTile.ORDERED_QUEUE)
+
+        assertEquals(KtvKioskViewMode.DASHBOARD, policy.currentMode)
+        assertEquals(KtvDashboardTile.ORDERED_QUEUE, policy.lastActiveTile)
+        assertFalse(policy.canHandleBack())
+    }
+
+    @Test
+    fun visibleHomeEntriesExcludeLegacyRanking() {
+        assertEquals(
+            listOf(
+                KtvDashboardTile.PINYIN,
+                KtvDashboardTile.SINGER,
+                KtvDashboardTile.CATEGORY,
+                KtvDashboardTile.LANGUAGE,
+                KtvDashboardTile.FAVORITES,
+                KtvDashboardTile.HISTORY,
+                KtvDashboardTile.ORDERED_QUEUE,
+            ),
+            KtvDashboardTile.dashboardEntries,
+        )
+    }
 }

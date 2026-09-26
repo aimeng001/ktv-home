@@ -72,7 +72,7 @@ class PlaybackVariantServiceTest {
     }
 
     @Test
-    void forceTranscodeResolvesDirectlyToNativeStreamWithoutDiskCaching() throws Exception {
+    void forceTranscodeResolvesToLivePipeWithoutDiskCaching() throws Exception {
         Path sourceRoot = Files.createTempDirectory("ktv-source-");
         Path dataRoot = Files.createTempDirectory("ktv-data-");
         Path sourcePath = Files.createFile(sourceRoot.resolve("song.rmvb"));
@@ -89,9 +89,11 @@ class PlaybackVariantServiceTest {
 
         PlaybackDescriptor descriptor = service.resolve(9L, true);
 
-        assertThat(descriptor.kind()).isEqualTo("NATIVE");
+        assertThat(descriptor.kind()).isEqualTo("LIVE_TRANSCODE");
         assertThat(descriptor.status()).isEqualTo("READY");
-        assertThat(descriptor.streamUrl()).isEqualTo("/api/stream/9");
+        assertThat(descriptor.sourceFileId()).isEqualTo(9L);
+        assertThat(descriptor.variantId()).isNull();
+        assertThat(descriptor.streamUrl()).isEqualTo("/api/stream/9?transcode=true");
         assertThat(Files.size(sourcePath)).isZero();
         assertThat(Files.list(dataRoot).toList()).isEmpty();
         verifyNoInteractions(variants);

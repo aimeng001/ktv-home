@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="#141D252B" />
-    <corners android:radius="3dp" />
-    <stroke android:width="2dp" android:color="@color/tag_mv" />
+    <solid android:color="@color/ktv_surface_tint" />
+    <corners android:radius="@dimen/ktv_radius_control" />
+    <stroke android:width="@dimen/ktv_border_width" android:color="@color/ktv_border" />
 </shape>

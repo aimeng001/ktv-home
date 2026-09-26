@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent" />
+            <corners android:radius="10dp" />
+            <stroke android:width="12dp" android:color="@color/ktv_dashboard_gold_glow" />
+        </shape>
+    </item>
+    <item android:inset="4dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="@color/ktv_dashboard_card_focused"
+                android:endColor="@color/ktv_dashboard_card_focused_bottom" />
+            <corners android:radius="@dimen/ktv_dashboard_card_radius" />
+            <stroke android:width="@dimen/ktv_dashboard_focus_border" android:color="@color/ktv_dashboard_gold" />
+        </shape>
+    </item>
+</layer-list>

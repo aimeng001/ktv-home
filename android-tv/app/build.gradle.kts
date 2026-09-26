@@ -11,7 +11,19 @@ val tvVersionName = providers.environmentVariable("KTV_TV_VERSION_NAME")
 val tvVersionCode = providers.environmentVariable("KTV_TV_VERSION_CODE")
     .map { value -> value.toIntOrNull() ?: throw GradleException("KTV_TV_VERSION_CODE must be an integer") }
     .orElse(1)
-
+val emulatorTestAbis = providers.gradleProperty("ktv.android.emulatorAbis")
+    .orNull
+    ?.split(',')
+    ?.map { it.trim() }
+    ?.filter { it.isNotEmpty() }
+    ?.distinct()
+    .orEmpty()
+if (emulatorTestAbis.any { it !in setOf("x86", "x86_64") }) {
+    throw GradleException("ktv.android.emulatorAbis only accepts x86 or x86_64")
+}
+if (emulatorTestAbis.isNotEmpty() && gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }) {
+    throw GradleException("ktv.android.emulatorAbis is for Debug emulator tests only; do not build Release with it")
+}
 if (!ffmpegAar.isFile) {
     throw GradleException(
         "缺少 Media3 FFmpeg 扩展：${ffmpegAar.path}。请按 app/libs/README.md 准备该文件。"
@@ -63,7 +75,7 @@ android {
         abi {
             isEnable = true
             reset()
-            include("armeabi-v7a", "arm64-v8a")
+            include("armeabi-v7a", "arm64-v8a", *emulatorTestAbis.toTypedArray())
             isUniversalApk = false
         }
     }
@@ -110,13 +122,13 @@ tasks.matching { task ->
 dependencies {
     // AndroidX 基础
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.appcompat:appcompat:1.8.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.constraintlayout:constraintlayout:2.2.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.2.2")
 
     // Leanback（TV 启动器兼容，详设§12.2）
-    implementation("androidx.leanback:leanback:1.0.0")
+    implementation("androidx.leanback:leanback:1.2.0")
 
     // Media3 / ExoPlayer（P1.28 播放引擎）
     implementation("androidx.media3:media3-exoplayer:$media3")
@@ -134,8 +146,8 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test:core-ktx:1.6.1")
-    androidTestImplementation("androidx.test:runner:1.6.2")
-    androidTestImplementation("androidx.test:rules:1.6.1")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:core-ktx:1.7.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test:rules:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }

@@ -28,6 +28,26 @@ public sealed class PlaybackCoordinatorTests
         Assert.Equal(new[] { 1 }, output.AudioTrackIndices);
         Assert.Equal("http://server/api/playback/stream/88", output.LoadedStreamUrls.Single());
     }
+
+    [Fact]
+    public async Task Live_transcode_uses_source_identity_and_pipe_url_without_variant_id()
+    {
+        var output = new RecordingPlaybackOutput();
+        var source = FileSourceFor(AudioLayout.DUAL_TRACK, fileId: 31);
+        var api = new ResolvingServerApi(
+            source,
+            new PlaybackDescriptor(
+                "LIVE_TRANSCODE", "READY", 31, null,
+                "http://server/api/stream/31?transcode=true&start=65.250", 2, 1,
+                new AudioLayoutDto(AudioLayout.DUAL_TRACK, 0, 1), null, null));
+        var coordinator = new PlaybackCoordinator(api, output, TimeSpan.Zero);
+
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("accompaniment"));
+
+        Assert.Equal(new long[] { 31 }, output.LoadedFileIds);
+        Assert.Equal("http://server/api/stream/31?transcode=true&start=65.250", output.LoadedStreamUrls.Single());
+        Assert.Equal(new[] { 1 }, output.AudioTrackIndices);
+    }
     [Fact]
     public async Task Preparing_playback_waits_until_ready_beyond_two_minutes()
     {

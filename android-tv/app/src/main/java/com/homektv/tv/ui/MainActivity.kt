@@ -40,12 +40,17 @@ import com.homektv.tv.session.DeviceModeMigrationPolicy
 import com.homektv.tv.session.DeviceSessionChangePolicy
 import com.homektv.tv.session.DeviceSessionFingerprint
 import com.homektv.tv.ui.controller.ControllerFragment
+import com.homektv.tv.ui.kiosk.KtvDashboardBackground
 import com.homektv.tv.R
 import com.homektv.tv.databinding.ActivityMainBinding
+import com.homektv.tv.databinding.ViewAudioOverlayBinding
+import com.homektv.tv.databinding.ViewRemoteMenuBinding
+import com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
 import com.homektv.tv.net.AppConfig
 import com.homektv.tv.net.AudioLayout
 import com.homektv.tv.net.KtvSocket
 import com.homektv.tv.net.MediaApi
+import com.homektv.tv.net.MicrophoneMonitorStartupPolicy
 import com.homektv.tv.net.ApkPackageInfo
 import com.homektv.tv.net.PlaybackErrorContext
 import com.homektv.tv.net.QueueSnapshot
@@ -65,6 +70,7 @@ import com.homektv.tv.player.PlaybackLoadGate
 import com.homektv.tv.player.PlaybackLoadTicket
 import com.homektv.tv.player.DesiredPlaybackState
 import com.homektv.tv.player.PlaybackLoadProjection
+import com.homektv.tv.player.LiveTranscodeStreamUrl
 import com.homektv.tv.player.PlaybackSeekGate
 import com.homektv.tv.player.supportsVocalSwitch
 import kotlinx.coroutines.Dispatchers
@@ -91,6 +97,8 @@ import java.io.File
 class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     private lateinit var binding: ActivityMainBinding
+    private var audioOverlayBinding: ViewAudioOverlayBinding? = null
+    private var remoteMenuBinding: ViewRemoteMenuBinding? = null
     private lateinit var config: AppConfig
     private lateinit var mediaApi: MediaApi
     private var socket: KtvSocket? = null
@@ -110,7 +118,12 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         val recordGranted = grants[Manifest.permission.RECORD_AUDIO] == true ||
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         if (recordGranted) startMicrophoneMonitor()
-        else onToast("未授予麦克风权限")
+        else {
+            config.microphoneMonitorEnabled = false
+            microphoneActive = false
+            updateMicrophoneButton()
+            onToast("未授予麦克风权限")
+        }
     }
 
     /** 当前请求中的 queueId，用于判断快照是否切了歌；播放器回调使用其已加载身份。 */
@@ -137,7 +150,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             clock.postDelayed(this, 30_000L)
         }
     }
-    private val menuHide = Runnable { binding.remoteMenu.visibility = View.GONE }
+    private val menuHide = Runnable { remoteMenuBinding?.root?.visibility = View.GONE }
     private val progressHide = Runnable { hidePlaybackProgress() }
     private var recommendations: List<com.homektv.tv.net.SongDto> = emptyList()
     private var recommendationOffset = 0
@@ -191,6 +204,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     private val modeCapabilities by lazy { DeviceModeCapabilities.forMode(config.effectiveMode()) }
     private lateinit var kioskController: KtvKioskOverlayController
+    private var kioskOverlayBinding: ViewKtvKioskOverlayBinding? = null
+    private var kioskWindowInsets = intArrayOf(0, 0, 0, 0)
+    private var audioMiniQrVisibility: Int? = null
+    private var audioMiniQrLabelVisibility: Int? = null
+    private var cachedKioskQrBitmap: android.graphics.Bitmap? = null
     private val kioskCoordinator = KioskModeCoordinator(
         idleTimeoutMs = KioskModeCoordinator.DEFAULT_IDLE_TIMEOUT_MS,
         scheduler = HandlerIdleTimerScheduler(),
@@ -203,6 +221,38 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         )[ControllerViewModel::class.java]
     }
     private lateinit var playbackCoordinator: PlaybackCoordinator
+
+    private fun ensureKioskController(): KtvKioskOverlayController {
+        if (::kioskController.isInitialized) return kioskController
+        check(modeCapabilities.canOpenKiosk) { "Current device mode cannot open the TV kiosk UI" }
+
+        val overlayBinding = kioskOverlayBinding ?: ViewKtvKioskOverlayBinding
+            .bind(binding.kioskOverlayStub.inflate())
+            .also { kioskOverlayBinding = it }
+        overlayBinding.kioskRootOverlay.setPadding(
+            kioskWindowInsets[0], kioskWindowInsets[1], kioskWindowInsets[2], kioskWindowInsets[3],
+        )
+        kioskController = KtvKioskOverlayController(
+            activity = this,
+            binding = binding,
+            kioskOverlayBinding = overlayBinding,
+            coordinator = kioskCoordinator,
+            focusController = focusController,
+            effectPlayer = effectPlayer,
+            controllerActions = kioskViewModel,
+            catalogActions = kioskViewModel,
+            personalActions = kioskViewModel,
+            initialExternalDisplayActive = externalDisplayActive,
+            onTogglePlayback = { togglePlayback() },
+            onNext = { sendControl("next") },
+            onRestart = { sendControl("restart") },
+            onToggleVocal = { toggleVocal() },
+        )
+        cachedQueueSnapshot?.let(kioskController::updateSnapshot)
+        cachedKioskQrBitmap?.let(kioskController::setCachedQrBitmap)
+        artistAvatarUrl?.let { artistAvatars[it] }?.let(overlayBinding.kioskBottomBar::setArtistAvatar)
+        return kioskController
+    }
 
     private var sessionFingerprint: DeviceSessionFingerprint? = null
     private val backExitGate = com.homektv.tv.navigation.BackExitGate()
@@ -218,6 +268,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = AppConfig(this)
+        applyOrientationForMode(config.effectiveMode())
         sessionFingerprint = DeviceSessionFingerprint(
             serverHost = config.serverHost,
             mode = config.effectiveMode(),
@@ -238,6 +289,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        KtvDashboardBackground.applyTo(binding.standbyPanel)
+        KtvDashboardBackground.applyTo(binding.queueOverlay)
 
         // 沉浸式与系统导航条防护：全屏 MV 画面保持无黑边满屏，仅浮层面板避让手势条与挖孔
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -246,10 +299,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 androidx.core.view.WindowInsetsCompat.Type.systemBars() or
                 androidx.core.view.WindowInsetsCompat.Type.displayCutout()
             )
-            binding.kioskOverlay.kioskRootOverlay.setPadding(
-                systemBars.left, systemBars.top, systemBars.right, systemBars.bottom
+            kioskWindowInsets = intArrayOf(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            kioskOverlayBinding?.kioskRootOverlay?.setPadding(
+                systemBars.left, systemBars.top, systemBars.right, systemBars.bottom,
             )
-            binding.remoteMenu.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            remoteMenuBinding?.root?.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             binding.queueOverlay.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
@@ -341,14 +395,22 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             },
             onFinished = { queueId -> socket?.sendFinished(queueId) },
             onError = { _, context -> onPlayError(context) },
-            onPlaybackResolutionRequired = { queueId, _ ->
-                val snapshot = desiredPlaybackState.forQueue(queueId)
+            onPlaybackResolutionRequired = { recovery ->
+                val snapshot = desiredPlaybackState.forQueue(recovery.queueId)
                 val songId = snapshot?.playing?.song?.id
-                if (songId != null) {
-                    val loadTicket = beginPlaybackLoad(queueId)
+                if (songId != null && recovery.fileId != null) {
+                    val loadTicket = beginPlaybackLoad(recovery.queueId)
                     activePlaybackLoadTicket = loadTicket
                     playbackReplacementJob = playbackCoordinator.replace(
-                        PlaybackReplacementRequest(queueId = queueId, songId = songId, forceTranscode = true),
+                        PlaybackReplacementRequest(
+                            queueId = recovery.queueId,
+                            songId = songId,
+                            forceTranscode = true,
+                            recoveryPositionMs = recovery.positionMs,
+                            recoverySeekSequence = snapshot.seekSequence,
+                            recoveryPlayWhenReady = recovery.playWhenReady,
+                            stateAtFailure = snapshot.state,
+                        ),
                     ).job
                 }
             },
@@ -402,55 +464,51 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
             )
         }
-        if (modeCapabilities.canOpenKiosk) {
-            kioskController = KtvKioskOverlayController(
-                activity = this,
-                binding = binding,
-                coordinator = kioskCoordinator,
-                focusController = focusController,
-                effectPlayer = effectPlayer,
-                controllerActions = kioskViewModel,
-                catalogActions = kioskViewModel,
-                personalActions = kioskViewModel,
-                initialExternalDisplayActive = externalDisplayActive,
-                onTogglePlayback = { togglePlayback() },
-                onNext = { sendControl("next") },
-                onRestart = { sendControl("restart") },
-                onToggleVocal = { toggleVocal() },
-            )
-            if (KioskLifecyclePolicy.shouldAutoLaunchKioskOnStart(config.effectiveMode(), modeCapabilities.canOpenKiosk)) {
-                binding.root.post {
-                    if (::kioskController.isInitialized) {
-                        binding.standbyPanel.visibility = View.GONE
-                        kioskController.toggleKiosk(true)
-                    }
+        if (KioskLifecyclePolicy.shouldAutoLaunchKioskOnStart(config.effectiveMode(), modeCapabilities.canOpenKiosk)) {
+            binding.root.post {
+                if (!isFinishing && !isDestroyed) {
+                    binding.standbyPanel.visibility = View.GONE
+                    ensureKioskController().toggleKiosk(true)
                 }
             }
         }
 
-        setupRemoteMenu()
+        setupPersistentOverlayActions()
         if (audioPreview) {
             renderAudioPreview()
         } else {
             socket = KtvSocket(config, this).also { it.connect() }
-            if (config.microphoneMonitorEnabled) ensureMicrophonePermissionsAndStart()
+            restoreMicrophoneMonitorIfPermitted()
+        }
+    }
+
+    private fun applyOrientationForMode(mode: DeviceMode) {
+        val isTelevision = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+            (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+            android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+        val hasTouchscreen = packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+        requestedOrientation = when {
+            isTelevision || !hasTouchscreen -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            mode == DeviceMode.CONTROLLER && resources.configuration.smallestScreenWidthDp < 600 ->
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 
     private fun renderAudioPreview() {
         showPlayer(audioMode = true)
+        val audioUi = requireNotNull(audioOverlayBinding)
         updateArtistAvatar(null)
-        binding.imgAudioCover.setImageDrawable(null)
-        binding.txtAudioFallback.text = "晴天"
-        binding.txtAudioTitle.text = "晴天"
-        binding.txtAudioArtist.text = "周杰伦"
-        binding.txtAudioNext.text = "接下来  海阔天空 · Beyond"
-        binding.txtAudioLyricCurrent.setLine(LyricLine(0L, "童年的荡秋千 随记忆一直晃到现在"), 10_000L)
-        binding.txtAudioLyricCurrent.updatePlayback(4_200L, false)
-        binding.txtAudioLyricNext.text = "吹着前奏望着天空"
-        binding.audioProgress.progress = 420
-        binding.txtAudioElapsed.text = "01:42"
-        binding.txtAudioDuration.text = "04:03"
+        audioUi.imgAudioCover.setImageDrawable(null)
+        audioUi.txtAudioFallback.text = getString(R.string.app_name)
+        audioUi.txtAudioTitle.text = getString(R.string.audio_preview_empty_title)
+        audioUi.txtAudioArtist.text = ""
+        audioUi.txtAudioNext.text = ""
+        audioUi.txtAudioLyricCurrent.setLine(null, 0L)
+        audioUi.txtAudioLyricNext.text = ""
+        audioUi.audioProgress.progress = 0
+        audioUi.txtAudioElapsed.text = getString(R.string.time_zero)
+        audioUi.txtAudioDuration.text = getString(R.string.time_zero)
     }
 
     override fun onResume() {
@@ -539,6 +597,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         microphoneMonitor = null
         if (::kioskController.isInitialized) {
             kioskController.destroy()
+        } else {
+            kioskCoordinator.destroy()
         }
         super.onDestroy()
     }
@@ -558,23 +618,24 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 return true
             }
             hideVocalPanel()
-            if (modeCapabilities.canOpenKiosk && ::kioskController.isInitialized) {
-                kioskController.toggleKiosk(true)
+            if (modeCapabilities.canOpenKiosk) {
+                ensureKioskController().toggleKiosk(true)
                 return true
             }
-            binding.remoteMenu.visibility = if (binding.remoteMenu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-            if (binding.remoteMenu.visibility == View.VISIBLE) binding.remotePlay.requestFocus()
+            val menu = ensureRemoteMenuBinding()
+            menu.root.visibility = if (menu.root.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            if (menu.root.visibility == View.VISIBLE) menu.remotePlay.requestFocus()
             resetMenuTimer()
             return true
         }
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) {
             backExitGate.reset()
         }
-        if (binding.remoteMenu.visibility == View.VISIBLE) {
+        if (remoteMenuBinding?.root?.visibility == View.VISIBLE) {
             if (event.action == KeyEvent.ACTION_DOWN) resetMenuTimer()
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
                 if (event.action == KeyEvent.ACTION_UP) {
-                    binding.remoteMenu.visibility = View.GONE
+                    remoteMenuBinding?.root?.visibility = View.GONE
                     backExitGate.reset()
                 }
                 return true
@@ -614,12 +675,12 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                     return true
                 }
             }
-            if (binding.remoteMenu.visibility != View.VISIBLE && binding.queueOverlay.visibility != View.VISIBLE && !kioskCoordinator.isKioskActive.value) {
+            if (remoteMenuBinding?.root?.visibility != View.VISIBLE && binding.queueOverlay.visibility != View.VISIBLE && !kioskCoordinator.isKioskActive.value) {
                 when (event.keyCode) {
                     // 确认键：呼出点歌台（MV 转入画中画），若无点歌能力则回退弹出原唱/伴唱选择栏
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                        if (modeCapabilities.canOpenKiosk && ::kioskController.isInitialized) {
-                            kioskController.toggleKiosk(true)
+                        if (modeCapabilities.canOpenKiosk) {
+                            ensureKioskController().toggleKiosk(true)
                             return true
                         }
                         showVocalPanel()
@@ -721,42 +782,65 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.btnVocalAccompaniment.setTextColor(if (original) white else gold)
     }
 
-    private fun setupRemoteMenu() {
-        binding.remotePlay.setOnClickListener { togglePlayback() }
-        binding.remoteNext.setOnClickListener { sendControl("next") }
-        binding.remoteRestart.setOnClickListener { sendControl("restart") }
-        binding.remoteVocal.setOnClickListener { toggleVocal() }
-        binding.remoteVolUp.setOnClickListener { changeVolume(10) }
-        binding.remoteVolDown.setOnClickListener { changeVolume(-10) }
-        binding.remoteMute.setOnClickListener { sendControl("mute", "{\"muted\":${!currentMuted}}") }
-        binding.remoteQueue.setOnClickListener {
-            if (LegacyQueuePolicy.shouldOpenKioskDrawer(modeCapabilities.canOpenKiosk, ::kioskController.isInitialized)) {
-                binding.remoteMenu.visibility = View.GONE
-                kioskController.openQueueDrawer()
+    private fun ensureAudioOverlayBinding(): ViewAudioOverlayBinding {
+        audioOverlayBinding?.let { return it }
+        val audioUi = ViewAudioOverlayBinding.bind(binding.audioOverlayStub.inflate())
+        KtvDashboardBackground.applyTo(audioUi.root)
+        audioOverlayBinding = audioUi
+        cachedKioskQrBitmap?.let(audioUi.imgAudioMiniQr::setImageBitmap)
+        audioMiniQrVisibility?.let { audioUi.imgAudioMiniQr.visibility = it }
+        audioMiniQrLabelVisibility?.let { audioUi.txtAudioMiniQrHint.visibility = it }
+        return audioUi
+    }
+
+    private fun ensureRemoteMenuBinding(): ViewRemoteMenuBinding {
+        remoteMenuBinding?.let { return it }
+        val menu = ViewRemoteMenuBinding.bind(binding.remoteMenuStub.inflate())
+        remoteMenuBinding = menu
+        menu.root.setPadding(kioskWindowInsets[0], kioskWindowInsets[1], kioskWindowInsets[2], kioskWindowInsets[3])
+        setupRemoteMenu(menu)
+        return menu
+    }
+
+    private fun setupRemoteMenu(menu: ViewRemoteMenuBinding) {
+        menu.remotePlay.setOnClickListener { togglePlayback() }
+        menu.remoteNext.setOnClickListener { sendControl("next") }
+        menu.remoteRestart.setOnClickListener { sendControl("restart") }
+        menu.remoteVocal.setOnClickListener { toggleVocal() }
+        menu.remoteVolUp.setOnClickListener { changeVolume(10) }
+        menu.remoteVolDown.setOnClickListener { changeVolume(-10) }
+        menu.remoteMute.setOnClickListener { sendControl("mute", "{\"muted\":${!currentMuted}}") }
+        menu.remoteQueue.setOnClickListener {
+            if (LegacyQueuePolicy.shouldOpenKioskDrawer(modeCapabilities.canOpenKiosk)) {
+                menu.root.visibility = View.GONE
+                ensureKioskController().openQueueDrawer()
             } else {
                 showQueueOverlay()
             }
         }
-        binding.remoteOrder.setOnClickListener {
-            binding.remoteMenu.visibility = View.GONE
-            if (modeCapabilities.canOpenKiosk && ::kioskController.isInitialized) {
-                kioskController.toggleKiosk(true)
+        menu.remoteOrder.setOnClickListener {
+            menu.root.visibility = View.GONE
+            if (modeCapabilities.canOpenKiosk) {
+                ensureKioskController().toggleKiosk(true)
             } else {
                 startActivity(Intent(this, ControllerActivity::class.java).apply {
                     putExtra(ControllerFragment.EXTRA_REALTIME, false)
                 })
             }
         }
-        binding.remoteOrder.visibility = if (modeCapabilities.canOpenKiosk) View.VISIBLE else View.GONE
-        binding.remoteMicrophone.setOnClickListener { toggleMicrophoneMonitor() }
+        menu.remoteOrder.visibility = if (modeCapabilities.canOpenKiosk) View.VISIBLE else View.GONE
+        menu.remoteMicrophone.setOnClickListener { toggleMicrophoneMonitor() }
         updateMicrophoneButton()
-        binding.remoteSettings.setOnClickListener {
-            binding.remoteMenu.visibility = View.GONE
+        menu.remoteSettings.setOnClickListener {
+            menu.root.visibility = View.GONE
             settingsLauncher.launch(Intent(this, SetupActivity::class.java).apply {
                 putExtra(SetupActivity.EXTRA_FORCE_SETUP, true)
                 putExtra(SetupActivity.EXTRA_RETURN_TO_CALLER, true)
             })
         }
+    }
+
+    private fun setupPersistentOverlayActions() {
         binding.queueClose.setOnClickListener { binding.queueOverlay.visibility = View.GONE }
         binding.btnVocalOriginal.setOnClickListener {
             sendControl("set_vocal", "{\"mode\":\"original\"}")
@@ -774,8 +858,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun resetMenuTimer() {
-        binding.remoteMenu.removeCallbacks(menuHide)
-        binding.remoteMenu.postDelayed(menuHide, 10_000L)
+        remoteMenuBinding?.root?.let { menu ->
+            menu.removeCallbacks(menuHide)
+            menu.postDelayed(menuHide, 10_000L)
+        }
     }
 
     private fun toggleMicrophoneMonitor() {
@@ -812,8 +898,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun updateMicrophoneButton() {
-        if (!::binding.isInitialized) return
-        binding.remoteMicrophone.text = if (microphoneActive) "麦克风：开" else "麦克风：关"
+        remoteMenuBinding?.remoteMicrophone?.text = if (microphoneActive) "麦克风：开" else "麦克风：关"
     }
 
     private fun applyVideoScaleMode(mode: String) {
@@ -846,7 +931,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun showQueueOverlay() {
-        binding.remoteMenu.visibility = View.GONE
+        remoteMenuBinding?.root?.visibility = View.GONE
         cachedQueueSnapshot?.let { renderQueue(it) }
         binding.queueOverlay.visibility = View.VISIBLE
         val target = binding.queueList.getChildAt(0) ?: binding.queueClose
@@ -934,7 +1019,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         currentPlaybackState = snapshot.state
         val lyricsPlaying = snapshot.state == "playing"
         binding.txtLyricPrevious.updatePlayback(engine?.currentPositionMs ?: 0L, lyricsPlaying)
-        binding.txtAudioLyricCurrent.updatePlayback(engine?.currentPositionMs ?: 0L, lyricsPlaying)
+        audioOverlayBinding?.txtAudioLyricCurrent?.updatePlayback(engine?.currentPositionMs ?: 0L, lyricsPlaying)
         hasCurrentSong = snapshot.playing != null
         cachedQueueSnapshot = snapshot
         if (binding.queueOverlay.visibility == View.VISIBLE) {
@@ -942,7 +1027,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         }
         binding.txtPhones.text =
             getString(R.string.status_phones, snapshot.connectedPhones.toInt())
-        binding.txtWaitingStat.text = "排队中 ${StandbyStatsPolicy.waitingCount(snapshot)} 首"
+        binding.txtWaitingStat.text = getString(
+            R.string.home_waiting_count,
+            StandbyStatsPolicy.waitingCount(snapshot),
+        )
         binding.txtWaitingStat.visibility = View.VISIBLE
         binding.txtPlayedStat.visibility = View.GONE
         applyPlayback(snapshot)
@@ -951,7 +1039,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     private fun renderQueue(snapshot: QueueSnapshot) {
         val now = snapshot.playing?.song
-        binding.queueNow.text = if (now == null) "当前演唱：暂无" else "正在演唱  ${now.title} · ${now.artist}"
+        binding.queueNow.text = if (now == null) {
+            getString(R.string.queue_now_playing_empty)
+        } else {
+            getString(R.string.queue_now_playing, now.title, now.artist)
+        }
         val focusedQueueId = (0 until binding.queueList.childCount)
             .map { binding.queueList.getChildAt(it) }
             .firstOrNull { it.hasFocus() }
@@ -964,7 +1056,13 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             val song = item.song ?: return@forEachIndexed
             val row = TextView(this).apply {
                 tag = item.queueId
-                text = "%02d    %s · %s    %s".format(index + 1, song.title, song.artist, item.orderedByNick ?: "")
+                text = getString(
+                    R.string.main_queue_row,
+                    index + 1,
+                    song.title,
+                    song.artist,
+                    item.orderedByNick.orEmpty(),
+                )
                 textSize = 20f
                 setTextColor(getColor(R.color.dim))
                 setPadding(18, 20, 18, 20)
@@ -1032,7 +1130,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             currentAudioLayout = AudioLayout.normalStereo()
             engine?.stop()
             binding.txtLyricPrevious.stopAnimation()
-            binding.txtAudioLyricCurrent.stopAnimation()
+            audioOverlayBinding?.txtAudioLyricCurrent?.stopAnimation()
             showStandby()
             return
         }
@@ -1077,17 +1175,18 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.txtLyricCurrent.alpha = 1f
         binding.txtLyricPrevious.stopAnimation()
         binding.txtLyricCurrent.text = ""
-        binding.txtAudioLyricCurrent.stopAnimation()
-        binding.txtAudioLyricNext.text = ""
+        audioOverlayBinding?.txtAudioLyricCurrent?.stopAnimation()
+        audioOverlayBinding?.txtAudioLyricNext?.text = ""
         showPlayer(audioMode)
         if (audioMode) {
+            val audioUi = requireNotNull(audioOverlayBinding)
             val song = playing.song
-            binding.imgAudioCover.setImageDrawable(null)
-            binding.txtAudioFallback.text = song?.title.orEmpty().take(2).ifBlank { "KTV" }
-            binding.txtAudioTitle.text = song?.title.orEmpty()
-            binding.txtAudioArtist.text = song?.artist.orEmpty()
-            binding.txtAudioLyricCurrent.setLine(null, 0L)
-            binding.txtAudioLyricNext.text = song?.title.orEmpty()
+            audioUi.imgAudioCover.setImageDrawable(null)
+            audioUi.txtAudioFallback.text = song?.title.orEmpty().take(2).ifBlank { "KTV" }
+            audioUi.txtAudioTitle.text = song?.title.orEmpty()
+            audioUi.txtAudioArtist.text = song?.artist.orEmpty()
+            audioUi.txtAudioLyricCurrent.setLine(null, 0L)
+            audioUi.txtAudioLyricNext.text = song?.title.orEmpty()
         }
         val replacement = playbackCoordinator.replace(
             PlaybackReplacementRequest(queueId = targetQueueId, songId = songId),
@@ -1121,6 +1220,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             lyricLines = mediaApi.fetchLyric(songId)?.let(LrcParser::parse).orEmpty()
             if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
             if (audioMode) {
+                val audioUi = ensureAudioOverlayBinding()
                 val coverBytes = mediaApi.fetchCover(songId)
                 if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
                 coverBytes?.let { bytes ->
@@ -1128,10 +1228,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                         ArtworkDecoder.decode(bytes, ArtworkProfile.COVER)
                     }
                     if (bitmap != null && playbackCoordinator.isCurrent(token) && isCurrentPlaybackLoad(loadTicket)) {
-                        binding.imgAudioCover.setImageBitmap(bitmap)
+                        audioUi.imgAudioCover.setImageBitmap(bitmap)
                     }
                 }
-                if (lyricLines.isNotEmpty()) binding.txtAudioLyricNext.text = lyricLines.first().text
+                if (lyricLines.isNotEmpty()) audioUi.txtAudioLyricNext.text = lyricLines.first().text
             }
             if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
             val command = playbackLoadProjection.commandForLoadedFile(
@@ -1141,6 +1241,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 accompanimentTrackIndex = accompanimentTrackIndex,
                 audioTrackCount = audioTrackCount,
                 audioLayout = currentAudioLayout,
+                recovery = token.request.takeIf {
+                    it.forceTranscode && LiveTranscodeStreamUrl.isLiveTranscode(streamUrl)
+                },
             ) ?: return@launch
             eng.setVocalMode(
                 command.vocalMode,
@@ -1236,9 +1339,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 }
             }
             if (bmp != null) {
+                cachedKioskQrBitmap = bmp
                 binding.imgQr.setImageBitmap(bmp)
                 binding.imgMiniQr.setImageBitmap(bmp)
-                binding.imgAudioMiniQr.setImageBitmap(bmp)
+                audioOverlayBinding?.imgAudioMiniQr?.setImageBitmap(bmp)
                 binding.imgQr.visibility = View.VISIBLE
                 binding.txtQrPlaceholder.visibility = View.GONE
                 if (::kioskController.isInitialized) {
@@ -1254,10 +1358,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             content?.let(::applyStandbyContent)
             val libraryCount = mediaApi.fetchLibraryCount()
             binding.txtLibraryStat.visibility = if (libraryCount == null) View.GONE else View.VISIBLE
-            if (libraryCount != null) binding.txtLibraryStat.text = "曲库 $libraryCount 首"
-            binding.recommendationRow.visibility = if (recommendations.isEmpty()) View.GONE else View.VISIBLE
-            binding.txtRecommendationsEmpty.visibility = if (recommendations.isEmpty()) View.VISIBLE else View.GONE
-            if (recommendations.isNotEmpty()) renderRecommendationCards()
+            if (libraryCount != null) {
+                binding.txtLibraryStat.text = getString(R.string.home_library_count, libraryCount)
+            }
         }
     }
 
@@ -1280,14 +1383,14 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         }
         binding.imgMiniQr.visibility = miniQrVisibility
         binding.txtMiniQrHint.visibility = miniQrLabelVisibility
-        binding.imgAudioMiniQr.visibility = miniQrVisibility
-        binding.txtAudioMiniQrHint.visibility = miniQrLabelVisibility
+        audioMiniQrVisibility = miniQrVisibility
+        audioMiniQrLabelVisibility = miniQrLabelVisibility
+        audioOverlayBinding?.imgAudioMiniQr?.visibility = miniQrVisibility
+        audioOverlayBinding?.txtAudioMiniQrHint?.visibility = miniQrLabelVisibility
         binding.txtStandbyWelcome.text = content.welcomeText
         binding.txtStandbySubtitle.text = content.subtitle
         recommendations = content.songs.sortedByDescending { it.coverUrl != null }
-        binding.recommendationRow.visibility = if (recommendations.isEmpty()) View.GONE else View.VISIBLE
-        binding.txtRecommendationsEmpty.visibility = if (recommendations.isEmpty()) View.VISIBLE else View.GONE
-        if (recommendations.isNotEmpty()) renderRecommendationCards()
+        renderStandbyRecommendations()
         val logoUrl = content.logoUrl?.trim()?.takeIf { it.isNotEmpty() }
         if (logoUrl == null) {
             binding.imgStandbyLogo.setImageResource(R.drawable.home_ktv_logo)
@@ -1311,6 +1414,27 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         if (!antiBurnEnabled) {
             binding.standbyPanel.translationX = 0f
             binding.standbyPanel.translationY = 0f
+        }
+    }
+
+    private fun restoreMicrophoneMonitorIfPermitted() {
+        val recordAudioGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (MicrophoneMonitorStartupPolicy.shouldRestoreMonitoring(config.microphoneMonitorEnabled, recordAudioGranted)) {
+            ensureMicrophonePermissionsAndStart()
+        } else if (config.microphoneMonitorEnabled) {
+            config.microphoneMonitorEnabled = false
+        }
+    }
+
+    private fun renderStandbyRecommendations() {
+        val visible = StandbyRecommendationPolicy.isSectionVisible(recommendations.size)
+        binding.recommendationBand.visibility = if (visible) View.VISIBLE else View.GONE
+        binding.recommendationRow.visibility = if (visible) View.VISIBLE else View.GONE
+        if (visible) {
+            renderRecommendationCards()
+        } else {
+            binding.recommendationRow.removeAllViews()
         }
     }
 
@@ -1387,7 +1511,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.playerView.visibility = if (externalDisplayActive) View.INVISIBLE else View.VISIBLE
         binding.standbyPanel.visibility = View.GONE
         binding.ktvOverlay.visibility = if (audioMode) View.GONE else View.VISIBLE
-        binding.audioOverlay.visibility = if (audioMode) View.VISIBLE else View.GONE
+        if (audioMode) {
+            ensureAudioOverlayBinding().root.visibility = View.VISIBLE
+        } else {
+            audioOverlayBinding?.root?.visibility = View.GONE
+        }
         showPlaybackProgress()
     }
 
@@ -1395,11 +1523,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.standbyPanel.removeCallbacks(standbyTicker)
         binding.playerView.visibility = View.GONE
         binding.ktvOverlay.visibility = View.GONE
-        binding.audioOverlay.visibility = View.GONE
+        audioOverlayBinding?.root?.visibility = View.GONE
         hidePlaybackProgress()
-        if (modeCapabilities.canOpenKiosk && ::kioskController.isInitialized) {
+        if (modeCapabilities.canOpenKiosk) {
             binding.standbyPanel.visibility = View.GONE
-            kioskController.toggleKiosk(true)
+            ensureKioskController().toggleKiosk(true)
         } else {
             binding.standbyPanel.visibility = View.VISIBLE
             binding.standbyPanel.post(standbyTicker)
@@ -1412,7 +1540,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         ) return
         binding.playerInfoPanel.visibility = View.VISIBLE
         binding.playProgress.visibility = View.VISIBLE
-        binding.audioProgress.visibility = View.VISIBLE
+        audioOverlayBinding?.audioProgress?.visibility = View.VISIBLE
         binding.txtElapsed.visibility = View.VISIBLE
         binding.txtVocalMode.visibility = View.VISIBLE
         binding.txtDuration.visibility = View.VISIBLE
@@ -1428,10 +1556,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         if (!::binding.isInitialized) return
         binding.playerInfoPanel.visibility = View.GONE
         binding.playProgress.visibility = View.GONE
-        val audioMode = binding.audioOverlay.visibility == View.VISIBLE
-        binding.audioProgress.visibility = if (audioMode) View.VISIBLE else View.GONE
-        binding.txtAudioElapsed.visibility = if (audioMode) View.VISIBLE else View.GONE
-        binding.txtAudioDuration.visibility = if (audioMode) View.VISIBLE else View.GONE
+        val audioUi = audioOverlayBinding
+        val audioMode = audioUi?.root?.visibility == View.VISIBLE
+        audioUi?.audioProgress?.visibility = if (audioMode) View.VISIBLE else View.GONE
+        audioUi?.txtAudioElapsed?.visibility = if (audioMode) View.VISIBLE else View.GONE
+        audioUi?.txtAudioDuration?.visibility = if (audioMode) View.VISIBLE else View.GONE
         binding.txtElapsed.visibility = View.GONE
         binding.txtVocalMode.visibility = View.GONE
         binding.txtDuration.visibility = View.GONE
@@ -1444,6 +1573,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private fun updatePlayerInfo(snapshot: QueueSnapshot) {
         val current = snapshot.playing ?: return
         val song = current.song ?: return
+        val audioUi = if (song.mediaType.equals("AUDIO", ignoreCase = true)) {
+            ensureAudioOverlayBinding()
+        } else {
+            audioOverlayBinding
+        }
         binding.txtMediaBadge.text = if (song.mediaType == "KTV_VIDEO") "KTV版" else "MV"
         binding.txtPlayerTitle.text = song.title
         binding.txtPlayerArtist.text = song.artist
@@ -1452,7 +1586,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         val next = snapshot.list.firstOrNull { it.status == "waiting" }
         binding.nextPanel.visibility = if (next?.song != null) View.VISIBLE else View.GONE
         binding.txtNextSong.text = next?.song?.let { "${it.title} · ${next.orderedByNick ?: ""}" } ?: ""
-        binding.txtAudioNext.text = next?.song?.let { "接下来  ${it.title} · ${it.artist}" } ?: ""
+        audioUi?.txtAudioNext?.text = next?.song?.let { "接下来  ${it.title} · ${it.artist}" } ?: ""
         // lyric timeline is delivered separately in the next lyric task; use the title as a temporary fallback.
         if (lyricLines.isEmpty()) {
             binding.txtLyricCurrent.text = song.title
@@ -1479,8 +1613,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         artistAvatarJob = null
         binding.imgPlayerArtistAvatar.setImageDrawable(null)
         binding.imgPlayerArtistAvatar.visibility = View.GONE
-        binding.imgAudioArtistAvatar.setImageDrawable(null)
-        binding.imgAudioArtistAvatar.visibility = View.GONE
+        audioOverlayBinding?.imgAudioArtistAvatar?.setImageDrawable(null)
+        audioOverlayBinding?.imgAudioArtistAvatar?.visibility = View.GONE
+        kioskOverlayBinding?.kioskBottomBar?.setArtistAvatar(null)
         if (url == null) return
 
         if (cached != null) {
@@ -1505,16 +1640,19 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private fun showArtistAvatar(bitmap: android.graphics.Bitmap) {
         binding.imgPlayerArtistAvatar.setImageBitmap(bitmap)
         binding.imgPlayerArtistAvatar.visibility = View.VISIBLE
-        binding.imgAudioArtistAvatar.setImageBitmap(bitmap)
-        binding.imgAudioArtistAvatar.visibility = View.VISIBLE
+        audioOverlayBinding?.imgAudioArtistAvatar?.setImageBitmap(bitmap)
+        audioOverlayBinding?.imgAudioArtistAvatar?.visibility = View.VISIBLE
+        kioskOverlayBinding?.kioskBottomBar?.setArtistAvatar(bitmap)
     }
 
     private fun updateProgress(positionMs: Long) {
         val duration = engine?.durationMs ?: 0L
         binding.playProgress.progress = if (duration > 0) ((positionMs * 1000) / duration).toInt().coerceIn(0, 1000) else 0
-        binding.audioProgress.progress = binding.playProgress.progress
-        binding.txtAudioElapsed.text = formatMs(positionMs)
-        binding.txtAudioDuration.text = formatMs(duration)
+        audioOverlayBinding?.let { audioUi ->
+            audioUi.audioProgress.progress = binding.playProgress.progress
+            audioUi.txtAudioElapsed.text = formatMs(positionMs)
+            audioUi.txtAudioDuration.text = formatMs(duration)
+        }
         binding.txtElapsed.text = formatMs(positionMs)
         if (lyricLines.isNotEmpty()) {
             binding.txtLyricPrevious.visibility = View.VISIBLE
@@ -1536,10 +1674,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             binding.txtLyricPrevious.setLine(lyricLines[index], lineEndMs)
             binding.txtLyricPrevious.updatePlayback(positionMs, currentPlaybackState == "playing")
             binding.txtLyricCurrent.text = lyricLines.getOrNull(index + 1)?.text.orEmpty()
-            if (binding.audioOverlay.visibility == View.VISIBLE) {
-                binding.txtAudioLyricCurrent.setLine(lyricLines[index], lineEndMs)
-                binding.txtAudioLyricCurrent.updatePlayback(positionMs, currentPlaybackState == "playing")
-                binding.txtAudioLyricNext.text = lyricLines.getOrNull(index + 1)?.text.orEmpty()
+            val audioUi = audioOverlayBinding
+            if (audioUi?.root?.visibility == View.VISIBLE) {
+                audioUi.txtAudioLyricCurrent.setLine(lyricLines[index], lineEndMs)
+                audioUi.txtAudioLyricCurrent.updatePlayback(positionMs, currentPlaybackState == "playing")
+                audioUi.txtAudioLyricNext.text = lyricLines.getOrNull(index + 1)?.text.orEmpty()
             }
         }
     }

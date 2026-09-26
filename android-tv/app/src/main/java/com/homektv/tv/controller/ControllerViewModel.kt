@@ -55,6 +55,7 @@ class ControllerViewModel(
     private val actions = ActionCoordinator()
     private var searchJob: Job? = null
     private var searchMoreJob: Job? = null
+    private val searchRequestGate = SearchRequestGate()
     private val queueRequests = LatestRequestScope(viewModelScope)
     private val catalogRequests = LatestRequestScope(viewModelScope)
     private val personalRequests = LatestRequestScope(viewModelScope)
@@ -97,7 +98,6 @@ class ControllerViewModel(
         }
         refreshQueue()
         if (config.isConfigured) refreshCatalogStatus()
-        loadRanking()
         registerUser()
     }
 
@@ -198,6 +198,7 @@ class ControllerViewModel(
 
     override fun setQuery(value: String) {
         val query = value.take(MAX_QUERY_LENGTH)
+        val request = searchRequestGate.begin(query)
         searchJob?.cancel()
         searchMoreJob?.cancel()
         _state.update { ControllerStateReducer.withSearchStarted(it, query) }
@@ -207,14 +208,14 @@ class ControllerViewModel(
             delay(SEARCH_DEBOUNCE_MS)
             when (val result = songApi.search(query, page = 0)) {
                 is KtvApiResult.Success -> {
-                    if (_state.value.query == query) {
+                    if (searchRequestGate.isCurrent(request)) {
                         _state.update {
                             ControllerStateReducer.withSearchResults(it, query, result.value, page = 0)
                         }
                     }
                 }
                 is KtvApiResult.Failure -> {
-                    if (_state.value.query == query) {
+                    if (searchRequestGate.isCurrent(request)) {
                         _state.update { ControllerStateReducer.withSearchFailure(it, result.error) }
                     }
                 }
@@ -227,13 +228,14 @@ class ControllerViewModel(
         val current = _state.value
         if (current.query.isBlank() || current.loading || current.searchLoadingMore || !current.searchHasMore) return
         val query = current.query
+        val request = searchRequestGate.begin(query)
         val page = current.searchPage + 1
         searchMoreJob?.cancel()
         _state.update { ControllerStateReducer.withSearchLoadStarted(it) }
         searchMoreJob = viewModelScope.launch {
             when (val result = songApi.search(query, page = page)) {
                 is KtvApiResult.Success -> {
-                    if (_state.value.query == query) {
+                    if (searchRequestGate.isCurrent(request)) {
                         _state.update {
                             ControllerStateReducer.withSearchResults(
                                 it,
@@ -245,7 +247,7 @@ class ControllerViewModel(
                     }
                 }
                 is KtvApiResult.Failure -> {
-                    if (_state.value.query == query) {
+                    if (searchRequestGate.isCurrent(request)) {
                         _state.update { ControllerStateReducer.withSearchFailure(it, result.error) }
                     }
                 }
@@ -254,6 +256,7 @@ class ControllerViewModel(
     }
 
     override fun refreshQueue() {
+        _state.update { ControllerStateReducer.withQueueLoadStarted(it) }
         queueRequests.launch {
             when (val result = queueApi.snapshot()) {
                 is KtvApiResult.Success -> _state.update {
@@ -509,7 +512,7 @@ class ControllerViewModel(
         catalogRequests.launch {
             when (val result = songApi.languages()) {
                 is KtvApiResult.Success -> _state.update {
-                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
+                    ControllerStateReducer.withCatalogRootSuccess(it).copy(
                         languages = result.value.take(MAX_CATALOG_ITEMS),
                         catalogLoading = false,
                         catalogDetail = false,
@@ -527,7 +530,7 @@ class ControllerViewModel(
         catalogRequests.launch {
             when (val result = songApi.tags()) {
                 is KtvApiResult.Success -> _state.update {
-                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
+                    ControllerStateReducer.withCatalogRootSuccess(it).copy(
                         tags = result.value.take(MAX_CATALOG_ITEMS),
                         catalogLoading = false,
                         catalogDetail = false,
@@ -566,7 +569,7 @@ class ControllerViewModel(
         catalogRequests.launch {
             when (val result = songApi.languages()) {
                 is KtvApiResult.Success -> _state.update {
-                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
+                    ControllerStateReducer.withCatalogRootSuccess(it).copy(
                         languages = result.value.take(MAX_CATALOG_ITEMS),
                         catalogSongs = emptyList(),
                         catalogHasMore = false,
@@ -587,7 +590,7 @@ class ControllerViewModel(
         catalogRequests.launch {
             when (val result = songApi.tags()) {
                 is KtvApiResult.Success -> _state.update {
-                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
+                    ControllerStateReducer.withCatalogRootSuccess(it).copy(
                         tags = result.value.take(MAX_CATALOG_ITEMS),
                         catalogSongs = emptyList(),
                         catalogHasMore = false,
@@ -816,13 +819,17 @@ class ControllerViewModel(
     }
 
     override fun loadFavorites() {
+        _state.update { ControllerStateReducer.withPersonalLoadStarted(it, UiDomain.FAVORITES) }
         personalRequests.launch {
             when (val result = favoriteApi.list()) {
                 is KtvApiResult.Success -> _state.update {
                     val favorites = result.value.take(MAX_PERSONAL_ITEMS)
-                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.FAVORITES).copy(
+                    ControllerStateReducer.withPersonalLoadFinished(
+                        ControllerStateReducer.withSuccessfulRead(it, UiDomain.FAVORITES).copy(
                         favorites = favorites,
                         favoriteIds = favorites.mapTo(linkedSetOf()) { song -> song.id },
+                        ),
+                        UiDomain.FAVORITES,
                     )
                 }
                 is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.FAVORITES, result.error) }
@@ -852,6 +859,7 @@ class ControllerViewModel(
 
     override fun loadPlaylists() {
         coverRequests.cancel()
+        _state.update { ControllerStateReducer.withPersonalLoadCancelled(it) }
         personalRequests.launch {
             when (val result = playlistApi.list()) {
                 is KtvApiResult.Success -> _state.update {
@@ -871,7 +879,8 @@ class ControllerViewModel(
         val id = playlistId.coerceAtLeast(1)
         coverRequests.cancel()
         _state.update {
-            it.copy(
+            val personalLoadsCleared = ControllerStateReducer.withPersonalLoadCancelled(it)
+            personalLoadsCleared.copy(
                 playlistDetail = null,
                 playlistDetailLoading = true,
                 playlistCoverBytes = null,
@@ -901,7 +910,13 @@ class ControllerViewModel(
     override fun clearPlaylistDetail() {
         personalRequests.cancel()
         coverRequests.cancel()
-        _state.update { it.copy(playlistDetail = null, playlistDetailLoading = false, playlistCoverBytes = null) }
+        _state.update {
+            ControllerStateReducer.withPersonalLoadCancelled(it).copy(
+                playlistDetail = null,
+                playlistDetailLoading = false,
+                playlistCoverBytes = null,
+            )
+        }
     }
 
     private fun loadPlaylistCover(playlistId: Long) {
@@ -925,11 +940,15 @@ class ControllerViewModel(
     }
 
     override fun loadHistory(mine: Boolean) {
+        _state.update { ControllerStateReducer.withPersonalLoadStarted(it, UiDomain.HISTORY) }
         personalRequests.launch {
             when (val result = historyApi.list(mine)) {
                 is KtvApiResult.Success -> _state.update {
-                    ControllerStateReducer.withSuccessfulRead(it, UiDomain.HISTORY).copy(
-                        history = result.value.take(MAX_PERSONAL_ITEMS),
+                    ControllerStateReducer.withPersonalLoadFinished(
+                        ControllerStateReducer.withSuccessfulRead(it, UiDomain.HISTORY).copy(
+                            history = result.value.take(MAX_PERSONAL_ITEMS),
+                        ),
+                        UiDomain.HISTORY,
                     )
                 }
                 is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.HISTORY, result.error) }

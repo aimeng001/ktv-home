@@ -8,6 +8,7 @@ import com.homektv.web.dto.ControlRequest;
 import com.homektv.web.dto.QueueSnapshot;
 import com.homektv.ws.WsEvent;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
+@Isolated("Testcontainers JUnit extension does not support parallel test execution")
 class PartyLoadIntegrationTest {
 
     private static final int CLIENT_COUNT = 10;

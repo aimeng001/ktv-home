@@ -6,6 +6,7 @@ import com.homektv.media.MediaProbe;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -39,6 +40,7 @@ import static org.mockito.Mockito.when;
  */
 @SpringBootTest
 @Testcontainers
+@Isolated("Testcontainers JUnit extension does not support parallel test execution")
 @Import(LargeExternalLibraryScanTest.TestDoubles.class)
 @EnabledIfSystemProperty(named = "runLargeLibraryScanTest", matches = "true")
 class LargeExternalLibraryScanTest {

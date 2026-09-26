@@ -19,7 +19,7 @@
             android:id="@+id/txtKeywordLabel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="拼音首字母: "
+            android:text="@string/keyboard_keyword_prefix"
             android:textColor="@color/gold"
             android:textSize="15sp"
             android:textStyle="bold" />
@@ -29,7 +29,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:hint="按右侧或下方字母搜索"
+            android:hint="@string/keyboard_search_help"
             android:textColor="@android:color/white"
             android:textColorHint="@color/dim2"
             android:textSize="20sp"
@@ -43,7 +43,7 @@
             android:layout_height="38dp"
             android:background="@drawable/btn_keyboard_key"
             android:textColor="@color/color_keyboard_key_text"
-            android:text="退格"
+            android:text="@string/keyboard_backspace"
             android:textSize="13sp"
             android:focusable="true" />
 
@@ -54,12 +54,12 @@
             android:layout_marginStart="8dp"
             android:background="@drawable/btn_keyboard_key"
             android:textColor="@color/color_keyboard_key_text"
-            android:text="清空"
+            android:text="@string/keyboard_clear_action"
             android:textSize="13sp"
             android:focusable="true" />
     </LinearLayout>
 
-    <!-- 字母按键网格：6 列布局 -->
+    <!-- 字母按键网格：7 列布局，与搜索设计一致 -->
     <GridLayout
         android:id="@+id/keyboardGrid"
         android:layout_width="match_parent"
@@ -75,18 +75,18 @@
         android:layout_marginTop="10dp"
         android:orientation="horizontal">
 
-        <Button
+        <Button style="?android:attr/buttonBarButtonStyle"
             android:id="@+id/btnToggleT9"
             android:layout_width="0dp"
             android:layout_height="44dp"
             android:layout_weight="1"
             android:background="@drawable/btn_keyboard_key"
             android:textColor="@color/color_keyboard_key_text"
-            android:text="切换全键盘(26键)"
+            android:text="@string/keyboard_switch_full"
             android:textSize="13sp"
             android:focusable="true" />
 
-        <Button
+        <Button style="?android:attr/buttonBarButtonStyle"
             android:id="@+id/btnSwitchIme"
             android:layout_width="0dp"
             android:layout_height="44dp"
@@ -94,7 +94,7 @@
             android:layout_marginStart="8dp"
             android:background="@drawable/btn_keyboard_key"
             android:textColor="@color/color_keyboard_key_text"
-            android:text="系统输入法"
+            android:text="@string/keyboard_ime_action"
             android:textSize="13sp"
             android:focusable="true" />
     </LinearLayout>

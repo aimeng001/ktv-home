@@ -9,7 +9,7 @@ import org.junit.Test
 class KtvTabSeparationTest {
 
     @Test
-    fun tabState_preservesIndependentDatasetsForRankingsAndCategories() {
+    fun tabState_preservesLegacyDatasetsWhileHiddenRoutesReturnHome() {
         val state = KioskPresentationState()
 
         val rankingSongs = listOf(
@@ -31,15 +31,16 @@ class KtvTabSeparationTest {
         assertNotEquals(state.rankings.value, state.newSongs.value)
 
         state.selectTab(KioskTab.RANKINGS)
-        assertEquals(KioskTab.RANKINGS, state.currentTab.value)
+        assertEquals(KioskTab.DASHBOARD, state.currentTab.value)
         assertEquals(2, state.rankings.value.size)
 
         state.selectTab(KioskTab.CATEGORIES)
         assertEquals(KioskTab.CATEGORIES, state.currentTab.value)
         assertEquals(2, state.newSongs.value.size)
 
-        // Switching back to RANKINGS does not clobber rankings
+        // Legacy ranking state remains stored but is no longer a visible navigation destination.
         state.selectTab(KioskTab.RANKINGS)
+        assertEquals(KioskTab.DASHBOARD, state.currentTab.value)
         assertEquals("海阔天空", state.rankings.value.first().title)
     }
 

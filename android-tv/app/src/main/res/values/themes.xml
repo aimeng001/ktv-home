@@ -2,11 +2,26 @@
 <resources>
     <!-- 全屏深色主题，无 ActionBar，适配 TV 大屏 -->
     <style name="Theme.HomeKtvTv" parent="Theme.AppCompat.NoActionBar">
-        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:windowBackground">@drawable/ktv_screen_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowFullscreen">true</item>
         <item name="android:colorAccent">@color/gold</item>
         <item name="android:textColor">@color/text</item>
+    </style>
+
+    <style name="Theme.HomeKtvTv.MainActivity" parent="@style/Theme.HomeKtvTv">
+        <item name="android:windowBackground">@null</item>
+    </style>
+
+    <style name="Theme.HomeKtvTv.UpdateDialog" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/update_dialog_background</item>
+        <item name="android:colorBackground">@color/ktv_panel_surface</item>
+        <item name="android:textColorPrimary">@color/text</item>
+        <item name="android:textColorSecondary">@color/dim</item>
+        <item name="android:colorAccent">@color/gold</item>
+        <item name="colorAccent">@color/gold</item>
+        <item name="android:windowMinWidthMajor">36%</item>
+        <item name="android:windowMinWidthMinor">90%</item>
     </style>
 </resources>

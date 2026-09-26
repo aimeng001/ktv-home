@@ -70,6 +70,40 @@ public sealed class HttpServerApiTests
         Assert.Equal("http://server:54001/api/playback/stream/88", descriptor.StreamUrl);
         Assert.Equal(1, descriptor.VocalTrackIndex);
     }
+
+    [Fact]
+    public async Task Playback_resolver_accepts_live_transcode_without_variant_identity()
+    {
+        HttpRequestMessage? request = null;
+        var handler = new RecordingHandler(message =>
+        {
+            request = message;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new
+                {
+                    kind = "LIVE_TRANSCODE",
+                    status = "READY",
+                    sourceFileId = 31L,
+                    variantId = (long?)null,
+                    streamUrl = "/api/stream/31?transcode=true&start=65.250",
+                    audioTracks = 2,
+                    audioLayout = new { layout = "DUAL_TRACK", accompanimentTrackIndex = 1 },
+                }, options: ProtocolJson.Options),
+            };
+        });
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:54001/")), handler: handler);
+
+        var descriptor = await api.ResolvePlaybackAsync(31, forceTranscode: true);
+
+        Assert.Equal("http://server:54001/api/playback/resolve/31?forceTranscode=true", request!.RequestUri!.ToString());
+        Assert.Equal("LIVE_TRANSCODE", descriptor!.Kind);
+        Assert.Null(descriptor.VariantId);
+        Assert.True(descriptor.IsReady);
+        Assert.Equal("http://server:54001/api/stream/31?transcode=true&start=65.250", descriptor.StreamUrl);
+        Assert.Equal(2, descriptor.AudioTracks);
+    }
     [Fact]
     public void Stream_url_stays_on_the_shared_api_path()
     {

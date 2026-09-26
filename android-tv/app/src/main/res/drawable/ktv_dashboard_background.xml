@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <!-- Runtime supplies the sampled stops; this fallback keeps Android Studio previews close. -->
+    <gradient
+        android:angle="270"
+        android:startColor="@color/ktv_dashboard_bg_top"
+        android:centerColor="@color/ktv_dashboard_bg_400"
+        android:centerY="0.426"
+        android:endColor="@color/ktv_dashboard_bg_800" />
+</shape>

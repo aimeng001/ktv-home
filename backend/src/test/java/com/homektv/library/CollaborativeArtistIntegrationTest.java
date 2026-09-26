@@ -7,6 +7,7 @@ import com.homektv.repo.SongRepository;
 import com.homektv.web.dto.SongDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -21,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @Testcontainers
+@Isolated("Testcontainers JUnit extension does not support parallel test execution")
 class CollaborativeArtistIntegrationTest {
 
     @Container

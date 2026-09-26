@@ -10,23 +10,33 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup;
 
 class StreamControllerTest {
 
@@ -197,6 +207,8 @@ class StreamControllerTest {
         Process mockProcess = mock(Process.class);
         when(mockProcess.getInputStream()).thenReturn(new ByteArrayInputStream(fakeFmp4Data));
         when(mockProcess.isAlive()).thenReturn(false);
+        when(mockProcess.waitFor(5, TimeUnit.SECONDS)).thenReturn(true);
+        when(mockProcess.exitValue()).thenReturn(0);
 
         StreamController controller = new StreamController(repository, props,
                 new SongAvailabilityPolicy(repository),
@@ -228,6 +240,133 @@ class StreamControllerTest {
 
         // 验证磁盘零缓存写入
         assertThat(Files.list(library).toList()).containsExactly(rmvbFile);
+    }
+
+    @Test
+    void forceTranscodeQueryUsesPipeForNonLegacyVideoContainer() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("forced-mkv-lib"));
+        Path media = Files.createFile(library.resolve("song.mkv"));
+        Files.write(media, new byte[]{0x01, 0x02, 0x03});
+
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("matroska");
+        songFile.setMediaType("MV");
+        songFile.setAudioTracks(1);
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(13L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+
+        AtomicReference<List<String>> executedCommand = new AtomicReference<>();
+        byte[] fakeFmp4Data = new byte[]{0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p'};
+        Process mockProcess = mock(Process.class);
+        when(mockProcess.getInputStream()).thenReturn(new ByteArrayInputStream(fakeFmp4Data));
+        when(mockProcess.isAlive()).thenReturn(false);
+        when(mockProcess.waitFor(5, TimeUnit.SECONDS)).thenReturn(true);
+        when(mockProcess.exitValue()).thenReturn(0);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), builder -> {
+                    executedCommand.set(builder.command());
+                    return mockProcess;
+                });
+        MockMvc mvc = standaloneSetup(controller).build();
+
+        MvcResult result = mvc.perform(get("/api/stream/13").param("transcode", "true")).andReturn();
+        if (result.getRequest().isAsyncStarted()) {
+            result = mvc.perform(asyncDispatch(result)).andReturn();
+        }
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(HttpStatus.OK.value());
+        assertThat(result.getResponse().getContentType()).startsWith("video/mp4");
+        assertThat(result.getResponse().getContentAsByteArray()).containsExactly(fakeFmp4Data);
+        assertThat(executedCommand.get()).containsSequence("-c:v", "libx264");
+        assertThat(executedCommand.get()).containsSequence("-c:a", "aac");
+        assertThat(executedCommand.get()).contains("pipe:1");
+        assertThat(Files.list(library).toList()).containsExactly(media);
+    }
+
+    @Test
+    void forceTranscodeRejectsUnsupportedMediaAndInvalidSeekBeforeStartingFfmpeg() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("invalid-force-lib"));
+        Path video = Files.createFile(library.resolve("song.mkv"));
+        Path audio = Files.createFile(library.resolve("song.mp3"));
+        SongFile videoFile = new SongFile();
+        videoFile.setFilePath(video.toString());
+        videoFile.setFormat("matroska");
+        videoFile.setMediaType("MV");
+        SongFile audioFile = new SongFile();
+        audioFile.setFilePath(audio.toString());
+        audioFile.setFormat("mp3");
+        audioFile.setMediaType("AUDIO");
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(14L)).thenReturn(Optional.of(videoFile));
+        when(repository.findById(15L)).thenReturn(Optional.of(audioFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        AtomicBoolean launcherCalled = new AtomicBoolean(false);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), builder -> {
+                    launcherCalled.set(true);
+                    throw new AssertionError("Invalid transcode requests must not start FFmpeg");
+                });
+        MockMvc mvc = standaloneSetup(controller).build();
+
+        var unsupported = mvc.perform(get("/api/stream/15").param("transcode", "true")).andReturn();
+        var negativeStart = mvc.perform(get("/api/stream/14").param("transcode", "true")
+                .param("start", "-1")).andReturn();
+        var excessiveStart = mvc.perform(get("/api/stream/14").param("transcode", "true")
+                .param("start", "86401")).andReturn();
+        var notANumberStart = mvc.perform(get("/api/stream/14").param("transcode", "true")
+                .param("start", "NaN")).andReturn();
+        var infiniteStart = mvc.perform(get("/api/stream/14").param("transcode", "true")
+                .param("start", "Infinity")).andReturn();
+
+        assertThat(unsupported.getResponse().getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(negativeStart.getResponse().getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(excessiveStart.getResponse().getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(notANumberStart.getResponse().getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(infiniteStart.getResponse().getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(launcherCalled.get()).isFalse();
+    }
+
+    @Test
+    void forceTranscodeAdmissionReturns429BeforeStartingFifthProcess() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("transcode-limit-lib"));
+        Path media = Files.createFile(library.resolve("song.mkv"));
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("matroska");
+        songFile.setMediaType("MV");
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(16L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        AtomicInteger launcherCalls = new AtomicInteger();
+        Process process = mock(Process.class);
+        when(process.getInputStream()).thenReturn(new ByteArrayInputStream(new byte[0]));
+        when(process.isAlive()).thenReturn(false);
+        when(process.waitFor(5, TimeUnit.SECONDS)).thenReturn(true);
+        when(process.exitValue()).thenReturn(0);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), builder -> {
+                    launcherCalls.incrementAndGet();
+                    return process;
+                });
+
+        List<ResponseEntity<StreamingResponseBody>> responses = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            responses.add(controller.streamInternal(16L, null, null, true));
+        }
+
+        assertThat(responses).hasSize(5);
+        assertThat(responses.get(4).getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(launcherCalls.get()).isZero();
+        for (int i = 0; i < 4; i++) {
+            responses.get(i).getBody().writeTo(new ByteArrayOutputStream());
+        }
+        assertThat(launcherCalls.get()).isEqualTo(4);
+        assertThat(controller.streamInternal(16L, null, null, true).getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 
     @Test
@@ -267,6 +406,165 @@ class StreamControllerTest {
 
         // 验证强杀进程被触发
         verify(mockProcess).destroyForcibly();
+        assertThat(controller.streamInternal(11L, null, null, true).getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    void nonZeroFfmpegExitAfterPartialOutputFailsTheStream() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("transcode-nonzero-lib"));
+        Path media = Files.createFile(library.resolve("song.mkv"));
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("matroska");
+        songFile.setMediaType("MV");
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(18L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        Process process = mock(Process.class);
+        byte[] partialOutput = new byte[]{0x00, 0x00, 0x00, 0x10, 'f', 't', 'y', 'p'};
+        when(process.getInputStream()).thenReturn(new ByteArrayInputStream(partialOutput));
+        when(process.waitFor(5, TimeUnit.SECONDS)).thenReturn(true);
+        when(process.exitValue()).thenReturn(7);
+        when(process.isAlive()).thenReturn(false);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), builder -> process);
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        var response = controller.streamInternal(18L, null, null, true);
+
+        assertThatThrownBy(() -> response.getBody().writeTo(output))
+                .isInstanceOf(IOException.class);
+        assertThat(output.toByteArray()).containsExactly(partialOutput);
+        verify(process).waitFor(5, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void ffmpegStdoutReadFailureIsReportedAndReleasesAdmissionSlot() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("transcode-stdout-failure-lib"));
+        Path media = Files.createFile(library.resolve("song.mkv"));
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("matroska");
+        songFile.setMediaType("MV");
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(20L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        Process process = mock(Process.class);
+        when(process.getInputStream()).thenReturn(new InputStream() {
+            @Override
+            public int read() throws IOException {
+                throw new IOException("synthetic stdout failure");
+            }
+        });
+        when(process.isAlive()).thenReturn(false);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), builder -> process);
+
+        var response = controller.streamInternal(20L, null, null, true);
+
+        assertThatThrownBy(() -> response.getBody().writeTo(new ByteArrayOutputStream()))
+                .isInstanceOf(IOException.class);
+        assertThat(controller.streamInternal(20L, null, null, true).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    void ffmpegExitWaitTimeoutFailsTheStreamAndKillsTheProcess() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("transcode-timeout-lib"));
+        Path media = Files.createFile(library.resolve("song.mkv"));
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("matroska");
+        songFile.setMediaType("MV");
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(21L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        Process process = mock(Process.class);
+        when(process.getInputStream()).thenReturn(new ByteArrayInputStream(new byte[0]));
+        when(process.waitFor(5, TimeUnit.SECONDS)).thenReturn(false);
+        when(process.isAlive()).thenReturn(true);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), builder -> process);
+
+        var response = controller.streamInternal(21L, null, null, true);
+
+        assertThatThrownBy(() -> response.getBody().writeTo(new ByteArrayOutputStream()))
+                .isInstanceOf(IOException.class);
+        verify(process).destroyForcibly();
+        assertThat(controller.streamInternal(21L, null, null, true).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    void interruptedFfmpegWaitRestoresInterruptAndReleasesAdmissionSlot() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("transcode-interrupted-lib"));
+        Path media = Files.createFile(library.resolve("song.mkv"));
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("matroska");
+        songFile.setMediaType("MV");
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(19L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        Process process = mock(Process.class);
+        when(process.getInputStream()).thenReturn(new ByteArrayInputStream(new byte[0]));
+        when(process.waitFor(5, TimeUnit.SECONDS)).thenThrow(new InterruptedException("test interruption"));
+        when(process.isAlive()).thenReturn(true);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), builder -> process);
+
+        var response = controller.streamInternal(19L, null, null, true);
+        try {
+            assertThatThrownBy(() -> response.getBody().writeTo(new ByteArrayOutputStream()))
+                    .isInstanceOf(IOException.class);
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+
+        verify(process).destroyForcibly();
+        assertThat(controller.streamInternal(19L, null, null, true).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    void ffmpegLaunchFailureReleasesTranscodeAdmissionSlot() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("transcode-launch-failure-lib"));
+        Path media = Files.createFile(library.resolve("song.mkv"));
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("matroska");
+        songFile.setMediaType("MV");
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(17L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        AtomicInteger launchAttempts = new AtomicInteger();
+        Process successfulProcess = mock(Process.class);
+        when(successfulProcess.getInputStream()).thenReturn(new ByteArrayInputStream(new byte[0]));
+        when(successfulProcess.waitFor(5, TimeUnit.SECONDS)).thenReturn(true);
+        when(successfulProcess.exitValue()).thenReturn(0);
+        when(successfulProcess.isAlive()).thenReturn(false);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), builder -> {
+                    if (launchAttempts.incrementAndGet() == 1) {
+                        throw new IOException("synthetic process launch failure");
+                    }
+                    return successfulProcess;
+                });
+
+        var failedBodyResponse = controller.streamInternal(17L, null, null, true);
+        assertThatThrownBy(() -> failedBodyResponse.getBody().writeTo(new ByteArrayOutputStream()))
+                .isInstanceOf(IOException.class);
+        var nextResponse = controller.streamInternal(17L, null, null, true);
+
+        assertThat(nextResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        nextResponse.getBody().writeTo(new ByteArrayOutputStream());
+        assertThat(launchAttempts.get()).isEqualTo(2);
     }
 
     @Test

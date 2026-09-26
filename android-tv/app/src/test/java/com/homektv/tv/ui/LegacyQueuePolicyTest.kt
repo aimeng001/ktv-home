@@ -17,8 +17,7 @@ class LegacyQueuePolicyTest {
 
     @Test
     fun combinedModePrefersKioskDrawerForQueueAccess() {
-        assertTrue(LegacyQueuePolicy.shouldOpenKioskDrawer(canOpenKiosk = true, isKioskInitialized = true))
-        assertFalse(LegacyQueuePolicy.shouldOpenKioskDrawer(canOpenKiosk = true, isKioskInitialized = false))
-        assertFalse(LegacyQueuePolicy.shouldOpenKioskDrawer(canOpenKiosk = false, isKioskInitialized = false))
+        assertTrue(LegacyQueuePolicy.shouldOpenKioskDrawer(canOpenKiosk = true))
+        assertFalse(LegacyQueuePolicy.shouldOpenKioskDrawer(canOpenKiosk = false))
     }
 }

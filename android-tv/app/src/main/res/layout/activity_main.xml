@@ -3,10 +3,11 @@
      后续 TV-02/03 播放页、TV-04/05 浮层将叠加在此容器上。 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/bg">
+    tools:context=".ui.MainActivity">
 
     <!-- 待机页 -->
     <LinearLayout
@@ -27,8 +28,8 @@
 
             <ImageView android:id="@+id/imgStandbyLogo" android:layout_width="64dp" android:layout_height="48dp" android:layout_marginEnd="12dp" android:contentDescription="@string/app_name" android:scaleType="fitCenter" android:src="@drawable/home_ktv_logo" />
             <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical">
-                <TextView android:id="@+id/txtBrandName" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Home KTV" android:textColor="@color/karaoke_red" android:textSize="31sp" android:textStyle="bold" />
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="FAMILY KARAOKE" android:textColor="@color/dim2" android:textSize="10sp" />
+            <TextView android:id="@+id/txtBrandName" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/brand_home_ktv" android:textAppearance="@style/TextAppearance.HomeKtv.BrandHero" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="@string/brand_tagline" android:textColor="@color/dim2" android:textSize="11sp" />
             </LinearLayout>
 
             <View
@@ -62,41 +63,45 @@
         </LinearLayout>
 
         <!-- 主视觉 -->
-        <LinearLayout
+        <androidx.constraintlayout.widget.ConstraintLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
             android:paddingHorizontal="36dp"
             android:paddingVertical="12dp">
 
             <LinearLayout
+                android:id="@+id/homeHeroPanel"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="1.15"
-                android:orientation="vertical">
+                android:orientation="vertical"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toStartOf="@id/qrPanel"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintHorizontal_weight="1.15"
+                app:layout_constraintHorizontal_chainStyle="spread">
 
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/karaoke_label" android:paddingHorizontal="14dp" android:paddingVertical="6dp" android:text="家庭欢唱模式" android:textColor="@android:color/white" android:textSize="14sp" android:textStyle="bold" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/gold_label" android:paddingHorizontal="14dp" android:paddingVertical="6dp" android:text="@string/home_mode_badge" android:textColor="@color/bg" android:textSize="14sp" android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/txtStandbyWelcome"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:text="今晚开唱"
+                android:text="@string/home_welcome"
                 android:textColor="@android:color/white"
                 android:textSize="56sp"
                 android:textStyle="bold" />
 
-            <View android:layout_width="72dp" android:layout_height="4dp" android:layout_marginTop="10dp" android:background="@color/karaoke_red" />
+            <View android:layout_width="72dp" android:layout_height="4dp" android:layout_marginTop="10dp" android:background="@color/gold" />
 
             <TextView
                 android:id="@+id/txtStandbySubtitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
-                android:text="手机点歌，电视欢唱\n一家人的客厅 KTV"
+                android:text="@string/home_subtitle"
                 android:textColor="@color/dim"
                 android:lineSpacingExtra="2dp"
                 android:textSize="20sp" />
@@ -104,28 +109,32 @@
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
+                    android:layout_marginTop="@dimen/ktv_spacing_lg"
                     android:orientation="horizontal">
-                    <TextView android:id="@+id/txtLibraryStat" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" android:text="曲库" android:textColor="@color/dim" android:textSize="15sp" android:visibility="gone" />
-                    <TextView android:id="@+id/txtPlayedStat" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="14dp" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" android:text="今晚已唱 0 首" android:textColor="@color/dim" android:textSize="15sp" android:visibility="gone" />
-                    <TextView android:id="@+id/txtWaitingStat" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="14dp" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" android:text="排队中" android:textColor="@color/dim" android:textSize="15sp" android:visibility="gone" />
+                    <TextView android:id="@+id/txtLibraryStat" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" android:text="@string/home_library_label" android:textColor="@color/dim" android:textSize="15sp" android:visibility="gone" />
+                    <TextView android:id="@+id/txtPlayedStat" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="14dp" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" tools:text="今晚已唱 0 首" android:textColor="@color/dim" android:textSize="15sp" android:visibility="gone" />
+                    <TextView android:id="@+id/txtWaitingStat" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="14dp" android:background="@drawable/standby_chip" android:paddingHorizontal="16dp" android:paddingVertical="6dp" android:text="@string/home_waiting_label" android:textColor="@color/dim" android:textSize="15sp" android:visibility="gone" />
                 </LinearLayout>
             </LinearLayout>
 
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="0.55"
                 android:id="@+id/qrPanel"
                 android:background="@drawable/qr_panel"
                 android:clipChildren="false"
                 android:clipToPadding="false"
                 android:gravity="center"
                 android:orientation="vertical"
-                android:padding="20dp">
+                android:padding="20dp"
+                app:layout_constraintStart_toEndOf="@id/homeHeroPanel"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintHorizontal_weight="0.55">
 
-            <TextView android:id="@+id/qrTitle" android:layout_width="wrap_content" android:layout_height="26dp" android:gravity="center" android:includeFontPadding="true" android:text="扫码点歌" android:textColor="@android:color/white" android:textSize="17sp" android:textStyle="bold" />
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:text="微信扫一扫，即刻加入这场欢唱" android:textColor="@color/dim" android:textSize="12sp" />
+            <TextView android:id="@+id/qrTitle" android:layout_width="wrap_content" android:layout_height="26dp" android:gravity="center" android:includeFontPadding="true" android:text="@string/standby_scan_title" android:textColor="@android:color/white" android:textSize="17sp" android:textStyle="bold" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:text="@string/standby_scan_sub" android:textColor="@color/dim" android:textSize="12sp" />
 
             <!-- 二维码（P1.30 接 /api/qr）：加载前显示占位文字，加载成功显示真图 -->
             <FrameLayout
@@ -159,17 +168,19 @@
                 android:textColor="@color/dim"
                 android:textSize="13sp" />
             </LinearLayout>
-        </LinearLayout>
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
         <LinearLayout
+            android:id="@+id/recommendationBand"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:background="@drawable/recommendation_band"
             android:orientation="vertical"
             android:paddingHorizontal="24dp"
-            android:paddingVertical="10dp">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="为此刻精选  ·  客厅里的合唱歌单" android:textColor="@color/karaoke_pink" android:textSize="13sp" android:textStyle="bold" />
+            android:paddingVertical="10dp"
+            android:visibility="gone">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/recommendation_heading" android:textColor="@color/gold" android:textSize="13sp" android:textStyle="bold" />
             <LinearLayout
                 android:id="@+id/recommendationRow"
                 android:layout_width="match_parent"
@@ -177,16 +188,6 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal" />
-            <TextView
-                android:id="@+id/txtRecommendationsEmpty"
-                android:layout_width="match_parent"
-                android:layout_height="58dp"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical"
-                android:text="暂无歌曲，请先扫描曲库"
-                android:textColor="@android:color/white"
-                android:textSize="17sp"
-                android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>
 
@@ -226,15 +227,15 @@
                 android:orientation="horizontal"
                 android:padding="12dp"
                 android:background="@drawable/player_glass">
-                <TextView android:id="@+id/txtMediaBadge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="KTV版" android:textColor="@color/gold" android:textStyle="bold" android:textSize="14sp" />
-                <ImageView android:id="@+id/imgPlayerArtistAvatar" android:layout_width="42dp" android:layout_height="42dp" android:layout_marginStart="10dp" android:contentDescription="歌手头像" android:scaleType="centerCrop" android:visibility="gone" />
+                <TextView android:id="@+id/txtMediaBadge" android:layout_width="wrap_content" android:layout_height="wrap_content" tools:text="KTV版" android:textColor="@color/gold" android:textStyle="bold" android:textSize="14sp" />
+                <ImageView android:id="@+id/imgPlayerArtistAvatar" android:layout_width="42dp" android:layout_height="42dp" android:layout_marginStart="10dp" android:contentDescription="@string/accessibility_artist_avatar" android:scaleType="centerCrop" android:visibility="gone" />
                 <TextView android:id="@+id/txtPlayerTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="12dp" android:textColor="@android:color/white" android:textSize="22sp" android:textStyle="bold" />
                 <TextView android:id="@+id/txtPlayerArtist" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="10dp" android:textColor="@color/dim" android:textSize="18sp" />
                 <TextView android:id="@+id/txtOrderedBy" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="12dp" android:textColor="@color/dim" android:textSize="14sp" />
             </LinearLayout>
             <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
             <LinearLayout android:id="@+id/nextPanel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp" android:background="@drawable/player_glass">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="下一首  " android:textColor="@color/dim" android:textSize="14sp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" tools:text="下一首" android:textColor="@color/dim" android:textSize="14sp" />
                 <TextView android:id="@+id/txtNextSong" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="@android:color/white" android:textSize="17sp" />
             </LinearLayout>
         </LinearLayout>
@@ -250,73 +251,25 @@
                 <TextView android:id="@+id/txtDuration" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="@color/dim" android:textSize="14sp" />
             </LinearLayout>
         </LinearLayout>
-        <ImageView android:id="@+id/imgMiniQr" android:layout_width="104dp" android:layout_height="104dp" android:layout_gravity="bottom|end" android:layout_marginBottom="78dp" android:background="@android:color/white" android:padding="4dp" android:scaleType="fitCenter" android:contentDescription="扫码点歌" />
+        <ImageView android:id="@+id/imgMiniQr" android:layout_width="104dp" android:layout_height="104dp" android:layout_gravity="bottom|end" android:layout_marginBottom="78dp" android:background="@android:color/white" android:padding="4dp" android:scaleType="fitCenter" android:contentDescription="@string/standby_scan_title" />
         <TextView android:id="@+id/txtMiniQrHint" android:layout_width="104dp" android:layout_height="24dp" android:layout_gravity="bottom|end" android:layout_marginBottom="50dp" android:gravity="center" android:text="@string/qr_wechat_order" android:textColor="@android:color/white" android:textSize="14sp" android:textStyle="bold" android:shadowColor="#F0000000" android:shadowDx="1" android:shadowDy="1" android:shadowRadius="3" />
     </FrameLayout>
 
-    <!-- TV-03 音频海报播放页 -->
-    <FrameLayout
-        android:id="@+id/audioOverlay"
+    <!-- TV-03 音频海报仅在音频曲目/预览打开时膨胀 -->
+    <ViewStub
+        android:id="@+id/audioOverlayStub"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:visibility="gone"
-        android:background="@drawable/audio_stage_background"
-        android:padding="44dp">
-        <LinearLayout android:layout_width="wrap_content" android:layout_height="108dp" android:orientation="horizontal" android:gravity="center_vertical">
-            <FrameLayout android:layout_width="108dp" android:layout_height="108dp">
-                <TextView android:id="@+id/txtAudioFallback" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/audio_accent" android:gravity="center" android:textColor="#111317" android:textSize="26sp" android:textStyle="bold" />
-                <ImageView android:id="@+id/imgAudioCover" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="centerCrop" android:contentDescription="歌曲封面" />
-            </FrameLayout>
-            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="20dp" android:orientation="vertical">
-                <TextView android:id="@+id/txtAudioTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="@android:color/white" android:textSize="30sp" android:textStyle="bold" />
-                <TextView android:id="@+id/txtAudioArtist" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:textColor="@color/dim" android:textSize="19sp" />
-                <ImageView android:id="@+id/imgAudioArtistAvatar" android:layout_width="48dp" android:layout_height="48dp" android:layout_marginTop="8dp" android:contentDescription="歌手头像" android:scaleType="centerCrop" android:visibility="gone" />
-            </LinearLayout>
-        </LinearLayout>
-        <ImageView android:id="@+id/imgAudioMiniQr" android:layout_width="104dp" android:layout_height="104dp" android:layout_gravity="top|start" android:layout_marginTop="140dp" android:background="@android:color/white" android:padding="4dp" android:scaleType="fitCenter" android:contentDescription="扫码点歌" />
-        <TextView android:id="@+id/txtAudioMiniQrHint" android:layout_width="104dp" android:layout_height="24dp" android:layout_gravity="top|start" android:layout_marginTop="248dp" android:gravity="center" android:text="@string/qr_wechat_order" android:textColor="@android:color/white" android:textSize="14sp" android:textStyle="bold" android:shadowColor="#F0000000" android:shadowDx="1" android:shadowDy="1" android:shadowRadius="3" />
-        <TextView android:id="@+id/txtAudioNext" android:layout_width="360dp" android:layout_height="wrap_content" android:layout_gravity="top|end" android:layout_marginTop="24dp" android:ellipsize="end" android:gravity="end" android:maxLines="1" android:textColor="@color/dim" android:textSize="16sp" />
-        <LinearLayout android:layout_width="match_parent" android:layout_height="116dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="198dp" android:orientation="vertical">
-            <com.homektv.tv.ui.KaraokeLyricView android:id="@+id/txtAudioLyricCurrent" android:layout_width="match_parent" android:layout_height="58dp" />
-            <TextView android:id="@+id/txtAudioLyricNext" android:layout_width="match_parent" android:layout_height="58dp" android:gravity="center" android:includeFontPadding="false" android:maxLines="1" android:textColor="@android:color/white" android:textSize="42sp" android:textStyle="bold" android:shadowColor="#E6000000" android:shadowDx="2" android:shadowDy="2" android:shadowRadius="4" />
-        </LinearLayout>
-        <LinearLayout android:layout_width="match_parent" android:layout_height="140dp" android:layout_gravity="bottom" android:orientation="vertical">
-            <com.homektv.tv.ui.AudioSpectrumView android:id="@+id/audioSpectrum" android:layout_width="match_parent" android:layout_height="64dp" />
-            <ProgressBar android:id="@+id/audioProgress" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="18dp" android:max="1000" android:progressTint="@color/audio_accent" />
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-                <TextView android:id="@+id/txtAudioElapsed" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="7dp" android:textColor="@color/dim2" android:textSize="14sp" />
-                <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
-                <TextView android:id="@+id/txtAudioDuration" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="7dp" android:textColor="@color/dim2" android:textSize="14sp" />
-            </LinearLayout>
-        </LinearLayout>
-    </FrameLayout>
+        android:layout="@layout/view_audio_overlay" />
 
-    <!-- TV-04 遥控菜单浮层 -->
-    <LinearLayout
-        android:id="@+id/remoteMenu"
+    <!-- TV-04 遥控菜单首次按菜单键时再加载，避免常驻主布局膨胀视图数 -->
+    <ViewStub
+        android:id="@+id/remoteMenuStub"
         android:layout_width="560dp"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="42dp"
-        android:background="@drawable/player_glass"
-        android:orientation="vertical"
-        android:padding="18dp"
-        android:visibility="gone">
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="播放控制" android:textColor="@color/gold" android:textSize="18sp" android:textStyle="bold" />
-        <GridLayout android:id="@+id/remoteGrid" android:layout_width="match_parent" android:layout_height="wrap_content" android:columnCount="4" android:rowCount="3" android:useDefaultMargins="true">
-            <Button android:id="@+id/remotePlay" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="播放/暂停" />
-            <Button android:id="@+id/remoteNext" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="切歌" />
-            <Button android:id="@+id/remoteRestart" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="重唱" />
-            <Button android:id="@+id/remoteVocal" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="原唱/伴唱" />
-            <Button android:id="@+id/remoteVolUp" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="音量 +" />
-            <Button android:id="@+id/remoteVolDown" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="音量 -" />
-            <Button android:id="@+id/remoteMute" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="静音" />
-            <Button android:id="@+id/remoteQueue" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="播放队列" />
-            <Button android:id="@+id/remoteOrder" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="点歌台" />
-            <Button android:id="@+id/remoteMicrophone" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="麦克风：关" />
-            <Button android:id="@+id/remoteSettings" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="服务器/模式" />
-        </GridLayout>
-    </LinearLayout>
+        android:layout="@layout/view_remote_menu" />
 
     <!-- 音量 OSD：任何来源的音量变化时顶部短暂显示当前音量与满量程差距 -->
     <LinearLayout
@@ -343,7 +296,7 @@
             style="?android:attr/progressBarStyleHorizontal"
             android:layout_width="0dp"
             android:layout_height="6dp"
-            android:layout_marginStart="16dp"
+            android:layout_marginStart="@dimen/ktv_spacing_lg"
             android:layout_weight="1"
             android:max="100"
             android:progressTint="@color/gold" />
@@ -382,10 +335,10 @@
         android:orientation="vertical"
         android:padding="18dp"
         android:visibility="gone">
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="演唱模式" android:textColor="@color/gold" android:textSize="18sp" android:textStyle="bold" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/singing_mode_label" android:textColor="@color/gold" android:textSize="18sp" android:textStyle="bold" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:orientation="horizontal">
-            <Button android:id="@+id/btnVocalOriginal" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="原唱" android:textSize="20sp" />
-            <Button android:id="@+id/btnVocalAccompaniment" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:layout_marginStart="16dp" android:text="伴唱" android:textSize="20sp" />
+            <Button style="?android:attr/buttonBarButtonStyle" android:id="@+id/btnVocalOriginal" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:background="@drawable/btn_keyboard_key" android:text="@string/vocal_original" android:textSize="20sp" />
+            <Button style="?android:attr/buttonBarButtonStyle" android:id="@+id/btnVocalAccompaniment" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:layout_marginStart="16dp" android:background="@drawable/btn_keyboard_key" android:text="@string/vocal_backing" android:textSize="20sp" />
         </LinearLayout>
     </LinearLayout>
 
@@ -394,14 +347,14 @@
         android:id="@+id/queueOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/bg"
+        android:background="@drawable/ktv_screen_background"
         android:orientation="vertical"
         android:padding="44dp"
         android:visibility="gone">
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="播放队列" android:textColor="@color/gold" android:textSize="32sp" android:textStyle="bold" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/queue_label" android:textColor="@color/gold" android:textSize="32sp" android:textStyle="bold" />
             <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
-            <Button android:id="@+id/queueClose" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="返回" />
+            <Button android:id="@+id/queueClose" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/common_back" />
         </LinearLayout>
         <TextView android:id="@+id/queueNow" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="28dp" android:background="@drawable/player_glass" android:padding="18dp" android:textColor="@color/gold" android:textSize="22sp" />
         <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="16dp">
@@ -410,7 +363,9 @@
     </LinearLayout>
 
     <!-- TV-06 商用点歌台顶层 Overlay (Kiosk Mode) -->
-    <include
-        android:id="@+id/kioskOverlay"
-        layout="@layout/view_ktv_kiosk_overlay" />
+    <ViewStub
+        android:id="@+id/kioskOverlayStub"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout="@layout/view_ktv_kiosk_overlay" />
 </FrameLayout>

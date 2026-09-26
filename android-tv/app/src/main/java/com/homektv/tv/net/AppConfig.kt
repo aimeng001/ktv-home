@@ -161,7 +161,7 @@ class AppConfig(context: Context) {
     }
 
     var microphoneMonitorEnabled: Boolean
-        get() = prefs.getBoolean(KEY_MICROPHONE_MONITOR, true)
+        get() = prefs.getBoolean(KEY_MICROPHONE_MONITOR, MicrophoneMonitorStartupPolicy.DEFAULT_ENABLED)
         set(value) = prefs.edit { putBoolean(KEY_MICROPHONE_MONITOR, value) }
 
     /** 与服务端 KTV_PLAYER_CREDENTIAL 对应的可选电视连接密钥。 */

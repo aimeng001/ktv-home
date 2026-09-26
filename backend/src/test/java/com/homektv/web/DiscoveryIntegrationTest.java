@@ -7,8 +7,12 @@ import com.homektv.repo.SongRepository;
 import com.homektv.repo.WishRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
+import org.springframework.context.ApplicationContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.env.Environment;
+import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -25,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest
 @Testcontainers
+@Isolated("Testcontainers JUnit extension does not support parallel test execution")
 class DiscoveryIntegrationTest {
 
     @Container
@@ -41,6 +46,8 @@ class DiscoveryIntegrationTest {
     }
 
     @Autowired DiscoveryController discoveryController;
+    @Autowired ApplicationContext applicationContext;
+    @Autowired Environment environment;
     @Autowired HistoryController historyController;
     @Autowired WishController wishController;
     @Autowired SongRepository songRepo;
@@ -81,6 +88,14 @@ class DiscoveryIntegrationTest {
         // songA 播放最多，应排第一
         var first = (com.homektv.web.dto.SongDto) r.get(0);
         assertThat(first.title()).isEqualTo("晴天");
+    }
+
+    @Test
+    void testContextDisablesBackgroundSchedulingAndLanDiscovery() {
+        assertThat(environment.getProperty("app.scheduling.enabled", Boolean.class, true)).isFalse();
+        assertThat(environment.getProperty("app.discovery.enabled", Boolean.class, true)).isFalse();
+        assertThat(applicationContext.getBeansOfType(ScheduledAnnotationBeanPostProcessor.class))
+                .isEmpty();
     }
 
     @Test

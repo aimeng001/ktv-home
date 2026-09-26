@@ -32,6 +32,12 @@ public record PlaybackDescriptor(
                 AudioLayoutDto.from(source), null, null);
     }
 
+    public static PlaybackDescriptor liveTranscode(SongFile source) {
+        return new PlaybackDescriptor("LIVE_TRANSCODE", "READY", source.getId(), null,
+                "/api/stream/" + source.getId() + "?transcode=true", source.getAudioTracks(),
+                source.getVocalTrackIndex(), AudioLayoutDto.from(source), null, null);
+    }
+
     public static PlaybackDescriptor preparing(SongFile source, PlaybackVariant variant) {
         return new PlaybackDescriptor("TRANSCODE", "PREPARING", source.getId(), variant.getId(), null,
                 variant.getAudioTracks(), variant.getAccompanimentTrackIndex(), layout(variant), null, null);
