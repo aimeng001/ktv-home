@@ -57,10 +57,14 @@ class KioskPipLayoutContractTest {
 
         assertTrue(source.contains("kioskContentStage.addOnLayoutChangeListener(pipLayoutChangeListener)"))
         assertTrue(source.contains("KioskPipResponsivePolicy.resolve("))
+        assertTrue(source.contains("minContentHeightDp = requirement.preferredHeightDp"))
         assertTrue(source.contains("Player.STATE_BUFFERING && it.playWhenReady"))
-        assertTrue(source.contains("if (state.videoVisible && pipSpaceAvailable) View.VISIBLE else View.GONE"))
+        assertTrue(source.contains("val effectivePipVisible = state.videoVisible && pipSpaceAvailable"))
+        assertTrue(source.contains("if (effectivePipVisible) View.VISIBLE else View.GONE"))
         assertTrue(source.contains("binding.kioskOverlay.btnKioskExit.visibility ="))
-        assertTrue(source.contains("if (!state.videoVisible && binding.kioskOverlay.btnKioskExit.hasFocus())"))
+        assertTrue(source.contains("if (!effectivePipVisible && binding.kioskOverlay.btnKioskExit.hasFocus())"))
         assertTrue(source.contains("tabHistory.nextFocusRightId"))
+        assertTrue(source.contains("overlay.kioskKeyboard.onLayoutModeChanged"))
+        assertTrue(source.contains("schedulePipResponsiveSizeUpdate()"))
     }
 }

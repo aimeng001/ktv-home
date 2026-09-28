@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { canonicalizeSettings, releaseLabel, saveDirtySections, loadSettingsSections, canSaveSection, runSettingsAction, editableSettingsPayload, normalizeStandbySongIds, exceedsStandbySongLimit, describeSaveFailures, MAX_STANDBY_SONGS } from './settingsState'
+import { canonicalizeSettings, releaseLabel, saveDirtySections, loadSettingsSections, canSaveSection, runSettingsAction, editableSettingsPayload, normalizeStandbySongIds, exceedsStandbySongLimit, describeSaveFailures, MAX_STANDBY_SONGS, failedSettingsSections, reconcileSettingsDraft } from './settingsState'
 
 describe('admin settings state', () => {
   it('strips internal runtime state from form submission payload', () => {
@@ -99,6 +99,31 @@ describe('admin settings state', () => {
     expect(result.values.music).toEqual({ enabled: false })
     expect(result.states).toEqual({ general: 'ready', ai: 'error', music: 'ready' })
     expect(result.errors.ai).toBeInstanceOf(Error)
+  })
+
+  it('retries only failed settings partitions', () => {
+    expect(failedSettingsSections({ general: 'ready', ai: 'error', music: 'loading' })).toEqual(['ai'])
+  })
+
+  it('preserves a dirty settings draft while advancing its server baseline after retry', () => {
+    const result = reconcileSettingsDraft(
+      { enabled: true, baseUrl: 'http://unsaved' },
+      JSON.stringify({ enabled: false, baseUrl: 'http://old' }),
+      { enabled: false, baseUrl: 'http://server-new' },
+    )
+
+    expect(result.value).toEqual({ enabled: true, baseUrl: 'http://unsaved' })
+    expect(result.baseline).toEqual({ enabled: false, baseUrl: 'http://server-new' })
+    expect(result.dirty).toBe(true)
+  })
+
+  it('uses newly loaded values when the settings draft is clean', () => {
+    const current = { enabled: false }
+    const result = reconcileSettingsDraft(current, JSON.stringify(current), { enabled: true })
+
+    expect(result.value).toEqual({ enabled: true })
+    expect(result.baseline).toEqual({ enabled: true })
+    expect(result.dirty).toBe(false)
   })
 
   it('blocks a dirty section whose initial read failed', async () => {

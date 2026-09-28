@@ -88,7 +88,7 @@ function flash(value){message.value=value;setTimeout(()=>message.value='',3000)}
 async function run(action){busy.value=true;try{await action()}catch(error){await alertDialog(error.message||'操作失败')}finally{busy.value=false}}
 async function createSelected(){await run(async()=>{const results=await Promise.allSettled(props.selectedIds.map(id=>api.adminAiCreateTask(id)));const created=results.filter(item=>item.status==='fulfilled').length;const skipped=results.length-created;flash(`已创建 ${created} 个任务${skipped?`，跳过 ${skipped} 首`:''}`);await refresh()})}
 async function createUnclassified(){await run(async()=>{const result=await api.adminAiCreateUnclassified(batchLimit.value);flash(`已创建 ${result.created} 个任务`);await refresh()})}
-async function repairLibrary(){await run(async()=>{const result=await api.adminAiRepair();repairBatchId.value=result.batchId;await loadRepairProgress();flash(`已创建 ${result.created} 个存量修复任务`);await refresh()})}
+async function repairLibrary(){await run(async()=>{const result=await api.adminAiRepair();repairBatchId.value=result.batchId;await loadRepairProgress();const rejected=Number(result.dispatchRejected||0);flash(`已创建 ${result.created} 个存量修复任务${rejected?`，${rejected} 个未能入队，已标记失败可重试`:''}`);await refresh()})}
 async function loadRepairProgress(){if(repairBatchId.value)Object.assign(repairProgress,await api.adminAiRepairProgress(repairBatchId.value))}
 async function pauseRepair(){await run(async()=>{Object.assign(repairProgress,await api.adminAiPauseRepair(repairBatchId.value));await refresh()})}
 async function resumeRepair(){await run(async()=>{await api.adminAiResumeRepair(repairBatchId.value);await loadRepairProgress();await refresh()})}

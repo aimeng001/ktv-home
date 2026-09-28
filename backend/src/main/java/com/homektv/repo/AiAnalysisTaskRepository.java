@@ -4,7 +4,9 @@ import com.homektv.domain.AiAnalysisTask;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
+import jakarta.persistence.LockModeType;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
@@ -20,6 +22,18 @@ public interface AiAnalysisTaskRepository extends JpaRepository<AiAnalysisTask, 
     List<AiAnalysisTask> findByBatchIdOrderByCreatedAtAsc(String batchId);
     boolean existsBySongIdAndStatusIn(Long songId, List<String> statuses);
     Optional<AiAnalysisTask> findFirstBySongIdAndStatusInOrderByCreatedAtDesc(Long songId, List<String> statuses);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select task from AiAnalysisTask task where task.id = :taskId")
+    Optional<AiAnalysisTask> findByIdForUpdate(@Param("taskId") Long taskId);
+
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE AiAnalysisTask task SET task.status = 'paused'
+            WHERE task.batchId = :batchId AND task.status IN ('pending', 'processing')
+            """)
+    int pauseBatch(@Param("batchId") String batchId);
     /**
      * Atomically claims a pending task. A concurrent worker that observes the
      * same task receives zero rows and must not execute the provider call.

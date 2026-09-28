@@ -52,6 +52,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -972,7 +973,46 @@ class IncrementalLibraryScanTest {
 
         scanService.scanAll();
 
-        verify(artistCreditService, atLeastOnce()).replace(anyLong(), eq("单依纯_王子异"));
+        verify(artistCreditService, atLeastOnce())
+                .createInitial(anyLong(), eq("单依纯_王子异"), any());
+        verify(artistCreditService, never())
+                .replace(anyLong(), anyString());
+        verify(artistCreditService, never())
+                .replace(anyLong(), anyString(), any());
+    }
+
+    @Test
+    void scanReplacesInitialArtistCreditsWhenMediaTagsCorrectTheArtist() throws Exception {
+        Path file = Files.write(sourceDir.resolve("草蜢-爱-国语-流行.mp3"), new byte[]{1, 2, 3});
+        TagInfo tag = new TagInfo();
+        tag.setArtist("王菲");
+        when(tagReader.read(file.toFile())).thenReturn(tag);
+
+        scanService.scanAll();
+
+        verify(artistCreditService).createInitial(anyLong(), eq("草蜢"), any());
+        verify(artistCreditService).replace(anyLong(), eq("王菲"));
+    }
+
+    @Test
+    void scanStillSynchronizesProvisionalCreditsForRowsPendingBeforeThisScan() throws Exception {
+        Path file = Files.write(sourceDir.resolve("草蜢-爱-国语-流行.mkv"), new byte[]{1, 2, 3});
+        Song provisional = new Song();
+        provisional.setId(800L);
+        provisional.setTitle("爱");
+        provisional.setArtist("草蜢");
+        provisional.setMediaType(MediaClassifier.PENDING_PROBE);
+        provisional.setFingerprint("fast-index-800");
+        provisional.setStatus("unrecognized");
+        provisional.setNeedsAiOptimization(true);
+        songsById.put(provisional.getId(), provisional);
+        songsByFingerprint.put(provisional.getFingerprint(), provisional);
+        registerUnchangedFile(file, provisional);
+        filesByPath.get(file.toString()).setProbePending(true);
+
+        scanService.scanAll();
+
+        verify(artistCreditService).replace(anyLong(), eq("草蜢"));
     }
 
     @Test

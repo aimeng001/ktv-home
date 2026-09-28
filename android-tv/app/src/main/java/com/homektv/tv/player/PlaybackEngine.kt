@@ -491,14 +491,18 @@ class PlaybackEngine(
         identityGate.markReady(fileId.toString())
 
         fallbackPlaybackToken += 1L
-        fallbackPlayer.prepareAndPlay(
-            fileId,
-            streamUrl,
-            initialPositionMs,
-            fallbackPlaybackToken,
-            playWhenReady,
+        prepareFallbackPlayback(
+            player = fallbackPlayer,
+            fileId = fileId,
+            streamUrl = streamUrl,
+            initialPositionMs = initialPositionMs,
+            requestToken = fallbackPlaybackToken,
+            playWhenReady = playWhenReady,
+            mode = requestedVocalMode,
+            accompanimentIndex = requestedAccompanimentIndex,
+            audioTrackCount = requestedAudioTrackCount,
+            audioLayout = requestedAudioLayout,
         )
-        fallbackPlayer.setChannelMode(requestedVocalMode)
         Log.i(TAG, "Switched to FfmpegFallbackPlayer for fileId=$fileId url=$streamUrl")
     }
 

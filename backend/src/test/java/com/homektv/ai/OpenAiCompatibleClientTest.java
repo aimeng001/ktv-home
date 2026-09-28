@@ -2,6 +2,9 @@ package com.homektv.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homektv.domain.MediaImportRecord;
+import com.homektv.domain.Song;
+import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.web.ApiException;
 import com.sun.net.httpserver.HttpExchange;
@@ -113,6 +116,59 @@ class OpenAiCompatibleClientTest {
                 .path("ok").asBoolean()).isTrue();
     }
 
+    @Test
+    void songClassificationSendsRelativeFileEvidenceWithoutAbsoluteLibraryPaths() throws Exception {
+        List<String> bodies = new ArrayList<>();
+        start(exchange -> {
+            bodies.add(read(exchange));
+            respond(exchange, 200, completion("{}"));
+        });
+        Song song = new Song();
+        song.setId(71L);
+        song.setTitle("晴天");
+        song.setArtist("周杰伦");
+        SongFile file = new SongFile();
+        file.setSongId(71L);
+        file.setFilePath("D:\\Private NAS Root\\library\\周杰伦\\晴天.mkv");
+        file.setSourcePath("D:\\Private NAS Root\\imports\\晴天.mkv");
+        file.setRelativePath("国语\\周杰伦\\晴天.mkv");
+        SongFile fallbackFile = new SongFile();
+        fallbackFile.setFilePath("/mnt/SECOND_PRIVATE_ROOT/山丘.mp4");
+        fallbackFile.setRelativePath("/stale/absolute/path");
+        SongFileRepository files = mock(SongFileRepository.class);
+        when(files.findBySongIdOrderByPriorityDesc(71L)).thenReturn(List.of(file, fallbackFile));
+
+        client(AiConfigService.JsonMode.PROMPT_ONLY, files).classify(song, "BULK");
+
+        assertThat(bodies).singleElement().asString()
+                .contains("国语/周杰伦/晴天.mkv", "山丘.mp4")
+                .doesNotContain("Private NAS Root", "D:\\\\Private NAS Root", "SECOND_PRIVATE_ROOT", "/stale/");
+    }
+
+    @Test
+    void importClassificationDoesNotSendAbsolutePathsFromRecordOrReason() throws Exception {
+        List<String> bodies = new ArrayList<>();
+        start(exchange -> {
+            bodies.add(read(exchange));
+            respond(exchange, 200, completion("{}"));
+        });
+        MediaImportRecord record = new MediaImportRecord();
+        record.setId(72L);
+        record.setSourcePath("D:\\Private NAS Root\\imports\\晴天.mkv");
+        record.setSourceFilename("晴天.mkv");
+        record.setParsedTitle("晴天");
+        record.setParsedArtist("周杰伦");
+        record.setReason("读取失败，文件位于 D:\\Private NAS Root\\imports\\晴天.mkv\n"
+                + "容器文件位于 /mnt/private-library/imports/晴天.mkv\n"
+                + "共享文件位于 \\\\NAS-SERVER\\Songs\\晴天.mkv");
+
+        client(AiConfigService.JsonMode.PROMPT_ONLY).classifyImport(record, "BULK");
+
+        assertThat(bodies).singleElement().asString()
+                .contains("晴天.mkv", "读取失败", "容器文件位于")
+                .doesNotContain("Private NAS Root", "D:\\\\Private NAS Root", "/mnt/private-library", "NAS-SERVER");
+    }
+
     @Tag("extended")
     @Test
     void retriesRateLimitAndListsModels() throws Exception {
@@ -166,11 +222,15 @@ class OpenAiCompatibleClientTest {
     }
 
     private OpenAiCompatibleClient client(AiConfigService.JsonMode mode) {
+        return client(mode, mock(SongFileRepository.class));
+    }
+
+    private OpenAiCompatibleClient client(AiConfigService.JsonMode mode, SongFileRepository files) {
         AiConfigService configService = mock(AiConfigService.class);
         when(configService.resolve()).thenReturn(new AiConfigService.ResolvedConfig(
                 true, "http://localhost:" + server.getAddress().getPort() + "/v1", "vendor/model:any-v2", "",
                 5, 0.97, 0.92, mode, 2, 1, "test-key"));
-        return new OpenAiCompatibleClient(configService, new ObjectMapper(), RestClient.builder(), mock(SongFileRepository.class));
+        return new OpenAiCompatibleClient(configService, new ObjectMapper(), RestClient.builder(), files);
     }
 
     private void start(Handler handler) throws IOException {

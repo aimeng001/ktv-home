@@ -139,7 +139,12 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         {
             Options = { KeepAliveInterval = Timeout.InfiniteTimeSpan },
         };
-        await connectedSocket.ConnectAsync(endpoint.WebSocketUri(clientToken, playerCredential), cancellationToken).ConfigureAwait(false);
+        var playerCredentialHeader = endpoint.PlayerCredentialHeader(playerCredential);
+        if (playerCredentialHeader is not null)
+        {
+            connectedSocket.Options.SetRequestHeader("X-Player-Credential", playerCredentialHeader);
+        }
+        await connectedSocket.ConnectAsync(endpoint.WebSocketUri(clientToken), cancellationToken).ConfigureAwait(false);
         socket = connectedSocket;
         await FlushReliableMessagesAsync(connectedSocket, cancellationToken).ConfigureAwait(false);
         ConnectionChanged?.Invoke(true);

@@ -38,6 +38,72 @@ interface FallbackPlayer {
     val durationMs: Long
 }
 
+internal data class FallbackVocalSelection(
+    val mode: String,
+    val trackIndex: Int?,
+    val audioLayout: AudioLayout,
+)
+
+/** Defers vocal selection until MediaPlayer has audio tracks, while retaining later changes. */
+internal class FallbackVocalSelectionState {
+    private var prepared = false
+    private var requested: FallbackVocalSelection? = null
+
+    fun beginPreparation() {
+        prepared = false
+        requested = null
+    }
+
+    fun select(mode: String, trackIndex: Int?, audioLayout: AudioLayout): FallbackVocalSelection? {
+        val selection = FallbackVocalSelection(mode, trackIndex, audioLayout)
+        requested = selection
+        return selection.takeIf { prepared }
+    }
+
+    fun onPrepared(): FallbackVocalSelection? {
+        prepared = true
+        return requested
+    }
+
+    fun reset() {
+        prepared = false
+        requested = null
+    }
+}
+
+internal fun applyFallbackVocalSelection(
+    player: FallbackPlayer,
+    mode: String,
+    accompanimentIndex: Int?,
+    audioTrackCount: Int,
+    audioLayout: AudioLayout,
+) {
+    val trackIndex = resolveAudioTrackIndex(
+        audioLayout = audioLayout,
+        vocalMode = mode,
+        audioTrackCount = audioTrackCount,
+        legacyAccompanimentIndex = accompanimentIndex,
+    )
+    player.setVocalSelection(mode, trackIndex, audioLayout)
+}
+
+internal fun prepareFallbackPlayback(
+    player: FallbackPlayer,
+    fileId: Long,
+    streamUrl: String,
+    initialPositionMs: Long,
+    requestToken: Long,
+    playWhenReady: Boolean,
+    mode: String,
+    accompanimentIndex: Int?,
+    audioTrackCount: Int,
+    audioLayout: AudioLayout,
+) {
+    player.prepareAndPlay(fileId, streamUrl, initialPositionMs, requestToken, playWhenReady)
+    player.setChannelMode(mode)
+    applyFallbackVocalSelection(player, mode, accompanimentIndex, audioTrackCount, audioLayout)
+}
+
 /** Keeps pause/resume intent ordered with MediaPlayer's asynchronous prepare callback. */
 internal class FallbackPlaybackIntent {
     private var generation = 0L
@@ -92,6 +158,7 @@ class FfmpegFallbackPlayer(
     private var isMuted: Boolean = false
     private var requestedPositionMs: Long = 0L
     private val playbackIntent = FallbackPlaybackIntent()
+    private val vocalSelection = FallbackVocalSelectionState()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val progressRunnable = object : Runnable {
@@ -131,6 +198,7 @@ class FfmpegFallbackPlayer(
         currentStreamUrl = streamUrl
         requestedPositionMs = initialPositionMs.coerceAtLeast(0L)
         val attempt = playbackIntent.begin(playWhenReady)
+        vocalSelection.beginPreparation()
 
         try {
             val player = MediaPlayer().apply {
@@ -152,6 +220,7 @@ class FfmpegFallbackPlayer(
                         mp.seekTo(requestedPositionMs.toInt())
                     }
                     applyCurrentVolume()
+                    vocalSelection.onPrepared()?.let { applyVocalSelection(mp, it) }
                     if (shouldPlay) {
                         mp.start()
                         onStateChanged(true)
@@ -233,6 +302,7 @@ class FfmpegFallbackPlayer(
     override fun stop() {
         mainHandler.removeCallbacks(progressRunnable)
         playbackIntent.reset()
+        vocalSelection.reset()
         mediaPlayer?.let {
             try {
                 if (it.isPlaying) it.stop()
@@ -275,22 +345,29 @@ class FfmpegFallbackPlayer(
     }
 
     override fun setVocalSelection(mode: String, trackIndex: Int?, audioLayout: AudioLayout) {
+        vocalSelection.select(mode, trackIndex, audioLayout)?.let { selection ->
+            mediaPlayer?.let { applyVocalSelection(it, selection) }
+        }
+    }
+
+    private fun applyVocalSelection(mp: MediaPlayer, selection: FallbackVocalSelection) {
+        val mode = selection.mode
+        val trackIndex = selection.trackIndex
+        val audioLayout = selection.audioLayout
         val layout = audioLayout.layout
         if (layout.equals("DUAL_TRACK", ignoreCase = true)) {
             if (trackIndex != null && trackIndex >= 0) {
                 try {
-                    mediaPlayer?.let { mp ->
-                        val tracks = mp.trackInfo
-                        var audioTrackCount = 0
-                        for (i in tracks.indices) {
-                            if (tracks[i].trackType == MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) {
-                                if (audioTrackCount == trackIndex) {
-                                    mp.selectTrack(i)
-                                    Log.i(TAG, "Selected audio track $trackIndex (internal index $i)")
-                                    break
-                                }
-                                audioTrackCount++
+                    val tracks = mp.trackInfo
+                    var audioTrackCount = 0
+                    for (i in tracks.indices) {
+                        if (tracks[i].trackType == MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) {
+                            if (audioTrackCount == trackIndex) {
+                                mp.selectTrack(i)
+                                Log.i(TAG, "Selected audio track $trackIndex (internal index $i)")
+                                break
                             }
+                            audioTrackCount++
                         }
                     }
                 } catch (e: Exception) {

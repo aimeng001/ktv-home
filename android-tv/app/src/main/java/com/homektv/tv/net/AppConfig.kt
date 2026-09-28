@@ -231,7 +231,7 @@ class AppConfig(context: Context) {
     }
 
     internal fun wsUrlFor(server: SavedServer?, clientToken: String): String =
-        buildTvWebSocketUrl(server?.hostPort.orEmpty(), clientToken, playerCredentialFor(server))
+        buildTvWebSocketUrl(server?.hostPort.orEmpty(), clientToken)
 
     /** WebSocket 地址 for the controller-compatible V1 session. */
     fun controllerWsUrl(userToken: String = this.userToken): String =
@@ -255,11 +255,11 @@ class AppConfig(context: Context) {
         return if (configuration.smallestScreenWidthDp >= 600) "ANDROID_TABLET" else "ANDROID_PHONE"
     }
 
-    /** REST/资源基址：http://host:port/api */
-    fun apiBase(): String = "http://${serverHost}/api"
+    /** REST/资源基址；服务器显式配置 HTTPS 时保持 TLS。 */
+    fun apiBase(): String = buildServerHttpUrl(serverHost.orEmpty(), "/api")
 
     /** H5 点歌地址（用于待机页二维码/明文兜底） */
-    fun h5Url(): String = "http://${serverHost}/m"
+    fun h5Url(): String = buildServerHttpUrl(serverHost.orEmpty(), "/m")
 
     /**
      * Stable player token for the currently selected server. The old global
@@ -400,29 +400,43 @@ class AppConfig(context: Context) {
         internal fun serverScopedPreferenceKey(prefix: String, serverHost: String?): String =
             ServerSessionScope.hostPreferenceKey(prefix, serverHost)
 
-        /**
-         * 归一化用户输入：去空格、剥离 http(s):// 前缀与尾部斜杠；
-         * 未带端口时补默认 8080；手动输入支持任意有效服务端端口。
-         */
+        /** Normalize HTTP addresses while retaining explicit HTTPS as a security boundary. */
         fun normalizeHost(raw: String): String? {
             var s = raw.trim()
             if (s.isEmpty()) return null
-            s = s.removePrefix("http://").removePrefix("https://")
+            val secure = s.startsWith("https://", ignoreCase = true)
+            s = when {
+                secure -> s.substring(8)
+                s.startsWith("http://", ignoreCase = true) -> s.substring(7)
+                else -> s
+            }
             s = s.substringBefore("/")        // 去掉路径
             if (s.isEmpty()) return null
-            if (!s.contains(":")) s = "$s:8080"
-            return s
+            if (!s.contains(":")) s = "$s:${if (secure) 443 else 8080}"
+            return if (secure) "https://$s" else s
         }
     }
 }
 
-internal fun buildTvWebSocketUrl(serverHost: String, clientToken: String, playerCredential: String?): String {
+internal fun buildTvWebSocketUrl(serverHost: String, clientToken: String): String {
     val token = encodeQueryComponent(clientToken)
-    val credential = playerCredential?.trim()?.takeIf { it.isNotEmpty() }
-        ?.let { "&player_credential=${encodeQueryComponent(it)}" }
-        .orEmpty()
-    return "ws://$serverHost/ws?client_type=tv&client_token=$token&protocol_version=2&platform=ANDROID_TV$credential"
+    return "${buildWebSocketBaseUrl(serverHost)}?client_type=tv&client_token=$token&protocol_version=2&platform=ANDROID_TV"
 }
+
+internal fun buildServerHttpUrl(serverHost: String, path: String): String =
+    "${if (isHttpsServerAddress(serverHost)) "https" else "http"}://${serverAddress(serverHost)}/${path.trimStart('/')}"
+
+internal fun buildWebSocketBaseUrl(serverHost: String): String =
+    "${if (isHttpsServerAddress(serverHost)) "wss" else "ws"}://${serverAddress(serverHost)}/ws"
+
+internal fun isHttpsServerAddress(serverHost: String): Boolean =
+    serverHost.trim().startsWith("https://", ignoreCase = true)
+
+internal fun playerCredentialForTransport(serverHost: String, credential: String?): String? =
+    credential?.trim()?.takeIf { it.isNotEmpty() && isHttpsServerAddress(serverHost) }
+
+private fun serverAddress(serverHost: String): String =
+    serverHost.trim().replace(Regex("^https?://", RegexOption.IGNORE_CASE), "").trimEnd('/')
 
 internal fun encodeQueryComponent(value: String): String = buildString {
     value.toByteArray(Charsets.UTF_8).forEach { byte ->

@@ -24,7 +24,7 @@
         <main class="settings-content">
         <div v-if="hasLoadErrors" class="settings-load-alert" role="alert">
           <span>部分设置读取失败，失败分区不会保存默认值。</span>
-          <button class="text-btn" :disabled="loading" @click="load">重试</button>
+          <button class="text-btn" :disabled="loading" @click="retryFailedSections">重试</button>
         </div>
         <div v-if="sectionStateFor(section) === 'error'" class="settings-error" role="alert">
           当前分区读取失败；请先重试成功后再保存，避免覆盖服务器上的原配置。
@@ -204,7 +204,7 @@ import {
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
-import { canonicalizeSettings, loadSettingsSections, releaseLabel, runSettingsAction, saveDirtySections, editableSettingsPayload, isAiConfigured, normalizeStandbySongIds, exceedsStandbySongLimit, describeSaveFailures, MAX_STANDBY_SONGS, TRANSCODE_SETTING_KEYS, mergeSettingsSection, canStartSettingsSave } from './settingsState'
+import { canonicalizeSettings, loadSettingsSections, releaseLabel, runSettingsAction, saveDirtySections, editableSettingsPayload, isAiConfigured, normalizeStandbySongIds, exceedsStandbySongLimit, describeSaveFailures, MAX_STANDBY_SONGS, TRANSCODE_SETTING_KEYS, mergeSettingsSection, canStartSettingsSave, failedSettingsSections, reconcileSettingsDraft } from './settingsState'
 
 const route = useRoute(); const router = useRouter()
 const categories = [
@@ -282,17 +282,15 @@ const aiDirty = computed(() => snapshot(aiForm) !== aiOriginal.value)
 const musicDirty = computed(() => snapshot(musicForm) !== musicOriginal.value)
 const hasLoadErrors = computed(() => Object.values(sectionState).some(value => value === 'error'))
 function sectionStateFor(value) { return value === 'ai' ? sectionState.ai : value === 'metadata' ? sectionState.music : sectionState.general }
-function resetLoadState() { Object.assign(sectionState, { general: 'loading', ai: 'loading', music: 'loading' }); Object.keys(sectionErrors).forEach(key => delete sectionErrors[key]) }
+function resetLoadState(names = Object.keys(sectionState)) { for (const name of names) { sectionState[name] = 'loading'; delete sectionErrors[name] } }
 function selectSection(value){ section.value=value; router.replace({query:{...route.query,section:value}}) }
 function jump(item){ selectSection(item.section); nextTick(()=>document.getElementById(item.key)?.scrollIntoView({behavior:'smooth',block:'center'})) }
 function sourceLabel(value){ return value==='DATABASE'?'管理后台':value==='ENVIRONMENT'?'环境变量':value==='NONE'?'未配置':'默认值' }
 function formatTime(value){ return value ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '—' }
 function isCooling(item){ return Boolean(item?.cooldownUntil && Date.parse(item.cooldownUntil) > Date.now()) }
 function applyPreset(p){ if(p.baseUrl) aiForm.baseUrl=p.baseUrl }
-async function load(){
-  loading.value=true
-  resetLoadState()
-  const result = await loadSettingsSections({
+async function load(failedOnly=false){
+  const loaders={
     general: () => api.adminGetSettings(),
     ai: () => api.adminAiConfig(),
     music: () => api.adminMusicSourceConfig(),
@@ -300,30 +298,48 @@ async function load(){
     wishes: () => api.adminWishes(),
     mode: () => api.adminSourceLibrary({page:0,size:1}),
     release: () => api.releaseInfo()
-  })
-  Object.assign(sectionState, { general: result.states.general, ai: result.states.ai, music: result.states.music })
+  }
+  const names=failedOnly?failedSettingsSections(sectionState):Object.keys(loaders)
+  if(!names.length)return
+  loading.value=true
+  resetLoadState(failedOnly?names:Object.keys(sectionState))
+  const selectedLoaders=Object.fromEntries(names.map(name=>[name,loaders[name]]))
+  const result = await loadSettingsSections(selectedLoaders)
+  for(const name of Object.keys(sectionState)) if(result.states[name]) sectionState[name]=result.states[name]
   Object.assign(sectionErrors, result.errors)
   const settings = result.values.general
   const config = result.values.ai
   const music = result.values.music
-  if (settings) Object.assign(form, canonicalizeSettings(settings))
+  if (settings) {
+    const incoming={...form,...canonicalizeSettings(settings)}
+    const merged=reconcileSettingsDraft(form,original.value,incoming)
+    Object.assign(form,merged.value)
+    original.value=snapshot(merged.baseline)
+  }
   if (config) {
     Object.assign(ai, config)
-    Object.assign(aiForm, { enabled:config.enabled, baseUrl:config.baseUrl, bulkModel:config.bulkModel, reasoningModel:config.reasoningModel, timeoutSeconds:config.timeoutSeconds, identityThreshold:config.identityThreshold, classificationThreshold:config.classificationThreshold, jsonMode:config.jsonMode||'AUTO', bulkConcurrency:config.bulkConcurrency||2, reasoningConcurrency:config.reasoningConcurrency||1 })
+    const incoming={ enabled:config.enabled, baseUrl:config.baseUrl, apiKey:'', bulkModel:config.bulkModel, reasoningModel:config.reasoningModel, timeoutSeconds:config.timeoutSeconds, identityThreshold:config.identityThreshold, classificationThreshold:config.classificationThreshold, jsonMode:config.jsonMode||'AUTO', bulkConcurrency:config.bulkConcurrency||2, reasoningConcurrency:config.reasoningConcurrency||1 }
+    const merged=reconcileSettingsDraft(aiForm,aiOriginal.value,incoming)
+    Object.assign(aiForm,merged.value)
+    aiOriginal.value=snapshot(merged.baseline)
   }
   if (music) {
-    Object.assign(musicForm, { enabled:music.enabled||false, providers:music.providers||[], resultLimit:music.resultLimit||20, timeoutSeconds:music.timeoutSeconds||5, searchCacheHours:music.searchCacheHours||6, concurrencyLimit:music.concurrencyLimit||1, requestIntervalMs:music.requestIntervalMs||1500, autoApplyThreshold:music.autoApplyThreshold??.95 })
+    const incoming={ enabled:music.enabled||false, providers:music.providers||[], resultLimit:music.resultLimit||20, timeoutSeconds:music.timeoutSeconds||5, searchCacheHours:music.searchCacheHours||6, concurrencyLimit:music.concurrencyLimit||1, requestIntervalMs:music.requestIntervalMs||1500, autoApplyThreshold:music.autoApplyThreshold??.95 }
+    const merged=reconcileSettingsDraft(musicForm,musicOriginal.value,incoming)
+    Object.assign(musicForm,merged.value)
+    musicOriginal.value=snapshot(merged.baseline)
     musicStatus.value=music.providerStatus||[]
   }
   if (result.values.hardware) Object.assign(hardware, result.values.hardware)
   if (result.values.wishes) wishes.value=result.values.wishes
   if (result.values.mode) libraryMode.value=result.values.mode.libraryMode||null
   if (result.values.release) Object.assign(releaseInfo,result.values.release)
-  if (result.states.general === 'ready' || !original.value) original.value=snapshot(form)
-  if (result.states.ai === 'ready' || !aiOriginal.value) aiOriginal.value=snapshot(aiForm)
-  if (result.states.music === 'ready' || !musicOriginal.value) musicOriginal.value=snapshot(musicForm)
+  if (!original.value) original.value=snapshot(form)
+  if (!aiOriginal.value) aiOriginal.value=snapshot(aiForm)
+  if (!musicOriginal.value) musicOriginal.value=snapshot(musicForm)
   loading.value=false
 }
+async function retryFailedSections(){await load(true)}
 watch([form,aiForm,musicForm],()=>{ if(!loading.value) dirty.value=snapshot(form)!==original.value||snapshot(aiForm)!==aiOriginal.value||snapshot(musicForm)!==musicOriginal.value },{deep:true})
 async function saveAll(){
   if(!canStartSettingsSave(saving.value) || restoring.value)return
@@ -385,7 +401,7 @@ const standbySongsHint = computed(() => standbySongsTruncated.value
   ? `已超过上限，仅保留前 ${MAX_STANDBY_SONGS} 首（后端最多接受 ${MAX_STANDBY_SONGS} 首）`
   : `用逗号分隔多个歌曲 ID，最多 ${MAX_STANDBY_SONGS} 首`)
 function setStandbySongIds(value){ standbySongsTruncated.value=exceedsStandbySongLimit(value); form.standby_song_ids=normalizeStandbySongIds(value) }
-async function uploadStandbyLogo(event){ const file=event.target.files?.[0]; if(!file)return; try{await api.adminUploadStandbyLogo(file); Object.assign(form,canonicalizeSettings(await api.adminGetSettings())); original.value=snapshot(form)}catch(e){await alertDialog(e.message||'Logo 上传失败')}finally{event.target.value=''} }
+async function uploadStandbyLogo(event){ const file=event.target.files?.[0]; if(!file)return; try{const uploaded=await api.adminUploadStandbyLogo(file); const baseline=original.value?JSON.parse(original.value):{...form}; const configured=Boolean(uploaded?.logoUrl); form.standby_logo_configured=configured; baseline.standby_logo_configured=configured; original.value=snapshot(baseline)}catch(e){await alertDialog(e.message||'Logo 上传失败')}finally{event.target.value=''} }
 
 const wishesModalOpen = ref(false)
 const exportingWishes = ref(false)

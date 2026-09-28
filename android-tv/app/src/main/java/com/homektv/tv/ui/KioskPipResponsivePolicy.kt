@@ -10,7 +10,7 @@ internal object KioskPipResponsivePolicy {
     fun resolve(
         availableWidthDp: Int,
         availableHeightDp: Int,
-        minContentHeightDp: Int = MIN_CONTENT_HEIGHT_DP,
+        minContentHeightDp: Int,
         bottomMarginDp: Int = BOTTOM_MARGIN_DP,
         contentGapDp: Int = CONTENT_GAP_DP,
         minWidthDp: Int = MIN_WIDTH_DP,
@@ -34,8 +34,6 @@ internal object KioskPipResponsivePolicy {
         return Size(widthDp = minOf(preferredWidth, widthLimit), visible = true)
     }
 
-    // Keep the search prompt and one full T9 action row visible: 12 + 52 + 12 + 52 + 6 dp.
-    private const val MIN_CONTENT_HEIGHT_DP = 134
     private const val BOTTOM_MARGIN_DP = 8
     private const val CONTENT_GAP_DP = 10
     private const val MIN_WIDTH_DP = 128

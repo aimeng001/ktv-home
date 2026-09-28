@@ -4,15 +4,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.concurrent.ConcurrentHashMap
@@ -31,15 +38,20 @@ import java.util.concurrent.TimeUnit
  */
 class LanScanner {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        .readTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        .callTimeout(PROBE_TIMEOUT_MS + 200, TimeUnit.MILLISECONDS)
-        .retryOnConnectionFailure(false)
-        .build()
+    private val scanClient = newClient(
+        connectTimeoutMs = SCAN_PROBE_TIMEOUT_MS,
+        readTimeoutMs = SCAN_PROBE_TIMEOUT_MS,
+        callTimeoutMs = SCAN_CALL_TIMEOUT_MS,
+    )
+    private val validationClient = newClient(
+        connectTimeoutMs = DIRECT_CONNECT_TIMEOUT_MS,
+        readTimeoutMs = DIRECT_READ_TIMEOUT_MS,
+        callTimeoutMs = DIRECT_CALL_TIMEOUT_MS,
+    )
 
     fun close() {
-        client.closeResources()
+        scanClient.closeResources()
+        validationClient.closeResources()
     }
 
 
@@ -58,7 +70,7 @@ class LanScanner {
             for (batch in targets.chunked(MAX_CONCURRENT_PROBES)) {
                 batch.map { hostPort ->
                     async(Dispatchers.IO) {
-                        val server = discover(hostPort)
+                        val server = discoverForScan(hostPort)
                         if (server != null && found.putIfAbsent(server.hostPort, server) == null) {
                             onFound?.invoke(server)
                         }
@@ -87,11 +99,21 @@ class LanScanner {
     suspend fun validate(hostPort: String): Boolean = discover(hostPort) != null
 
     /** Returns the validated server identity exposed by the health endpoint. */
-    suspend fun discover(hostPort: String): DiscoveredServer? = withContext(Dispatchers.IO) {
-        withTimeoutOrNull(PROBE_TIMEOUT_MS + 300) {
+    suspend fun discover(hostPort: String): DiscoveredServer? =
+        discoverWith(hostPort, validationClient, DIRECT_VALIDATION_BUDGET_MS)
+
+    internal suspend fun discoverForScan(hostPort: String): DiscoveredServer? =
+        discoverWith(hostPort, scanClient, SCAN_VALIDATION_BUDGET_MS)
+
+    private suspend fun discoverWith(
+        hostPort: String,
+        client: OkHttpClient,
+        validationBudgetMs: Long,
+    ): DiscoveredServer? = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(validationBudgetMs) {
             try {
-                val health = probeBody(hostPort, "/api/health") ?: return@withTimeoutOrNull null
-                val ready = probeBody(hostPort, "/api/ready") ?: return@withTimeoutOrNull null
+                val health = probeBody(client, hostPort, "/api/health") ?: return@withTimeoutOrNull null
+                val ready = probeBody(client, hostPort, "/api/ready") ?: return@withTimeoutOrNull null
                 parseDiscoveredServer(hostPort, health, ready)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -112,14 +134,39 @@ class LanScanner {
         return discover(hostPort)?.instanceId == expected
     }
 
-    private fun probeBody(hostPort: String, path: String): String? {
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun probeBody(client: OkHttpClient, hostPort: String, path: String): String? =
+        suspendCancellableCoroutine { continuation ->
         val req = Request.Builder()
-            .url("http://$hostPort$path")
+            .url(buildServerHttpUrl(hostPort, path))
             .get()
             .build()
-        return client.newCall(req).execute().use { resp ->
-            if (resp.isSuccessful) ResponseBodyReader.readText(resp.body, 64L * 1024L) else null
+        val call = client.newCall(req)
+        continuation.invokeOnCancellation {
+            call.cancel()
         }
+
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                continuation.resumeWithCancellationGuard(null)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val body = try {
+                    response.use { resp ->
+                        if (resp.isSuccessful) ResponseBodyReader.readText(resp.body, 64L * 1024L) else null
+                    }
+                } catch (_: Exception) {
+                    null
+                }
+                continuation.resumeWithCancellationGuard(body)
+            }
+        })
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun CancellableContinuation<String?>.resumeWithCancellationGuard(value: String?) {
+        resume(value) { _, _, _ -> }
     }
 
     internal fun validationSatisfied(results: Map<String, Boolean>): Boolean =
@@ -157,11 +204,28 @@ class LanScanner {
     }
 
     companion object {
-        private const val PROBE_TIMEOUT_MS = 300L
+        private const val SCAN_PROBE_TIMEOUT_MS = 300L
+        private const val SCAN_CALL_TIMEOUT_MS = 500L
+        private const val SCAN_VALIDATION_BUDGET_MS = 700L
+        private const val DIRECT_CONNECT_TIMEOUT_MS = 1_500L
+        private const val DIRECT_READ_TIMEOUT_MS = 2_500L
+        private const val DIRECT_CALL_TIMEOUT_MS = 3_000L
+        private const val DIRECT_VALIDATION_BUDGET_MS = 6_000L
         private const val MAX_CONCURRENT_PROBES = 64
         internal val CANDIDATE_PORTS = listOf(8080, 80, 8000, 8081, 8090, 8888, 9000, 9090, 54001)
         internal val PRESET_TARGETS = listOf("192.168.31.18:54001")
         internal val VALIDATION_PATHS = listOf("/api/health", "/api/ready")
+
+        private fun newClient(
+            connectTimeoutMs: Long,
+            readTimeoutMs: Long,
+            callTimeoutMs: Long,
+        ) = OkHttpClient.Builder()
+            .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
+            .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
+            .callTimeout(callTimeoutMs, TimeUnit.MILLISECONDS)
+            .retryOnConnectionFailure(false)
+            .build()
 
         /**
          * Parses both successful probe bodies and preserves the stable instance ID

@@ -4,7 +4,10 @@ import com.homektv.domain.Playlist;
 import com.homektv.domain.PlaylistSong;
 import com.homektv.domain.Song;
 import com.homektv.domain.AiAnalysisTask;
+import com.homektv.domain.MediaImportRecord;
+import com.homektv.library.MediaClassifier;
 import com.homektv.repo.AiAnalysisTaskRepository;
+import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.PlaylistRepository;
 import com.homektv.repo.PlaylistSongRepository;
 import com.homektv.repo.SongRepository;
@@ -46,6 +49,8 @@ class AiPlaylistIntegrationTest {
     @Autowired PlaylistSongRepository playlistSongRepository;
     @Autowired SongRepository songRepository;
     @Autowired AiAnalysisTaskRepository aiAnalysisTaskRepository;
+    @Autowired MediaImportRecordRepository mediaImportRecordRepository;
+    @Autowired AiAnalysisFinalizer aiAnalysisFinalizer;
 
     @Test
     void invalidPreviewDoesNotLeavePlaylistOrAssociations() {
@@ -119,6 +124,135 @@ class AiPlaylistIntegrationTest {
 
         assertThatThrownBy(() -> aiAnalysisTaskRepository.saveAndFlush(taskFor(song.getId())))
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void pauseThatCommitsBeforeFinalizationPreventsSongMutation() {
+        String suffix = String.valueOf(System.nanoTime());
+        Song song = saveSong("暂停前标题-" + suffix, "未知歌手", "pause-first-" + suffix);
+        AiAnalysisTask task = processingTask(song.getId(), "pause-first-batch-" + suffix);
+
+        service.pauseRepairBatch(task.getBatchId());
+
+        assertThat(finishWithConfidentClassification(task, "暂停后标题-" + suffix, "新歌手-" + suffix))
+                .isFalse();
+        assertThat(songRepository.findById(song.getId()).orElseThrow().getTitle())
+                .isEqualTo("暂停前标题-" + suffix);
+        AiAnalysisTask persistedTask = aiAnalysisTaskRepository.findById(task.getId()).orElseThrow();
+        assertThat(persistedTask.getStatus()).isEqualTo("paused");
+        assertThat(persistedTask.getResultJson()).isNull();
+    }
+
+    @Test
+    void finalizationThatCommitsBeforePauseKeepsAppliedResultAndTarget() {
+        String suffix = String.valueOf(System.nanoTime());
+        Song song = saveSong("提交前标题-" + suffix, "未知歌手", "finalize-first-" + suffix);
+        AiAnalysisTask task = processingTask(song.getId(), "finalize-first-batch-" + suffix);
+        String expectedTitle = "提交后标题-" + suffix;
+        String expectedArtist = "新歌手-" + suffix;
+
+        assertThat(finishWithConfidentClassification(task, expectedTitle, expectedArtist)).isTrue();
+        service.pauseRepairBatch(task.getBatchId());
+
+        Song persistedSong = songRepository.findById(song.getId()).orElseThrow();
+        assertThat(persistedSong.getTitle()).isEqualTo(expectedTitle);
+        assertThat(persistedSong.getArtist()).isEqualTo(expectedArtist);
+        assertThat(aiAnalysisTaskRepository.findById(task.getId()).orElseThrow().getStatus())
+                .isEqualTo("auto_applied");
+    }
+
+    @Test
+    void failedTargetMutationRollsBackTheTaskResultAndSongChangesTogether() {
+        String suffix = String.valueOf(System.nanoTime());
+        String conflictingTitle = "已存在标题-" + suffix;
+        String conflictingArtist = "已存在歌手-" + suffix;
+        Song target = saveSong("原始标题-" + suffix, "未知歌手", "rollback-target-" + suffix);
+        Song conflict = saveSong(conflictingTitle, conflictingArtist,
+                MediaClassifier.fingerprint(conflictingArtist, conflictingTitle, 0));
+        AiAnalysisTask task = processingTask(target.getId(), "rollback-batch-" + suffix);
+
+        assertThatThrownBy(() -> finishWithConfidentClassification(task, conflictingTitle, conflictingArtist))
+                .hasMessageContaining("重复");
+
+        Song persistedTarget = songRepository.findById(target.getId()).orElseThrow();
+        assertThat(persistedTarget.getTitle()).isEqualTo("原始标题-" + suffix);
+        assertThat(persistedTarget.getArtist()).isEqualTo("未知歌手");
+        AiAnalysisTask persistedTask = aiAnalysisTaskRepository.findById(task.getId()).orElseThrow();
+        assertThat(persistedTask.getStatus()).isEqualTo("processing");
+        assertThat(persistedTask.getResultJson()).isNull();
+        assertThat(songRepository.findById(conflict.getId())).isPresent();
+    }
+
+    @Test
+    void pauseThatCommitsBeforeFinalizationPreventsImportRecordMutation() {
+        String suffix = String.valueOf(System.nanoTime());
+        MediaImportRecord record = saveImportRecord(suffix);
+        AiAnalysisTask task = processingImportTask(record.getId(), "pause-import-batch-" + suffix);
+
+        service.pauseRepairBatch(task.getBatchId());
+
+        assertThat(finishWithConfidentClassification(task, "导入新标题-" + suffix, "导入新歌手-" + suffix))
+                .isFalse();
+        MediaImportRecord persistedRecord = mediaImportRecordRepository.findById(record.getId()).orElseThrow();
+        assertThat(persistedRecord.getParsedTitle()).isEqualTo("原导入标题-" + suffix);
+        assertThat(persistedRecord.getParsedArtist()).isEqualTo("原导入歌手-" + suffix);
+        assertThat(aiAnalysisTaskRepository.findById(task.getId()).orElseThrow().getStatus())
+                .isEqualTo("paused");
+    }
+
+    @Test
+    void importRecordMutationAndTerminalStatusCommitTogether() {
+        String suffix = String.valueOf(System.nanoTime());
+        MediaImportRecord record = saveImportRecord(suffix);
+        AiAnalysisTask task = processingImportTask(record.getId(), "finish-import-batch-" + suffix);
+        String expectedTitle = "导入新标题-" + suffix;
+        String expectedArtist = "导入新歌手-" + suffix;
+
+        assertThat(finishWithConfidentClassification(task, expectedTitle, expectedArtist)).isTrue();
+
+        MediaImportRecord persistedRecord = mediaImportRecordRepository.findById(record.getId()).orElseThrow();
+        assertThat(persistedRecord.getParsedTitle()).isEqualTo(expectedTitle);
+        assertThat(persistedRecord.getParsedArtist()).isEqualTo(expectedArtist);
+        assertThat(aiAnalysisTaskRepository.findById(task.getId()).orElseThrow().getStatus())
+                .isEqualTo("auto_applied");
+    }
+
+    private AiAnalysisTask processingTask(Long songId, String batchId) {
+        AiAnalysisTask task = taskFor(songId);
+        task.setStatus("processing");
+        task.setBatchId(batchId);
+        return aiAnalysisTaskRepository.saveAndFlush(task);
+    }
+
+    private AiAnalysisTask processingImportTask(Long recordId, String batchId) {
+        AiAnalysisTask task = new AiAnalysisTask();
+        task.setTargetType("IMPORT_RECORD");
+        task.setTargetId(recordId);
+        task.setStatus("processing");
+        task.setBatchId(batchId);
+        task.setModelRole("BULK");
+        task.setModel("test-model");
+        return aiAnalysisTaskRepository.saveAndFlush(task);
+    }
+
+    private MediaImportRecord saveImportRecord(String suffix) {
+        MediaImportRecord record = new MediaImportRecord();
+        record.setSourcePath("/tmp/ktv-import-test-" + suffix + ".mp4");
+        record.setSourceFilename("原始文件-" + suffix + ".mp4");
+        record.setSourceMd5("import-test-md5-" + suffix);
+        record.setParsedTitle("原导入标题-" + suffix);
+        record.setParsedArtist("原导入歌手-" + suffix);
+        record.setAction("READY");
+        return mediaImportRecordRepository.saveAndFlush(record);
+    }
+
+    private boolean finishWithConfidentClassification(AiAnalysisTask task, String title, String artist) {
+        AiSongClassification classification = new AiSongClassification(
+                title, artist, "国语", "90年代", List.of("流行"), List.of("怀旧"),
+                "全年龄", "独唱", List.of(), "集成测试", 0.99,
+                0.99, 0.99, 0.99, 0.99, "男歌手", Map.of());
+        return aiAnalysisFinalizer.finishProcessing(task.getId(), "{}", "{}", "{}",
+                "BULK", "test-model", classification, true, 0.90, null);
     }
 
     private AiAnalysisTask taskFor(Long songId) {

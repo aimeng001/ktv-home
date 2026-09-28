@@ -340,16 +340,18 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                                   @Param("artistKeys") List<String> artistKeys);
 
     @Query(value = """
-            SELECT tag AS name, COUNT(DISTINCT song_id) AS songCount FROM (
-                SELECT id AS song_id, unnest(tags) AS tag FROM songs WHERE status = 'ok'
-                UNION ALL
-                SELECT id AS song_id, unnest(ai_genres) AS tag FROM songs WHERE status = 'ok'
-                UNION ALL
-                SELECT id AS song_id, unnest(ai_themes) AS tag FROM songs WHERE status = 'ok'
-            ) sub
-            WHERE tag IS NOT NULL AND tag <> ''
-            GROUP BY tag
-            ORDER BY COUNT(DISTINCT song_id) DESC, tag ASC
+            SELECT category.tag AS name, COUNT(DISTINCT s.id) AS songCount
+            FROM songs s
+            CROSS JOIN LATERAL unnest(
+                COALESCE(s.tags, ARRAY[]::text[])
+                || COALESCE(s.ai_genres, ARRAY[]::text[])
+                || COALESCE(s.ai_themes, ARRAY[]::text[])
+            ) AS category(tag)
+            WHERE s.status = 'ok'
+              AND category.tag IS NOT NULL
+              AND category.tag <> ''
+            GROUP BY category.tag
+            ORDER BY COUNT(DISTINCT s.id) DESC, category.tag ASC
             LIMIT 100
             """, nativeQuery = true)
     List<TagCountProjection> aggregateTagsByStatusOk();

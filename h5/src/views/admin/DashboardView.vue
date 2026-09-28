@@ -59,11 +59,15 @@ import AdminLayout from './AdminLayout.vue'
 import { alertDialog } from '../../composables/useDialog'
 import { normalizeScanProgress, scanPercent as calculateScanPercent, scanPhaseLabel, formatEta } from './scanProgress'
 import { recordScanPollFailure, recordScanPollSuccess } from './dashboardPollState'
+import { createProgressPollGate } from './progressPollGate'
 const d=ref({}),queue=ref({}),progress=ref({}),scanning=ref(false),scanResult=ref(null),scanProgress=ref({}),sourceTotal=ref(0),pendingCount=ref(0)
 const downloadingDiag=ref(false)
 const libraryMode=ref('MANAGED')
 const loadError=ref(''),scanPollError=ref(''),scanPollFailures=ref(0)
 let scanTimer=null
+let scanPollRetryTimer=null
+let dashboardLoadGeneration=0
+const scanPollGate=createProgressPollGate()
 /**
  * 播放队列当前状态的中文映射。
  *
@@ -100,6 +104,7 @@ const externalMode=computed(()=>libraryMode.value==='EXTERNAL_READ_ONLY'||scanSu
  * @returns {Promise<void>}
  */
 async function load(){
+  const request=++dashboardLoadGeneration
   loadError.value=''
   const loaders=[
     () => api.adminStatus(),
@@ -113,6 +118,7 @@ async function load(){
     try{return {value:await loader()}}
     catch(error){return {error}}
   }))
+  if(request!==dashboardLoadGeneration)return
   const errors=results.filter(result=>result.error)
   if(errors.length)loadError.value=errors.map(result=>result.error.message||'请求失败').join('；')
   const [statusResult,queueResult,progressResult,sourcesResult,pendingResult,scanResultResult]=results
@@ -137,7 +143,11 @@ function startPolling(){if(!scanTimer)scanTimer=setInterval(pollScan,1000)}
  *
  * Stop polling scan progress and clear the timer.
  */
-function stopPolling(){if(scanTimer){clearInterval(scanTimer);scanTimer=null}}
+function stopPolling(){
+  if(scanTimer){clearInterval(scanTimer);scanTimer=null}
+  if(scanPollRetryTimer){clearTimeout(scanPollRetryTimer);scanPollRetryTimer=null}
+  scanPollGate.invalidate()
+}
 
 /**
  * 轮询扫描进度；检测到扫描结束时自动停止轮询并刷新仪表盘数据。
@@ -147,9 +157,12 @@ function stopPolling(){if(scanTimer){clearInterval(scanTimer);scanTimer=null}}
  * @returns {Promise<void>}
  */
 async function pollScan(){
-  const previous=scanning.value
+  const request=scanPollGate.begin()
+  if(request===null)return
   try{
     const value=await api.adminScanProgress()
+    if(!scanPollGate.isCurrent(request))return
+    const previous=scanning.value
     const state=recordScanPollSuccess({failures:scanPollFailures.value,running:previous},value)
     scanPollFailures.value=state.failures
     scanPollError.value=''
@@ -157,6 +170,8 @@ async function pollScan(){
     scanning.value=state.running
     if(previous&&!value.running){scanResult.value=value;stopPolling();await load()}
   }catch(error){
+    if(!scanPollGate.isCurrent(request))return
+    const previous=scanning.value
     const state=recordScanPollFailure({failures:scanPollFailures.value,running:previous},error)
     scanPollFailures.value=state.failures
     scanPollError.value=error.message||'扫描进度读取失败，正在重试'
@@ -165,6 +180,12 @@ async function pollScan(){
       stopPolling()
       scanProgress.value={...scanProgress.value,running:false,state:'FAILED',errorMessage:'扫描进度连续读取失败，请重试'}
       scanResult.value=scanProgress.value
+    }
+  }finally{
+    const pollAgain=scanPollGate.finish(request)
+    if(pollAgain&&scanTimer){
+      if(scanPollRetryTimer)clearTimeout(scanPollRetryTimer)
+      scanPollRetryTimer=setTimeout(()=>{scanPollRetryTimer=null;pollScan()},0)
     }
   }
 }
@@ -177,7 +198,19 @@ async function pollScan(){
  * No-op if a scan is already running.
  * @returns {Promise<void>}
  */
-async function scan(){if(scanning.value)return;try{scanPollFailures.value=0;scanPollError.value='';scanProgress.value=await api.adminStartScan();scanning.value=true;scanResult.value=null;startPolling()}catch(e){await alertDialog(e.message||'扫描失败')}}
+async function scan(){
+  if(scanning.value)return
+  dashboardLoadGeneration+=1
+  stopPolling()
+  try{
+    scanPollFailures.value=0
+    scanPollError.value=''
+    scanProgress.value=await api.adminStartScan()
+    scanning.value=true
+    scanResult.value=null
+    startPolling()
+  }catch(e){await alertDialog(e.message||'扫描失败')}
+}
 
 async function downloadDiag(){
   if(downloadingDiag.value)return
@@ -210,7 +243,7 @@ function formatTime(value){return new Date(value).toLocaleString('zh-CN',{hour12
 /** 挂载时加载仪表盘数据。 / Load dashboard data on mount. */
 onMounted(load)
 /** 卸载时停止轮询。 / Stop polling on unmount. */
-onUnmounted(stopPolling)
+onUnmounted(()=>{dashboardLoadGeneration+=1;stopPolling()})
 </script>
 <style scoped>
 .page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.page-head h1{font-size:22px}.page-head p{color:#64748b;font-size:13px;margin-top:6px}.header-actions{display:flex;align-items:center;gap:10px}.primary,.secondary{height:36px;padding:0 15px;border-radius:6px;font-size:13px}.primary{background:#2563eb;color:#fff}.secondary{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #cbd5e1;color:#334155}.primary:disabled,.secondary:disabled{opacity:.5}.error-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding:10px 13px;border:1px solid #fecaca;border-radius:7px;background:#fef2f2;color:#b91c1c;font-size:12px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}.stats article{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px}.stats span,.stats small{display:block;color:#64748b;font-size:12px}.stats strong{display:block;font-size:26px;margin:8px 0 6px}.stats small{color:#94a3b8}.scan-progress{padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:14px;color:#1e40af}.scan-progress.complete{background:#f0fdf4;border-color:#bbf7d0;color:#166534}.scan-progress.failed{background:#fef2f2;border-color:#fecaca;color:#991b1b}.scan-progress.failed .track{background:#fee2e2}.scan-progress.failed .track i{background:#dc2626}.error-msg{color:#b91c1c;font-weight:600}.progress-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.progress-head div{min-width:0}.progress-head strong,.progress-head span{display:block}.progress-head span{margin-top:4px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.progress-head b{font-size:18px}.track{height:7px;margin:12px 0 9px;background:#dbeafe;border-radius:4px;overflow:hidden}.complete .track{background:#dcfce7}.track i{display:block;height:100%;background:#2563eb;transition:width .25s}.complete .track i{background:#16a34a}.progress-meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px}.progress-meta .failed{color:#b91c1c;font-weight:700}.panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px}.panel-head{display:flex;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e2e8f0}.text-btn,.link{color:#2563eb;font-size:12px}.link:disabled{color:#94a3b8}table{width:100%;border-collapse:collapse;font-size:12px}th{padding:11px 14px;text-align:left;background:#f8fafc;color:#64748b}td{padding:13px 14px;border-top:1px solid #eef2f7;color:#475569}td strong,td small{display:block}td small{color:#94a3b8;margin-top:4px}.status{display:inline-flex;padding:3px 8px;border-radius:999px;font-weight:600}.green{background:#dcfce7;color:#166534}.blue{background:#dbeafe;color:#1d4ed8}.neutral{background:#f1f5f9;color:#475569}@media(max-width:900px){.stats{grid-template-columns:1fr 1fr}.panel{overflow:auto}table{min-width:760px}}

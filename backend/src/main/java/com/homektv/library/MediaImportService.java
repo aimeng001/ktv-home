@@ -460,6 +460,12 @@ public class MediaImportService {
             return false;
         }
         if (source.equals(output)) return false;
+        if (!hasText(record.getSourceMd5())) return false;
+        try {
+            if (!record.getSourceMd5().equalsIgnoreCase(hashService.md5(source))) return false;
+        } catch (Exception e) {
+            return false;
+        }
         return songFileRepo.findById(record.getSongFileId())
                 .filter(SongFile::isValid)
                 .filter(file -> {
@@ -1085,7 +1091,7 @@ public class MediaImportService {
                 Path companion = source.resolveSibling(stripExtension(source.getFileName().toString()) + "." + ext);
                 Path target = output.resolveSibling(stripExtension(output.getFileName().toString()) + "." + ext);
                 if (Files.isRegularFile(companion) && Files.isRegularFile(target)
-                        && Files.size(companion) == Files.size(target)) Files.deleteIfExists(companion);
+                        && Files.mismatch(companion, target) == -1L) Files.deleteIfExists(companion);
             }
         }
         removeSourceRecord(record);

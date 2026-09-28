@@ -1,6 +1,6 @@
 <template>
   <!-- 有歌曲正在播放时 / When a song is currently playing -->
-  <div v-if="player.nowPlaying" class="now" @click="$router.push({ name: 'lyric' })">
+  <RouterLink v-if="player.nowPlaying" class="now" :to="{ name: 'lyric' }" :aria-label="`打开歌词：${player.nowPlaying.song?.title || '当前歌曲'}`">
     <div class="cover" :style="coverStyle"><Music2 v-if="!coverUrl" :size="20" /></div>
     <div class="grow">
       <div class="title">
@@ -10,7 +10,7 @@
       <div class="bar"><i :style="{ width: progressPct + '%' }"></i></div>
     </div>
     <span class="chip">{{ stateText }}</span>
-  </div>
+  </RouterLink>
   <!-- 无人点歌时的空状态 / Empty state when no songs are queued -->
   <div v-else class="now empty">
     <div class="grow hint">还没人点歌，来点第一首吧</div>
@@ -56,7 +56,7 @@ const stateText = computed(() => {
 </script>
 
 <style scoped>
-.now { min-height:68px;background:#171b22;border-left:3px solid var(--coral);padding:10px;display:flex;gap:11px;align-items:center; }
+.now { min-height:68px;width:100%;box-sizing:border-box;color:inherit;text-decoration:none;border:0;text-align:left;font:inherit;cursor:pointer;background:#171b22;border-left:3px solid var(--coral);padding:10px;display:flex;gap:11px;align-items:center; }
 .now.empty { border-color: var(--glass-border); justify-content: center; }
 .hint { color: var(--dim2); font-size: 13px; text-align: center; }
 .cover {

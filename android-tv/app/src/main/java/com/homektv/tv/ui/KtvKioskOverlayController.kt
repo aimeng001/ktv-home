@@ -13,6 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.Player
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.homektv.tv.controller.ControllerActions
 import com.homektv.tv.controller.ControllerCatalogActions
 import com.homektv.tv.controller.ControllerCatalogVisibility
@@ -43,7 +44,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.roundToInt
 
 
 /**
@@ -78,8 +78,10 @@ class KtvKioskOverlayController(
     private val catalogActionRouter = KioskCatalogActionRouter(catalogActions)
     private val personalActionRouter = KioskPersonalActionRouter(personalActions)
     private val queueActionRouter = KioskQueueActionRouter(controllerActions)
+    private val contentRequirementMeasurer = KioskContentRequirementMeasurer(activity)
     private val pipObservedPlayer = binding.playerView.player
     private var pipSpaceAvailable = false
+    private var pipResponsiveUpdatePosted = false
     private val pipPlaybackListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             renderPipState()
@@ -93,8 +95,15 @@ class KtvKioskOverlayController(
             _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom,
         ->
         if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
-            updatePipResponsiveSize()
+            schedulePipResponsiveSizeUpdate()
         }
+    }
+    private val pipRecyclerAttachListener = object : RecyclerView.OnChildAttachStateChangeListener {
+        override fun onChildViewAttachedToWindow(view: View) {
+            schedulePipResponsiveSizeUpdate()
+        }
+
+        override fun onChildViewDetachedFromWindow(view: View) = Unit
     }
 
     val presentationState = KioskPresentationState(initialTab = KioskTab.DASHBOARD)
@@ -190,6 +199,15 @@ class KtvKioskOverlayController(
     private fun setupViews() {
         val overlay = binding.kioskOverlay
         overlay.kioskContentStage.addOnLayoutChangeListener(pipLayoutChangeListener)
+        listOf(
+            overlay.kioskMainContent,
+            overlay.kioskDashboardView,
+            overlay.panelPinyin,
+            overlay.panelSingers,
+            overlay.panelRankings,
+            overlay.panelCategories,
+            overlay.panelPersonal,
+        ).forEach { it.addOnLayoutChangeListener(pipLayoutChangeListener) }
 
         // 1. 列表布局绑定
         overlay.searchRecyclerView.layoutManager = LinearLayoutManager(activity)
@@ -255,6 +273,19 @@ class KtvKioskOverlayController(
 
         overlay.personalRecyclerView.layoutManager = LinearLayoutManager(activity)
         overlay.personalRecyclerView.adapter = personalSongAdapter
+
+        listOf(
+            overlay.searchRecyclerView,
+            overlay.singerRecyclerView,
+            overlay.rankingRecyclerView,
+            overlay.categoryRecyclerView,
+            overlay.personalRecyclerView,
+        ).forEach { recycler ->
+            recycler.addOnChildAttachStateChangeListener(pipRecyclerAttachListener)
+        }
+        overlay.kioskKeyboard.binding.keyboardContentRoot.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            schedulePipResponsiveSizeUpdate()
+        }
 
         installPaging(overlay.searchRecyclerView) {
             if (presentationState.selectedArtist.value != null) {
@@ -341,6 +372,9 @@ class KtvKioskOverlayController(
             focusController.hasInputText = keyword.isNotEmpty()
             onKeywordInput(keyword)
         }
+        overlay.kioskKeyboard.onLayoutModeChanged = {
+            schedulePipResponsiveSizeUpdate()
+        }
         overlay.kioskKeyboard.onImeRequest = {
             coordinator.resetIdleTimer()
             coordinator.setModalActive(true)
@@ -416,6 +450,7 @@ class KtvKioskOverlayController(
             controllerActions.state.collectLatest { state ->
                 controllerState = state
                 renderCatalogState(state)
+                schedulePipResponsiveSizeUpdate()
                 if (state.connection != ControllerConnection.CONNECTING) {
                     updateSnapshot(state.queue, state.queueProjection)
                 }
@@ -652,6 +687,7 @@ class KtvKioskOverlayController(
         }
 
         renderSearchEmptyState()
+        schedulePipResponsiveSizeUpdate()
 
         if (presentationState.currentTab.value == KioskTab.CATEGORIES && !categoryDetail) {
             val isLanguage = categoryMode == KioskCategoryMode.LANGUAGES
@@ -766,6 +802,7 @@ class KtvKioskOverlayController(
             KioskTab.HISTORY -> loadHistory()
         }
         renderSearchEmptyState()
+        schedulePipResponsiveSizeUpdate()
     }
 
     private fun onKeywordInput(keyword: String) {
@@ -930,6 +967,7 @@ class KtvKioskOverlayController(
             KioskCategoryMode.NEW -> Unit
         }
         binding.kioskOverlay.categoryRecyclerView.requestFocus()
+        schedulePipResponsiveSizeUpdate()
     }
 
     private fun loadFavorites() {
@@ -1017,6 +1055,7 @@ class KtvKioskOverlayController(
         )
         personalActionRouter.playlistDetail(playlist.id)
         binding.kioskOverlay.personalRecyclerView.requestFocus()
+        schedulePipResponsiveSizeUpdate()
     }
 
     private fun orderSong(song: SongDto, onComplete: (Boolean) -> Unit = {}) {
@@ -1199,15 +1238,16 @@ class KtvKioskOverlayController(
             playbackState = if (locallyBuffering) "buffering" else currentSnapshot?.state,
             hasPlaying = currentSnapshot?.playing != null,
         )
-        if (!state.videoVisible && binding.kioskOverlay.btnKioskExit.hasFocus()) {
+        val effectivePipVisible = state.videoVisible && pipSpaceAvailable
+        if (!effectivePipVisible && binding.kioskOverlay.btnKioskExit.hasFocus()) {
             binding.kioskOverlay.tabHistory.requestFocus()
         }
         binding.kioskOverlay.btnKioskExit.visibility =
-            if (state.videoVisible) View.VISIBLE else View.GONE
+            if (effectivePipVisible) View.VISIBLE else View.GONE
         binding.kioskOverlay.tabHistory.nextFocusRightId =
-            if (state.videoVisible) R.id.btnKioskExit else R.id.tabDashboard
+            if (effectivePipVisible) R.id.btnKioskExit else R.id.tabDashboard
         binding.kioskOverlay.pipVideoFrame.visibility =
-            if (state.videoVisible && pipSpaceAvailable) View.VISIBLE else View.GONE
+            if (effectivePipVisible) View.VISIBLE else View.GONE
         val playingTitle = currentSnapshot?.playing?.song?.let { song ->
             listOfNotNull(song.title, song.artist?.takeIf(String::isNotBlank)).joinToString(" · ")
         }.orEmpty()
@@ -1216,18 +1256,40 @@ class KtvKioskOverlayController(
             .joinToString("  ")
     }
 
+    private fun schedulePipResponsiveSizeUpdate() {
+        if (pipResponsiveUpdatePosted) return
+        val stage = binding.kioskOverlay.kioskContentStage
+        pipResponsiveUpdatePosted = true
+        if (!stage.post {
+                pipResponsiveUpdatePosted = false
+                updatePipResponsiveSize()
+            }
+        ) {
+            pipResponsiveUpdatePosted = false
+        }
+    }
+
     private fun updatePipResponsiveSize() {
         val stage = binding.kioskOverlay.kioskContentStage
-        if (stage.width <= 0 || stage.height <= 0) return
+        val availableWidthPx = stage.width - stage.paddingLeft - stage.paddingRight
+        val availableHeightPx = stage.height - stage.paddingTop - stage.paddingBottom
+        if (availableWidthPx <= 0 || availableHeightPx <= 0) return
 
         val density = activity.resources.displayMetrics.density
+        val requirement = activePanelRequirement()
+        if (requirement == null) {
+            pipSpaceAvailable = false
+            renderPipState()
+            return
+        }
         val size = KioskPipResponsivePolicy.resolve(
-            availableWidthDp = ((stage.width - stage.paddingLeft - stage.paddingRight) / density).roundToInt(),
-            availableHeightDp = ((stage.height - stage.paddingTop - stage.paddingBottom) / density).roundToInt(),
+            availableWidthDp = (availableWidthPx / density).toInt(),
+            availableHeightDp = (availableHeightPx / density).toInt(),
+            minContentHeightDp = requirement.preferredHeightDp,
         )
         val frame = binding.kioskOverlay.pipVideoFrame
         val params = frame.layoutParams as? ConstraintLayout.LayoutParams ?: return
-        val widthPx = (size.widthDp * density).roundToInt()
+        val widthPx = (size.widthDp * density).toInt()
         params.matchConstraintMinWidth = widthPx
         params.matchConstraintMaxWidth = widthPx
         frame.layoutParams = params
@@ -1235,9 +1297,65 @@ class KtvKioskOverlayController(
         renderPipState()
     }
 
+    private fun activePanelRequirement(): KioskContentHeightRequirement? {
+        val overlay = binding.kioskOverlay
+        return when {
+            overlay.kioskDashboardView.visibility == View.VISIBLE -> contentRequirementMeasurer.dashboard(
+                overlay.kioskDashboardView,
+            )
+            overlay.panelPinyin.visibility == View.VISIBLE -> contentRequirementMeasurer.pinyin(overlay)
+            overlay.panelSingers.visibility == View.VISIBLE -> contentRequirementMeasurer.listPage(
+                chrome = listOf(overlay.singerFilterRow, overlay.txtSingerStatus, overlay.btnSingerRetry),
+                recycler = overlay.singerRecyclerView,
+                fallbackItemLayout = R.layout.item_singer_card,
+            )
+            overlay.panelRankings.visibility == View.VISIBLE -> contentRequirementMeasurer.listPage(
+                chrome = listOf(overlay.txtRankingHeader),
+                recycler = overlay.rankingRecyclerView,
+                fallbackItemLayout = R.layout.item_kiosk_song_row,
+            )
+            overlay.panelCategories.visibility == View.VISIBLE -> {
+                val fallbackLayout = if (overlay.categoryRecyclerView.adapter === categoryNameAdapter) {
+                    R.layout.item_kiosk_named_count
+                } else {
+                    R.layout.item_kiosk_song_row
+                }
+                contentRequirementMeasurer.listPage(
+                    chrome = listOf(overlay.categoryFilterRow, overlay.txtCategoryHeader),
+                    recycler = overlay.categoryRecyclerView,
+                    fallbackItemLayout = fallbackLayout,
+                    statusPanel = overlay.categoryErrorPanel,
+                )
+            }
+            overlay.panelPersonal.visibility == View.VISIBLE -> contentRequirementMeasurer.listPage(
+                chrome = listOf(overlay.txtPersonalHeader),
+                recycler = overlay.personalRecyclerView,
+                fallbackItemLayout = null,
+                statusPanel = overlay.personalStatusPanel,
+            )
+            else -> null
+        }
+    }
+
     fun destroy() {
         pipObservedPlayer?.removeListener(pipPlaybackListener)
         binding.kioskOverlay.kioskContentStage.removeOnLayoutChangeListener(pipLayoutChangeListener)
+        listOf(
+            binding.kioskOverlay.kioskMainContent,
+            binding.kioskOverlay.kioskDashboardView,
+            binding.kioskOverlay.panelPinyin,
+            binding.kioskOverlay.panelSingers,
+            binding.kioskOverlay.panelRankings,
+            binding.kioskOverlay.panelCategories,
+            binding.kioskOverlay.panelPersonal,
+        ).forEach { it.removeOnLayoutChangeListener(pipLayoutChangeListener) }
+        listOf(
+            binding.kioskOverlay.searchRecyclerView,
+            binding.kioskOverlay.singerRecyclerView,
+            binding.kioskOverlay.rankingRecyclerView,
+            binding.kioskOverlay.categoryRecyclerView,
+            binding.kioskOverlay.personalRecyclerView,
+        ).forEach { it.removeOnChildAttachStateChangeListener(pipRecyclerAttachListener) }
         queueDialog?.dismiss()
         queueDialog = null
         qrDialog?.dismiss()
@@ -1249,6 +1367,11 @@ class KtvKioskOverlayController(
         pendingAvatarCallbacks.clear()
         singerAvatarCache.clear()
         transport.close()
+    }
+
+    private companion object {
+        const val MINIMUM_PINYIN_VIEWPORT_DP = 140
+        const val MINIMUM_LIST_VIEWPORT_DP = 128
     }
 
     private fun reparentView(view: View, target: ViewGroup) {

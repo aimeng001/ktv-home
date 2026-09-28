@@ -36,9 +36,9 @@
     <!-- 原/伴唱 / Original/Accompaniment -->
     <section class="sec">
       <div class="section-label"><b>演唱模式</b><span>{{ canVocal ? '支持原唱/伴唱' : '当前版本不可切换' }}</span></div>
-      <div class="seg" :class="{ disabled: !canVocal }">
-        <div :class="{ on: player.vocalMode === 'original' }" @click="setVocal('original')">原唱</div>
-        <div :class="{ on: player.vocalMode === 'accompaniment' }" @click="setVocal('accompaniment')">伴唱</div>
+      <div class="seg" :class="{ disabled: !canVocal }" role="group" aria-label="演唱模式">
+        <button type="button" :class="{ on: player.vocalMode === 'original' }" :aria-pressed="player.vocalMode === 'original'" :disabled="!canVocal" @click="setVocal('original')">原唱</button>
+        <button type="button" :class="{ on: player.vocalMode === 'accompaniment' }" :aria-pressed="player.vocalMode === 'accompaniment'" :disabled="!canVocal" @click="setVocal('accompaniment')">伴唱</button>
       </div>
       <div class="note">{{ canVocal ? '当前曲目支持原唱/伴唱切换' : '当前曲目无伴唱语义，此处禁用' }}</div>
       <button v-if="canVocal" class="track-fix" @click="swapVocalTracks">原唱和伴唱弄反了？纠正并记住</button>
@@ -219,8 +219,8 @@ async function effect(e) {
   background: rgba(240,199,66,.06); color: var(--gold); font-size: 12px; }
 .seg { display:flex;padding:3px;background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden; }
 .seg.disabled { opacity: .5; }
-.seg div { flex: 1; text-align: center; padding: 10px; font-size: 14px; color: var(--dim); }
-.seg div.on { border-radius:4px;background:var(--gold);color:#211d14;font-weight:700; }
+.seg button { flex:1;text-align:center;padding:10px;font-size:14px;color:var(--dim); }
+.seg button.on { border-radius:4px;background:var(--gold);color:#211d14;font-weight:700; }
 .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .fx { height:58px;display:grid;place-items:center;align-content:center;gap:5px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 4px;color:var(--dim);font-size:10px; }
 .fx svg { color:var(--cyan); }

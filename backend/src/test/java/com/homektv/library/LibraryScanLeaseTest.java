@@ -5,8 +5,10 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -16,25 +18,33 @@ import static org.mockito.Mockito.*;
 class LibraryScanLeaseTest {
 
     @Test
-    void heartbeatFailureFencesTheWorker() throws Exception {
+    void scheduledHeartbeatFailureFencesTheWorkerDeterministically() {
         LibraryScanStateStore state = mock(LibraryScanStateStore.class);
         LibraryScanStateStore.Claim claim = new LibraryScanStateStore.Claim(
                 UUID.randomUUID(), UUID.randomUUID(), 3L);
         when(state.heartbeat(eq(claim), any())).thenReturn(true, false);
-        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+        ScheduledExecutorService scheduler = mock(ScheduledExecutorService.class);
+        ScheduledFuture<?> heartbeatTask = mock(ScheduledFuture.class);
+        AtomicReference<Runnable> scheduledHeartbeat = new AtomicReference<>();
+        when(scheduler.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), eq(TimeUnit.MILLISECONDS)))
+                .thenAnswer(invocation -> {
+                    scheduledHeartbeat.set(invocation.getArgument(0));
+                    return heartbeatTask;
+                });
         try (LibraryScanLease lease = new LibraryScanLease(
                 claim,
                 state,
                 () -> new LibraryScanStateStore.ScanSnapshot("FAST_INDEX", 1, 1, 0, 0),
                 scheduler,
-                Duration.ofMillis(5))) {
-            Thread.sleep(30);
+                Duration.ofSeconds(5))) {
+            scheduledHeartbeat.get().run();
+            scheduledHeartbeat.get().run();
             assertThatThrownBy(lease::assertOwned)
                     .isInstanceOf(LeaseLostException.class);
             assertThat(lease.isLost()).isTrue();
-        } finally {
-            scheduler.shutdownNow();
+            verify(state, times(2)).heartbeat(eq(claim), any());
         }
+        verify(heartbeatTask).cancel(false);
     }
 
     @Test

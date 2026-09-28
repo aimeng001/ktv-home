@@ -60,8 +60,29 @@ class ClientTypeInterceptorTest {
                 mock(org.springframework.web.socket.WebSocketHandler.class),
                 new HashMap<>());
 
+        MockHttpServletRequest plaintextQuery = new MockHttpServletRequest("GET", "/ws");
+        plaintextQuery.setQueryString("client_type=tv&client_token=tv-1&player_credential=player-secret");
+        boolean plaintextQueryAccepted = new ClientTypeInterceptor(properties).beforeHandshake(
+                new ServletServerHttpRequest(plaintextQuery),
+                mock(org.springframework.http.server.ServerHttpResponse.class),
+                mock(org.springframework.web.socket.WebSocketHandler.class),
+                new HashMap<>());
+
+        MockHttpServletRequest insecureHeader = new MockHttpServletRequest("GET", "/ws");
+        insecureHeader.setQueryString("client_type=tv&client_token=tv-1");
+        insecureHeader.addHeader("X-Player-Credential", "player-secret");
+        boolean insecureHeaderAccepted = new ClientTypeInterceptor(properties).beforeHandshake(
+                new ServletServerHttpRequest(insecureHeader),
+                mock(org.springframework.http.server.ServerHttpResponse.class),
+                mock(org.springframework.web.socket.WebSocketHandler.class),
+                new HashMap<>());
+
         MockHttpServletRequest valid = new MockHttpServletRequest("GET", "/ws");
-        valid.setQueryString("client_type=tv&client_token=tv-1&player_credential=player-secret");
+        valid.setScheme("https");
+        valid.setSecure(true);
+        valid.setServerPort(443);
+        valid.setQueryString("client_type=tv&client_token=tv-1");
+        valid.addHeader("X-Player-Credential", "player-secret");
         boolean validAccepted = new ClientTypeInterceptor(properties).beforeHandshake(
                 new ServletServerHttpRequest(valid),
                 mock(org.springframework.http.server.ServerHttpResponse.class),
@@ -69,6 +90,8 @@ class ClientTypeInterceptorTest {
                 new HashMap<>());
 
         assertThat(missingAccepted).isFalse();
+        assertThat(plaintextQueryAccepted).isFalse();
+        assertThat(insecureHeaderAccepted).isFalse();
         assertThat(validAccepted).isTrue();
     }
 

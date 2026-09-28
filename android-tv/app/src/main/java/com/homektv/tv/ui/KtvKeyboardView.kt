@@ -30,6 +30,7 @@ class KtvKeyboardView @JvmOverloads constructor(
 
     var onKeywordChanged: ((String) -> Unit)? = null
     var onImeRequest: (() -> Unit)? = null
+    var onLayoutModeChanged: ((KeyboardLayoutMode) -> Unit)? = null
 
     init {
         renderKeys()
@@ -143,10 +144,18 @@ class KtvKeyboardView @JvmOverloads constructor(
             onImeRequest?.invoke()
         }
         binding.btnToggleT9.setOnClickListener {
-            session.toggleMode()
+            val mode = session.toggleMode()
             renderKeys()
             updateDisplay()
+            onLayoutModeChanged?.invoke(mode)
         }
+    }
+
+    fun measureNaturalContentHeightPx(availableWidthPx: Int): Int {
+        // ScrollView measures its child with an unbounded height. Read that natural
+        // measurement instead of re-measuring a live child and disturbing layout state.
+        if (availableWidthPx <= 0 || binding.keyboardContentRoot.measuredWidth != availableWidthPx) return 0
+        return binding.keyboardContentRoot.measuredHeight
     }
 
     private fun updateDisplay() {

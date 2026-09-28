@@ -76,6 +76,7 @@ import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
 import { createLatestRequest } from '../latestRequest'
+import { createProgressPollGate } from './progressPollGate'
 
 // 列表数据、分页、选中项 / List data, pagination, selected items
 const rows = ref([]), total = ref(0), page = ref(0), totalPages = ref(1), selected = ref([]), externalMode = ref(false)
@@ -85,7 +86,9 @@ const loadError = ref('')
 const filters = reactive({ keyword: '', status: '', formatAnalysis: '' })
 const progress = ref({ running:false, total:0, completed:0 })
 let timer = null
+let pollRetryTimer = null
 const listRequests = createLatestRequest()
+const progressPollGate = createProgressPollGate()
 
 /** 当前页是否全选（仅非删除项）/ Whether all non-deleted items on current page are selected */
 const allSelected = computed(() => rows.value.some(x => !x.sourceDeleted) && rows.value.filter(x => !x.sourceDeleted).every(x => selected.value.includes(x.id)))
@@ -120,7 +123,44 @@ async function load() {
  * 轮询转码进度，任务结束后自动清除定时器并刷新列表。
  * Poll transcode progress; auto-clear timer and refresh list when task ends.
  */
-async function loadProgress() { progress.value = await api.adminSourceTranscodeProgress().catch(()=>progress.value); if (!progress.value.running && timer) { clearInterval(timer); timer=null; await load() } }
+async function loadProgress() {
+  const request = progressPollGate.begin()
+  if (request === null) return
+  try {
+    const latest = await api.adminSourceTranscodeProgress()
+    if (!progressPollGate.isCurrent(request)) return
+    progress.value = latest
+    if (!latest.running && timer) {
+      stopProgressPolling()
+      await load()
+    }
+  } catch (_) {
+    // Retain the last known progress and let the next interval retry.
+  } finally {
+    const pollAgain = progressPollGate.finish(request)
+    if (pollAgain && timer) {
+      if (pollRetryTimer) clearTimeout(pollRetryTimer)
+      pollRetryTimer = setTimeout(() => {
+        pollRetryTimer = null
+        loadProgress()
+      }, 0)
+    }
+  }
+}
+
+function startProgressPolling() {
+  progressPollGate.invalidate({ queueLatest: true })
+  if (timer) clearInterval(timer)
+  timer = setInterval(loadProgress, 1500)
+}
+
+function stopProgressPolling() {
+  if (timer) clearInterval(timer)
+  timer = null
+  if (pollRetryTimer) clearTimeout(pollRetryTimer)
+  pollRetryTimer = null
+  progressPollGate.invalidate()
+}
 
 /** 搜索：重置到第一页 / Search: reset to first page */
 function search(){ page.value=0; load() }
@@ -161,7 +201,7 @@ function priorityText(item){ return progress.value.currentRecordId===item.id?'�
  *
  * @param {number[]} ids - 源素材 ID 数组 / source material ID array
  */
-async function startTranscode(ids){ progress.value=await api.adminStartSourceTranscode(ids); if(timer)clearInterval(timer); timer=setInterval(loadProgress,1500) }
+async function startTranscode(ids){ progress.value=await api.adminStartSourceTranscode(ids); startProgressPolling() }
 
 /**
  * 批量转码所有待处理的歌曲（全量模式）。
@@ -170,7 +210,7 @@ async function startTranscode(ids){ progress.value=await api.adminStartSourceTra
 async function transcodeAll(){
   if(progress.value.running)return
   if(!await confirmDialog('将处理全部待转码和转码失败的源文件。',{title:'批量转码所有歌曲'}))return
-  try { progress.value=await api.adminStartSourceTranscode([],true); if(timer)clearInterval(timer); timer=setInterval(loadProgress,1500) } catch(e) { await alertDialog(e.message||'全量转码启动失败') }
+  try { progress.value=await api.adminStartSourceTranscode([],true); startProgressPolling() } catch(e) { await alertDialog(e.message||'全量转码启动失败') }
 }
 
 /**
@@ -221,7 +261,11 @@ async function transcodeOne(item){
  */
 async function prioritize(item){
   if(!canPrioritize(item))return
-  try { progress.value=(await api.adminPrioritizeSourceTranscode(item.id)).progress } catch(e) { await alertDialog(e.message||'插队失败') }
+  try {
+    const result=await api.adminPrioritizeSourceTranscode(item.id)
+    progressPollGate.invalidate({ queueLatest: Boolean(timer) })
+    progress.value=result.progress
+  } catch(e) { await alertDialog(e.message||'插队失败') }
 }
 
 /**
@@ -289,13 +333,13 @@ function statusClass(v){return{AUTO_COPIED:'green',TRANSCODED:'green',PENDING_TR
  * 页面挂载：加载列表数据并初始化进度轮询。
  * On mount: load list data and initialize progress polling.
  */
-onMounted(async()=>{await Promise.all([load(),loadProgress()]);if(progress.value.running)timer=setInterval(loadProgress,1500)})
+onMounted(async()=>{await Promise.all([load(),loadProgress()]);if(progress.value.running)startProgressPolling()})
 
 /**
  * 页面卸载：清除进度轮询定时器。
  * On unmount: clear progress polling timer.
  */
-onUnmounted(()=>{if(timer)clearInterval(timer);listRequests.cancel()})
+onUnmounted(()=>{stopProgressPolling();listRequests.cancel()})
 </script>
 
 <style scoped>

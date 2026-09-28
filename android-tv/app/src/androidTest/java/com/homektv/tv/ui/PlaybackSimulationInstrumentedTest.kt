@@ -317,6 +317,14 @@ class PlaybackSimulationInstrumentedTest {
             assertTrue("buffering PiP should be visible while the user remains in song selection", awaitActivityCondition(scenario, 3_000L) {
                 privateField<ViewKtvKioskOverlayBinding>(it, "kioskOverlayBinding").pipVideoFrame.visibility == android.view.View.VISIBLE
             })
+            scenario.onActivity { kiosk.presentationState.selectTab(KioskTab.PINYIN) }
+            assertTrue("full keyboard content should temporarily yield the PiP on a short stage", awaitActivityCondition(scenario, 3_000L) {
+                privateField<ViewKtvKioskOverlayBinding>(it, "kioskOverlayBinding").pipVideoFrame.visibility == android.view.View.GONE
+            })
+            scenario.onActivity { kiosk.presentationState.selectTab(KioskTab.DASHBOARD) }
+            assertTrue("PiP should return after the dashboard's two action rows fit", awaitActivityCondition(scenario, 3_000L) {
+                privateField<ViewKtvKioskOverlayBinding>(it, "kioskOverlayBinding").pipVideoFrame.visibility == android.view.View.VISIBLE
+            })
             capture("07_dashboard_buffering_pip_synthetic.png")
 
             imageReader = ImageReader.newInstance(640, 360, PixelFormat.RGBA_8888, 2)
@@ -726,8 +734,8 @@ class PlaybackSimulationInstrumentedTest {
         override fun close() {
             closed = true
             runCatching { server.close() }
-            clients.toList().forEach { runCatching { it.close() } }
             acceptThread.join(1_000L)
+            clients.forEach { client -> runCatching { client.close() } }
         }
     }
 }

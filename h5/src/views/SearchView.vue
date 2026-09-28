@@ -24,7 +24,11 @@
         <div class="cnt"><b>搜索结果</b><span>{{ results.length }} 首歌曲</span></div>
         <SongRow v-for="s in results" :key="s.id" :song="s" :keyword="kw"
                  :extra="fmtDur(s.durationMs)" :ordered="orderedIds.has(s.id)" @order="order" />
-        <div v-if="hasMore" class="load-more-wrap">
+        <div v-if="searchError && results.length" class="page-error" role="alert">
+          <span>加载更多失败：{{ searchError }}</span>
+          <button class="btn ghost small" :disabled="loadingMore" @click="retryLoadMore">重试本页</button>
+        </div>
+        <div v-if="hasMore && !searchError" class="load-more-wrap">
           <button class="btn ghost small load-more-btn" :disabled="loadingMore" @click="loadMore">
             {{ loadingMore ? '加载中…' : '加载更多歌曲' }}
           </button>
@@ -104,6 +108,11 @@ const searchController = createSearchController(api, {
 })
 
 function loadMore() {
+  searchController.loadMore(kw.value, activeFilter.value)
+}
+
+function retryLoadMore() {
+  if (loadingMore.value) return
   searchController.loadMore(kw.value, activeFilter.value)
 }
 
@@ -198,4 +207,5 @@ function fmtDur(ms) {
 .load-more-wrap { display: flex; justify-content: center; padding: 14px 0 20px; }
 .load-more-btn { min-width: 140px; padding: 8px 16px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text); font-size: 12px; cursor: pointer; }
 .load-more-btn:disabled { opacity: .5; }
+.page-error { display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 0;color:var(--coral);font-size:12px; }
 </style>

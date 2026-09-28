@@ -73,13 +73,18 @@ public class ClientTypeInterceptor implements HandshakeInterceptor {
             reject(response);
             return false;
         }
+        String playerCredential = request.getHeaders().getFirst("X-Player-Credential");
+        if (parameters.containsKey("player_credential")
+                || (playerCredential != null && !bounded(playerCredential))) {
+            reject(response);
+            return false;
+        }
 
         String clientType = parameters.get("client_type");
         if (clientType == null || clientType.isBlank()) clientType = "h5";
         clientType = clientType.toLowerCase(java.util.Locale.ROOT);
         if (!CLIENT_TYPES.contains(clientType)
                 || !bounded(parameters.get("client_token"))
-                || !bounded(parameters.get("player_credential"))
                 || !bounded(parameters.get("protocol_version"))
                 || !validPlatform(parameters.get("platform"))
                 || !validDeviceMode(parameters.get("device_mode"))) {
@@ -87,7 +92,7 @@ public class ClientTypeInterceptor implements HandshakeInterceptor {
             return false;
         }
         if ("tv".equalsIgnoreCase(clientType)
-                && !matchesConfiguredCredential(parameters.get("player_credential"))) {
+                && !matchesConfiguredCredential(request, playerCredential)) {
             reject(response);
             return false;
         }
@@ -135,10 +140,13 @@ public class ClientTypeInterceptor implements HandshakeInterceptor {
         return parameters;
     }
 
-    private boolean matchesConfiguredCredential(String supplied) {
+    private boolean matchesConfiguredCredential(ServerHttpRequest request, String supplied) {
         String expected = properties.getPlayerCredential();
         if (expected == null || expected.isBlank()) {
             return true;
+        }
+        if (!"https".equalsIgnoreCase(request.getURI().getScheme())) {
+            return false;
         }
         if (supplied == null) {
             return false;

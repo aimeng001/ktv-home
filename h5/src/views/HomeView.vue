@@ -12,9 +12,9 @@
 
     <!-- ① 当前播放条 / Now Playing Bar -->
     <section class="sec">
-      <div class="search" @click="$router.push({ name: 'search' })">
+      <button type="button" class="search" aria-label="搜索歌名、歌手或拼音" @click="$router.push({ name: 'search' })">
         <Search :size="19" /><span class="ph">搜索歌名、歌手或拼音</span>
-      </div>
+      </button>
     </section>
 
     <section class="sec"><NowPlayingBar /></section>
@@ -22,9 +22,9 @@
     <!-- ③ 分类宫格 / Category Grid -->
     <section class="sec">
       <div class="quick-grid">
-        <div v-for="c in cats" :key="c.label" class="cat" @click="onCat(c)">
-          <div class="ic"><component :is="c.icon" :size="18" /></div>{{ c.label }}
-        </div>
+        <button v-for="c in cats" :key="c.label" type="button" class="cat" @click="onCat(c)">
+          <span class="ic"><component :is="c.icon" :size="18" /></span>{{ c.label }}
+        </button>
       </div>
     </section>
 
@@ -145,13 +145,14 @@ function onCat(c) {
 .sec { padding: 0 16px; margin-top: 12px; }
 .greeting { margin-top:18px; }.greeting h1 { font-size:24px;line-height:1.2; }.greeting p { margin-top:5px;color:var(--dim);font-size:12px; }
 .search {
+  width:100%;text-align:left;
   height:46px;display:flex;align-items:center;gap:9px;background:var(--panel);border:1px solid rgba(255,198,75,.28);border-radius:8px;
   padding:0 13px;color:var(--gold);font-size:13px;
 }
 .search .ph { color: var(--dim2); }
 .quick-grid { display:grid;grid-template-columns:repeat(4,1fr);gap:13px 4px; }
 .cat {
-  color:var(--dim);padding:2px 0;text-align:center;font-size:11px;transition:var(--transition);
+  width:100%;color:var(--dim);padding:2px 0;text-align:center;font-size:11px;transition:var(--transition);
 }
 .cat:active { transform: scale(.95); }
 .cat .ic { width:42px;height:42px;display:grid;place-items:center;margin:0 auto 6px;border:1px solid var(--line);border-radius:50%;color:var(--gold);background:var(--panel); }

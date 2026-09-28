@@ -18,6 +18,7 @@ class SetupConnectionPageContractTest {
             .filterIsInstance<Element>()
         val byId = elements.associateBy { it.getAttribute("android:id") }
 
+        assertEquals("@string/setup_scan_idle", byId.getValue("@+id/txtScanStatus").getAttribute("android:text"))
         val discovery = byId.getValue("@+id/setupDiscoveryPage")
         val manual = byId.getValue("@+id/setupManualPage")
         assertEquals("visible", discovery.getAttribute("android:visibility"))

@@ -5,6 +5,7 @@ import com.homektv.repo.SongArtistRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
@@ -41,7 +42,23 @@ public class ArtistCreditService {
         repository.flush();
         if (normalized.isEmpty()) return;
 
-        List<SongArtist> next = new java.util.ArrayList<>(normalized.size());
+        repository.saveAll(toSongArtists(songId, normalized));
+    }
+
+    /** Persists credits for a newly inserted song without querying rows that cannot exist yet. */
+    @Transactional
+    public void createInitial(long songId, String artistCredit, Collection<String> knownArtists) {
+        List<String> parsed = knownArtists == null || knownArtists.isEmpty()
+                ? ArtistCreditParser.parse(artistCredit)
+                : ArtistCreditParser.parse(artistCredit, knownArtists);
+        List<String> normalized = ArtistCreditParser.normalize(parsed);
+        if (normalized.isEmpty()) return;
+
+        repository.saveAll(toSongArtists(songId, normalized));
+    }
+
+    private static List<SongArtist> toSongArtists(long songId, List<String> normalized) {
+        List<SongArtist> next = new ArrayList<>(normalized.size());
         for (int index = 0; index < normalized.size(); index++) {
             String name = normalized.get(index);
             SongArtist row = new SongArtist();
@@ -53,7 +70,7 @@ public class ArtistCreditService {
             row.setArtistOrder(index);
             next.add(row);
         }
-        repository.saveAll(next);
+        return next;
     }
 
     private static boolean same(List<SongArtist> existing, List<String> names) {

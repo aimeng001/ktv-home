@@ -25,6 +25,7 @@ import com.homektv.tv.net.DiscoveredServer
 import com.homektv.tv.net.LanDiscovery
 import com.homektv.tv.net.LanScanner
 import com.homektv.tv.net.SavedServer
+import com.homektv.tv.net.playerCredentialForTransport
 import com.homektv.tv.session.DeviceMode
 import com.homektv.tv.ui.kiosk.KtvDashboardBackground
 import kotlinx.coroutines.Job
@@ -348,6 +349,19 @@ class SetupActivity : AppCompatActivity() {
     ) {
         val enteredCredential = binding.inputCredential.text.toString()
         val credentialChanged = enteredCredential != initialCredential
+        val willUseCredential = SetupCandidatePolicy.shouldReuseInitialCredential(
+            initialServer = initialServer,
+            targetServer = confirmed,
+            credentialChanged = credentialChanged,
+            legacyMigrationAccepted = legacyMigrationAccepted,
+        )
+        if (selectedMode() != DeviceMode.CONTROLLER && willUseCredential &&
+            playerCredentialForTransport(confirmed.hostPort, enteredCredential) == null
+        ) {
+            restoreSetupButton(button)
+            Toast.makeText(this, R.string.setup_credential_requires_https, Toast.LENGTH_LONG).show()
+            return
+        }
         if (legacyMigrationAccepted && initialServer != null &&
             !runCatching { config.migrateLegacyScope(initialServer!!, confirmed) }.getOrDefault(false)
         ) {

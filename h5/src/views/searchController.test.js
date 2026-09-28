@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createSearchController } from './searchController'
+import { searchViewState } from './searchState'
 
 function deferred() {
   let resolve
@@ -72,6 +73,36 @@ describe('search controller', () => {
     expect(controller.state().results.length).toBe(51)
     expect(controller.state().hasMore).toBe(false)
     expect(controller.state().page).toBe(1)
+  })
+
+  it('retains page zero and retries the failed page without restarting search', async () => {
+    const page0 = Array.from({ length: 50 }, (_, i) => ({ id: i + 1, title: `Song ${i + 1}` }))
+    const page1 = [{ id: 51, title: 'Song 51' }]
+    const client = {
+      searchSongs: vi.fn()
+        .mockResolvedValueOnce(page0)
+        .mockRejectedValueOnce(new Error('分页暂时不可用'))
+        .mockResolvedValueOnce(page1)
+    }
+    const controller = createSearchController(client, { schedule: runImmediately })
+
+    controller.setQuery('周杰伦')
+    await controller.waitForIdle()
+    await controller.loadMore('周杰伦')
+
+    expect(controller.state().results).toEqual(page0)
+    expect(controller.state().page).toBe(0)
+    expect(controller.state().hasMore).toBe(true)
+    expect(controller.state().loadingMore).toBe(false)
+    expect(controller.state().error).toBe('分页暂时不可用')
+    expect(searchViewState('周杰伦', false, controller.state().error, controller.state().results)).toBe('results')
+
+    await controller.loadMore('周杰伦')
+
+    expect(client.searchSongs.mock.calls.map(call => call[2])).toEqual([0, 1, 1])
+    expect(controller.state().results).toHaveLength(51)
+    expect(controller.state().page).toBe(1)
+    expect(controller.state().error).toBe('')
   })
 
   it('waitForIdle waits for an in-flight loadMore request', async () => {

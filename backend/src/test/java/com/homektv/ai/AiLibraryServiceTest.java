@@ -16,6 +16,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.core.task.TaskRejectedException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -35,6 +37,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doThrow;
 
 class AiLibraryServiceTest {
     @Test
@@ -147,7 +150,7 @@ class AiLibraryServiceTest {
                 mock(PlaylistRepository.class), mock(PlaylistSongRepository.class), worker,
                 new ObjectMapper(), configService, mock(AssetWriter.class),
                 mock(AiClassificationApplier.class), mock(OpenAiCompatibleClient.class),
-                mock(MediaImportRecordRepository.class));
+                mock(MediaImportRecordRepository.class), mock(AiTaskDispatchFailureRecorder.class));
 
         service.createRepairBatch();
 
@@ -174,7 +177,7 @@ class AiLibraryServiceTest {
                 mock(PlaylistRepository.class), mock(PlaylistSongRepository.class), worker,
                 new ObjectMapper(), configService, mock(AssetWriter.class),
                 mock(AiClassificationApplier.class), mock(OpenAiCompatibleClient.class),
-                mock(MediaImportRecordRepository.class));
+                mock(MediaImportRecordRepository.class), mock(AiTaskDispatchFailureRecorder.class));
 
         Map<String, Object> result = service.createRepairBatch();
 
@@ -184,6 +187,36 @@ class AiLibraryServiceTest {
         verify(taskRepository).existsBySongIdAndStatusIn(eq(5L), anyList());
         verify(taskRepository, times(1)).saveAndFlush(any(AiAnalysisTask.class));
         verify(worker, times(1)).analyze(any());
+    }
+
+    @Test
+    void repairBatchReturnsBatchIdAndCountsTasksRejectedByTheExecutor() {
+        SongRepository songRepository = mock(SongRepository.class);
+        AiAnalysisTaskRepository taskRepository = mock(AiAnalysisTaskRepository.class);
+        AiAnalysisWorker worker = mock(AiAnalysisWorker.class);
+        AiConfigService configService = mock(AiConfigService.class);
+        when(songRepository.findAll(any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(song(77L, "队列饱和", "歌手"))));
+        when(configService.isConfigured()).thenReturn(false);
+        when(configService.resolve()).thenReturn(new AiConfigService.ResolvedConfig(false, "", "", "",
+                30, 0.97, 0.92, AiConfigService.JsonMode.AUTO, 2, 1, ""));
+        when(taskRepository.saveAndFlush(any())).thenAnswer(invocation -> {
+            AiAnalysisTask task = invocation.getArgument(0);
+            ReflectionTestUtils.setField(task, "id", 77L);
+            return task;
+        });
+        doThrow(new TaskRejectedException("queue full")).when(worker).analyze(77L);
+        AiLibraryService service = new AiLibraryService(taskRepository, songRepository,
+                mock(PlaylistRepository.class), mock(PlaylistSongRepository.class), worker,
+                new ObjectMapper(), configService, mock(AssetWriter.class),
+                mock(AiClassificationApplier.class), mock(OpenAiCompatibleClient.class),
+                mock(MediaImportRecordRepository.class), mock(AiTaskDispatchFailureRecorder.class));
+
+        Map<String, Object> result = service.createRepairBatch();
+
+        assertThat(result).containsEntry("created", 1)
+                .containsEntry("dispatchRejected", 1);
+        assertThat(result.get("batchId")).isNotNull();
     }
 
     @Test
@@ -344,6 +377,7 @@ class AiLibraryServiceTest {
         return new AiLibraryService(mock(AiAnalysisTaskRepository.class), songRepository,
                 playlistRepository, playlistSongRepository, mock(AiAnalysisWorker.class),
                 objectMapper, configService, assetWriter,
-                mock(AiClassificationApplier.class), aiClient, mock(MediaImportRecordRepository.class));
+                mock(AiClassificationApplier.class), aiClient, mock(MediaImportRecordRepository.class),
+                mock(AiTaskDispatchFailureRecorder.class));
     }
 }

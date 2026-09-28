@@ -16,6 +16,7 @@ import com.homektv.domain.MediaImportRecord;
 import com.homektv.web.ApiException;
 import org.springframework.stereotype.Service;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -57,12 +58,14 @@ public class AiLibraryService {
     private final AiClassificationApplier classificationApplier;
     private final OpenAiCompatibleClient aiClient;
     private final MediaImportRecordRepository importRecordRepository;
+    private final AiTaskDispatchFailureRecorder dispatchFailureRecorder;
 
     public AiLibraryService(AiAnalysisTaskRepository taskRepository, SongRepository songRepository,
                             PlaylistRepository playlistRepository, PlaylistSongRepository playlistSongRepository,
                             AiAnalysisWorker worker, ObjectMapper objectMapper, AiConfigService configService,
                             AssetWriter assetWriter, AiClassificationApplier classificationApplier,
-                            OpenAiCompatibleClient aiClient, MediaImportRecordRepository importRecordRepository) {
+                            OpenAiCompatibleClient aiClient, MediaImportRecordRepository importRecordRepository,
+                            AiTaskDispatchFailureRecorder dispatchFailureRecorder) {
         this.taskRepository = taskRepository;
         this.songRepository = songRepository;
         this.playlistRepository = playlistRepository;
@@ -74,6 +77,7 @@ public class AiLibraryService {
         this.classificationApplier = classificationApplier;
         this.aiClient = aiClient;
         this.importRecordRepository = importRecordRepository;
+        this.dispatchFailureRecorder = dispatchFailureRecorder;
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -174,6 +178,7 @@ public class AiLibraryService {
         AiConfigService.ResolvedConfig config = configService.resolve();
         int created = 0;
         int skippedExisting = 0;
+        int dispatchRejected = 0;
         for (int pageNumber = 0; ; pageNumber++) {
             Page<Song> page = songPage(pageNumber);
             if (page == null || page.isEmpty()) break;
@@ -200,12 +205,13 @@ public class AiLibraryService {
                     }
                     throw conflict;
                 }
-                dispatchAfterCommit(task.getId());
+                if (!dispatchAfterCommit(task.getId())) dispatchRejected++;
                 created++;
             }
             if (!page.hasNext()) break;
         }
-        return Map.of("batchId", batchId, "created", created, "skippedExisting", skippedExisting);
+        return Map.of("batchId", batchId, "created", created, "skippedExisting", skippedExisting,
+                "dispatchRejected", dispatchRejected);
     }
 
     /**
@@ -213,30 +219,34 @@ public class AiLibraryService {
      * later rolled back. Calls made outside a transaction retain the legacy
      * immediate dispatch behavior.
      */
-    private void dispatchAfterCommit(Long taskId) {
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            worker.analyze(taskId);
-            return;
+    private boolean dispatchAfterCommit(Long taskId) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()
+                || !TransactionSynchronizationManager.isActualTransactionActive()) {
+            return dispatch(taskId);
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                worker.analyze(taskId);
+                dispatch(taskId);
             }
         });
+        return true;
+    }
+
+    private boolean dispatch(Long taskId) {
+        try {
+            worker.analyze(taskId);
+            return true;
+        } catch (TaskRejectedException rejected) {
+            dispatchFailureRecorder.markQueueRejected(taskId);
+            return false;
+        }
     }
     @Transactional
     public Map<String, Object> pauseRepairBatch(String batchId) {
         List<AiAnalysisTask> tasks = taskRepository.findByBatchIdOrderByCreatedAtAsc(batchId);
         if (tasks.isEmpty()) throw new ApiException("AI_BATCH_NOT_FOUND", "修复批次不存在");
-        int changed = 0;
-        for (AiAnalysisTask task : tasks) {
-            if (Set.of("pending", "processing").contains(task.getStatus())) {
-                task.setStatus("paused");
-                changed++;
-            }
-        }
-        taskRepository.saveAll(tasks);
+        taskRepository.pauseBatch(batchId);
         return repairProgress(batchId);
     }
 

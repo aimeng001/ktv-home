@@ -126,6 +126,7 @@ import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
 import { pollingDelay } from './loadState'
+import { createMetadataReviewRequestGate } from './metadataReviewRequest'
 
 const route=useRoute(),router=useRouter()
 const task=ref(null),threshold=ref(.95),starting=ref(false),taskAction=ref(false),itemBusy=ref(null),applying=ref(false)
@@ -134,6 +135,7 @@ const selectedIds=ref(new Set()),reviewing=ref(null),reviewApplyFields=ref([])
 const reviewMatches=ref([]),reviewSelected=ref(null),reviewProvider=ref(''),reviewLoading=ref(false),reviewSong=ref(null),reviewLyricLoading=ref(false)
 const reviewKeyword=ref('')
 const reviewManual=ref(false)
+const reviewRequestGate=createMetadataReviewRequestGate()
 const reviewEdits=reactive({title:'',artist:'',album:'',releaseDate:'',aliases:'',language:'未知',lyricText:''})
 const reviewOriginal=reactive({language:'未知',lyricText:''})
 const reviewFields=[{key:'title',label:'歌名'},{key:'artist',label:'歌手'},{key:'album',label:'专辑'},{key:'releaseDate',label:'发行时间'},{key:'aliases',label:'别名'},{key:'cover',label:'封面'}]
@@ -182,27 +184,34 @@ function setStatus(value){statusFilter.value=value;taskPage.value=0;refreshTask(
 function changeTaskPage(value){taskPage.value=value;refreshTask()}
 async function openReview(item){reviewKeyword.value=[item.title,item.artist].filter(Boolean).join(' ');reviewing.value={...item,standalone:false};await loadReviewData(false)}
 async function openStandaloneReview(song){reviewKeyword.value=[song.title,song.artist].filter(Boolean).join(' ');reviewing.value={songId:song.id,title:song.title,artist:song.artist,standalone:true};await loadReviewData(true)}
-function closeReview(){if(applying.value)return;reviewing.value=null;reviewMatches.value=[];reviewSelected.value=null;reviewManual.value=false;reviewSong.value=null;reviewProvider.value='';reviewKeyword.value='';reviewLyricLoading.value=false}
+function closeReview(){if(applying.value)return;reviewRequestGate.invalidate();reviewing.value=null;reviewMatches.value=[];reviewSelected.value=null;reviewManual.value=false;reviewSong.value=null;reviewProvider.value='';reviewKeyword.value='';reviewLoading.value=false;reviewLyricLoading.value=false}
 async function searchReview(){if(reviewKeyword.value.length<2){await alertDialog('请输入至少 2 个字符的搜索关键词');return}await loadReviewData(true)}
 async function loadReviewData(refresh){
   if(!reviewing.value)return
+  const target={...reviewing.value}
+  const targetKey=target.standalone?`song:${target.songId}`:`item:${task.value?.batchId}:${target.id}`
+  const request=reviewRequestGate.begin(targetKey)
+  const current=()=>reviewRequestGate.isCurrent(request,reviewing.value?.standalone?`song:${reviewing.value.songId}`:`item:${task.value?.batchId}:${reviewing.value?.id}`)
+  const keyword=reviewKeyword.value
   reviewLoading.value=true
   try{
     const scopedProvider=reviewProvider.value
-    const [song,result]=await Promise.all([api.adminSong(reviewing.value.songId),api.adminSongExternalMatches(reviewing.value.songId,refresh,reviewKeyword.value,scopedProvider?[scopedProvider]:[])])
+    const [song,result]=await Promise.all([api.adminSong(target.songId),api.adminSongExternalMatches(target.songId,refresh,keyword,scopedProvider?[scopedProvider]:[])])
+    if(!current())return
     reviewSong.value=song;reviewMatches.value=result.matches||[];reviewProvider.value=scopedProvider
     reviewOriginal.language=song.language||'未知';reviewEdits.language=reviewOriginal.language
     reviewOriginal.lyricText='';reviewEdits.lyricText=''
     if(song.lyricType&&song.lyricType!=='none'){
       reviewLyricLoading.value=true
-      try{const lyric=await api.lyricText(song.id);reviewOriginal.lyricText=lyric||'';reviewEdits.lyricText=lyric||''}catch{}
-      finally{reviewLyricLoading.value=false}
+      try{const lyric=await api.lyricText(song.id);if(!current())return;reviewOriginal.lyricText=lyric||'';reviewEdits.lyricText=lyric||''}catch{}
+      finally{if(current())reviewLyricLoading.value=false}
     }
-    const stored=reviewMatches.value.find(item=>item.track.provider===reviewing.value.provider&&item.track.externalId===reviewing.value.externalId)
+    if(!current())return
+    const stored=reviewMatches.value.find(item=>item.track.provider===target.provider&&item.track.externalId===target.externalId)
     const candidate=stored||reviewMatches.value[0]
     candidate?selectReviewMatch(candidate):selectManualReview()
-  }catch(e){await alertDialog(e.message||'平台元数据搜索失败')}
-  finally{reviewLoading.value=false}
+  }catch(e){if(current())await alertDialog(e.message||'平台元数据搜索失败')}
+  finally{if(current()){reviewLoading.value=false;reviewLyricLoading.value=false}}
 }
 function selectReviewMatch(candidate){
   reviewManual.value=false

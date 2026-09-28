@@ -20,28 +20,29 @@ import com.homektv.web.ApiException;
 @Service
 public class AiAnalysisWorker {
     private final AiAnalysisTaskRepository taskRepository;
+    private final AiAnalysisFinalizer finalizer;
     private final SongRepository songRepository;
     private final OpenAiCompatibleClient aiClient;
     private final ObjectMapper objectMapper;
     private final AiConfigService configService;
     private final AiAutoApplyPolicy autoApplyPolicy;
-    private final AiClassificationApplier classificationApplier;
     private final AiConcurrencyLimiter concurrencyLimiter;
     private final MediaImportRecordRepository importRecordRepository;
     private final LocalClassificationService localClassificationService;
 
-    public AiAnalysisWorker(AiAnalysisTaskRepository taskRepository, SongRepository songRepository,
+    public AiAnalysisWorker(AiAnalysisTaskRepository taskRepository, AiAnalysisFinalizer finalizer,
+                            SongRepository songRepository,
                             OpenAiCompatibleClient aiClient, ObjectMapper objectMapper, AiConfigService configService,
-                            AiAutoApplyPolicy autoApplyPolicy, AiClassificationApplier classificationApplier,
+                            AiAutoApplyPolicy autoApplyPolicy,
                             AiConcurrencyLimiter concurrencyLimiter, MediaImportRecordRepository importRecordRepository,
                             LocalClassificationService localClassificationService) {
         this.taskRepository = taskRepository;
+        this.finalizer = finalizer;
         this.songRepository = songRepository;
         this.aiClient = aiClient;
         this.objectMapper = objectMapper;
         this.configService = configService;
         this.autoApplyPolicy = autoApplyPolicy;
-        this.classificationApplier = classificationApplier;
         this.concurrencyLimiter = concurrencyLimiter;
         this.importRecordRepository = importRecordRepository;
         this.localClassificationService = localClassificationService;
@@ -111,44 +112,26 @@ public class AiAnalysisWorker {
                 }
                 if (isPaused(taskId)) return;
             }
-            task.setResultJson(objectMapper.writeValueAsString(result));
-            task.setFieldConfidence(objectMapper.writeValueAsString(java.util.Map.of(
+            String resultJson = objectMapper.writeValueAsString(result);
+            String fieldConfidence = objectMapper.writeValueAsString(java.util.Map.of(
                     "title", result.titleConfidence(), "artist", result.artistConfidence(),
-                    "language", result.languageConfidence(), "vocalForm", result.vocalFormConfidence())));
-            task.setEvidence(objectMapper.writeValueAsString(result.evidence()));
-            if (fallbackReason != null) {
-                task.setStatus("review");
-                task.setErrorMessage(fallbackReason);
-            } else if (importTarget && applyImportRecord(importRecord, result, config.identityThreshold())) {
-                task.setStatus("auto_applied");
-            } else if (!importTarget && autoApplyPolicy.shouldAutoApply(result) && classificationApplier.applyAuto(task.getSongId(), result)) {
-                task.setStatus("auto_applied");
-            } else {
-                task.setStatus("review");
-            }
+                    "language", result.languageConfidence(), "vocalForm", result.vocalFormConfidence()));
+            String evidence = objectMapper.writeValueAsString(result.evidence());
+            boolean autoApplyCandidate = fallbackReason == null
+                    && (importTarget || autoApplyPolicy.shouldAutoApply(result));
+            if (!finalizer.finishProcessing(taskId, resultJson, fieldConfidence, evidence,
+                    task.getModelRole(), task.getModel(), result, autoApplyCandidate,
+                    config == null ? 0 : config.identityThreshold(), fallbackReason)) return;
         } catch (Exception e) {
             String terminalStatus = e instanceof ApiException api && "AI_IDENTITY_CONFLICT".equals(api.getCode())
                     ? "review" : "failed";
             taskRepository.finishProcessingError(taskId, terminalStatus, safeMessage(e));
             return;
         }
-        taskRepository.finishProcessing(taskId,
-                task.getResultJson(), task.getFieldConfidence(), task.getEvidence(),
-                task.getModelRole(), task.getModel(), task.getStatus(), task.getErrorMessage());
     }
 
     private boolean isPaused(Long taskId) {
         return taskRepository.findById(taskId).map(task -> "paused".equals(task.getStatus())).orElse(false);
-    }
-
-    private boolean applyImportRecord(MediaImportRecord record, AiSongClassification result, double threshold) {
-        if (result.title() == null || result.title().isBlank() || result.artist() == null || result.artist().isBlank()
-                || result.titleConfidence() < threshold || result.artistConfidence() < threshold) return false;
-        record.setParsedTitle(result.title().trim());
-        record.setParsedArtist(result.artist().trim());
-        record.setReason("AI 已优化文件身份：" + (result.reason() == null ? "" : result.reason()));
-        importRecordRepository.save(record);
-        return true;
     }
 
     // 安全截取异常信息（脱敏 API Key、限制长度 1000 字符）

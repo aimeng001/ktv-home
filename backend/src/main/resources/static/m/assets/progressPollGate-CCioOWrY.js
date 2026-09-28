@@ -1,0 +1,1 @@
+function u(){let r=0,l=null,e=!1;return{begin(){return l!==null?(e=!0,null):(l=++r,l)},isCurrent(n){return n!==null&&n===l&&n===r},invalidate({queueLatest:n=!1}={}){r+=1,e=l!==null&&!!n},finish(n){if(n!==l)return!1;l=null;const t=e;return e=!1,t}}}export{u as c};

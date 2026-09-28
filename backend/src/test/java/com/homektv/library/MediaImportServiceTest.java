@@ -393,6 +393,7 @@ class MediaImportServiceTest {
         imported.setId(10L);
         imported.setSourcePath(importedSource.toString());
         imported.setSourceFilename(importedSource.getFileName().toString());
+        imported.setSourceMd5(new FileHashService().md5(importedSource));
         imported.setOutputPath(importedOutput.toString());
         imported.setOutputMd5(new FileHashService().md5(importedOutput));
         imported.setSongFileId(20L);
@@ -609,6 +610,7 @@ class MediaImportServiceTest {
         record.setId(42L);
         record.setSourcePath(importedSource.toString());
         record.setSourceFilename(importedSource.getFileName().toString());
+        record.setSourceMd5(new FileHashService().md5(importedSource));
         record.setOutputPath(importedOutput.toString());
         record.setOutputMd5(new FileHashService().md5(importedOutput));
         record.setOutputSize(Files.size(importedOutput));
@@ -629,6 +631,89 @@ class MediaImportServiceTest {
 
         assertThat(result.deleted()).isEqualTo(1);
         verify(hashService, never()).md5(importedOutput);
+    }
+
+    @Test
+    void cleanupPreservesSourceReplacedAfterSuccessfulImport() throws Exception {
+        Path source = sourceDir.resolve("歌手 - 已替换.mp4");
+        Path output = targetDir.resolve("歌手 - 已替换.mp4");
+        Files.writeString(source, "original-source-content");
+        Files.writeString(output, "verified-library-content");
+
+        MediaImportRecord record = new MediaImportRecord();
+        record.setId(44L);
+        record.setSourcePath(source.toString());
+        record.setSourceFilename(source.getFileName().toString());
+        record.setSourceMd5(new FileHashService().md5(source));
+        record.setOutputPath(output.toString());
+        record.setOutputMd5(new FileHashService().md5(output));
+        record.setOutputSize(Files.size(output));
+        var outputMtime = Files.getLastModifiedTime(output).toInstant()
+                .atOffset(ZoneOffset.UTC);
+        record.setOutputMtime(outputMtime.withNano((outputMtime.getNano() / 1_000) * 1_000));
+        record.setSongFileId(44L);
+        record.setImportedFlag(true);
+        SongFile libraryFile = new SongFile();
+        libraryFile.setId(44L);
+        libraryFile.setFilePath(output.toString());
+        libraryFile.setValid(true);
+        when(importRepo.findByIdGreaterThanOrderByIdAsc(eq(0L), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(record)));
+        when(songFileRepo.findById(44L)).thenReturn(Optional.of(libraryFile));
+
+        Files.writeString(source, "replacement-source-content");
+
+        MediaImportService.AutoCleanupResult result = service.cleanupImportedSources();
+
+        assertThat(result.eligible()).isZero();
+        assertThat(result.deleted()).isZero();
+        assertThat(result.skipped()).isEqualTo(1);
+        assertThat(source).hasContent("replacement-source-content");
+        assertThat(output).exists();
+    }
+
+    @Test
+    void cleanupDeletesOnlyCompanionsWhoseContentsWereCopied() throws Exception {
+        Path source = sourceDir.resolve("歌手 - 伴随文件.mp4");
+        Path output = targetDir.resolve("歌手 - 伴随文件.mp4");
+        Path changedLyric = sourceDir.resolve("歌手 - 伴随文件.lrc");
+        Path copiedLyric = targetDir.resolve("歌手 - 伴随文件.lrc");
+        Path unchangedCover = sourceDir.resolve("歌手 - 伴随文件.jpg");
+        Path copiedCover = targetDir.resolve("歌手 - 伴随文件.jpg");
+        Files.writeString(source, "source-content");
+        Files.writeString(output, "library-content");
+        Files.writeString(changedLyric, "new lyric");
+        Files.writeString(copiedLyric, "old lyric");
+        Files.writeString(unchangedCover, "same-cover");
+        Files.writeString(copiedCover, "same-cover");
+
+        MediaImportRecord record = new MediaImportRecord();
+        record.setId(45L);
+        record.setSourcePath(source.toString());
+        record.setSourceFilename(source.getFileName().toString());
+        record.setSourceMd5(new FileHashService().md5(source));
+        record.setOutputPath(output.toString());
+        record.setOutputMd5(new FileHashService().md5(output));
+        record.setOutputSize(Files.size(output));
+        var outputMtime = Files.getLastModifiedTime(output).toInstant()
+                .atOffset(ZoneOffset.UTC);
+        record.setOutputMtime(outputMtime.withNano((outputMtime.getNano() / 1_000) * 1_000));
+        record.setSongFileId(45L);
+        record.setImportedFlag(true);
+        SongFile libraryFile = new SongFile();
+        libraryFile.setId(45L);
+        libraryFile.setFilePath(output.toString());
+        libraryFile.setValid(true);
+        when(importRepo.findByIdGreaterThanOrderByIdAsc(eq(0L), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(record)));
+        when(songFileRepo.findById(45L)).thenReturn(Optional.of(libraryFile));
+
+        MediaImportService.AutoCleanupResult result = service.cleanupImportedSources();
+
+        assertThat(result.deleted()).isEqualTo(1);
+        assertThat(source).doesNotExist();
+        assertThat(changedLyric).hasContent("new lyric");
+        assertThat(unchangedCover).doesNotExist();
     }
 
     @Test
@@ -668,6 +753,7 @@ class MediaImportServiceTest {
         record.setId(43L);
         record.setSourcePath(importedSource.toString());
         record.setSourceFilename(importedSource.getFileName().toString());
+        record.setSourceMd5(new FileHashService().md5(importedSource));
         record.setOutputPath(importedOutput.toString());
         record.setSongFileId(43L);
         record.setImportedFlag(true);

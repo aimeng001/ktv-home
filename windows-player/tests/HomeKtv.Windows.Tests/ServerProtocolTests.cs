@@ -32,13 +32,25 @@ public sealed class ServerProtocolTests
     }
 
     [Fact]
-    public void Websocket_uri_escapes_optional_player_credential()
+    public void Websocket_uri_never_contains_the_player_credential()
     {
-        var endpoint = ServerEndpoint.Parse("http://192.168.1.10:8080");
+        var endpoint = ServerEndpoint.Parse("https://192.168.1.10:8443");
 
-        var uri = endpoint.WebSocketUri("windows-token", "secret/电视 1");
+        var uri = endpoint.WebSocketUri("windows-token");
 
-        Assert.Contains("player_credential=secret%2F%E7%94%B5%E8%A7%86%201", uri.Query);
+        Assert.Equal("wss", uri.Scheme);
+        Assert.DoesNotContain("player_credential", uri.Query);
+    }
+
+    [Fact]
+    public void Player_credential_header_requires_https()
+    {
+        var secureEndpoint = ServerEndpoint.Parse("https://192.168.1.10:8443");
+        var insecureEndpoint = ServerEndpoint.Parse("http://192.168.1.10:8080");
+
+        Assert.Equal("secret/电视 1", secureEndpoint.PlayerCredentialHeader(" secret/电视 1 "));
+        Assert.Throws<InvalidOperationException>(() =>
+            insecureEndpoint.PlayerCredentialHeader("secret/电视 1"));
     }
 
     [Fact]

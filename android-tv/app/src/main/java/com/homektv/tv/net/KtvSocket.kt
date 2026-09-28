@@ -228,7 +228,12 @@ class KtvSocket(
             KtvSocketRole.CONTROLLER -> config.controllerWsUrlFor(sessionServer, sessionUserToken)
         }
         Log.d(TAG, "connecting ${safeWebSocketLogTarget(sessionHost)}")
-        val req = Request.Builder().url(url).build()
+        val request = Request.Builder().url(url)
+        if (role == KtvSocketRole.PLAYER) {
+            playerCredentialForTransport(sessionHost.orEmpty(), config.playerCredentialFor(sessionServer))
+                ?.let { request.header("X-Player-Credential", it) }
+        }
+        val req = request.build()
         ws = http.newWebSocket(req, socketListener(epoch))
     }
 
@@ -569,7 +574,7 @@ internal fun buildFinishedMessage(queueId: Long, generation: Long): String = bui
 
 /** Keeps client identity query parameters out of connection logs. */
 internal fun safeWebSocketLogTarget(serverHost: String?): String =
-    serverHost?.trim()?.takeIf { it.isNotEmpty() }?.let { "ws://$it/ws" }
+    serverHost?.trim()?.takeIf { it.isNotEmpty() }?.let(::buildWebSocketBaseUrl)
         ?: "ws://<unconfigured>/ws"
 
 internal fun parseProgressPosition(payload: JsonElement?): Long = runCatching {

@@ -5,8 +5,9 @@ import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.homektv.domain.Song;
 import com.homektv.domain.MediaImportRecord;
+import com.homektv.domain.Song;
+import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -22,10 +23,15 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 @Component
 public class OpenAiCompatibleClient {
     static final int MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+    private static final String REDACTED_LOCAL_PATH = "[本地绝对路径已隐藏]";
+    private static final Pattern WINDOWS_ABSOLUTE_PATH = Pattern.compile(
+            "(?i)(?<![\\p{Alnum}])(?:[A-Z]:[\\\\/]|\\\\\\\\[^\\\\/\\r\\n]+[\\\\/][^\\\\/\\r\\n]+[\\\\/])[^\\r\\n]*");
+    private static final Pattern POSIX_ABSOLUTE_PATH = Pattern.compile("(?U)(?<![\\w:/])/(?!/)[^\\r\\n]*");
 
     private final AiConfigService configService;
     private final ObjectMapper mapper;
@@ -56,11 +62,11 @@ public class OpenAiCompatibleClient {
     }
 
     public AiSongClassification classifyImport(MediaImportRecord record, String role) {
-        String prompt = "导入记录 ID：" + record.getId() + "\n源文件：" + record.getSourceFilename()
-                + "\n源路径：" + record.getSourcePath() + "\n本地歌名：" + record.getParsedTitle()
+        String prompt = "导入记录 ID：" + record.getId() + "\n源文件：" + fileName(record.getSourceFilename())
+                + "\n本地歌名：" + record.getParsedTitle()
                 + "\n本地歌手：" + record.getParsedArtist() + "\n媒体类型：" + record.getMediaType()
                 + "\n格式：" + record.getSourceFormat() + "\n现有判断：" + record.getReason();
-        return parseClassification(completeJson(role, classificationSystemPrompt(), prompt, 1800));
+        return parseClassification(completeJson(role, classificationSystemPrompt(), redactAbsolutePaths(prompt), 1800));
     }
 
     private AiSongClassification parseClassification(JsonNode value) {
@@ -344,13 +350,44 @@ public class OpenAiCompatibleClient {
 
     private String classificationUserPrompt(Song song) {
         boolean trustedLanguage = song.getMetadataProvenance() == null || !song.getMetadataProvenance().contains("legacy_default");
-        return "歌曲 ID：" + song.getId() + "\n当前歌名：" + song.getTitle() + "\n当前歌手：" + song.getArtist()
+        String prompt = "歌曲 ID：" + song.getId() + "\n当前歌名：" + song.getTitle() + "\n当前歌手：" + song.getArtist()
                 + "\n当前语言：" + song.getLanguage() + (trustedLanguage ? "（可信度未知）" : "（历史默认值，不可信）")
                 + "\n演唱形式：" + song.getVocalForm() + "\n媒体类型：" + song.getMediaType()
                 + "\n现有标签：" + String.join("、", song.getTags()) + "\n人工锁定字段：" + String.join("、", song.getMetadataLocks())
                 + "\n文件证据：" + fileRepository.findBySongIdOrderByPriorityDesc(song.getId()).stream()
-                .limit(5).map(file -> file.getFilePath() + (file.getSourcePath() == null ? "" : " | source=" + file.getSourcePath()))
+                .limit(5).map(this::classificationFileEvidence)
                 .toList();
+        return redactAbsolutePaths(prompt);
+    }
+
+    private String classificationFileEvidence(SongFile file) {
+        String relativePath = file.getRelativePath();
+        if (relativePath != null && !relativePath.isBlank() && !isAbsolutePath(relativePath)) {
+            return normalizeSeparators(relativePath.trim());
+        }
+        return fileName(file.getFilePath());
+    }
+
+    private String fileName(String path) {
+        if (path == null || path.isBlank()) return "";
+        String normalized = normalizeSeparators(path.trim());
+        int separator = normalized.lastIndexOf('/');
+        return normalized.substring(separator + 1);
+    }
+
+    private String normalizeSeparators(String path) {
+        return path.replace('\\', '/');
+    }
+
+    private boolean isAbsolutePath(String path) {
+        String value = path.trim();
+        return value.startsWith("/") || value.startsWith("\\\\") || value.startsWith("\\")
+                || value.matches("(?i)^[a-z]:[\\\\/].*");
+    }
+
+    private String redactAbsolutePaths(String prompt) {
+        String windowsRedacted = WINDOWS_ABSOLUTE_PATH.matcher(prompt).replaceAll(REDACTED_LOCAL_PATH);
+        return POSIX_ABSOLUTE_PATH.matcher(windowsRedacted).replaceAll(REDACTED_LOCAL_PATH);
     }
 
     public static class AiProviderException extends RuntimeException {

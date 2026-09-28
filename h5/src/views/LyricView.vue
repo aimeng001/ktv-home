@@ -2,7 +2,7 @@
   <div class="page">
     <!-- 顶部迷你曲目条 / Mini track bar at top -->
     <div class="topbar">
-      <span class="down" @click="$router.back()">⌄</span>
+      <button type="button" class="down" aria-label="返回" @click="$router.back()">⌄</button>
       <div class="grow center">
         <div class="t">{{ song?.title || '暂无播放' }}
           <span class="a" v-if="song">· {{ song.artist }}</span></div>
@@ -159,7 +159,7 @@ async function next() {
               linear-gradient(175deg, rgba(20,26,42,.9), var(--bg));
 }
 .topbar { display: flex; align-items: center; gap: 10px; padding: 16px; }
-.down { font-size: 20px; color: var(--dim); }
+.down { width:34px;height:34px;flex:none;display:grid;place-items:center;border-radius:6px;padding:0;font-size:20px;color:var(--dim); }
 .center { text-align: center; }
 .center .t { font-size: 14px; font-weight: 700; }
 .center .a { color: var(--dim); font-weight: 400; font-size: 11px; }

@@ -1236,7 +1236,10 @@ public class LibraryScanService {
                 + "\"artist\":{\"source\":\"filename_fast_index\"}}");
         provisional.setNeedsAiOptimization(!parsed.recognized());
         provisional = songRepo.save(provisional);
-        syncArtistCredits(provisional, knownArtists);
+        if (artistCreditService != null && provisional.getId() != null) {
+            artistCreditService.createInitial(provisional.getId(), provisional.getArtist(), knownArtists);
+            counters.initialArtistCreditSongIds.add(provisional.getId());
+        }
         counters.dbUpdates++;
 
         SongFile indexed = new SongFile();
@@ -1632,6 +1635,7 @@ public class LibraryScanService {
                 .flatMap(songRepo::findById)
                 .filter(LibraryScanService::isProvisionalSong)
                 .orElse(null);
+        boolean initialCreditsAlreadyMatch = false;
         Song song;
         boolean isNew;
         Song provisionalToDelete = null;
@@ -1650,9 +1654,12 @@ public class LibraryScanService {
             isNew = false;
             provisionalToDelete = provisional;
         } else if (provisional != null) {
+            String fastIndexedArtist = provisional.getArtist();
             song = provisional;
             applyProbedMetadata(song, title, artist, mediaType, hasVocal, probe,
                     fingerprint, recognized, tag, filenameMeta, titleSource, artistSource);
+            initialCreditsAlreadyMatch = counters.initialArtistCreditSongIds.contains(provisional.getId())
+                    && Objects.equals(fastIndexedArtist, song.getArtist());
             isNew = false;
         } else if (dup.isPresent()) {
             song = dup.get();
@@ -1729,7 +1736,7 @@ public class LibraryScanService {
             }
         }
         song = songRepo.save(song);
-        syncArtistCredits(song, knownArtists);
+        if (!initialCreditsAlreadyMatch) syncArtistCredits(song, knownArtists);
         synchronized (counters) {
             counters.dbUpdates++;
         }
@@ -2133,6 +2140,7 @@ public class LibraryScanService {
     }
 
     private static final class ScanCounters {
+        private final Set<Long> initialArtistCreditSongIds = new HashSet<>();
         private int fastIndexed;
         private int probeQueued;
         private int probeCalls;

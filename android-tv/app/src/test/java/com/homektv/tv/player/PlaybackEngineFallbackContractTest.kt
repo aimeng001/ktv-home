@@ -15,6 +15,7 @@ class PlaybackEngineFallbackContractTest {
         var lastTrackIndex: Int? = null
         var lastAudioLayout: AudioLayout? = null
         var prepareCalled = 0
+        val calls = mutableListOf<String>()
         var releaseCalled = false
 
         override fun setSurface(surface: android.view.Surface?) {}
@@ -27,6 +28,7 @@ class PlaybackEngineFallbackContractTest {
             playWhenReady: Boolean,
         ) {
             prepareCalled++
+            calls += "prepare"
         }
 
         override fun pause() {}
@@ -34,6 +36,7 @@ class PlaybackEngineFallbackContractTest {
         override fun stop() {}
         override fun seekTo(positionMs: Long) {}
         override fun setChannelMode(mode: String) {
+            calls += "channelMode"
             lastVocalMode = mode
         }
 
@@ -43,6 +46,7 @@ class PlaybackEngineFallbackContractTest {
         }
 
         override fun setVocalSelection(mode: String, trackIndex: Int?, audioLayout: AudioLayout) {
+            calls += "vocalSelection"
             lastVocalMode = mode
             lastTrackIndex = trackIndex
             lastAudioLayout = audioLayout
@@ -108,5 +112,34 @@ class PlaybackEngineFallbackContractTest {
 
         mock.setVocalSelection("original", null, dualChannel)
         assertEquals("original", mock.lastVocalMode)
+    }
+
+    @Test
+    fun fallbackHandoffPreparesThenPassesTheCurrentDualTrackSelection() {
+        val mock = MockFallbackPlayer()
+        val layout = AudioLayout(
+            layout = "DUAL_TRACK",
+            originalTrackIndex = 0,
+            accompanimentTrackIndex = 2,
+        )
+
+        prepareFallbackPlayback(
+            player = mock,
+            fileId = 41,
+            streamUrl = "http://server/api/stream/5",
+            initialPositionMs = 12_000,
+            requestToken = 7,
+            playWhenReady = true,
+            mode = "accompaniment",
+            accompanimentIndex = 1,
+            audioTrackCount = 3,
+            audioLayout = layout,
+        )
+
+        assertEquals(listOf("prepare", "channelMode", "vocalSelection"), mock.calls)
+        assertEquals(1, mock.prepareCalled)
+        assertEquals("accompaniment", mock.lastVocalMode)
+        assertEquals(2, mock.lastTrackIndex)
+        assertEquals(layout, mock.lastAudioLayout)
     }
 }

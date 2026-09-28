@@ -44,7 +44,7 @@
                 android:id="@+id/txtScanStatus"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/setup_checking_previous"
+                android:text="@string/setup_scan_idle"
                 android:textColor="@color/dim"
                 android:textSize="15sp" />
         </LinearLayout>

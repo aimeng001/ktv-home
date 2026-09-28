@@ -135,6 +135,21 @@ export async function loadSettingsSections(loaders = {}) {
   return { values, states, errors }
 }
 
+export function failedSettingsSections(states = {}) {
+  return Object.keys(states).filter(name => states[name] === 'error')
+}
+
+/** Preserve an edited draft, but advance its baseline to the latest server value. */
+export function reconcileSettingsDraft(current = {}, baselineSnapshot = '', incoming = {}) {
+  const dirty = Boolean(baselineSnapshot) && JSON.stringify(current) !== baselineSnapshot
+  const baseline = { ...incoming }
+  return {
+    value: { ...(dirty ? current : incoming) },
+    baseline,
+    dirty,
+  }
+}
+
 export function canSaveSection(dirty, state) {
   return Boolean(dirty) && state === 'ready'
 }

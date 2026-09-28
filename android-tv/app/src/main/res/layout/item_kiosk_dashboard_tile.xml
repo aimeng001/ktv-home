@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/tileRoot"
     android:layout_width="match_parent"
-    android:layout_height="120dp"
+    android:layout_height="@dimen/kiosk_dashboard_tile_min_height"
     android:layout_margin="@dimen/ktv_spacing_xs"
     android:focusable="true"
     android:clickable="true"
