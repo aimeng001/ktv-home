@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -54,6 +55,55 @@ def _fixture_env(token: str, *, include_password: bool) -> str:
     if include_password:
         values["KTV_DB_PASSWORD"] = "compose-contract-test-only"
     return "\n".join(f"{key}={value}" for key, value in values.items()) + "\n"
+
+
+def _source_mount_explicitly_disables_host_path_creation(filename: str, target: str) -> bool:
+    lines = (ROOT / filename).read_text(encoding="utf-8").splitlines()
+    for index, line in enumerate(lines):
+        match = re.match(r"^(?P<indent>\s*)-\s+type:\s*bind\s*$", line)
+        if match is None:
+            continue
+
+        indent = len(match.group("indent"))
+        end = index + 1
+        while end < len(lines):
+            sibling = re.match(r"^(?P<indent>\s*)-\s+", lines[end])
+            if sibling is not None and len(sibling.group("indent")) == indent:
+                break
+            end += 1
+
+        block = lines[index:end]
+        has_target = any(
+            re.fullmatch(rf"\s+target:\s*['\"]?{re.escape(target)}['\"]?\s*", item)
+            for item in block
+        )
+        explicitly_disables_creation = False
+        for bind_index, item in enumerate(block):
+            bind_match = re.fullmatch(r"(?P<indent>\s*)bind:\s*", item)
+            if bind_match is None:
+                continue
+
+            bind_indent = len(bind_match.group("indent"))
+            for nested_item in block[bind_index + 1 :]:
+                if nested_item.strip() and len(nested_item) - len(nested_item.lstrip()) <= bind_indent:
+                    break
+                if re.fullmatch(r"\s+create_host_path:\s*false\s*", nested_item, flags=re.IGNORECASE):
+                    explicitly_disables_creation = True
+                    break
+            break
+        if has_target:
+            return explicitly_disables_creation
+
+    return False
+
+
+def _mount_disables_host_path_creation(mount: dict, filename: str, target: str) -> bool:
+    bind = mount.get("bind", {})
+    if not isinstance(bind, dict):
+        return False
+    if "create_host_path" in bind:
+        return bind["create_host_path"] is False
+    return _source_mount_explicitly_disables_host_path_creation(filename, target)
 
 
 class ComposeConfigurationContractTests(unittest.TestCase):
@@ -113,9 +163,21 @@ class ComposeConfigurationContractTests(unittest.TestCase):
         self.assertEqual(1, len(source_mounts))
         source_mount = source_mounts[0]
         self.assertTrue(source_mount["read_only"])
-        self.assertFalse(source_mount["bind"]["create_host_path"])
+        self.assertTrue(_mount_disables_host_path_creation(source_mount, "docker-compose.nas.yml", "/source-music"))
         expected_source = (ROOT / "backend" / "target" / f"compose-contract-{self.token}" / "source").resolve()
         self.assertEqual(str(expected_source), source_mount["source"])
+
+    def test_omitted_false_mount_policy_uses_explicit_compose_declaration(self) -> None:
+        normalized_mount = {"target": "/source-music", "bind": {}}
+        self.assertTrue(_mount_disables_host_path_creation(normalized_mount, "docker-compose.ci.yml", "/source-music"))
+        self.assertFalse(_mount_disables_host_path_creation(normalized_mount, "docker-compose.ci.yml", "/missing"))
+        self.assertFalse(
+            _mount_disables_host_path_creation(
+                {"target": "/source-music", "bind": {"create_host_path": True}},
+                "docker-compose.ci.yml",
+                "/source-music",
+            )
+        )
 
     def test_nas_database_credentials_health_dependency_and_cache_boundary(self) -> None:
         compose = self._nas_config()
@@ -148,7 +210,7 @@ class ComposeConfigurationContractTests(unittest.TestCase):
         self.assertEqual("EXTERNAL_READ_ONLY", app["environment"]["KTV_LIBRARY_MODE"])
         self.assertEqual(1, len(source_mounts))
         self.assertTrue(source_mounts[0]["read_only"])
-        self.assertFalse(source_mounts[0]["bind"]["create_host_path"])
+        self.assertTrue(_mount_disables_host_path_creation(source_mounts[0], "docker-compose.ci.yml", "/source-music"))
 
     def test_password_required_profiles_fail_closed_when_password_is_blank(self) -> None:
         for files in PASSWORD_REQUIRED_VARIANTS:
