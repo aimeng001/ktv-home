@@ -197,7 +197,8 @@ class MediaTranscoderTest {
         for (boolean hardwareAcceleration : List.of(false, true)) {
             String suffix = hardwareAcceleration ? "hardware" : "software";
             Path source = temp.resolve("reservation-" + suffix + ".mpg");
-            Path outputParentFile = Files.writeString(temp.resolve("output-parent-" + suffix), "not a directory");
+            String parentSentinel = "not a directory";
+            Path outputParentFile = Files.writeString(temp.resolve("output-parent-" + suffix), parentSentinel);
             Path output = outputParentFile.resolve("output.mkv");
             Files.writeString(source, "read-only-source");
             TranscodeHardwareService hardware = hardwareAcceleration
@@ -215,7 +216,11 @@ class MediaTranscoderTest {
                             .isEqualTo(hardwareAcceleration ? "HARDWARE_TRANSCODE_FAILED" : "TRANSCODE_FAILED"));
 
             assertThat(Files.readString(source)).isEqualTo("read-only-source");
-            assertThat(output).doesNotExist();
+            // Files.notExists(child) is allowed to return false when the parent is a
+            // regular file. Verify the reservation failure left that parent untouched;
+            // the process launcher assertion above proves no output process was started.
+            assertThat(Files.isRegularFile(outputParentFile)).isTrue();
+            assertThat(Files.readString(outputParentFile)).isEqualTo(parentSentinel);
         }
     }
 

@@ -53,6 +53,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.List;
 import java.util.Map;
@@ -347,14 +348,14 @@ class IncrementalLibraryScanTest {
         OffsetDateTime startedAt = OffsetDateTime.parse("2026-01-01T00:00:00Z");
         AtomicReference<OffsetDateTime> now = new AtomicReference<>(startedAt);
         CountDownLatch probesStarted = new CountDownLatch(2);
-        CountDownLatch releaseProbes = new CountDownLatch(1);
+        Semaphore releaseProbes = new Semaphore(0);
         CountDownLatch progressCaptured = new CountDownLatch(1);
         AtomicReference<LibraryScanService.ScanProgress> slowProgress = new AtomicReference<>();
         Files.write(sourceDir.resolve("周杰伦-慢速进度一-国语-流行.mkv"), new byte[]{1});
         Files.write(sourceDir.resolve("周杰伦-慢速进度二-国语-流行.mkv"), new byte[]{2});
         when(ffprobe.probe(any(Path.class))).thenAnswer(invocation -> {
             probesStarted.countDown();
-            if (!releaseProbes.await(5, TimeUnit.SECONDS)) {
+            if (!releaseProbes.tryAcquire(5, TimeUnit.SECONDS)) {
                 throw new AssertionError("test did not release synthetic probes");
             }
             return singleTrackProbe();
@@ -364,7 +365,9 @@ class IncrementalLibraryScanTest {
             try {
                 if (!probesStarted.await(5, TimeUnit.SECONDS)) return;
                 now.set(startedAt.plusSeconds(30));
-                releaseProbes.countDown();
+                // Release one probe, observe its published progress, then release the
+                // second. Releasing both together can skip the intermediate state.
+                releaseProbes.release();
                 long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
                 while (System.nanoTime() < deadline) {
                     LibraryScanService.ScanProgress progress = scanService.getScanProgress();
@@ -373,6 +376,7 @@ class IncrementalLibraryScanTest {
                             && progress.probeCompleted() < progress.probeQueued()) {
                         slowProgress.set(progress);
                         progressCaptured.countDown();
+                        releaseProbes.release();
                         return;
                     }
                     Thread.onSpinWait();
@@ -395,7 +399,7 @@ class IncrementalLibraryScanTest {
             assertThat(slowProgress.get().probedPerSecond()).isZero();
             assertThat(slowProgress.get().estimatedRemainingSeconds()).isNull();
         } finally {
-            releaseProbes.countDown();
+            releaseProbes.release(2);
             progressObserver.interrupt();
             progressObserver.join(TimeUnit.SECONDS.toMillis(5));
         }
@@ -2591,9 +2595,15 @@ class IncrementalLibraryScanTest {
 
         Path remountedRoot = Files.createDirectory(tempDir.resolve("remounted-library"));
         Path remountedFile = remountedRoot.resolve(file.getFileName());
-        Files.copy(file, remountedFile);
-        Files.delete(file);
+        Object originalFileKey = Files.readAttributes(file, java.nio.file.attribute.BasicFileAttributes.class)
+                .fileKey();
+        Files.move(file, remountedFile);
         Files.setLastModifiedTime(remountedFile, originalMtime);
+        Object remountedFileKey = Files.readAttributes(remountedFile,
+                java.nio.file.attribute.BasicFileAttributes.class).fileKey();
+        if (originalFileKey != null && remountedFileKey != null) {
+            assertThat(remountedFileKey).isEqualTo(originalFileKey);
+        }
         props.setSourceLibraryPath(remountedRoot.toString());
 
         LibraryScanService.ScanResult second = scanService.scanAll();
