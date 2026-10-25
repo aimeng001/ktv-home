@@ -3,6 +3,7 @@ package com.homektv.library;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -111,6 +112,21 @@ class FilenameParserTest {
     }
 
     @Test
+    void nullPreparedArtistIndexFallsBackToFilenameStructure() {
+        ParsedMeta standard = FilenameParser.parse(
+                "周杰伦-晴天-国语-流行.mkv", (FilenameParser.ArtistIndex) null);
+        ParsedMeta legacy = FilenameParser.parse(
+                "周杰伦-晴天.mkv", "artist_title", (FilenameParser.ArtistIndex) null);
+
+        assertThat(standard.artist()).isEqualTo("周杰伦");
+        assertThat(standard.title()).isEqualTo("晴天");
+        assertThat(standard.recognized()).isTrue();
+        assertThat(legacy.artist()).isEqualTo("周杰伦");
+        assertThat(legacy.title()).isEqualTo("晴天");
+        assertThat(legacy.recognized()).isTrue();
+    }
+
+    @Test
     void marksUnreliableFilenameForReviewWithoutChangingItsText() {
         String filename = "名称不规范.mkv";
 
@@ -185,5 +201,88 @@ class FilenameParserTest {
         assertThat(parsed.artist()).isEqualTo("周杰伦");
         assertThat(parsed.title()).isEqualTo("晴天");
         assertThat(parsed.recognized()).isTrue();
+    }
+
+    @Test
+    void knownArtistIndexIgnoresNullAndBlankEntriesAndKeepsTheFirstDisplayName() {
+        FilenameParser.ArtistIndex index = FilenameParser.prepareKnownArtists(
+                Arrays.asList(null, "   ", " A-Lin ", "a-lin"));
+
+        ParsedMeta parsed = FilenameParser.parse("A-Lin-给我一个理由忘记-国语-流行.mkv", index);
+
+        assertThat(parsed.artist()).isEqualTo("A-Lin");
+        assertThat(parsed.title()).isEqualTo("给我一个理由忘记");
+        assertThat(parsed.recognized()).isTrue();
+
+        FilenameParser.ArtistIndex emptyIndex = FilenameParser.prepareKnownArtists(null);
+        assertThat(emptyIndex.normalizedArtists()).isEmpty();
+    }
+
+    @Test
+    void parsesLegacyRulesKnownArtistBlocksAndTrackOnlyNames() {
+        ParsedMeta artistTitle = FilenameParser.parse("周杰伦-晴天-电影原声.mkv", "artist_title", List.of("周杰伦"));
+        assertThat(artistTitle.artist()).isEqualTo("周杰伦");
+        assertThat(artistTitle.title()).isEqualTo("晴天-电影原声");
+        assertThat(artistTitle.recognized()).isTrue();
+
+        ParsedMeta titleArtist = FilenameParser.parse("晴天-周杰伦.mkv", "title_artist");
+        assertThat(titleArtist.artist()).isEqualTo("周杰伦");
+        assertThat(titleArtist.title()).isEqualTo("晴天");
+        assertThat(titleArtist.recognized()).isTrue();
+
+        ParsedMeta knownArtistTitleArtist = FilenameParser.parse(
+                "周杰伦-晴天-电影原声.mkv", "title_artist", List.of("周杰伦"));
+        assertThat(knownArtistTitleArtist.title()).isEqualTo("周杰伦");
+        assertThat(knownArtistTitleArtist.artist()).isEqualTo("晴天-电影原声");
+
+        ParsedMeta trackOnly = FilenameParser.parse("Track-12345.mkv");
+        assertThat(trackOnly.recognized()).isFalse();
+        assertThat(trackOnly.needsReview()).isTrue();
+
+        ParsedMeta trackAsArtist = FilenameParser.parse("Track-晴天.mkv");
+        assertThat(trackAsArtist.recognized()).isTrue();
+        assertThat(trackAsArtist.artist()).isEqualTo("Track");
+        ParsedMeta numericTitle = FilenameParser.parse("歌手-12345.mkv");
+        assertThat(numericTitle.recognized()).isTrue();
+        assertThat(numericTitle.title()).isEqualTo("12345");
+    }
+
+    @Test
+    void ambiguousStandardSuffixFallsBackWithoutInventingArtistOrLanguage() {
+        ParsedMeta parsed = FilenameParser.parse("甲-乙-丙-国语-流行.mkv");
+
+        assertThat(parsed.recognized()).isFalse();
+        assertThat(parsed.artist()).isBlank();
+        assertThat(parsed.language()).isBlank();
+        assertThat(parsed.title()).isEqualTo("甲-乙-丙-国语-流行");
+    }
+
+    @Test
+    void normalizesUnderscoreBetweenLanguageAndCategoryAndRetainsCollaborativeReviewState() {
+        ParsedMeta normalized = FilenameParser.parse("周杰伦-晴天-国语_流行.mkv");
+        assertThat(normalized.artist()).isEqualTo("周杰伦");
+        assertThat(normalized.title()).isEqualTo("晴天");
+        assertThat(normalized.language()).isEqualTo("国语");
+        assertThat(normalized.category()).isEqualTo("流行");
+        assertThat(normalized.recognized()).isTrue();
+
+        ParsedMeta collaborativeNeedsReview = FilenameParser.parse("甲_乙--国语-合唱.mkv");
+        assertThat(collaborativeNeedsReview.needsReview()).isTrue();
+        assertThat(collaborativeNeedsReview.title()).isEqualTo("甲_乙--国语-合唱");
+    }
+
+    @Test
+    void nullEmptyAndPathLikeNamesHaveStableExtensionHandling() {
+        ParsedMeta nullName = FilenameParser.parse((String) null);
+        ParsedMeta emptyName = FilenameParser.parse("");
+
+        assertThat(nullName.recognized()).isFalse();
+        assertThat(nullName.title()).isEmpty();
+        assertThat(emptyName.recognized()).isFalse();
+        assertThat(emptyName.title()).isEmpty();
+        assertThat(FilenameParser.stripExtension(null)).isEmpty();
+        assertThat(FilenameParser.stripExtension("folder\\song.part.mkv")).isEqualTo("song.part");
+        assertThat(FilenameParser.stripExtension(".hidden")).isEqualTo(".hidden");
+        assertThat(FilenameParser.stripExtension("folder\\song")).isEqualTo("song");
     }
 }

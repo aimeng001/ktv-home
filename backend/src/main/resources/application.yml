@@ -45,6 +45,13 @@ app:
       minimum-previous-files: ${KTV_SCAN_MISSING_GUARD_MIN_FILES:1000}
       minimum-seen-ratio: ${KTV_SCAN_MISSING_GUARD_MIN_SEEN_RATIO:0.50}
       allow-mass-missing: ${KTV_SCAN_ALLOW_MASS_MISSING:false}
+  resource-budget:
+    probe-idle-limit: ${KTV_PROBE_IDLE_LIMIT:2}
+    probe-playing-limit: ${KTV_PROBE_PLAYING_LIMIT:1}
+    live-transcode-limit: ${KTV_LIVE_TRANSCODE_LIMIT:4}
+    managed-transcode-limit: ${KTV_MANAGED_TRANSCODE_LIMIT:1}
+    media-stream-limit: ${KTV_MEDIA_STREAM_LIMIT:4}
+    playback-poll-ms: ${KTV_PLAYBACK_PRESSURE_POLL_MS:500}
   config-master-key-path: ${KTV_CONFIG_MASTER_KEY_PATH:/data/secrets/config.key}
   admin-password: ${KTV_ADMIN_PASSWORD:}
   player-credential: ${KTV_PLAYER_CREDENTIAL:}

@@ -42,4 +42,22 @@ describe('parseLrc', () => {
     expect(parseLrc('')).toEqual([])
     expect(parseLrc(null)).toEqual([])
   })
+
+  it('supports timestamps with optional and variable-width fractional seconds', () => {
+    expect(parseLrc('[1:02]无小数\n[1:03.5]一位\n[1:04.050]三位').map(line => line.time))
+      .toEqual([62_000, 63_500, 64_050])
+  })
+
+  it('filters empty word segments while retaining non-empty enhanced lyric words', () => {
+    const [line] = parseLrc('[00:00.00]<00:00.00><00:01.00>歌词')
+
+    expect(line.text).toBe('歌词')
+    expect(line.words).toEqual([{ time: 1000, text: '歌词' }])
+  })
+
+  it('accepts enhanced word timestamps without fractional seconds', () => {
+    expect(parseLrc('[00:00.00]<00:01>整秒')[0].words).toEqual([
+      { time: 1000, text: '整秒' }
+    ])
+  })
 })

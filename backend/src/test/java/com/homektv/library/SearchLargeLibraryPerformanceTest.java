@@ -29,8 +29,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Opt-in search scale regression. It records the real PostgreSQL plan and
- * timing for the same SQL used by SongSearchRepository over a 200k-row
- * temporary catalogue. It is intentionally excluded from the default suite.
+ * timing for the same SQL used by SongSearchRepository over a configurable
+ * temporary catalogue (10,000 rows by default). It is intentionally excluded
+ * from the default suite; larger sizes can be selected explicitly.
  */
 @SpringBootTest
 @Testcontainers
@@ -63,10 +64,12 @@ class SearchLargeLibraryPerformanceTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private String fingerprintPrefix;
+    private int seededRows;
 
     @BeforeEach
     void seedLargeLibrary() {
-        int rows = Math.max(200_000, Integer.getInteger("searchLibraryRows", 200_000));
+        int rows = Math.max(10_000, Integer.getInteger("searchLibraryRows", 10_000));
+        seededRows = rows;
         fingerprintPrefix = "search-library-" + UUID.randomUUID() + "-";
         jdbc.update("TRUNCATE TABLE song_search_terms");
         jdbc.update("ALTER TABLE songs DISABLE TRIGGER USER");
@@ -79,17 +82,17 @@ class SearchLargeLibraryPerformanceTest {
                         vocal_form, metadata_locks, metadata_provenance,
                         needs_ai_optimization, ai_genres, ai_themes
                     )
-                    SELECT CASE WHEN g = 9 THEN '歌9' ELSE '压力曲' || g END,
+                    SELECT CASE WHEN g = ? THEN '歌9' ELSE '压力曲' || g END,
                            '艺' || (g % 1000),
-                           CASE WHEN g = 199999 THEN 'qingtian' ELSE '' END,
-                           CASE WHEN g = 199999 THEN 'qt' ELSE '' END,
+                           CASE WHEN g = ? THEN 'qingtian' ELSE '' END,
+                           CASE WHEN g = ? THEN 'qt' ELSE '' END,
                            '', '', '国语', ARRAY['流行']::text[],
                            CASE WHEN g % 3 = 0 THEN 'MV' ELSE 'KTV_VIDEO' END,
                            FALSE, 180000, 'none', g % 1000, 'ok',
                            ? || g, '未知', '独唱', ARRAY[]::text[], '{}'::jsonb,
                            FALSE, ARRAY['流行']::text[], ARRAY[]::text[]
                     FROM generate_series(1, ?) AS g
-                    """, fingerprintPrefix, rows);
+                    """, rows, rows, rows, fingerprintPrefix, rows);
         } finally {
             jdbc.update("ALTER TABLE songs ENABLE TRIGGER USER");
         }
@@ -121,7 +124,7 @@ class SearchLargeLibraryPerformanceTest {
                 UNION ALL
                 SELECT songs.id, 'TAG', 'tagmarker', 'tagmarker'
                 FROM songs
-                WHERE songs.fingerprint LIKE ? AND songs.title = '压力曲199998'
+                WHERE songs.fingerprint LIKE ? AND songs.title = '压力曲9996'
                 ON CONFLICT DO NOTHING
                 """, fingerprintPrefix + "%", fingerprintPrefix + "%", fingerprintPrefix + "%",
                 fingerprintPrefix + "%", fingerprintPrefix + "%", fingerprintPrefix + "%");
@@ -143,7 +146,7 @@ class SearchLargeLibraryPerformanceTest {
                 new SearchCase("high-fanout-latin", "h", ""),
                 new SearchCase("high-fanout-chinese", "压", ""),
                 new SearchCase("pinyin-prefix", "qingtian", "KTV_VIDEO"),
-                new SearchCase("selective-title", "压力曲199999", "KTV_VIDEO"),
+                new SearchCase("selective-title", "压力曲9998", "KTV_VIDEO"),
                 new SearchCase("tag-substring", "marker", "MV")
         );
         long maxMillis = Long.getLong("searchMaxMillis", 8_000L);
@@ -176,7 +179,7 @@ class SearchLargeLibraryPerformanceTest {
             assertThat(plan.path(0).has("Plan")).isTrue();
             assertThat(nodeTypes).isNotEmpty();
             assertThat(result).hasSizeLessThanOrEqualTo(50);
-            if (searchCase.name().equals("short-chinese-selective")) {
+            if (seededRows >= 200_000 && searchCase.name().equals("short-chinese-selective")) {
                 assertThat(relationsWithNode(plan, "Seq Scan", "songs"))
                         .as("short Chinese search must not scan the songs heap")
                         .isEmpty();

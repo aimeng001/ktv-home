@@ -21,7 +21,7 @@
     <div v-else-if="notFound" class="tip">歌单不存在或尚未公开</div>
     <div v-else class="tip error-tip">
       <span>歌单读取失败：{{ loadError }}</span>
-      <button class="retry" @click="loadPlaylist">重试</button>
+      <button class="retry" @click="loadPlaylist()">重试</button>
     </div>
     <TabBar active="home" />
   </div>

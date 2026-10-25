@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, makeControls } from './client'
 
 function jsonResponse(body, status = 200) {
@@ -16,6 +16,10 @@ describe('api client admin authentication', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('sends the admin token only to admin endpoints', async () => {
@@ -113,6 +117,53 @@ describe('api client admin authentication', () => {
     })
   })
 
+  it('encodes metadata scrape identifiers and uploads artist and playlist cover files as multipart data', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ok: true }))
+    const avatar = new File(['artist-avatar'], 'avatar.png', { type: 'image/png' })
+    const playlistCover = new File(['playlist-cover'], 'cover.jpg', { type: 'image/jpeg' })
+
+    await api.adminMetadataScrape('批次/一', { page: 2, status: 'failed', ignored: '' })
+    await api.adminUploadArtistAvatar('周杰伦/王菲', avatar)
+    await api.adminAiUploadPlaylistCover(17, playlistCover)
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/admin/metadata-scrapes/%E6%89%B9%E6%AC%A1%2F%E4%B8%80?page=2&status=failed'
+    )
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/artists/%E5%91%A8%E6%9D%B0%E4%BC%A6%2F%E7%8E%8B%E8%8F%B2/avatar')
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/admin/ai/playlists/17/cover')
+    for (const [, options] of fetchMock.mock.calls.slice(1)) {
+      expect(options.method).toBe('POST')
+      expect(options.headers['Content-Type']).toBeUndefined()
+      expect(options.body).toBeInstanceOf(FormData)
+      expect(options.body.get('file')).toBeInstanceOf(File)
+    }
+    expect(fetchMock.mock.calls[1][1].body.get('file').name).toBe('avatar.png')
+    expect(fetchMock.mock.calls[2][1].body.get('file').name).toBe('cover.jpg')
+  })
+
+  it('serializes admin filters, source deletion payloads, and repeated provider search parameters', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ok: true }))
+    const signal = new AbortController().signal
+
+    await api.adminSongs({ keyword: '周杰伦', status: '', page: 0, ignored: null }, { signal })
+    await api.adminSourceLibrary({ status: 'pending', format: 'rmvb', deleted: false }, { signal })
+    await api.adminDeleteSources([4, 9], { status: 'failed', sourceDeleted: false })
+    await api.adminSongExternalMatches(12, true, '周杰伦 & 王菲', ['netease', 'qq'])
+    await api.adminSongExternalMatches(13)
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/songs?keyword=%E5%91%A8%E6%9D%B0%E4%BC%A6&page=0')
+    expect(fetchMock.mock.calls[0][1].signal).toBe(signal)
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/source-library?status=pending&format=rmvb&deleted=false')
+    expect(fetchMock.mock.calls[1][1].signal).toBe(signal)
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({
+      ids: [4, 9], status: 'failed', sourceDeleted: false
+    })
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      '/api/admin/songs/12/external-matches?refresh=true&keyword=%E5%91%A8%E6%9D%B0%E4%BC%A6+%26+%E7%8E%8B%E8%8F%B2&providers=netease&providers=qq'
+    )
+    expect(fetchMock.mock.calls[4][0]).toBe('/api/admin/songs/13/external-matches?refresh=false')
+  })
+
   it('requests the paged artist directory with stable query parameters', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ items: [], total: 0, page: 0, size: 50 }))
 
@@ -131,6 +182,14 @@ describe('api client admin authentication', () => {
 
     expect(fetchMock.mock.calls[0][0]).toBe('/api/browse/artists/page?gender=%E7%94%B7%E6%AD%8C%E6%89%8B&initial=Z&page=1&size=30')
     expect(fetchMock.mock.calls[1][0]).toBe('/api/browse/artists/initials?gender=%E7%94%B7%E6%AD%8C%E6%89%8B')
+  })
+
+  it('omits the gender filter when requesting all artist initials', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([]))
+
+    await api.browseArtistInitials()
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/browse/artists/initials?')
   })
 
   it('requests a bounded public song page', async () => {
@@ -212,5 +271,95 @@ describe('api client admin authentication', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/diagnostics/bundle')
     expect(fetchMock.mock.calls[0][1].method).toBe('POST')
     expect(result).toBe(blob)
+  })
+
+  it('returns null for 204 and reads non-JSON success bodies as text', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 204, headers: { get: () => '' } })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: async () => 'plain response'
+      })
+
+    await expect(api.adminLogout()).resolves.toBeNull()
+    await expect(api.health()).resolves.toBe('plain response')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('falls back to the HTTP status when an error body cannot be parsed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => { throw new Error('not JSON') }
+    })
+
+    await expect(api.health()).rejects.toMatchObject({ message: 'HTTP 502', status: 502 })
+  })
+
+  it('does not clear the admin session for unrelated 401 errors', async () => {
+    localStorage.setItem('home-ktv.admin.token', 'still-valid')
+    const required = vi.fn()
+    window.addEventListener('home-ktv-admin-auth-required', required)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ code: 'FORBIDDEN', message: 'forbidden' }, 401))
+
+    await expect(api.adminStatus()).rejects.toMatchObject({ code: 'FORBIDDEN', status: 401 })
+    expect(localStorage.getItem('home-ktv.admin.token')).toBe('still-valid')
+    expect(required).not.toHaveBeenCalled()
+    window.removeEventListener('home-ktv-admin-auth-required', required)
+  })
+
+  it('sends the admin token on blob requests and propagates blob endpoint errors', async () => {
+    localStorage.setItem('home-ktv.admin.token', 'blob-token')
+    const blobFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'text/csv' },
+      blob: async () => new Blob(['csv'])
+    })
+
+    await api.adminExportWishesCsv()
+    expect(blobFetch.mock.calls[0][1].headers['X-Admin-Token']).toBe('blob-token')
+
+    blobFetch.mockResolvedValueOnce(jsonResponse({ message: 'export unavailable' }, 503))
+    await expect(api.adminExportWishesCsv()).rejects.toMatchObject({
+      message: 'export unavailable',
+      status: 503
+    })
+  })
+
+  it('uses the HTTP status when a blob error body cannot be parsed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => { throw new Error('not JSON') }
+    })
+
+    await expect(api.adminExportWishesCsv()).rejects.toMatchObject({ message: 'HTTP 500', status: 500 })
+  })
+
+  it('clears an expired admin token when a blob endpoint requires authentication', async () => {
+    localStorage.setItem('home-ktv.admin.token', 'expired-blob-token')
+    const required = vi.fn()
+    window.addEventListener('home-ktv-admin-auth-required', required)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ code: 'ADMIN_AUTH_REQUIRED' }, 401))
+
+    await expect(api.adminExportWishesCsv()).rejects.toMatchObject({
+      code: 'ADMIN_AUTH_REQUIRED',
+      status: 401
+    })
+    expect(localStorage.getItem('home-ktv.admin.token')).toBeNull()
+    expect(required).toHaveBeenCalledOnce()
+    window.removeEventListener('home-ktv-admin-auth-required', required)
+  })
+
+  it('keeps standard request headers when FormData is unavailable in the runtime', async () => {
+    vi.stubGlobal('FormData', undefined)
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ok: true }))
+
+    await api.health()
+
+    expect(fetchMock.mock.calls[0][1].headers['Content-Type']).toBe('application/json')
   })
 })

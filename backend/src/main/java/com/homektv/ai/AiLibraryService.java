@@ -868,13 +868,14 @@ public class AiLibraryService {
             throw new ApiException("INVALID_ARGUMENT", "歌单名称和 AI 标签不能为空");
         }
         String normalizedName = name.trim();
+        String normalizedTag = tag.trim();
         playlistRepository.lockGeneratedName(normalizedName);
         Playlist playlist = playlistRepository.findByName(normalizedName).orElseGet(Playlist::new);
         playlist.setName(normalizedName);
-        playlist.setTheme(tag.trim());
-        playlist.setDescription("由 AI 标签「" + tag.trim() + "」自动生成");
+        playlist.setTheme(normalizedTag);
+        playlist.setDescription("由 AI 标签「" + normalizedTag + "」自动生成");
         playlist.setAiGenerated(true);
-        playlist.setAiRule(write(Map.of("tag", tag.trim(), "limit", playlistLimit(limit))));
+        playlist.setAiRule(write(Map.of("tag", normalizedTag, "limit", playlistLimit(limit))));
         playlist = playlistRepository.save(playlist);
 
         playlistSongRepository.deleteByPlaylistIdAndManualFalse(playlist.getId());
@@ -890,7 +891,7 @@ public class AiLibraryService {
             if (page == null || page.isEmpty()) break;
             for (Song song : page.getContent()) {
                 if (existing.size() >= maximum) break;
-                if (!matches(song, tag) || existing.contains(song.getId())) continue;
+                if (!matches(song, normalizedTag) || existing.contains(song.getId())) continue;
                 PlaylistSong item = new PlaylistSong();
                 item.setPlaylistId(playlist.getId());
                 item.setSongId(song.getId());

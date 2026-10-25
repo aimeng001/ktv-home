@@ -1,6 +1,7 @@
 package com.homektv.diagnostics;
 
 import com.homektv.library.LibraryScanService;
+import com.homektv.resource.ResourceBudget;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -18,16 +19,19 @@ import java.util.function.Supplier;
 public class MemoryDiagnosticsService {
     private final Supplier<LibraryScanService.ScanProgress> scanProgress;
     private final MemoryMXBean memory;
+    private final ResourceBudget resourceBudget;
 
     @Autowired
-    public MemoryDiagnosticsService(LibraryScanService scanner) {
-        this(scanner::getScanProgress, ManagementFactory.getMemoryMXBean());
+    public MemoryDiagnosticsService(LibraryScanService scanner, ResourceBudget resourceBudget) {
+        this(scanner::getScanProgress, ManagementFactory.getMemoryMXBean(), resourceBudget);
     }
 
     MemoryDiagnosticsService(Supplier<LibraryScanService.ScanProgress> scanProgress,
-                             MemoryMXBean memory) {
+                             MemoryMXBean memory,
+                             ResourceBudget resourceBudget) {
         this.scanProgress = Objects.requireNonNull(scanProgress, "scanProgress");
         this.memory = Objects.requireNonNull(memory, "memory");
+        this.resourceBudget = Objects.requireNonNull(resourceBudget, "resourceBudget");
     }
 
     public MemoryDiagnostics snapshot() {
@@ -42,7 +46,8 @@ public class MemoryDiagnosticsService {
                 progress != null && progress.running(),
                 progress == null || progress.phase() == null ? "IDLE" : progress.phase(),
                 progress == null ? 0 : Math.max(0, progress.discovered()),
-                progress == null ? 0 : Math.max(0, progress.probeCompleted()));
+                progress == null ? 0 : Math.max(0, progress.probeCompleted()),
+                resourceBudget.snapshot());
     }
 
     private static long known(long value) {

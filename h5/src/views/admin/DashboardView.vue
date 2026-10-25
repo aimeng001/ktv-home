@@ -200,16 +200,16 @@ async function pollScan(){
  */
 async function scan(){
   if(scanning.value)return
+  scanning.value=true
   dashboardLoadGeneration+=1
   stopPolling()
   try{
     scanPollFailures.value=0
     scanPollError.value=''
     scanProgress.value=await api.adminStartScan()
-    scanning.value=true
     scanResult.value=null
     startPolling()
-  }catch(e){await alertDialog(e.message||'扫描失败')}
+  }catch(e){scanning.value=false;await alertDialog(e.message||'扫描失败')}
 }
 
 async function downloadDiag(){

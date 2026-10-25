@@ -40,6 +40,10 @@ class KtvTransportTest {
             KtvHttpTransport.resolveUrl(host, "songs"),
         )
         assertEquals(
+            "http://p1.music.126.net/avatar.jpg",
+            KtvHttpTransport.resolveUrl(host, "http://p1.music.126.net/avatar.jpg"),
+        )
+        assertEquals(
             "https://p1.music.126.net/avatar.jpg",
             KtvHttpTransport.resolveUrl(host, "https://p1.music.126.net/avatar.jpg"),
         )

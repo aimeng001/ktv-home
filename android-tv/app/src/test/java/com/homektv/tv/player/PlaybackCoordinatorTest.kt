@@ -6,6 +6,8 @@ import com.homektv.tv.net.AudioLayout
 import com.homektv.tv.net.KtvApiError
 import com.homektv.tv.net.KtvApiErrorKind
 import com.homektv.tv.net.NowPlaying
+import com.homektv.tv.net.PlaybackDescriptor
+import com.homektv.tv.net.PlaybackResolution
 import com.homektv.tv.net.QueueSnapshot
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -13,11 +15,114 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaybackCoordinatorTest {    @Test
+    fun liveTranscodeUrlHelpersHandleMissingAndInvalidOffsets() {
+        assertEquals("http://nas/api/stream/31?start=1.234", LiveTranscodeStreamUrl.withStart(
+            "http://nas/api/stream/31",
+            1_234L,
+        ))
+        assertEquals("http://nas/api/stream/31", LiveTranscodeStreamUrl.withStart(
+            "http://nas/api/stream/31?start=12.000",
+            -1L,
+        ))
+
+        assertFalse(LiveTranscodeStreamUrl.isLiveTranscode(null))
+        assertFalse(LiveTranscodeStreamUrl.isLiveTranscode("http://nas/api/stream/31?transcode=1"))
+        assertEquals(0L, LiveTranscodeStreamUrl.startPositionMs(null))
+        assertEquals(0L, LiveTranscodeStreamUrl.startPositionMs("http://nas/api/stream/31"))
+        assertEquals(0L, LiveTranscodeStreamUrl.startPositionMs("http://nas/api/stream/31?start=invalid"))
+        assertEquals(0L, LiveTranscodeStreamUrl.startPositionMs("http://nas/api/stream/31?start=NaN"))
+        assertEquals(0L, LiveTranscodeStreamUrl.startPositionMs("http://nas/api/stream/31?start=Infinity"))
+        assertEquals(0L, LiveTranscodeStreamUrl.startPositionMs("http://nas/api/stream/31?start=-0.5"))
+        assertEquals(1_250L, LiveTranscodeStreamUrl.startPositionMs("http://nas/api/stream/31?transcode=true&start=1.25"))
+    }
+
+    @Test
+    fun sourceResolutionExceptionWithoutMessageReportsRetryableFallback() = runBlocking {
+        val messages = mutableListOf<String>()
+        val desired = DesiredPlaybackState().also {
+            it.update(QueueSnapshot(playing = NowPlaying(queueId = 51L), state = "playing"))
+        }
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        lateinit var coordinator: PlaybackCoordinator
+        coordinator = PlaybackCoordinator(
+            source = object : PlaybackSource {
+                override suspend fun resolveFileSource(songId: Long): FileSourceResolution =
+                    error("resolvePlayback should be used")
+
+                override suspend fun resolvePlayback(songId: Long, forceTranscode: Boolean): com.homektv.tv.net.PlaybackResolution =
+                    throw IllegalStateException(null as String?)
+
+                override fun streamUrl(fileId: Long): String = "source://$fileId"
+            },
+            desiredState = desired,
+            scope = scope,
+            onBeginReplacement = {},
+            onFileReady = { _, _, _, _ -> error("a failed source must not start playback") },
+            onMissingSource = { error("a retryable source failure is not an absent file") },
+            onWaitingForSource = { _, error ->
+                messages += error.message
+                coordinator.invalidate()
+            },
+            retryDelay = {},
+        )
+
+        val ticket = coordinator.replace(PlaybackReplacementRequest(51L, 7L))
+        ticket.job.join()
+
+        assertEquals(listOf("文件源暂时不可用"), messages)
+        assertFalse(coordinator.isCurrent(ticket))
+        scope.cancel()
+    }
+
+    @Test
+    fun readyDescriptorWithoutUrlUsesTheSourceFallbackUrl() = runBlocking {
+        val sourceFile = FileSource(id = 71L, format = "mp4")
+        val desired = DesiredPlaybackState().also {
+            it.update(QueueSnapshot(playing = NowPlaying(queueId = 52L), state = "playing"))
+        }
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        var receivedUrl: String? = null
+        val coordinator = PlaybackCoordinator(
+            source = object : PlaybackSource {
+                override suspend fun resolveFileSource(songId: Long): FileSourceResolution =
+                    error("resolvePlayback should be used")
+
+                override suspend fun resolvePlayback(songId: Long, forceTranscode: Boolean) =
+                    com.homektv.tv.net.PlaybackResolution.Ready(
+                        sourceFile,
+                        com.homektv.tv.net.PlaybackDescriptor(
+                            kind = "NATIVE",
+                            status = "READY",
+                            sourceFileId = sourceFile.id,
+                        ),
+                    )
+
+                override fun streamUrl(fileId: Long): String = "source://$fileId"
+            },
+            desiredState = desired,
+            scope = scope,
+            onBeginReplacement = {},
+            onFileReady = { _, file, _, url ->
+                assertEquals(sourceFile.id, file.id)
+                receivedUrl = url
+            },
+            onMissingSource = { error("a ready source must not be reported missing") },
+        )
+
+        val ticket = coordinator.replace(PlaybackReplacementRequest(52L, 7L))
+        ticket.job.join()
+
+        assertEquals("source://71", receivedUrl)
+        scope.cancel()
+    }
+
+    @Test
     fun liveTranscodeSeekUrlReplacesPriorOffsetAndResetRemovesOffset() {
         assertEquals(
             "http://nas/api/stream/31?transcode=true&start=65.250",
@@ -41,6 +146,8 @@ class PlaybackCoordinatorTest {    @Test
     fun liveTranscodePositionMapsBetweenAbsoluteAndPipeTimeline() {
         assertEquals(91_125L, LiveTranscodePosition.absolutePositionMs(25_875L, 65_250L))
         assertEquals(25_875L, LiveTranscodePosition.pipePositionMs(91_125L, 65_250L))
+        assertEquals(123_000L, LiveTranscodePosition.absolutePositionMs(3_000L, 120_000L))
+        assertEquals(3_000L, LiveTranscodePosition.pipePositionMs(123_000L, 120_000L))
         assertEquals(0L, LiveTranscodePosition.pipePositionMs(10_000L, 65_250L))
     }
 
@@ -421,6 +528,166 @@ class PlaybackCoordinatorTest {    @Test
     }
 
     @Test
+    fun readySourceIsIgnoredWhenItsQueueItemIsNoLongerDesired() = runBlocking {
+        val sourceFile = FileSource(id = 81L, format = "mp4")
+        val desired = DesiredPlaybackState().also {
+            it.update(QueueSnapshot(playing = NowPlaying(queueId = 99L), state = "playing"))
+        }
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        var started = false
+        val coordinator = PlaybackCoordinator(
+            source = readyPlaybackSource(sourceFile, PlaybackDescriptor(kind = "NATIVE", status = "READY")),
+            desiredState = desired,
+            scope = scope,
+            onBeginReplacement = {},
+            onFileReady = { _, _, _, _ -> started = true },
+            onMissingSource = { error("a ready source is not an absent source") },
+        )
+
+        val ticket = coordinator.replace(PlaybackReplacementRequest(queueId = 81L, songId = 7L))
+        ticket.job.join()
+
+        assertFalse(started)
+        assertTrue(coordinator.isCurrent(ticket))
+        scope.cancel()
+    }
+
+    @Test
+    fun recoveryRestoresPlayIntentWithoutOverwritingANewerSeek() = runBlocking {
+        val sourceFile = FileSource(id = 82L, format = "avi")
+        val descriptor = PlaybackDescriptor(
+            kind = "LIVE_TRANSCODE",
+            status = "READY",
+            sourceFileId = 82L,
+            streamUrl = "http://nas/api/stream/82?transcode=true",
+        )
+        val desired = DesiredPlaybackState().also {
+            it.update(QueueSnapshot(
+                playing = NowPlaying(queueId = 82L),
+                state = "playing",
+                positionMs = 91_125L,
+                seekSequence = 4L,
+            ))
+        }
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        var received: Pair<QueueSnapshot, String>? = null
+        val coordinator = PlaybackCoordinator(
+            source = readyPlaybackSource(sourceFile, descriptor),
+            desiredState = desired,
+            scope = scope,
+            onBeginReplacement = {},
+            onFileReady = { _, _, snapshot, url -> received = snapshot to url },
+            onMissingSource = { error("a ready source is not an absent source") },
+        )
+
+        val ticket = coordinator.replace(PlaybackReplacementRequest(
+            queueId = 82L,
+            songId = 7L,
+            forceTranscode = true,
+            recoveryPositionMs = 65_000L,
+            recoverySeekSequence = 3L,
+            recoveryPlayWhenReady = false,
+            stateAtFailure = "playing",
+        ))
+        ticket.job.join()
+
+        val (snapshot, url) = requireNotNull(received)
+        assertEquals(91_125L, snapshot.positionMs)
+        assertEquals("paused", snapshot.state)
+        assertEquals("http://nas/api/stream/82?transcode=true&start=91.125", url)
+        scope.cancel()
+    }
+
+    @Test
+    fun absentRecoveryValuesLeaveTheLatestLiveTranscodeSnapshotUnchanged() = runBlocking {
+        val sourceFile = FileSource(id = 83L, format = "avi")
+        val descriptor = PlaybackDescriptor(
+            kind = "LIVE_TRANSCODE",
+            status = "READY",
+            sourceFileId = 83L,
+            streamUrl = "http://nas/api/stream/83?transcode=true",
+        )
+        val desired = DesiredPlaybackState().also {
+            it.update(QueueSnapshot(
+                playing = NowPlaying(queueId = 83L),
+                state = "paused",
+                positionMs = 12_000L,
+                seekSequence = 4L,
+            ))
+        }
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        var received: Pair<QueueSnapshot, String>? = null
+        val coordinator = PlaybackCoordinator(
+            source = readyPlaybackSource(sourceFile, descriptor),
+            desiredState = desired,
+            scope = scope,
+            onBeginReplacement = {},
+            onFileReady = { _, _, snapshot, url -> received = snapshot to url },
+            onMissingSource = { error("a ready source is not an absent source") },
+        )
+
+        val ticket = coordinator.replace(PlaybackReplacementRequest(
+            queueId = 83L,
+            songId = 7L,
+            forceTranscode = true,
+        ))
+        ticket.job.join()
+
+        val (snapshot, url) = requireNotNull(received)
+        assertEquals(12_000L, snapshot.positionMs)
+        assertEquals("paused", snapshot.state)
+        assertEquals("http://nas/api/stream/83?transcode=true&start=12.000", url)
+        scope.cancel()
+    }
+
+    @Test
+    fun automaticLegacyPipeAppliesRecoveryPositionWithoutForceFlag() = runBlocking {
+        val sourceFile = FileSource(id = 84L, format = "avi")
+        val descriptor = PlaybackDescriptor(
+            kind = "LIVE_TRANSCODE",
+            status = "READY",
+            sourceFileId = 84L,
+            streamUrl = "http://nas/api/stream/84?transcode=true",
+        )
+        val desired = DesiredPlaybackState().also {
+            it.update(QueueSnapshot(
+                playing = NowPlaying(queueId = 84L),
+                state = "playing",
+                positionMs = 2_000L,
+                seekSequence = 1L,
+            ))
+        }
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        var received: Pair<QueueSnapshot, String>? = null
+        val coordinator = PlaybackCoordinator(
+            source = readyPlaybackSource(sourceFile, descriptor),
+            desiredState = desired,
+            scope = scope,
+            onBeginReplacement = {},
+            onFileReady = { _, _, snapshot, url -> received = snapshot to url },
+            onMissingSource = { error("a ready source is not an absent source") },
+        )
+
+        val ticket = coordinator.replace(PlaybackReplacementRequest(
+            queueId = 84L,
+            songId = 7L,
+            forceTranscode = false,
+            recoveryPositionMs = 60_000L,
+            recoverySeekSequence = 1L,
+            recoveryPlayWhenReady = false,
+            stateAtFailure = "playing",
+        ))
+        ticket.job.join()
+
+        val (snapshot, url) = requireNotNull(received)
+        assertEquals(84L, snapshot.playing?.queueId)
+        assertEquals(60_000L, snapshot.positionMs)
+        assertEquals("paused", snapshot.state)
+        assertEquals("http://nas/api/stream/84?transcode=true&start=60.000", url)
+        scope.cancel()
+    }
+
+    @Test
     fun retryableFailureNeverCallsMissingSource() = runBlocking {
         val events = mutableListOf<String>()
         lateinit var coordinator: PlaybackCoordinator
@@ -581,6 +848,16 @@ class PlaybackCoordinatorTest {    @Test
             events,
         )
         scope.cancel()
+    }
+
+    private fun readyPlaybackSource(file: FileSource, descriptor: PlaybackDescriptor) = object : PlaybackSource {
+        override suspend fun resolveFileSource(songId: Long): FileSourceResolution =
+            FileSourceResolution.Ready(file)
+
+        override suspend fun resolvePlayback(songId: Long, forceTranscode: Boolean): PlaybackResolution =
+            PlaybackResolution.Ready(file, descriptor)
+
+        override fun streamUrl(fileId: Long): String = "source://$fileId"
     }
 }
 

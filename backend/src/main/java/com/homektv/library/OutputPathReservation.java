@@ -13,6 +13,10 @@ public final class OutputPathReservation {
     private OutputPathReservation() { }
 
     public static Path reserve(Path desired) throws IOException {
+        return reserve(desired, MAX_CANDIDATES);
+    }
+
+    static Path reserve(Path desired, int maxCandidates) throws IOException {
         Path normalized = desired.toAbsolutePath().normalize();
         Path parent = normalized.getParent();
         if (parent == null) throw new IOException("输出路径没有父目录：" + desired);
@@ -22,7 +26,7 @@ public final class OutputPathReservation {
         int dot = filename.lastIndexOf('.');
         String base = dot > 0 ? filename.substring(0, dot) : filename;
         String extension = dot > 0 ? filename.substring(dot) : "";
-        for (int index = 1; index <= MAX_CANDIDATES; index++) {
+        for (int index = 1; index <= maxCandidates; index++) {
             Path candidate = index == 1
                     ? normalized
                     : parent.resolve(base + "-" + index + extension);

@@ -129,7 +129,7 @@ async function saveSongEdit(){
     if(updated){
       Object.assign(editingSong.value,updated)
     }
-    closeSongEditor()
+    songEditorOpen.value=false
   }catch(err){
     await alertDialog(err.message||'保存歌曲失败')
   }finally{

@@ -11,6 +11,9 @@ val tvVersionName = providers.environmentVariable("KTV_TV_VERSION_NAME")
 val tvVersionCode = providers.environmentVariable("KTV_TV_VERSION_CODE")
     .map { value -> value.toIntOrNull() ?: throw GradleException("KTV_TV_VERSION_CODE must be an integer") }
     .orElse(1)
+providers.gradleProperty("ktv.coverage.buildDir").orNull
+    ?.takeIf { it.isNotBlank() }
+    ?.let { coverageBuildDir -> layout.buildDirectory.set(file(coverageBuildDir)) }
 val emulatorTestAbis = providers.gradleProperty("ktv.android.emulatorAbis")
     .orNull
     ?.split(',')
@@ -64,6 +67,8 @@ android {
         debug {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
+            enableUnitTestCoverage = true
+            enableAndroidTestCoverage = true
         }
         release {
             isMinifyEnabled = false

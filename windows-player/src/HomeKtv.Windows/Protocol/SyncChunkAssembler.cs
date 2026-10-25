@@ -119,12 +119,9 @@ public sealed class SyncChunkAssembler
             var combined = new List<QueueEntry>(assembly.EntryCount);
             for (var index = 0; index < assembly.Total; index++)
             {
-                if (!assembly.Chunks.TryGetValue(index, out var page))
-                {
-                    assemblies.Remove(chunk.SyncId);
-                    return null;
-                }
-                combined.AddRange(page);
+                // Accepted chunk indices are unique and constrained to [0, Total).
+                // Reaching Total stored chunks therefore guarantees every index exists.
+                combined.AddRange(assembly.Chunks[index]);
             }
 
             var result = new AssembledSnapshot(

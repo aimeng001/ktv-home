@@ -4,7 +4,9 @@ import com.homektv.config.AppProperties;
 import com.homektv.domain.SongFile;
 import com.homektv.library.LibraryModePolicy;
 import com.homektv.library.SongAvailabilityPolicy;
+import com.homektv.playback.PlaybackTransportPolicy;
 import com.homektv.repo.SongFileRepository;
+import com.homektv.resource.ResourceBudget;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,21 +21,11 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 媒体流（P1.17，详设§11.1）。
@@ -74,10 +66,6 @@ public class StreamController {
 
     private static final int BUF = 64 * 1024;
     private static final double MAX_TRANSCODE_START_SECONDS = 24 * 60 * 60;
-    private static final long TRANSCODE_PROCESS_EXIT_TIMEOUT_SECONDS = 5;
-    private static final Set<String> TRANSCODE_FORMATS = Set.of("rm", "rmvb", "realmedia");
-    private static final Logger log = LoggerFactory.getLogger(StreamController.class);
-    private final Semaphore transcodeSemaphore = new Semaphore(4);
 
     private final SongFileRepository fileRepo;
     private final AppProperties props;
@@ -88,38 +76,48 @@ public class StreamController {
         Process start(ProcessBuilder builder) throws IOException;
     }
 
-    private final String ffmpegPath;
+    private final LiveTranscodeCommandBuilder transcodeCommandBuilder;
     private final ProcessLauncher processLauncher;
+    private final ResourceBudget resourceBudget;
 
     public StreamController(SongFileRepository fileRepo) {
-        this(fileRepo, new AppProperties(), new SongAvailabilityPolicy(fileRepo), "ffmpeg", ProcessBuilder::start);
+        this(fileRepo, new AppProperties(), new SongAvailabilityPolicy(fileRepo), "ffmpeg",
+                ProcessBuilder::start, standaloneResourceBudget());
     }
 
     public StreamController(SongFileRepository fileRepo, AppProperties props) {
-        this(fileRepo, props, new SongAvailabilityPolicy(fileRepo), "ffmpeg", ProcessBuilder::start);
+        this(fileRepo, props, new SongAvailabilityPolicy(fileRepo), "ffmpeg",
+                ProcessBuilder::start, standaloneResourceBudget());
     }
 
     public StreamController(SongFileRepository fileRepo, AppProperties props,
                             SongAvailabilityPolicy availabilityPolicy) {
-        this(fileRepo, props, availabilityPolicy, "ffmpeg", ProcessBuilder::start);
+        this(fileRepo, props, availabilityPolicy, "ffmpeg", ProcessBuilder::start, standaloneResourceBudget());
     }
 
     public StreamController(SongFileRepository fileRepo, AppProperties props,
                             SongAvailabilityPolicy availabilityPolicy,
                             ProcessLauncher processLauncher) {
-        this(fileRepo, props, availabilityPolicy, "ffmpeg", processLauncher);
+        this(fileRepo, props, availabilityPolicy, "ffmpeg", processLauncher, standaloneResourceBudget());
     }
 
     @Autowired
     public StreamController(SongFileRepository fileRepo, AppProperties props,
                             SongAvailabilityPolicy availabilityPolicy,
                             @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath,
-                            @Autowired(required = false) ProcessLauncher processLauncher) {
+                            @Autowired(required = false) ProcessLauncher processLauncher,
+                            ResourceBudget resourceBudget) {
         this.fileRepo = fileRepo;
         this.props = props;
         this.availabilityPolicy = availabilityPolicy;
-        this.ffmpegPath = (ffmpegPath != null && !ffmpegPath.isBlank()) ? ffmpegPath : "ffmpeg";
+        String executable = (ffmpegPath != null && !ffmpegPath.isBlank()) ? ffmpegPath : "ffmpeg";
+        this.transcodeCommandBuilder = new LiveTranscodeCommandBuilder(executable);
         this.processLauncher = processLauncher != null ? processLauncher : ProcessBuilder::start;
+        this.resourceBudget = resourceBudget;
+    }
+
+    private static ResourceBudget standaloneResourceBudget() {
+        return new ResourceBudget(4, 4, 4, () -> false);
     }
 
     public ResponseEntity<StreamingResponseBody> stream(Long fileId, String rangeHeader) {
@@ -189,12 +187,11 @@ public class StreamController {
             return ResponseEntity.notFound().build();
         }
 
-        // 1. 显式回退仅适用于已就绪视频；RM/RMVB 自动路径保持兼容。
-        boolean legacyTranscode = isTranscodeRequired(sf);
-        if (forceTranscode && !isVideo(sf)) {
+        // 1. Explicit fallback and automatic legacy-video routing share the resolver policy.
+        if (forceTranscode && !PlaybackTransportPolicy.isVideo(sf)) {
             return ResponseEntity.badRequest().build();
         }
-        if (forceTranscode || legacyTranscode) {
+        if (PlaybackTransportPolicy.requiresLiveTranscode(sf, forceTranscode)) {
             if (startSeconds != null && (!Double.isFinite(startSeconds)
                     || startSeconds < 0 || startSeconds > MAX_TRANSCODE_START_SECONDS)) {
                 return ResponseEntity.badRequest().build();
@@ -203,180 +200,54 @@ public class StreamController {
         }
 
         // 2. 99% 普通格式快路径：继续走 RandomAccessFile HTTP Range 流
-        return serveStaticRangeStream(file, sf, rangeHeader);
-    }
-
-    private boolean isTranscodeRequired(SongFile sf) {
-        String format = sf.getFormat() == null ? "" : sf.getFormat().trim().toLowerCase();
-        String path = sf.getFilePath() == null ? "" : sf.getFilePath().toLowerCase();
-        return TRANSCODE_FORMATS.stream().anyMatch(fmt -> format.contains(fmt) || path.endsWith("." + fmt));
-    }
-
-    private boolean isVideo(SongFile sf) {
-        return "MV".equalsIgnoreCase(sf.getMediaType())
-                || "KTV_VIDEO".equalsIgnoreCase(sf.getMediaType());
+        return serveStaticRangeStream(file, sf, rangeHeader, request);
     }
 
     private ResponseEntity<StreamingResponseBody> serveOnTheFlyTranscodeStream(
             Long fileId, File file, SongFile sf, Double startSeconds, HttpServletRequest request) {
-        List<String> cmd = new ArrayList<>();
-        cmd.add(this.ffmpegPath);
-        cmd.add("-hide_banner");
-        cmd.add("-loglevel");
-        cmd.add("error");
-        if (startSeconds != null && startSeconds > 0) {
-            cmd.add("-ss");
-            cmd.add(String.format(Locale.US, "%.3f", startSeconds));
+        MediaStreamLease mediaStreamLease = reserveMediaStream(request);
+        if (mediaStreamLease == null) return tooManyStreamsResponse();
+
+        LiveTranscodeSession session;
+        try {
+            List<String> command = transcodeCommandBuilder.build(file, sf, startSeconds);
+            session = LiveTranscodeSession.tryReserve(
+                    resourceBudget, processLauncher, command, fileId, startSeconds).orElse(null);
+        } catch (RuntimeException | Error error) {
+            mediaStreamLease.closeBeforeBodyIfReserved();
+            throw error;
         }
-        cmd.add("-i");
-        cmd.add(file.getAbsolutePath());
-
-        // 完整保留原伴唱所有音轨（DUAL_TRACK）
-        cmd.add("-map");
-        cmd.add("0:v:0");
-        int audioTracks = sf.getAudioTracks();
-        if (audioTracks > 1) {
-            for (int i = 0; i < audioTracks; i++) {
-                cmd.add("-map");
-                cmd.add("0:a:" + i);
-            }
-        } else {
-            cmd.add("-map");
-            cmd.add("0:a?");
+        // 在提交 HTTP 响应前占用名额；在响应体内拒绝会太晚，客户端已收到 200。
+        if (session == null) {
+            mediaStreamLease.closeBeforeBodyIfReserved();
+            return tooManyStreamsResponse();
         }
-
-        // 视频编码为 H.264
-        cmd.add("-c:v");
-        cmd.add("libx264");
-        cmd.add("-preset");
-        cmd.add("veryfast");
-        cmd.add("-tune");
-        cmd.add("zerolatency");
-        cmd.add("-pix_fmt");
-        cmd.add("yuv420p");
-
-        // 音频编码为 AAC 双声道立体声（DUAL_CHANNEL 左右声道独立通道）
-        cmd.add("-c:a");
-        cmd.add("aac");
-        cmd.add("-b:a");
-        cmd.add("192k");
-        cmd.add("-ar");
-        cmd.add("48000");
-        cmd.add("-ac");
-        cmd.add("2");
-
-        // 管道输出分片 MP4 流
-        cmd.add("-f");
-        cmd.add("mp4");
-        cmd.add("-movflags");
-        cmd.add("frag_keyframe+empty_moov+default_base_moof");
-        cmd.add("pipe:1");
-
-        // 在提交 HTTP 响应前占用名额；在 StreamingResponseBody 内拒绝会太晚，客户端已收到 200。
-        if (!transcodeSemaphore.tryAcquire()) {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).build();
-        }
-        TranscodeLease lease = new TranscodeLease(transcodeSemaphore);
         if (request != null) {
-            request.setAttribute(TranscodeAsyncLifecycleInterceptor.LEASE_ATTRIBUTE, lease);
+            request.setAttribute(TranscodeAsyncLifecycleInterceptor.SESSION_ATTRIBUTE, session);
         }
         try {
             return ResponseEntity.ok()
                     .contentType(MediaType.parseMediaType("video/mp4"))
                     .header(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate")
-                    .body(outputStream -> {
-                    if (!lease.beginStreaming()) return;
-                    Process process = null;
-                    try {
-                        ProcessBuilder pb = new ProcessBuilder(cmd);
-                        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
-                        process = processLauncher.start(pb);
-                        try (InputStream in = process.getInputStream()) {
-                            copyTranscodeOutput(in, outputStream);
-                        }
-                        if (!process.waitFor(TRANSCODE_PROCESS_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                            throw new IOException("FFmpeg did not exit before the stream completion timeout");
-                        }
-                        int exitCode = process.exitValue();
-                        if (exitCode != 0) {
-                            throw new TranscodeProcessExitException(exitCode);
-                        }
-                    } catch (ClientDisconnectedException disconnected) {
-                        log.debug("Live transcode client disconnected: fileId={}", fileId);
-                    } catch (InterruptedException interrupted) {
-                        Thread.currentThread().interrupt();
-                        log.warn("Live transcode interrupted: fileId={}, startSeconds={}", fileId, startSeconds);
-                        throw new IOException("Live transcode interrupted for fileId=" + fileId);
-                    } catch (IOException failure) {
-                        Integer exitCode = failure instanceof TranscodeProcessExitException exitFailure
-                                ? exitFailure.exitCode
-                                : null;
-                        log.error("Live transcode failed: fileId={}, startSeconds={}, failureType={}, exitCode={}",
-                                fileId, startSeconds, failure.getClass().getSimpleName(), exitCode);
-                        // 响应已提交为 200；以流异常结束，避免客户端把截断媒体当作正常 EOF。
-                        throw new IOException("Live transcode failed for fileId=" + fileId);
-                    } finally {
-                        try {
-                            if (process != null && process.isAlive()) {
-                                process.destroyForcibly();
-                            }
-                        } finally {
-                            lease.close();
-                        }
-                    }
-                });
+                    .body(mediaStreamLease.wrap(session::streamTo));
         } catch (RuntimeException | Error error) {
-            lease.close();
+            session.close();
+            mediaStreamLease.closeBeforeBodyIfReserved();
             throw error;
         }
     }
 
-    private static void copyTranscodeOutput(InputStream processOutput, java.io.OutputStream responseOutput)
-            throws IOException {
-        InputStream input = new BufferedInputStream(processOutput, BUF);
-        byte[] buffer = new byte[BUF];
-        int read;
-        while ((read = input.read(buffer)) != -1) {
-            try {
-                responseOutput.write(buffer, 0, read);
-            } catch (IOException clientDisconnected) {
-                throw new ClientDisconnectedException(clientDisconnected);
-            }
-        }
-        try {
-            responseOutput.flush();
-        } catch (IOException clientDisconnected) {
-            throw new ClientDisconnectedException(clientDisconnected);
-        }
-    }
-
-    private static final class ClientDisconnectedException extends IOException {
-        private ClientDisconnectedException(IOException cause) {
-            super(cause);
-        }
-    }
-
-    private static final class TranscodeProcessExitException extends IOException {
-        private final int exitCode;
-
-        private TranscodeProcessExitException(int exitCode) {
-            super("FFmpeg exited with non-zero status");
-            this.exitCode = exitCode;
-        }
-    }
-
     private ResponseEntity<StreamingResponseBody> serveStaticRangeStream(
-            File file, SongFile sf, String rangeHeader) {
+            File file, SongFile sf, String rangeHeader, HttpServletRequest request) {
         long length = file.length();
         MediaType contentType = mediaTypeFor(sf.getFormat(), file.getName());
 
         // 无 Range：整段返回，声明 Accept-Ranges 以便客户端后续 seek
         if (rangeHeader == null || rangeHeader.isBlank()) {
-            return ResponseEntity.ok()
+            return streamWithMediaLease(ResponseEntity.ok()
                     .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                     .contentType(contentType)
-                    .contentLength(length)
-                    .body(writeRegion(file, 0, length));
+                    .contentLength(length), writeRegion(file, 0, length), request);
         }
 
         // 有 Range：解析首个区间，返回 206 Partial Content
@@ -390,19 +261,51 @@ public class StreamController {
         } catch (IllegalArgumentException e) {
             return rangeNotSatisfiable(length);
         }
-        // 起点越界 → 416（不依赖底层抛异常，避免被框架映射成 400）
-        if (start >= length || start < 0 || end < start) {
+        // HttpRange rejects malformed/reversed ranges and returns nonnegative bounds.
+        if (start >= length) {
             return rangeNotSatisfiable(length);
         }
 
         long count = end - start + 1;
 
-        return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
+        return streamWithMediaLease(ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
                 .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                 .header(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + end + "/" + length)
                 .contentType(contentType)
-                .contentLength(count)
-                .body(writeRegion(file, start, count));
+                .contentLength(count), writeRegion(file, start, count), request);
+    }
+
+    private ResponseEntity<StreamingResponseBody> streamWithMediaLease(
+            ResponseEntity.BodyBuilder response,
+            StreamingResponseBody body,
+            HttpServletRequest request) {
+        MediaStreamLease lease = reserveMediaStream(request);
+        if (lease == null) return tooManyStreamsResponse();
+        try {
+            return response.body(lease.wrap(body));
+        } catch (RuntimeException | Error error) {
+            lease.closeBeforeBodyIfReserved();
+            throw error;
+        }
+    }
+
+    private MediaStreamLease reserveMediaStream(HttpServletRequest request) {
+        ResourceBudget.Permit permit = resourceBudget.tryAcquireMediaStream().orElse(null);
+        if (permit == null) return null;
+        MediaStreamLease lease = new MediaStreamLease(permit);
+        try {
+            lease.attachTo(request);
+            return lease;
+        } catch (RuntimeException | Error error) {
+            lease.closeBeforeBodyIfReserved();
+            throw error;
+        }
+    }
+
+    private ResponseEntity<StreamingResponseBody> tooManyStreamsResponse() {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "1")
+                .build();
     }
 
     private ResponseEntity<StreamingResponseBody> rangeNotSatisfiable(long length) {

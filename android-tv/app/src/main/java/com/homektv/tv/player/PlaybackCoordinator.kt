@@ -74,7 +74,7 @@ internal object PlaybackSourceFailurePolicy {
  */
 internal class PlaybackCoordinator(
     private val source: PlaybackSource,
-    private val desiredState: DesiredPlaybackState,
+    private val desiredState: DesiredPlaybackSnapshotProvider,
     private val scope: CoroutineScope,
     private val onBeginReplacement: (queueId: Long?) -> Unit,
     private val onFileReady: (
@@ -182,7 +182,9 @@ internal class PlaybackCoordinator(
             }
         }
         synchronized(lock) {
-            if (generation == nextGeneration && activeRequest == request) activeJob = job
+            // Every request replacement or invalidation increments generation
+            // under this same lock, so generation is the authoritative guard.
+            if (generation == nextGeneration) activeJob = job
             else job.cancel()
         }
         return PlaybackReplacementTicket(token, job)
@@ -232,9 +234,9 @@ internal class PlaybackCoordinator(
         request: PlaybackReplacementRequest,
         liveTranscode: Boolean,
     ): QueueSnapshot {
-        if (!liveTranscode || !request.forceTranscode) return this
-        val seekUnchanged = request.recoverySeekSequence == null ||
-            request.recoverySeekSequence == seekSequence
+        if (!liveTranscode) return this
+        val recoverySeekSequence = request.recoverySeekSequence
+        val seekUnchanged = recoverySeekSequence == null || recoverySeekSequence == seekSequence
         val stateUnchanged = request.stateAtFailure == null ||
             request.stateAtFailure.equals(state, ignoreCase = true)
         return copy(
@@ -264,15 +266,17 @@ internal object LiveTranscodeStreamUrl {
         return "$withoutOldStart${separator}start=$seconds"
     }
 
-    fun isLiveTranscode(streamUrl: String?): Boolean =
-        streamUrl?.substringAfter('?', "")?.split('&')?.any { it == "transcode=true" } == true
+    fun isLiveTranscode(streamUrl: String?): Boolean {
+        if (streamUrl == null) return false
+        return streamUrl.substringAfter('?', "").split('&').any { it == "transcode=true" }
+    }
 
     fun startPositionMs(streamUrl: String?): Long {
-        val start = streamUrl?.substringAfter('?', "")?.split('&')
-            ?.firstOrNull { it.substringBefore('=') == "start" }
-            ?.substringAfter('=')
-            ?.toDoubleOrNull()
+        val source = streamUrl ?: return 0L
+        val startParameter = source.substringAfter('?', "").split('&')
+            .firstOrNull { it.substringBefore('=') == "start" }
             ?: return 0L
+        val start = startParameter.substringAfter('=').toDoubleOrNull() ?: return 0L
         if (!start.isFinite() || start <= 0.0) return 0L
         return (start * 1_000.0).toLong()
     }

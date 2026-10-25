@@ -13,4 +13,25 @@ describe('artist avatar fallback state', () => {
   it('does not manufacture an image request without a cached avatar URL', () => {
     expect(avatarUrlFor({ artistKey: 'unknown', avatarUrl: null }, new Set())).toBe('')
   })
+
+  it('uses the artist name when a stable key is missing and tolerates no failure set', () => {
+    const artist = { name: '周杰伦', avatarUrl: '/cached/avatar.jpg' }
+
+    expect(avatarUrlFor(artist)).toBe(artist.avatarUrl)
+    expect(avatarUrlFor(artist, new Set(['周杰伦']))).toBe('')
+  })
+
+  it('uses an empty lookup key when both the stable key and name are missing', () => {
+    expect(avatarUrlFor({ avatarUrl: '/cached/avatar.jpg' }, new Set())).toBe('/cached/avatar.jpg')
+  })
+
+  it('copies failure state and ignores records without a usable artist key', () => {
+    const original = new Set(['existing'])
+    const next = rememberAvatarFailure(original, { name: '林俊杰' })
+
+    expect(next).not.toBe(original)
+    expect([...original]).toEqual(['existing'])
+    expect([...next]).toEqual(['existing', '林俊杰'])
+    expect([...rememberAvatarFailure(undefined, null)]).toEqual([])
+  })
 })

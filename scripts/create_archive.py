@@ -258,9 +258,6 @@ def should_include_file(file_path: Path, approved_files: set[Path] | None = None
     for part in rel_parts[:-1]:
         if part in EXCLUDE_DIRS:
             return False
-        # Special check for build dirs: e.g. app/build or android-tv/build
-        if part == "build":
-            return False
 
     return True
 

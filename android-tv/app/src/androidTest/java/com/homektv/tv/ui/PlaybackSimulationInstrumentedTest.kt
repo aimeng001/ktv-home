@@ -97,6 +97,7 @@ class PlaybackSimulationInstrumentedTest {
             val firstReady = CountDownLatch(1)
             val firstFrame = CountDownLatch(1)
             val bufferingAfterReady = CountDownLatch(1)
+            val expectBufferingAfterResume = java.util.concurrent.atomic.AtomicBoolean(false)
             val playerFailure = java.util.concurrent.atomic.AtomicReference<String?>(null)
             lateinit var engine: PlaybackEngine
             lateinit var player: Player
@@ -128,6 +129,13 @@ class PlaybackSimulationInstrumentedTest {
                 kiosk = privateField(activity, "kioskController")
                 player = requireNotNull(mainBinding.playerView.player)
                 var reachedReady = false
+                fun captureBufferingWhilePlaying() {
+                    if (expectBufferingAfterResume.get() && reachedReady
+                        && player.playbackState == Player.STATE_BUFFERING && player.playWhenReady
+                    ) {
+                        bufferingAfterReady.countDown()
+                    }
+                }
                 player.addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
                         playerFailure.set(error.toString())
@@ -137,9 +145,12 @@ class PlaybackSimulationInstrumentedTest {
                         if (playbackState == Player.STATE_READY) {
                             reachedReady = true
                             firstReady.countDown()
-                        } else if (reachedReady && playbackState == Player.STATE_BUFFERING && player.playWhenReady) {
-                            bufferingAfterReady.countDown()
                         }
+                        captureBufferingWhilePlaying()
+                    }
+
+                    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                        captureBufferingWhilePlaying()
                     }
 
                     override fun onRenderedFirstFrame() {
@@ -186,14 +197,20 @@ class PlaybackSimulationInstrumentedTest {
             assertTrue("original audio group should be selected", awaitSelectedAudioGroup(scenario, 0))
             val beforeVocalSwitch = readActivity(scenario) { engine.currentPositionMs }
             scenario.onActivity {
-                engine.setVocalMode("accompaniment", 1, 2, audioLayout)
+                repeat(500) { index ->
+                    val mode = if (index % 2 == 0) "original" else "accompaniment"
+                    engine.setVocalMode(mode, 1, 2, audioLayout)
+                }
             }
-            assertTrue("accompaniment audio group should be selected", awaitSelectedAudioGroup(scenario, 1))
+            assertTrue("500 vocal switches should settle on the final accompaniment group", awaitSelectedAudioGroup(scenario, 1))
             assertEquals("vocal switching must not reload the current media", "91001", readActivity(scenario) {
                 privateField<ActivityMainBinding>(it, "binding").playerView.player?.currentMediaItem?.mediaId
             })
             assertTrue("vocal switching must not reset playback progress", readActivity(scenario) {
                 engine.currentPositionMs + 250L >= beforeVocalSwitch
+            })
+            assertTrue("vocal switching must preserve the active playback intent", readActivity(scenario) {
+                privateField<ActivityMainBinding>(it, "binding").playerView.player?.playWhenReady == true
             })
 
             val livePipeSeekPositionMs = 6_000L
@@ -295,6 +312,17 @@ class PlaybackSimulationInstrumentedTest {
             }
             capture("07_dashboard_paused_pip_synthetic.png")
 
+            val requestsBeforeResumeSeek = mediaServer.requestCount
+            val heldResponse = mediaServer.holdNextResponseBody()
+            expectBufferingAfterResume.set(true)
+            scenario.onActivity {
+                // A fresh seek makes the next HTTP response deterministic: hold its body so
+                // the resumed player must expose the real BUFFERING state in the PiP UI.
+                engine.seekTo(engine.currentPositionMs + 1_000L)
+            }
+            assertTrue("the paused seek should request a new live-pipe response", awaitActivityCondition(scenario, 15_000L) {
+                mediaServer.requestCount > requestsBeforeResumeSeek
+            })
             scenario.onActivity {
                 engine.resume()
                 kiosk.updateSnapshot(firstSnapshot.copy(state = "playing", vocalMode = "accompaniment"))
@@ -304,6 +332,7 @@ class PlaybackSimulationInstrumentedTest {
                 privateField<ViewKtvKioskOverlayBinding>(activity, "kioskOverlayBinding").txtPipLabel.text.toString() ==
                     "缓冲中  合成播放测试片段 · 本地仪器夹具"
             })
+            mediaServer.releaseResponse(heldResponse)
 
             // The production kiosk intentionally exits after 15 seconds without user input.
             // Simulate the user remaining in song selection before exercising the display event.
@@ -650,6 +679,8 @@ class PlaybackSimulationInstrumentedTest {
     private class SlowLocalMediaServer(private val bytes: ByteArray) : AutoCloseable {
         private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         private val clients = ConcurrentHashMap.newKeySet<Socket>()
+        private val nextResponseGate = java.util.concurrent.atomic.AtomicReference<CountDownLatch?>(null)
+        private val activeResponseGates = ConcurrentHashMap.newKeySet<CountDownLatch>()
         @Volatile private var closed = false
         @Volatile var requestCount = 0
             private set
@@ -664,6 +695,16 @@ class PlaybackSimulationInstrumentedTest {
         val liveTranscodeUrl: String get() = url + "?transcode=true"
 
         fun start(): SlowLocalMediaServer = this
+
+        fun holdNextResponseBody(): CountDownLatch {
+            val gate = CountDownLatch(1)
+            nextResponseGate.set(gate)
+            return gate
+        }
+
+        fun releaseResponse(gate: CountDownLatch) {
+            gate.countDown()
+        }
 
         private fun acceptLoop() {
             while (!closed) {
@@ -715,6 +756,16 @@ class PlaybackSimulationInstrumentedTest {
                 output.write("Connection: close\r\n\r\n".toByteArray(StandardCharsets.ISO_8859_1))
                 output.flush()
 
+                val responseGate = nextResponseGate.getAndSet(null)
+                if (responseGate != null) {
+                    activeResponseGates += responseGate
+                    try {
+                        responseGate.await(30, TimeUnit.SECONDS)
+                    } finally {
+                        activeResponseGates -= responseGate
+                    }
+                }
+
                 var offset = start
                 while (!closed && offset <= end) {
                     val count = minOf(4_096, end - offset + 1)
@@ -733,6 +784,8 @@ class PlaybackSimulationInstrumentedTest {
 
         override fun close() {
             closed = true
+            nextResponseGate.getAndSet(null)?.countDown()
+            activeResponseGates.forEach { it.countDown() }
             runCatching { server.close() }
             acceptThread.join(1_000L)
             clients.forEach { client -> runCatching { client.close() } }

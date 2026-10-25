@@ -6,6 +6,59 @@ namespace HomeKtv.Windows.Tests;
 
 public sealed class MpvControllerTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Rejects_a_nonpositive_command_timeout(int milliseconds)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new MpvProcessController(new FakeMpvSessionFactory(), TimeSpan.FromMilliseconds(milliseconds)));
+    }
+
+    [Fact]
+    public async Task Position_is_null_without_loaded_media_and_does_not_start_mpv()
+    {
+        var factory = new FakeMpvSessionFactory();
+        await using var controller = new MpvProcessController(factory);
+
+        Assert.Null(await controller.GetPositionMsAsync());
+        Assert.Equal(0, factory.StartCount);
+    }
+
+    [Fact]
+    public async Task Position_is_null_when_mpv_returns_a_non_numeric_value()
+    {
+        var session = new FakeMpvSession { GetPropertyResponse = Json("\"not-a-time\"") };
+        await using var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+        await controller.LoadAsync("http://server/stream/10", 10);
+
+        Assert.Null(await controller.GetPositionMsAsync());
+    }
+
+    [Fact]
+    public async Task Negative_position_is_clamped_to_zero()
+    {
+        var session = new FakeMpvSession { GetPropertyResponse = Json("-0.25") };
+        await using var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+        await controller.LoadAsync("http://server/stream/10", 10);
+
+        Assert.Equal(0, await controller.GetPositionMsAsync());
+    }
+
+    [Fact]
+    public async Task Live_pipe_position_and_seek_use_absolute_server_time_and_relative_mpv_time()
+    {
+        var session = new FakeMpvSession { GetPropertyResponse = Json("3.0") };
+        await using var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+        await controller.LoadLiveTranscodeAsync(
+            "http://server/api/stream/31?token=local&transcode=true&start=120.000", 31, 120_000L);
+
+        Assert.Equal(123_000L, await controller.GetPositionMsAsync());
+        await controller.SeekAsync(123_000L);
+
+        Assert.Contains(session.Commands, command => command.SequenceEqual(MpvCommands.Seek(3_000L)));
+    }
+
     [Fact]
     public async Task Load_pauses_before_replacing_media()
     {
@@ -73,6 +126,19 @@ public sealed class MpvControllerTests
     }
 
     [Fact]
+    public async Task Display_changes_work_with_a_session_factory_without_display_selection_support()
+    {
+        var session = new FakeMpvSession();
+        await using var controller = new MpvProcessController(new SingleMpvSessionFactory(session));
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.Commands.Clear();
+
+        await controller.SetDisplayAsync(2);
+
+        Assert.Contains(session.Commands, command => command.SequenceEqual(MpvCommands.SetFullscreenScreen(2)));
+    }
+
+    [Fact]
     public async Task Dual_track_uses_mpv_audio_track_id_not_relative_index_as_id()
     {
         var session = new FakeMpvSession
@@ -95,6 +161,63 @@ public sealed class MpvControllerTests
     }
 
     [Fact]
+    public async Task Audio_track_selection_waits_for_demux_tracks_to_appear()
+    {
+        var session = new FakeMpvSession();
+        session.GetPropertyResponses.Enqueue(Json("[]"));
+        session.GetPropertyResponses.Enqueue(Json("[]"));
+        session.GetPropertyResponses.Enqueue(Json("""
+            [
+              {"type":"audio","id":7},
+              {"type":"audio","id":12}
+            ]
+            """));
+        await using var controller = new MpvProcessController(new SingleMpvSessionFactory(session));
+
+        await controller.SetAudioTrackAsync(1);
+
+        Assert.Equal(3, session.Commands.Count(command => command.SequenceEqual(MpvCommands.GetTrackList())));
+        Assert.Contains(session.Commands, command => command.SequenceEqual(MpvCommands.SetAudioTrack(12)));
+    }
+
+    [Fact]
+    public async Task Audio_track_selection_fails_after_all_demux_track_poll_attempts()
+    {
+        var session = new FakeMpvSession { GetPropertyResponse = Json("[]") };
+        await using var controller = new MpvProcessController(new SingleMpvSessionFactory(session));
+
+        var exception = await Assert.ThrowsAsync<MpvCommandException>(
+            () => controller.SetAudioTrackAsync(0));
+
+        Assert.Contains("did not expose audio track 0", exception.Message);
+        Assert.Equal(30, session.Commands.Count(command =>
+            command.SequenceEqual(MpvCommands.GetTrackList())));
+        Assert.DoesNotContain(session.Commands, command =>
+            command.SequenceEqual(MpvCommands.SetAudioTrack(0)));
+    }
+
+    [Fact]
+    public async Task Audio_track_selection_is_restored_after_session_recovery()
+    {
+        var tracks = Json("""
+            [
+              {"type":"audio","id":7},
+              {"type":"audio","id":12}
+            ]
+            """);
+        var first = new FakeMpvSession { GetPropertyResponse = tracks };
+        var replacement = new FakeMpvSession { GetPropertyResponse = tracks };
+        var controller = new MpvProcessController(new FakeMpvSessionFactory(first, replacement));
+        await controller.LoadAsync("http://server/stream/10", 10);
+        await controller.SetAudioTrackAsync(1);
+        first.FailNextCommand = true;
+
+        await controller.PlayAsync();
+
+        Assert.Contains(replacement.Commands, command => command.SequenceEqual(MpvCommands.SetAudioTrack(12)));
+    }
+
+    [Fact]
     public async Task A_crashed_mpv_session_is_replaced_and_command_retried()
     {
         var first = new FakeMpvSession();
@@ -111,6 +234,145 @@ public sealed class MpvControllerTests
         Assert.Contains(replacement.Commands, command => command[0]?.ToString() == "loadfile");
         Assert.Contains(replacement.Commands,
             command => command[0]?.ToString() == "set_property" && command[1]?.ToString() == "pause");
+        Assert.Single(replacement.Commands, command => command.SequenceEqual(MpvCommands.Play()));
+    }
+
+    [Fact]
+    public async Task Failed_projection_restore_disposes_the_replacement_and_clears_the_session()
+    {
+        var original = new FakeMpvSession();
+        var replacement = new FakeMpvSession
+        {
+            NextCommandFailure = new IOException("synthetic projection restore failure")
+        };
+        var factory = new FakeMpvSessionFactory(original, replacement);
+        await using var controller = new MpvProcessController(factory);
+        await controller.LoadAsync("http://server/stream/10", 10);
+        original.FailNextCommand = true;
+
+        var error = await Assert.ThrowsAsync<IOException>(() => controller.PlayAsync());
+
+        Assert.Equal("synthetic projection restore failure", error.Message);
+        Assert.Equal(2, factory.StartCount);
+        Assert.Equal(1, replacement.DisposeCount);
+        Assert.False(controller.IsMpvRunning);
+    }
+
+    [Fact]
+    public async Task Recovery_restores_paused_state_after_the_process_exits()
+    {
+        var first = new FakeMpvSession();
+        var replacement = new FakeMpvSession();
+        var controller = new MpvProcessController(new FakeMpvSessionFactory(first, replacement));
+        await controller.LoadAsync("http://server/stream/10", 10);
+        await controller.PauseAsync();
+        first.Commands.Clear();
+        first.FailNextCommand = true;
+
+        await controller.SeekAsync(1250);
+
+        Assert.Equal(2, replacement.Commands.Count(command => command.SequenceEqual(MpvCommands.Pause())));
+        Assert.Contains(replacement.Commands, command => command.SequenceEqual(MpvCommands.Seek(1250)));
+    }
+
+    [Fact]
+    public async Task Notifications_from_a_replaced_session_cannot_finish_the_current_song()
+    {
+        var first = new FakeMpvSession();
+        var replacement = new FakeMpvSession();
+        var controller = new MpvProcessController(new FakeMpvSessionFactory(first, replacement));
+        var finished = new List<long>();
+        controller.PlaybackFinished += finished.Add;
+        await controller.LoadAsync("http://server/stream/10", 10);
+        first.Notify("file-loaded", "{\"playlist_entry_id\":1}");
+        first.FailNextCommand = true;
+        await controller.PlayAsync();
+
+        await controller.LoadAsync("http://server/stream/20", 20);
+        replacement.Notify("file-loaded", "{\"playlist_entry_id\":2}");
+        first.Notify("end-file", "{\"reason\":\"eof\",\"playlist_entry_id\":1}");
+        replacement.Notify("end-file", "{\"reason\":\"eof\",\"playlist_entry_id\":2}");
+
+        Assert.Equal(new long[] { 20 }, finished);
+    }
+
+    [Fact]
+    public async Task Dispose_is_idempotent_and_does_not_dispose_the_session_twice()
+    {
+        var session = new FakeMpvSession();
+        var controller = new MpvProcessController(new SingleMpvSessionFactory(session));
+        await controller.LoadAsync("http://server/stream/10", 10);
+
+        await controller.DisposeAsync();
+        await controller.DisposeAsync();
+
+        Assert.Equal(1, session.DisposeCount);
+        Assert.False(controller.IsMpvRunning);
+    }
+
+    [Fact]
+    public async Task Late_disconnection_from_a_replaced_session_does_not_raise_a_second_fault()
+    {
+        var first = new FakeMpvSession();
+        var replacement = new FakeMpvSession();
+        await using var controller = new MpvProcessController(new FakeMpvSessionFactory(first, replacement));
+        var faults = new List<Exception>();
+        controller.SessionFaulted += faults.Add;
+        await controller.LoadAsync("http://server/stream/10", 10);
+        first.FailNextCommand = true;
+
+        await controller.PlayAsync();
+        first.ReportDisconnected(new IOException("late old-session disconnect"));
+
+        Assert.Single(faults);
+        Assert.IsType<MpvConnectionException>(faults[0]);
+    }
+
+    [Fact]
+    public async Task Nonrecoverable_command_errors_are_propagated_without_restarting_mpv()
+    {
+        var session = new FakeMpvSession();
+        var factory = new FakeMpvSessionFactory(session, new FakeMpvSession());
+        await using var controller = new MpvProcessController(factory);
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.NextCommandFailure = new InvalidOperationException("synthetic command contract failure");
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => controller.PlayAsync());
+
+        Assert.Equal("synthetic command contract failure", error.Message);
+        Assert.Equal(1, factory.StartCount);
+        Assert.DoesNotContain(session.Commands, command => command.SequenceEqual(MpvCommands.Play()));
+    }
+
+    [Fact]
+    public async Task Recover_keeps_a_live_session_and_restores_projection_after_process_exit()
+    {
+        const string streamUrl = "http://server/stream/10";
+        var first = new FakeMpvSession();
+        var replacement = new FakeMpvSession();
+        var factory = new FakeMpvSessionFactory(first, replacement);
+        await using var controller = new MpvProcessController(factory);
+
+        await controller.RecoverAsync();
+        await controller.LoadAsync(streamUrl, 10);
+        await controller.SetVolumeAsync(62, false);
+        await controller.SeekAsync(3_210);
+        await controller.PlayAsync();
+
+        var liveCommandCount = first.Commands.Count;
+        await controller.RecoverAsync();
+        Assert.Equal(1, factory.StartCount);
+        Assert.Equal(liveCommandCount, first.Commands.Count);
+
+        await first.DisposeAsync();
+        await controller.RecoverAsync();
+
+        Assert.Equal(2, factory.StartCount);
+        Assert.Contains(replacement.Commands, command => command.SequenceEqual(MpvCommands.LoadFile(streamUrl)));
+        Assert.Contains(replacement.Commands, command => command.SequenceEqual(MpvCommands.SetVolume(62)));
+        Assert.Contains(replacement.Commands, command => command.SequenceEqual(MpvCommands.SetMuted(false)));
+        Assert.Contains(replacement.Commands, command => command.SequenceEqual(MpvCommands.Seek(3_210)));
+        Assert.Contains(replacement.Commands, command => command.SequenceEqual(MpvCommands.Play()));
     }
 
     [Fact]
@@ -137,6 +399,19 @@ public sealed class MpvControllerTests
 
         Assert.Equal(1, factory.StartCount);
         Assert.Contains(session.Commands, command => command.SequenceEqual(MpvCommands.Stop()));
+        Assert.Null(controller.CurrentFileId);
+    }
+
+    [Fact]
+    public async Task Stop_if_not_running_resets_state_without_starting_mpv()
+    {
+        var factory = new FakeMpvSessionFactory();
+        await using var controller = new MpvProcessController(factory);
+
+        await controller.StopIfRunningAsync();
+
+        Assert.Equal(0, factory.StartCount);
+        Assert.False(controller.IsMpvRunning);
         Assert.Null(controller.CurrentFileId);
     }
 
@@ -221,6 +496,39 @@ public sealed class MpvControllerTests
     }
 
     [Fact]
+    public async Task End_file_events_are_safe_without_finished_or_failure_subscribers()
+    {
+        var session = new FakeMpvSession();
+        await using var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.Notify("file-loaded", "{\"playlist_entry_id\":1}");
+        session.Notify("end-file", "{\"reason\":\"eof\",\"playlist_entry_id\":1}");
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.Notify("start-file", "{\"playlist_entry_id\":2}");
+        session.Notify("end-file", "{\"reason\":\"error\",\"playlist_entry_id\":2}");
+    }
+
+    [Fact]
+    public async Task Ignores_end_file_notifications_without_a_reason_or_valid_playlist_entry()
+    {
+        var session = new FakeMpvSession();
+        await using var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+        var finished = new List<long>();
+        controller.PlaybackFinished += fileId => finished.Add(fileId);
+
+        await controller.LoadAsync("http://server/stream/10", 10);
+        session.Notify("file-loaded", "{\"playlist_entry_id\":1}");
+        session.Notify("other", "{\"reason\":\"eof\",\"playlist_entry_id\":1}");
+        session.Notify("end-file", "{}");
+        session.Notify("end-file", "{\"reason\":\"eof\"}");
+        session.Notify("end-file", "{\"reason\":\"eof\",\"playlist_entry_id\":\"1\"}");
+
+        Assert.Empty(finished);
+    }
+
+    [Fact]
     public async Task Eof_for_an_old_playlist_entry_is_ignored_after_a_replacement_load()
     {
         var session = new FakeMpvSession();
@@ -237,6 +545,33 @@ public sealed class MpvControllerTests
         session.Notify("end-file", "{\"reason\":\"eof\",\"playlist_entry_id\":2}");
 
         Assert.Equal(new long[] { 20 }, finished);
+    }
+
+    [Fact]
+    public async Task Live_pipe_restart_for_the_same_file_fences_old_and_duplicate_eof_callbacks()
+    {
+        var session = new FakeMpvSession();
+        var controller = new MpvProcessController(new FakeMpvSessionFactory(session));
+        var finished = new List<long>();
+        controller.PlaybackFinished += finished.Add;
+
+        await controller.LoadLiveTranscodeAsync(
+            "http://server/api/stream/31?transcode=true&start=60.000", 31, 60_000L);
+        session.Notify("start-file", "{\"playlist_entry_id\":1}");
+        session.Notify("file-loaded", "{\"playlist_entry_id\":1}");
+        await controller.StopAsync();
+        await controller.LoadLiveTranscodeAsync(
+            "http://server/api/stream/31?transcode=true&start=120.000", 31, 120_000L);
+        session.Notify("start-file", "{\"playlist_entry_id\":2}");
+        session.Notify("file-loaded", "{\"playlist_entry_id\":2}");
+
+        session.Notify("end-file", "{\"reason\":\"eof\",\"playlist_entry_id\":1}");
+        session.Notify("end-file", "{\"reason\":\"eof\",\"playlist_entry_id\":2}");
+        session.Notify("end-file", "{\"reason\":\"eof\",\"playlist_entry_id\":2}");
+
+        Assert.Equal(new long[] { 31 }, finished);
+        Assert.Contains(session.Commands, command => command.SequenceEqual(MpvCommands.Stop()));
+        Assert.Equal(2, session.Commands.Count(command => command[0]?.ToString() == "loadfile"));
     }
 
     /// <summary>
@@ -432,16 +767,27 @@ public sealed class MpvControllerTests
     {
         public List<IReadOnlyList<object?>> Commands { get; } = new();
         public JsonElement? GetPropertyResponse { get; init; }
+        public Queue<JsonElement?> GetPropertyResponses { get; } = new();
+        public int DisposeCount { get; private set; }
         public bool FailNextCommand { get; set; }
+        public Exception? NextCommandFailure { get; set; }
         public bool IsAlive { get; private set; } = true;
 
         public event Action<MpvNotification>? NotificationReceived;
         public event Action<Exception>? Disconnected;
 
+        public void ReportDisconnected(Exception exception) => Disconnected?.Invoke(exception);
+
         public Task<JsonElement?> ExecuteAsync(
             IReadOnlyList<object?> command,
             CancellationToken cancellationToken = default)
         {
+            if (NextCommandFailure is { } nextCommandFailure)
+            {
+                NextCommandFailure = null;
+                throw nextCommandFailure;
+            }
+
             if (FailNextCommand)
             {
                 FailNextCommand = false;
@@ -454,7 +800,7 @@ public sealed class MpvControllerTests
             Commands.Add(command.ToArray());
             return Task.FromResult<JsonElement?>(
                 command.Count > 1 && command[0]?.ToString() == "get_property"
-                    ? GetPropertyResponse
+                    ? GetPropertyResponses.TryDequeue(out var queuedResponse) ? queuedResponse : GetPropertyResponse
                     : null);
         }
 
@@ -466,6 +812,7 @@ public sealed class MpvControllerTests
 
         public ValueTask DisposeAsync()
         {
+            DisposeCount++;
             IsAlive = false;
             return ValueTask.CompletedTask;
         }

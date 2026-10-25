@@ -29,6 +29,11 @@ public interface IPlaybackOutput
 {
     Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default);
 
+    /** Loads a pipe-backed live-transcode URL whose mpv clock starts at the supplied absolute offset. */
+    Task LoadLiveTranscodeAsync(
+        string streamUrl, long fileId, long pipeStartPositionMs, CancellationToken cancellationToken = default) =>
+        LoadAsync(streamUrl, fileId, cancellationToken);
+
     Task PlayAsync(CancellationToken cancellationToken = default);
 
     Task PauseAsync(CancellationToken cancellationToken = default);

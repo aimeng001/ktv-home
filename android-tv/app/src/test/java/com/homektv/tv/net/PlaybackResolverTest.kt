@@ -140,6 +140,58 @@ class PlaybackResolverTest {
     }
 
     @Test
+    fun readyResolutionWithNullUrlProducesFatalUrlMissing() = runBlocking {
+        val transport = RouteTransport(
+            routes = mapOf(
+                "/songs/7" to KtvApiResult.Success(
+                    "{\"id\":7,\"files\":[{\"id\":11,\"priority\":1,\"ready\":true}]}",
+                ),
+                "/playback/resolve/11" to KtvApiResult.Success(
+                    "{\"kind\":\"TRANSCODE\",\"status\":\"READY\",\"sourceFileId\":11,\"streamUrl\":null}",
+                ),
+            ),
+        )
+        val resolver = PlaybackResolver(transport, json, { apiBase })
+
+        val result = resolver.resolve(7L)
+
+        assertTrue(result is PlaybackResolution.Fatal)
+        assertEquals("PLAYBACK_URL_MISSING", (result as PlaybackResolution.Fatal).error.code)
+    }
+
+    @Test
+    fun readyResolutionWithWhitespaceUrlProducesFatalUrlMissing() = runBlocking {
+        val transport = RouteTransport(
+            routes = mapOf(
+                "/songs/7" to KtvApiResult.Success(
+                    "{\"id\":7,\"files\":[{\"id\":11,\"priority\":1,\"ready\":true}]}",
+                ),
+                "/playback/resolve/11" to KtvApiResult.Success(
+                    "{\"kind\":\"TRANSCODE\",\"status\":\"READY\",\"sourceFileId\":11,\"streamUrl\":\"   \"}",
+                ),
+            ),
+        )
+        val resolver = PlaybackResolver(transport, json, { apiBase })
+
+        val result = resolver.resolve(7L)
+
+        assertTrue(result is PlaybackResolution.Fatal)
+        assertEquals("PLAYBACK_URL_MISSING", (result as PlaybackResolution.Fatal).error.code)
+    }
+
+    @Test
+    fun statusHashCollisionDoesNotMatchAReadyDescriptor() {
+        val resolver = PlaybackResolver(RouteTransport(emptyMap()), json, { apiBase })
+
+        val result = resolver.decodePlayback(
+            FileSource(id = 11L),
+            "{\"kind\":\"NATIVE\",\"status\":\"S&ADY\",\"sourceFileId\":11,\"streamUrl\":\"/stream/11\"}",
+        ) as PlaybackResolution.Fatal
+
+        assertEquals("PLAYBACK_STATUS_INVALID", result.error.code)
+    }
+
+    @Test
     fun preparingResolutionReturnsPreparingDescriptor() = runBlocking {
         val transport = RouteTransport(
             routes = mapOf(
@@ -182,6 +234,26 @@ class PlaybackResolverTest {
         assertEquals("FAILED", failed.descriptor.status)
         assertEquals("TRANSCODE_EXECUTION_FAILED", failed.error.code)
         assertEquals("FFmpeg exited with error", failed.error.message)
+    }
+
+    @Test
+    fun failedResolutionUsesStableDefaultsWhenTheServerOmitsErrorDetails() = runBlocking {
+        val transport = RouteTransport(
+            routes = mapOf(
+                "/songs/7" to KtvApiResult.Success(
+                    "{\"id\":7,\"files\":[{\"id\":11,\"priority\":1,\"ready\":true}]}",
+                ),
+                "/playback/resolve/11" to KtvApiResult.Success(
+                    "{\"kind\":\"TRANSCODE\",\"status\":\"FAILED\",\"sourceFileId\":11}",
+                ),
+            ),
+        )
+        val resolver = PlaybackResolver(transport, json, { apiBase })
+
+        val result = resolver.resolve(7L) as PlaybackResolution.Failed
+
+        assertEquals("PLAYBACK_PREPARE_FAILED", result.error.code)
+        assertEquals("MV 准备失败", result.error.message)
     }
 
     @Test
@@ -367,6 +439,74 @@ class PlaybackResolverTest {
         assertEquals("http://192.168.1.10:8080/api/stream/11?transcode=true", ready.descriptor.streamUrl)
         assertEquals("DUAL_TRACK", ready.descriptor.audioLayout.layout)
         assertEquals(1, ready.descriptor.audioLayout.accompanimentTrackIndex)
+    }
+
+    @Test
+    fun playbackFailureClassificationDistinguishesLegacyMissingAndTransientErrors() {
+        val source = FileSource(
+            id = 11L,
+            audioTracks = 2,
+            vocalTrackIndex = 1,
+            audioLayout = AudioLayout(layout = "DUAL_TRACK", accompanimentTrackIndex = 0),
+        )
+        val resolver = PlaybackResolver(RouteTransport(emptyMap()), json, { apiBase })
+
+        val legacy = resolver.classifyPlaybackFailure(
+            source,
+            KtvApiError(KtvApiErrorKind.HTTP, "HTTP_404", "old server", status = 404),
+        ) as PlaybackResolution.Ready
+        assertEquals("NATIVE", legacy.descriptor.kind)
+        assertEquals("http://192.168.1.10:8080/api/stream/11", legacy.descriptor.streamUrl)
+        assertEquals(0, legacy.descriptor.vocalTrackIndex)
+        assertEquals(source.audioLayout, legacy.descriptor.audioLayout)
+
+        assertEquals(
+            PlaybackResolution.Absent(AbsentReason.NO_VALID_FILE),
+            resolver.classifyPlaybackFailure(
+                source,
+                KtvApiError(KtvApiErrorKind.BUSINESS, "NO_VALID_FILE", "no playable file"),
+            ),
+        )
+        assertEquals(
+            PlaybackResolution.Absent(AbsentReason.NO_VALID_FILE),
+            resolver.classifyPlaybackFailure(
+                source,
+                KtvApiError(KtvApiErrorKind.HTTP, "CUSTOM_MISSING", "not found", status = 404),
+            ),
+        )
+
+        listOf(401, 403).forEach { status ->
+            val error = KtvApiError(KtvApiErrorKind.HTTP, "HTTP_$status", "denied", status = status)
+            assertEquals(PlaybackResolution.ConfigurationFailure(error), resolver.classifyPlaybackFailure(source, error))
+        }
+        listOf(408, 425, 429, 500).forEach { status ->
+            val error = KtvApiError(KtvApiErrorKind.HTTP, "HTTP_$status", "temporary", status = status)
+            assertEquals(PlaybackResolution.Retryable(error), resolver.classifyPlaybackFailure(source, error))
+        }
+        val network = KtvApiError(KtvApiErrorKind.NETWORK, "NETWORK_ERROR", "offline")
+        assertEquals(PlaybackResolution.Retryable(network), resolver.classifyPlaybackFailure(source, network))
+
+        listOf(
+            KtvApiError(KtvApiErrorKind.HTTP, "HTTP_400", "bad request", status = 400),
+            KtvApiError(KtvApiErrorKind.HTTP, "HTTP_UNKNOWN", "status missing"),
+            KtvApiError(KtvApiErrorKind.BUSINESS, "NOT_FOUND", "business failure", status = 404),
+        ).forEach { error ->
+            assertEquals(PlaybackResolution.Fatal(error), resolver.classifyPlaybackFailure(source, error))
+        }
+    }
+
+    @Test
+    fun absolutePlaybackUrlHandlesNullBlankHttpHttpsAndRelativeValues() {
+        val resolver = PlaybackResolver(RouteTransport(emptyMap()), json, { apiBase })
+
+        assertEquals(null, resolver.absolutePlaybackUrl(null))
+        assertEquals(null, resolver.absolutePlaybackUrl("  "))
+        assertEquals("http://cdn.local/stream/11", resolver.absolutePlaybackUrl("http://cdn.local/stream/11"))
+        assertEquals("https://cdn.local/stream/11", resolver.absolutePlaybackUrl("https://cdn.local/stream/11"))
+        assertEquals(
+            "http://192.168.1.10:8080/playback/stream/11",
+            resolver.absolutePlaybackUrl("playback/stream/11"),
+        )
     }
 
     private class RouteTransport(

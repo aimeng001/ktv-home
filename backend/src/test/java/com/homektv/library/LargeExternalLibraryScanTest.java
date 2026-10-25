@@ -9,10 +9,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -23,6 +25,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.stream.Stream;
 import java.util.Comparator;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,9 +37,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Opt-in end-to-end scan stress test. It exercises the real scanAll() pipeline
- * against a temporary external library while replacing only the expensive
- * ffprobe/tag process boundaries with deterministic fakes.
+ * Opt-in end-to-end scan stress test. By default it exercises the real scanAll()
+ * pipeline against a temporary synthetic library. An explicit
+ * nasReadOnlyScanRoot may select a real read-only library subtree containing at
+ * most 10,000 regular files. Only the expensive ffprobe/tag process boundaries
+ * are replaced with deterministic fakes.
  */
 @SpringBootTest
 @Testcontainers
@@ -44,6 +49,9 @@ import static org.mockito.Mockito.when;
 @Import(LargeExternalLibraryScanTest.TestDoubles.class)
 @EnabledIfSystemProperty(named = "runLargeLibraryScanTest", matches = "true")
 class LargeExternalLibraryScanTest {
+
+    private static final int MAX_SCAN_FILES = 10_000;
+    private static final String NAS_READ_ONLY_ROOT_PROPERTY = "nasReadOnlyScanRoot";
 
     @Container
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
@@ -54,17 +62,55 @@ class LargeExternalLibraryScanTest {
     private static final Path libraryDir;
     private static final Path dataDir;
     private static final int rows;
+    private static final boolean externalReadOnlyRoot;
 
     static {
+        String configuredRoot = System.getProperty(NAS_READ_ONLY_ROOT_PROPERTY);
+        externalReadOnlyRoot = configuredRoot != null && !configuredRoot.isBlank();
+        Integer configuredRows = Integer.getInteger("scanRows");
+        if (configuredRows == null) configuredRows = Integer.getInteger("largeLibraryRows", 10_000);
+        if (configuredRows > MAX_SCAN_FILES) {
+            throw new ExceptionInInitializerError("scanRows is capped at " + MAX_SCAN_FILES);
+        }
         try {
-            libraryDir = Files.createTempDirectory("ktv-large-external-library");
-            dataDir = Files.createTempDirectory("ktv-large-external-data");
+            Path selectedLibrary = externalReadOnlyRoot
+                    ? Path.of(configuredRoot).toRealPath()
+                    : Files.createTempDirectory("ktv-large-external-library");
+            int selectedRows = externalReadOnlyRoot ? countExternalMediaFiles(selectedLibrary)
+                    : Math.max(1_000, configuredRows);
+            Path temporaryData = Files.createTempDirectory("ktv-large-external-data");
+            libraryDir = selectedLibrary;
+            dataDir = temporaryData;
+            rows = selectedRows;
         } catch (IOException failure) {
             throw new ExceptionInInitializerError(failure);
         }
-        Integer configuredRows = Integer.getInteger("scanRows");
-        if (configuredRows == null) configuredRows = Integer.getInteger("largeLibraryRows", 10_000);
-        rows = Math.max(1_000, configuredRows);
+    }
+
+    private static int countExternalMediaFiles(Path root) throws IOException {
+        if (!Files.isDirectory(root)) {
+            throw new IllegalArgumentException("nasReadOnlyScanRoot must be a directory");
+        }
+        long regularFileCount;
+        try (Stream<Path> paths = Files.walk(root)) {
+            regularFileCount = paths
+                    .filter(path -> !Files.isSymbolicLink(path) && Files.isRegularFile(path))
+                    .limit(MAX_SCAN_FILES + 1L)
+                    .count();
+        }
+        if (regularFileCount > MAX_SCAN_FILES) {
+            throw new IllegalArgumentException("NAS scan root exceeds the 10,000-file test limit");
+        }
+        try (Stream<Path> paths = Files.walk(root)) {
+            int mediaFiles = Math.toIntExact(paths
+                    .filter(path -> !Files.isSymbolicLink(path) && Files.isRegularFile(path))
+                    .filter(LibraryScanService::isMediaFile)
+                    .count());
+            if (mediaFiles == 0) {
+                throw new IllegalArgumentException("NAS scan root contains no supported media files");
+            }
+            return mediaFiles;
+        }
     }
 
     @DynamicPropertySource
@@ -74,13 +120,14 @@ class LargeExternalLibraryScanTest {
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.flyway.enabled", () -> "true");
         registry.add("app.source-library-path", libraryDir::toString);
-        registry.add("app.ktv-library-path", () -> libraryDir.resolve("managed").toString());
+        registry.add("app.ktv-library-path", () -> dataDir.resolve("managed").toString());
         registry.add("app.library-mode", () -> "EXTERNAL_READ_ONLY");
         registry.add("app.data-path", dataDir::toString);
     }
 
     @BeforeAll
     static void createSyntheticLibrary() throws IOException {
+        if (externalReadOnlyRoot) return;
         for (int index = 1; index <= rows; index++) {
             Files.createFile(libraryDir.resolve(
                     "stressartist%05d-stresstitle%05d-国语-流行.mkv".formatted(index, index)));
@@ -89,7 +136,7 @@ class LargeExternalLibraryScanTest {
 
     @AfterAll
     static void removeSyntheticLibrary() throws IOException {
-        removeTree(libraryDir);
+        if (!externalReadOnlyRoot) removeTree(libraryDir);
         removeTree(dataDir);
     }
 
@@ -113,6 +160,10 @@ class LargeExternalLibraryScanTest {
 
     @Autowired
     private LibraryScanStateStore scanStateStore;
+
+    @Autowired
+    @Qualifier("artistProfileExecutor")
+    private ThreadPoolTaskExecutor artistProfileExecutor;
 
     @Test
     void bootstrapHandlesLargeExternalLibraryAndNoChangeRescanDoesNotProbeAgain()
@@ -140,6 +191,26 @@ class LargeExternalLibraryScanTest {
         assertThat(second.probeCalls()).isZero();
         assertThat(third.probeCalls()).isZero();
         assertThat(second.missing()).isZero();
+        awaitArtistProfileWork();
+    }
+
+    private void awaitArtistProfileWork() throws InterruptedException {
+        var executor = artistProfileExecutor.getThreadPoolExecutor();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
+        long idleSince = 0L;
+        while (System.nanoTime() < deadline) {
+            if (executor.getActiveCount() == 0 && executor.getQueue().isEmpty()) {
+                if (idleSince == 0L) idleSince = System.nanoTime();
+                if (System.nanoTime() - idleSince >= java.util.concurrent.TimeUnit.SECONDS.toNanos(1)) return;
+            } else {
+                idleSince = 0L;
+            }
+            Thread.sleep(50L);
+        }
+        assertThat(executor.getActiveCount()).as("artist profile tasks should finish before the test database closes")
+                .isZero();
+        assertThat(executor.getQueue()).as("artist profile task queue should be drained before container cleanup")
+                .isEmpty();
     }
 
     private LibraryScanStateStore.Snapshot awaitCompletedBootstrap() throws InterruptedException {

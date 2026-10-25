@@ -6,11 +6,12 @@ import java.nio.charset.Charset;
 import java.util.Objects;
 
 /** Drains a child-process stream while retaining only its diagnostic tail. */
-final class ProcessOutputTail {
+public final class ProcessOutputTail {
+    public static final int DEFAULT_MAX_BYTES = 64 * 1024;
 
     private ProcessOutputTail() { }
 
-    static String read(InputStream input, Charset charset, int maxBytes) throws IOException {
+    public static String read(InputStream input, Charset charset, int maxBytes) throws IOException {
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(charset, "charset");
         if (maxBytes <= 0) throw new IllegalArgumentException("maxBytes must be positive");

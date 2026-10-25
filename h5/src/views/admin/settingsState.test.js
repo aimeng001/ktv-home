@@ -147,4 +147,9 @@ describe('admin settings state', () => {
     expect(result).toEqual({ ok: false, error: expect.any(Error) })
     expect(result.error.message).toBe('权限不足')
   })
+
+  it('returns the value of a successful settings action', async () => {
+    await expect(runSettingsAction(() => Promise.resolve({ saved: true })))
+      .resolves.toEqual({ ok: true, value: { saved: true } })
+  })
 })

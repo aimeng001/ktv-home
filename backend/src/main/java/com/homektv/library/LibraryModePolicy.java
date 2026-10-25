@@ -111,18 +111,19 @@ public final class LibraryModePolicy {
      */
     private static Path resolveBoundaryPath(Path path) {
         Path absolute = path.toAbsolutePath().normalize();
-        Path existing = absolute;
+        Path existing = absolute.getRoot();
         Deque<Path> missing = new ArrayDeque<>();
-        while (!Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
-            Path name = existing.getFileName();
-            if (name == null) break;
-            missing.push(name);
-            existing = existing.getParent();
-            if (existing == null) break;
+        for (Path name : absolute) {
+            Path candidate = existing.resolve(name);
+            if (missing.isEmpty() && Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
+                existing = candidate;
+            } else {
+                missing.addLast(name);
+            }
         }
         try {
-            Path resolved = (existing == null ? absolute.getRoot() : existing).toRealPath();
-            while (!missing.isEmpty()) resolved = resolved.resolve(missing.pop());
+            Path resolved = existing.toRealPath();
+            while (!missing.isEmpty()) resolved = resolved.resolve(missing.removeFirst());
             return resolved.normalize();
         } catch (IOException e) {
             throw new ApiException(EXTERNAL_READ_ONLY_CODE,

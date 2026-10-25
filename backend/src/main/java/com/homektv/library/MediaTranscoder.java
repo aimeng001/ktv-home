@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.config.AppProperties;
+import com.homektv.resource.ResourceBudget;
 import com.homektv.web.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,8 +17,6 @@ import java.util.List;
 @Service
 public class MediaTranscoder {
 
-    static final int MAX_PROCESS_LOG_BYTES = 64 * 1024;
-
     @FunctionalInterface
     interface ProcessLauncher {
         Process start(List<String> command) throws IOException;
@@ -27,40 +26,54 @@ public class MediaTranscoder {
     private final String ffmpegPath;
     private final AppProperties props;
     private final ProcessLauncher processLauncher;
+    private final ResourceBudget resourceBudget;
 
     public MediaTranscoder(TranscodeHardwareService hardwareService,
                            @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath) {
         this(hardwareService, ffmpegPath, new AppProperties(), MediaTranscoder::startProcess,
-                MediaProcessRunner.DEFAULT_TIMEOUT);
+                MediaProcessRunner.DEFAULT_TIMEOUT, standaloneResourceBudget());
     }
 
     @Autowired
     public MediaTranscoder(TranscodeHardwareService hardwareService,
                            @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath,
                            AppProperties props,
-                           @Value("${app.transcode.timeout-seconds:1800}") long timeoutSeconds) {
+                           @Value("${app.transcode.timeout-seconds:1800}") long timeoutSeconds,
+                           ResourceBudget resourceBudget) {
         this(hardwareService, ffmpegPath, props, MediaTranscoder::startProcess,
-                MediaProcessRunner.fromSeconds(timeoutSeconds));
+                MediaProcessRunner.fromSeconds(timeoutSeconds), resourceBudget);
     }
 
     /** Compatibility constructor for direct callers that use the managed-mode service. */
     public MediaTranscoder(TranscodeHardwareService hardwareService, String ffmpegPath, AppProperties props) {
         this(hardwareService, ffmpegPath, props, MediaTranscoder::startProcess,
-                MediaProcessRunner.DEFAULT_TIMEOUT);
+                MediaProcessRunner.DEFAULT_TIMEOUT, standaloneResourceBudget());
     }
 
     MediaTranscoder(TranscodeHardwareService hardwareService, String ffmpegPath,
                     AppProperties props, ProcessLauncher processLauncher) {
-        this(hardwareService, ffmpegPath, props, processLauncher, MediaProcessRunner.DEFAULT_TIMEOUT);
+        this(hardwareService, ffmpegPath, props, processLauncher,
+                MediaProcessRunner.DEFAULT_TIMEOUT, standaloneResourceBudget());
     }
 
     MediaTranscoder(TranscodeHardwareService hardwareService, String ffmpegPath,
                     AppProperties props, ProcessLauncher processLauncher, Duration timeout) {
+        this(hardwareService, ffmpegPath, props, processLauncher, timeout, standaloneResourceBudget());
+    }
+
+    MediaTranscoder(TranscodeHardwareService hardwareService, String ffmpegPath,
+                    AppProperties props, ProcessLauncher processLauncher, Duration timeout,
+                    ResourceBudget resourceBudget) {
         this.hardwareService = hardwareService;
         this.ffmpegPath = ffmpegPath;
         this.props = props;
         this.processLauncher = processLauncher;
         this.timeout = timeout;
+        this.resourceBudget = resourceBudget;
+    }
+
+    private static ResourceBudget standaloneResourceBudget() {
+        return new ResourceBudget(1, 1, 4, 1, () -> false);
     }
 
     private final Duration timeout;
@@ -100,7 +113,7 @@ public class MediaTranscoder {
                 "-c:s", "copy", reservedOutput.toString()));
 
         boolean completed = false;
-        try {
+        try (ResourceBudget.Permit ignored = resourceBudget.acquireManagedTranscode()) {
             Process process = processLauncher.start(command);
             MediaProcessRunner.Result result = MediaProcessRunner.run(process, timeout);
             if (result.timedOut()) {

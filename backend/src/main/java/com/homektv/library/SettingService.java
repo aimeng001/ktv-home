@@ -112,17 +112,14 @@ public class SettingService {
         Map<String, Object> all = getAll();
         Map<String, Object> out = new HashMap<>();
         for (String key : EDITABLE_KEYS) {
-            if (all.containsKey(key)) {
-                out.put(key, all.get(key));
-            }
+            out.put(key, all.get(key));
         }
         // 读路径必须与写路径使用同一套约束。库里若有历史遗留或手工 SQL 写入的越界/重复
         // standby_song_ids，原样返回会让整包回写必然 400 —— 管理员即使只改「轮播间隔」
         // 这类无关设置也无法保存，且提示只指向「基础设置」，无法自助恢复。
         Object standbySongs = out.get("standby_song_ids");
-        if (standbySongs instanceof List<?> ids) {
-            out.put("standby_song_ids", normalizeStandbySongIds(ids));
-        }
+        out.put("standby_song_ids", standbySongs instanceof List<?> ids
+                ? normalizeStandbySongIds(ids) : List.of());
         Object logo = all.get("standby_logo_path");
         out.put("standby_logo_configured", logo != null && !logo.toString().isBlank());
         return out;

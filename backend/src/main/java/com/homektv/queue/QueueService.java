@@ -9,14 +9,20 @@ import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
 import com.homektv.ws.WsProtocolLimits;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Comparator;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * 队列状态机：点歌/顶歌/删歌（P1.9，详设§4.4）。
@@ -42,14 +48,25 @@ public class QueueService {
     private final SongRepository songRepo;
     private final PlayerStateRepository playerRepo;
     private final SongAvailabilityPolicy availabilityPolicy;
+    private final Consumer<List<QueueItem>> shuffleItems;
 
+    @Autowired
     public QueueService(QueueItemRepository queueRepo, SongRepository songRepo,
                         PlayerStateRepository playerRepo,
                         SongAvailabilityPolicy availabilityPolicy) {
+        this(queueRepo, songRepo, playerRepo, availabilityPolicy,
+                items -> Collections.shuffle(items));
+    }
+
+    QueueService(QueueItemRepository queueRepo, SongRepository songRepo,
+                 PlayerStateRepository playerRepo,
+                 SongAvailabilityPolicy availabilityPolicy,
+                 Consumer<List<QueueItem>> shuffleItems) {
         this.queueRepo = queueRepo;
         this.songRepo = songRepo;
         this.playerRepo = playerRepo;
         this.availabilityPolicy = availabilityPolicy;
+        this.shuffleItems = shuffleItems;
     }
 
     /**
@@ -116,7 +133,8 @@ public class QueueService {
 
         // 插到 current 与 next 的中值 → 排到最前（后顶者更前）
         double midpoint = currentIndex + (nextIndex - currentIndex) / 2.0;
-        if (!Double.isFinite(midpoint) || midpoint <= currentIndex || midpoint >= nextIndex) {
+        // currentIndex is normalized and the preceding gap guard keeps this midpoint finite.
+        if (midpoint <= currentIndex || midpoint >= nextIndex) {
             rebalanceWaiting(waiting, currentIndex);
             nextIndex = nextWaitingIndex(waiting, queueId, currentIndex);
             midpoint = currentIndex + (nextIndex - currentIndex) / 2.0;
@@ -157,19 +175,30 @@ public class QueueService {
         queueRepo.lockQueueMutation();
         List<QueueItem> items = new ArrayList<>(waitingList());
         if (items.size() < 2) return items;
-        Collections.shuffle(items);
-        items.sort(Comparator.comparingInt(q -> 0));
-        List<QueueItem> arranged = new ArrayList<>();
+        shuffleItems.accept(items);
+        Map<Long, ArrayDeque<QueueItem>> byUser = new LinkedHashMap<>();
+        for (QueueItem item : items) {
+            byUser.computeIfAbsent(item.getOrderedBy(), ignored -> new ArrayDeque<>()).addLast(item);
+        }
+
+        List<QueueItem> arranged = new ArrayList<>(items.size());
         Long previousUser = null;
-        while (!items.isEmpty()) {
-            int pick = 0;
-            for (int i = 0; i < items.size(); i++) {
-                Long user = items.get(i).getOrderedBy();
-                if (previousUser == null || !previousUser.equals(user)) { pick = i; break; }
+        boolean hasPreviousUser = false;
+        while (arranged.size() < items.size()) {
+            boolean hasDifferentUser = false;
+            if (hasPreviousUser) {
+                for (Map.Entry<Long, ArrayDeque<QueueItem>> entry : byUser.entrySet()) {
+                    if (!entry.getValue().isEmpty() && !Objects.equals(entry.getKey(), previousUser)) {
+                        hasDifferentUser = true;
+                        break;
+                    }
+                }
             }
-            QueueItem item = items.remove(pick);
-            arranged.add(item);
-            previousUser = item.getOrderedBy();
+            Map.Entry<Long, ArrayDeque<QueueItem>> selected = selectShuffleGroup(
+                    byUser, previousUser, hasDifferentUser);
+            arranged.add(selected.getValue().removeFirst());
+            previousUser = selected.getKey();
+            hasPreviousUser = true;
         }
         double index = currentPlayingIndex() + STEP;
         for (QueueItem item : arranged) {
@@ -177,6 +206,28 @@ public class QueueService {
             index += STEP;
         }
         return queueRepo.saveAll(arranged);
+    }
+
+    static Map.Entry<Long, ArrayDeque<QueueItem>> selectShuffleGroup(
+            Map<Long, ArrayDeque<QueueItem>> byUser, Long previousUser, boolean hasDifferentUser) {
+        Map.Entry<Long, ArrayDeque<QueueItem>> selected = null;
+        int largestRemainingGroup = -1;
+        for (Map.Entry<Long, ArrayDeque<QueueItem>> entry : byUser.entrySet()) {
+            int remaining = entry.getValue().size();
+            if (remaining == 0
+                    || (hasDifferentUser && Objects.equals(entry.getKey(), previousUser))) {
+                continue;
+            }
+            // Group encounter order came from one random shuffle, so equal counts have random tie order.
+            if (remaining > largestRemainingGroup) {
+                selected = entry;
+                largestRemainingGroup = remaining;
+            }
+        }
+        if (selected == null) {
+            throw new IllegalStateException("Queue shuffle could not select a remaining user group");
+        }
+        return selected;
     }
 
     // ---- 内部工具 ----
@@ -194,6 +245,7 @@ public class QueueService {
         if (ps.getCurrentQueueId() != null) {
             return queueRepo.findById(ps.getCurrentQueueId())
                     .map(QueueItem::getOrderIndex)
+                    .filter(Double::isFinite)
                     .orElse(0.0);
         }
         return 0.0;

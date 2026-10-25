@@ -24,6 +24,7 @@ final class InMemoryLibraryScanSeenPathStore implements LibraryScanSeenPathStore
     private final Map<UUID, Set<String>> pendingAtStart = new HashMap<>();
     private final AtomicInteger recordBatchCalls = new AtomicInteger();
     private boolean failRecordBatches;
+    private boolean failPendingAtStartLookups;
 
     InMemoryLibraryScanSeenPathStore(SongFileRepository files, SongRepository songs) {
         this.files = files;
@@ -46,6 +47,10 @@ final class InMemoryLibraryScanSeenPathStore implements LibraryScanSeenPathStore
         return recordBatchCalls.get();
     }
 
+    void failPendingAtStartLookups() {
+        failPendingAtStartLookups = true;
+    }
+
     int activeScanCount() {
         return seenPaths.size();
     }
@@ -58,6 +63,9 @@ final class InMemoryLibraryScanSeenPathStore implements LibraryScanSeenPathStore
 
     @Override
     public Set<String> findPendingAtStart(UUID scanId, String fileRole, Collection<String> filePaths) {
+        if (failPendingAtStartLookups) {
+            throw new IllegalStateException("test pending-at-start lookup failure");
+        }
         Set<String> pending = pendingAtStart.getOrDefault(scanId, Set.of());
         return filePaths.stream().filter(pending::contains).collect(java.util.stream.Collectors.toSet());
     }

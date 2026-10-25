@@ -41,7 +41,7 @@ public final class AudioLayoutResolver {
         if (mode == LibraryMode.EXTERNAL_READ_ONLY) {
             AudioLayout configured = configuredExternalDefault == null
                     ? AudioLayout.NORMAL_STEREO : configuredExternalDefault;
-            if (configured == AudioLayout.DUAL_TRACK && audioTracks < 2) {
+            if (configured == AudioLayout.DUAL_TRACK) {
                 return new Result(AudioLayout.NORMAL_STEREO, AudioLayoutSource.AUTO_DEFAULT);
             }
             return new Result(configured, AudioLayoutSource.AUTO_DEFAULT);

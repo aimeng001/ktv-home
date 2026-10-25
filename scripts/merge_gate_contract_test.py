@@ -226,8 +226,11 @@ class MergeGateContractTests(unittest.TestCase):
         workflow = (REPOSITORY / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
         )
+        compose_contracts = (REPOSITORY / "scripts" / "compose_config_test.py").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("compose-config:", workflow)
-        self.assertIn("files=(", workflow)
+        self.assertIn("python scripts/compose_config_test.py", workflow)
         for filename in (
             "docker-compose.yml",
             "docker-compose.dev.yml",
@@ -237,28 +240,35 @@ class MergeGateContractTests(unittest.TestCase):
             "docker-compose.hardware.yml",
             "docker-compose.rockchip.yml",
         ):
-            self.assertIn(filename, workflow)
-        self.assertIn('docker compose -f "$file" config --quiet', workflow)
+            self.assertIn(filename, compose_contracts)
+        self.assertIn("config", compose_contracts)
+        self.assertIn("--format", compose_contracts)
 
     def test_ci_combines_compose_hardware_overlays_with_the_base(self) -> None:
-        workflow = (REPOSITORY / ".github" / "workflows" / "ci.yml").read_text(
+        compose_contracts = (REPOSITORY / "scripts" / "compose_config_test.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn('case "$file" in', workflow)
         self.assertIn(
-            "docker-compose.hardware.yml|docker-compose.rockchip.yml)",
-            workflow,
+            '("docker-compose.yml", "docker-compose.hardware.yml")',
+            compose_contracts,
         )
         self.assertIn(
-            'docker compose -f docker-compose.yml -f "$file" config --quiet',
-            workflow,
+            '("docker-compose.yml", "docker-compose.rockchip.yml")',
+            compose_contracts,
         )
 
     def test_ci_compose_validation_supplies_a_non_secret_database_password(self) -> None:
         workflow = (REPOSITORY / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("KTV_DB_PASSWORD: ci-validation-only", workflow)
+        compose_job = re.search(r"(?ms)^  compose-config:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", workflow)
+        self.assertIsNotNone(compose_job)
+        self.assertNotIn("KTV_DB_PASSWORD", compose_job.group(0))
+        compose_contracts = (REPOSITORY / "scripts" / "compose_config_test.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('values["KTV_DB_PASSWORD"] = "compose-contract-test-only"', compose_contracts)
+        self.assertIn("test_password_required_profiles_fail_closed_when_password_is_blank", compose_contracts)
 
     def test_ci_runs_a_constrained_real_large_scan(self) -> None:
         workflow = (REPOSITORY / ".github" / "workflows" / "ci.yml").read_text(

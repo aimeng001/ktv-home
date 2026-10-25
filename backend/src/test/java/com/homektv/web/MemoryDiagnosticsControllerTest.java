@@ -3,6 +3,7 @@ package com.homektv.web;
 import com.homektv.config.AppProperties;
 import com.homektv.diagnostics.MemoryDiagnostics;
 import com.homektv.diagnostics.MemoryDiagnosticsService;
+import com.homektv.resource.ResourceBudget;
 import com.homektv.security.AdminAuthInterceptor;
 import com.homektv.security.AdminAuthService;
 import org.junit.jupiter.api.Test;
@@ -25,7 +26,11 @@ class MemoryDiagnosticsControllerTest {
         String token = auth.login("admin-secret");
         MemoryDiagnosticsService service = mock(MemoryDiagnosticsService.class);
         when(service.snapshot()).thenReturn(new MemoryDiagnostics(
-                128, 768, 2048, 128, true, "MEDIA_PROBE", 48_122, 17_500));
+                128, 768, 2048, 128, true, "MEDIA_PROBE", 48_122, 17_500,
+                new ResourceBudget.Snapshot(
+                        new ResourceBudget.WaitSnapshot(1, 2, 3, 7, 8_000, 5_000),
+                        1, 4,
+                        new ResourceBudget.WaitSnapshot(0, 1, 1, 9, 10_000, 6_000))));
         MockMvc mvc = standaloneSetup(new MemoryDiagnosticsController(service))
                 .addInterceptors(new AdminAuthInterceptor(auth))
                 .build();
@@ -40,6 +45,14 @@ class MemoryDiagnosticsControllerTest {
                 .andExpect(jsonPath("$.scanRunning").value(true))
                 .andExpect(jsonPath("$.scanPhase").value("MEDIA_PROBE"))
                 .andExpect(jsonPath("$.discoveredFiles").value(48_122))
-                .andExpect(jsonPath("$.probeProcessed").value(17_500));
+                .andExpect(jsonPath("$.probeProcessed").value(17_500))
+                .andExpect(jsonPath("$.resourceBudget.probes.active").value(1))
+                .andExpect(jsonPath("$.resourceBudget.probes.waiting").value(2))
+                .andExpect(jsonPath("$.resourceBudget.probes.waitCount").value(7))
+                .andExpect(jsonPath("$.resourceBudget.probes.totalWaitNanos").value(8_000))
+                .andExpect(jsonPath("$.resourceBudget.activeLiveTranscodes").value(1))
+                .andExpect(jsonPath("$.resourceBudget.liveTranscodeLimit").value(4))
+                .andExpect(jsonPath("$.resourceBudget.managedTranscodes.waiting").value(1))
+                .andExpect(jsonPath("$.resourceBudget.managedTranscodes.maxWaitNanos").value(6_000));
     }
 }

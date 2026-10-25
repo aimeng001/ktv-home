@@ -88,6 +88,16 @@ class SongSearchServiceTest {
     }
 
     @Test
+    void searchNormalizesANullMediaTypeToNoFilter() {
+        when(searchRepo.search(eq("zhou"), eq("zhou"), eq("zhou"), eq(""), any()))
+                .thenReturn(List.of(new Song()));
+
+        service.search("zhou", (String) null, 0);
+
+        verify(searchRepo).search(eq("zhou"), eq("zhou"), eq("zhou"), eq(""), any(Pageable.class));
+    }
+
+    @Test
     void searchRejectsNegativePage() {
         assertThatThrownBy(() -> service.search("zhou", -5))
                 .isInstanceOf(ApiException.class)

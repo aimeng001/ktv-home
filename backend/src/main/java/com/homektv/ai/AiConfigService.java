@@ -210,8 +210,8 @@ public class AiConfigService {
     }
 
     private String suffix(String value) {
-        if (value == null || value.isBlank()) return null;
-        return value.length() <= 4 ? value : value.substring(value.length() - 4);
+        if (value == null || value.isBlank() || value.length() <= 4) return null;
+        return value.substring(value.length() - 4);
     }
 
     private JsonMode jsonMode(String value) {

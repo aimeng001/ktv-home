@@ -68,7 +68,7 @@ public class AdminAuthService {
 
         synchronized (authStateGate) {
             purgeExpired(now);
-            enforceCooldown(key, now);
+            enforceCooldown(key);
 
             if (!MessageDigest.isEqual(expected, supplied)) {
                 recordFailedLogin(key, now);
@@ -88,14 +88,12 @@ public class AdminAuthService {
         }
     }
 
-    private void enforceCooldown(String key, Instant now) {
+    private void enforceCooldown(String key) {
         FailedLoginState state = failedLogins.get(key);
         if (state == null) return;
-        if (state.blockedUntil() != null && now.isBefore(state.blockedUntil())) {
+        // login() purges expired states before this check, so any remaining cooldown is active.
+        if (state.blockedUntil() != null) {
             throw new ApiException("ADMIN_AUTH_RATE_LIMITED", "登录尝试过多，请稍后再试");
-        }
-        if (state.blockedUntil() != null || !now.isBefore(state.windowStartedAt().plus(FAILURE_WINDOW))) {
-            failedLogins.remove(key, state);
         }
     }
 
@@ -104,9 +102,8 @@ public class AdminAuthService {
             throw new ApiException("ADMIN_AUTH_RATE_LIMITED", "登录尝试过多，请稍后再试");
         }
         failedLogins.compute(key, (ignored, current) -> {
-            if (current == null
-                    || current.blockedUntil() != null
-                    || !now.isBefore(current.windowStartedAt().plus(FAILURE_WINDOW))) {
+            // Expired windows are removed by purgeExpired(); active cooldowns were rejected above.
+            if (current == null) {
                 return new FailedLoginState(1, now, null);
             }
             int failures = current.failures() + 1;
@@ -142,8 +139,8 @@ public class AdminAuthService {
         synchronized (authStateGate) {
             Instant now = Instant.now(clock);
             purgeExpired(now);
-            Instant expiresAt = sessions.get(token);
-            return expiresAt != null && now.isBefore(expiresAt);
+            // Expired sessions are removed before lookup, so membership means still authenticated.
+            return sessions.containsKey(token);
         }
     }
 

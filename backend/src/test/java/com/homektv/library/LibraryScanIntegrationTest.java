@@ -6,12 +6,15 @@ import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongArtistRepository;
 import com.homektv.repo.SongRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -94,6 +97,7 @@ class LibraryScanIntegrationTest {
     @Autowired SongFileRepository fileRepo;
     @Autowired SongArtistRepository artistRepo;
     @Autowired JdbcTemplate jdbcTemplate;
+    @Autowired @Qualifier("artistProfileExecutor") ThreadPoolTaskExecutor artistProfileExecutor;
 
     @org.junit.jupiter.api.BeforeEach
     void clean() {
@@ -105,6 +109,26 @@ class LibraryScanIntegrationTest {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    @AfterEach
+    void awaitBackgroundProfileWork() throws InterruptedException {
+        var executor = artistProfileExecutor.getThreadPoolExecutor();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+        long idleSince = 0L;
+        while (System.nanoTime() < deadline) {
+            if (executor.getActiveCount() == 0 && executor.getQueue().isEmpty()) {
+                if (idleSince == 0L) idleSince = System.nanoTime();
+                if (System.nanoTime() - idleSince >= TimeUnit.SECONDS.toNanos(1)) return;
+            } else {
+                idleSince = 0L;
+            }
+            Thread.sleep(50L);
+        }
+        assertThat(executor.getActiveCount()).as("artist profile work should finish before test data is reset")
+                .isZero();
+        assertThat(executor.getQueue()).as("artist profile queue should be drained before test data is reset")
+                .isEmpty();
     }
 
     @Test

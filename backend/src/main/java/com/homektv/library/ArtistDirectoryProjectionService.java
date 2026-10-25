@@ -87,6 +87,7 @@ public class ArtistDirectoryProjectionService {
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate refreshTransaction;
+    private final Runnable beforeRefreshTaskCompletion;
     private final ExecutorService refreshExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "artist-directory-refresh");
         thread.setDaemon(true);
@@ -97,13 +98,19 @@ public class ArtistDirectoryProjectionService {
     private final Object refreshLock = new Object();
 
     public ArtistDirectoryProjectionService(JdbcTemplate jdbc) {
-        this(jdbc, null);
+        this(jdbc, null, () -> {});
     }
 
     @org.springframework.beans.factory.annotation.Autowired
     public ArtistDirectoryProjectionService(JdbcTemplate jdbc, PlatformTransactionManager transactionManager) {
+        this(jdbc, transactionManager, () -> {});
+    }
+
+    ArtistDirectoryProjectionService(JdbcTemplate jdbc, PlatformTransactionManager transactionManager,
+                                     Runnable beforeRefreshTaskCompletion) {
         this.jdbc = jdbc;
         this.refreshTransaction = transactionManager == null ? null : new TransactionTemplate(transactionManager);
+        this.beforeRefreshTaskCompletion = beforeRefreshTaskCompletion;
     }
 
     /** Defers mutation-triggered refresh until the surrounding transaction commits. */
@@ -133,6 +140,7 @@ public class ArtistDirectoryProjectionService {
                             return;
                         }
                     } while (refreshRequested.get());
+                    beforeRefreshTaskCompletion.run();
                 } finally {
                     refreshRunning.set(false);
                     if (refreshRequested.get()) requestRefresh();

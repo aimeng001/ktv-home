@@ -34,6 +34,29 @@ class AdminAuthServiceTest {
     }
 
     @Test
+    void blankPasswordIsAlsoUnconfigured() {
+        properties.setAdminPassword(" \t ");
+
+        assertThat(service.isConfigured()).isFalse();
+        assertThat(service.isAuthenticated("stale-token")).isFalse();
+        assertThatThrownBy(() -> service.login("anything"))
+                .isInstanceOf(ApiException.class)
+                .extracting(exception -> ((ApiException) exception).getCode())
+                .isEqualTo("ADMIN_AUTH_NOT_CONFIGURED");
+    }
+
+    @Test
+    void nullPasswordIsUnconfigured() {
+        properties.setAdminPassword(null);
+
+        assertThat(service.isConfigured()).isFalse();
+        assertThatThrownBy(() -> service.login("anything"))
+                .isInstanceOf(ApiException.class)
+                .extracting(exception -> ((ApiException) exception).getCode())
+                .isEqualTo("ADMIN_AUTH_NOT_CONFIGURED");
+    }
+
+    @Test
     void wrongPasswordDoesNotCreateUsableSession() {
         properties.setAdminPassword("correct-password");
 
@@ -77,6 +100,50 @@ class AdminAuthServiceTest {
 
         clock.advance(Duration.ofMinutes(1).plusSeconds(1));
         assertThat(service.login("correct-password", "192.168.1.10")).isNotBlank();
+    }
+
+    @Test
+    void nullPasswordAndBlankClientKeysUseTheSameUnknownClientBucket() {
+        properties.setAdminPassword("correct-password");
+
+        for (int attempt = 0; attempt < AdminAuthService.MAX_FAILED_ATTEMPTS; attempt++) {
+            String clientKey = attempt == 0 ? null : " \t ";
+            assertThatThrownBy(() -> service.login(null, clientKey))
+                    .isInstanceOf(ApiException.class)
+                    .extracting(exception -> ((ApiException) exception).getCode())
+                    .isEqualTo("ADMIN_AUTH_INVALID");
+        }
+
+        assertThatThrownBy(() -> service.login("correct-password", "unknown"))
+                .isInstanceOf(ApiException.class)
+                .extracting(exception -> ((ApiException) exception).getCode())
+                .isEqualTo("ADMIN_AUTH_RATE_LIMITED");
+    }
+
+    @Test
+    void failedAttemptsStartANewWindowAtTheExactExpiryBoundary() {
+        properties.setAdminPassword("correct-password");
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-30T00:00:00Z"));
+        service = new AdminAuthService(properties, clock);
+
+        for (int attempt = 0; attempt < 4; attempt++) {
+            assertThatThrownBy(() -> service.login("wrong-password", "window-client"))
+                    .isInstanceOf(ApiException.class)
+                    .extracting(exception -> ((ApiException) exception).getCode())
+                    .isEqualTo("ADMIN_AUTH_INVALID");
+        }
+
+        clock.advance(Duration.ofMinutes(10));
+        for (int attempt = 0; attempt < AdminAuthService.MAX_FAILED_ATTEMPTS; attempt++) {
+            assertThatThrownBy(() -> service.login("wrong-password", "window-client"))
+                    .isInstanceOf(ApiException.class)
+                    .extracting(exception -> ((ApiException) exception).getCode())
+                    .isEqualTo("ADMIN_AUTH_INVALID");
+        }
+        assertThatThrownBy(() -> service.login("wrong-password", "window-client"))
+                .isInstanceOf(ApiException.class)
+                .extracting(exception -> ((ApiException) exception).getCode())
+                .isEqualTo("ADMIN_AUTH_RATE_LIMITED");
     }
 
     @Test
@@ -124,6 +191,23 @@ class AdminAuthServiceTest {
                 .isInstanceOf(ApiException.class)
                 .extracting(exception -> ((ApiException) exception).getCode())
                 .isEqualTo("ADMIN_AUTH_SESSION_LIMIT");
+    }
+
+    @Test
+    void sessionExpiresAtTheExactBoundaryAndBlankLogoutIsHarmless() {
+        properties.setAdminPassword("correct-password");
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-30T00:00:00Z"));
+        service = new AdminAuthService(properties, clock);
+        String token = service.login("correct-password");
+
+        assertThat(service.isAuthenticated(null)).isFalse();
+        assertThat(service.isAuthenticated("unknown-token")).isFalse();
+        clock.advance(Duration.ofHours(12));
+
+        assertThat(service.isAuthenticated(token)).isFalse();
+        service.logout(null);
+        service.logout(" \t ");
+        assertThat(service.isAuthenticated(" \t ")).isFalse();
     }
 
     @Test

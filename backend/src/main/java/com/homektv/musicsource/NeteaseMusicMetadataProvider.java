@@ -3,6 +3,7 @@ package com.homektv.musicsource;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -18,10 +19,15 @@ public class NeteaseMusicMetadataProvider implements MusicMetadataProvider {
     private final ObjectMapper mapper;
     private final MusicSourceHttp http;
 
+    @Autowired
     public NeteaseMusicMetadataProvider(ObjectMapper mapper, ProviderCallGuard guard) {
+        this(mapper, new MusicSourceHttp(mapper, MusicProvider.NETEASE,
+                Set.of("interfacepc.music.163.com", "music.163.com"), guard));
+    }
+
+    NeteaseMusicMetadataProvider(ObjectMapper mapper, MusicSourceHttp http) {
         this.mapper = mapper;
-        this.http = new MusicSourceHttp(mapper, MusicProvider.NETEASE,
-                Set.of("interfacepc.music.163.com", "music.163.com"), guard);
+        this.http = http;
     }
 
     @Override public MusicProvider provider() { return MusicProvider.NETEASE; }
@@ -63,10 +69,12 @@ public class NeteaseMusicMetadataProvider implements MusicMetadataProvider {
             long publish = song.path("publishTime").asLong(0);
             if (publish > 0) release = Instant.ofEpochMilli(publish).atZone(ZoneOffset.UTC).toLocalDate().toString();
             List<String> aliases = ProviderJson.names(song.has("alia") ? song.path("alia") : song.path("alias"), null);
+            Integer duration = null;
+            if (song.has("dt")) duration = song.path("dt").asInt();
+            else if (song.has("duration")) duration = song.path("duration").asInt();
             ExternalTrack track = ProviderJson.track(provider(), song.path("id").asText(), ProviderJson.text(song, "name", 500),
                     ProviderJson.names(artists, "name"), ProviderJson.text(album, "name", 500),
-                    song.has("dt") ? song.path("dt").asInt() : (song.has("duration") ? song.path("duration").asInt() : null),
-                    release, aliases, cover, song.path("fee").asInt(0) == 4 ? "UNAVAILABLE" : "AVAILABLE");
+                    duration, release, aliases, cover, song.path("fee").asInt(0) == 4 ? "UNAVAILABLE" : "AVAILABLE");
             if (track != null) result.add(track);
             if (result.size() >= limit) break;
         }

@@ -7,6 +7,20 @@ namespace HomeKtv.Windows.ServerConnection;
 
 public sealed class UdpDiscoveryClient
 {
+    private readonly Func<IEnumerable<IPAddress>> _broadcastAddressProvider;
+    private readonly int _discoveryPort;
+
+    public UdpDiscoveryClient()
+        : this(BroadcastAddresses, DiscoveryProtocol.UdpPort)
+    {
+    }
+
+    internal UdpDiscoveryClient(Func<IEnumerable<IPAddress>> broadcastAddressProvider, int discoveryPort)
+    {
+        _broadcastAddressProvider = broadcastAddressProvider;
+        _discoveryPort = discoveryPort;
+    }
+
     public async Task<IReadOnlyList<DiscoveredServer>> DiscoverAsync(
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
@@ -16,9 +30,9 @@ public sealed class UdpDiscoveryClient
             EnableBroadcast = true,
         };
         var request = Encoding.UTF8.GetBytes(DiscoveryProtocol.Request);
-        foreach (var address in BroadcastAddresses())
+        foreach (var address in _broadcastAddressProvider())
         {
-            await client.SendAsync(request, request.Length, new IPEndPoint(address, DiscoveryProtocol.UdpPort))
+            await client.SendAsync(request, request.Length, new IPEndPoint(address, _discoveryPort))
                 .ConfigureAwait(false);
         }
 
@@ -50,7 +64,7 @@ public sealed class UdpDiscoveryClient
         return results.Values.ToArray();
     }
 
-    private static IEnumerable<IPAddress> BroadcastAddresses()
+    internal static IEnumerable<IPAddress> BroadcastAddresses()
     {
         var result = new HashSet<IPAddress> { IPAddress.Broadcast };
         foreach (var network in NetworkInterface.GetAllNetworkInterfaces())
@@ -77,7 +91,7 @@ public sealed class UdpDiscoveryClient
         return result;
     }
 
-    private static uint ToUInt32(IPAddress address)
+    internal static uint ToUInt32(IPAddress address)
     {
         var bytes = address.GetAddressBytes();
         if (BitConverter.IsLittleEndian) Array.Reverse(bytes);

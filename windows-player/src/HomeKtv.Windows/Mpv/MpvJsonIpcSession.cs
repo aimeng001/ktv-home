@@ -8,6 +8,18 @@ namespace HomeKtv.Windows.Mpv;
 
 public sealed class MpvJsonIpcSession : IMpvSession
 {
+    internal interface IRequestIdGenerator
+    {
+        long Next();
+    }
+
+    private sealed class MonotonicRequestIdGenerator : IRequestIdGenerator
+    {
+        private long current;
+
+        public long Next() => Interlocked.Increment(ref current);
+    }
+
     private readonly NamedPipeClientStream pipe;
     private readonly Process process;
     private readonly StreamReader reader;
@@ -16,13 +28,22 @@ public sealed class MpvJsonIpcSession : IMpvSession
     private readonly ConcurrentDictionary<long, TaskCompletionSource<System.Text.Json.JsonElement?>> pending = new();
     private readonly CancellationTokenSource lifetime = new();
     private readonly Task receiveLoop;
-    private long requestId;
+    private readonly IRequestIdGenerator requestIds;
     private int disposed;
 
     public MpvJsonIpcSession(NamedPipeClientStream pipe, Process process)
+        : this(pipe, process, new MonotonicRequestIdGenerator())
+    {
+    }
+
+    internal MpvJsonIpcSession(
+        NamedPipeClientStream pipe,
+        Process process,
+        IRequestIdGenerator requestIds)
     {
         this.pipe = pipe;
         this.process = process;
+        this.requestIds = requestIds;
         reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false,
             bufferSize: 16 * 1024, leaveOpen: true);
         writer = new StreamWriter(pipe, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
@@ -49,7 +70,7 @@ public sealed class MpvJsonIpcSession : IMpvSession
             throw new MpvConnectionException("mpv IPC is not connected.");
         }
 
-        var id = Interlocked.Increment(ref requestId);
+        var id = requestIds.Next();
         var completion = new TaskCompletionSource<System.Text.Json.JsonElement?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         if (!pending.TryAdd(id, completion))
@@ -62,6 +83,11 @@ public sealed class MpvJsonIpcSession : IMpvSession
             await writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                if (!IsAlive)
+                {
+                    throw new MpvConnectionException("mpv IPC session is no longer connected.");
+                }
+
                 await writer.WriteLineAsync(MpvIpcProtocol.SerializeCommand(id, command))
                     .ConfigureAwait(false);
                 await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -167,9 +193,18 @@ public sealed class MpvJsonIpcSession : IMpvSession
 
         pending.Clear();
         try { pipe.Dispose(); } catch (IOException) { }
-        try { writer.Dispose(); } catch (ObjectDisposedException) { }
-        try { reader.Dispose(); } catch (ObjectDisposedException) { }
+        await writeLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            try { writer.Dispose(); } catch (IOException) { } catch (ObjectDisposedException) { }
+        }
+        finally
+        {
+            writeLock.Release();
+        }
+
         try { await receiveLoop.ConfigureAwait(false); } catch (Exception) { }
+        try { reader.Dispose(); } catch (ObjectDisposedException) { }
         try
         {
             if (!process.HasExited)
@@ -180,7 +215,6 @@ public sealed class MpvJsonIpcSession : IMpvSession
         catch (InvalidOperationException) { }
         catch (System.ComponentModel.Win32Exception) { }
         process.Dispose();
-        writeLock.Dispose();
         lifetime.Dispose();
     }
 }

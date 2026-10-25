@@ -63,18 +63,25 @@ public static class MpvIpcProtocol
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                message = null;
+                return false;
+            }
             long? requestId = root.TryGetProperty("request_id", out var request)
                 && request.ValueKind == JsonValueKind.Number
                 && request.TryGetInt64(out var id)
                 ? id
                 : null;
             var error = root.TryGetProperty("error", out var errorNode)
+                && errorNode.ValueKind == JsonValueKind.String
                 ? errorNode.GetString()
                 : null;
             var data = root.TryGetProperty("data", out var dataNode)
                 ? dataNode.Clone()
                 : (JsonElement?)null;
             var eventName = root.TryGetProperty("event", out var eventNode)
+                && eventNode.ValueKind == JsonValueKind.String
                 ? eventNode.GetString()
                 : null;
             var eventData = root.TryGetProperty("event_data", out var eventDataNode)
@@ -163,6 +170,7 @@ public static class MpvTrackMapper
         foreach (var track in trackList.Value.EnumerateArray())
         {
             if (!track.TryGetProperty("type", out var type)
+                || type.ValueKind != JsonValueKind.String
                 || !string.Equals(type.GetString(), "audio", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -170,6 +178,7 @@ public static class MpvTrackMapper
 
             if (audioIndex++ != audioRelativeIndex
                 || !track.TryGetProperty("id", out var id)
+                || id.ValueKind != JsonValueKind.Number
                 || !id.TryGetInt32(out var trackId))
             {
                 continue;

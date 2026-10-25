@@ -25,35 +25,57 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
     private readonly ServerEndpoint endpoint;
     private readonly string clientToken;
     private readonly string? playerCredential;
+    private readonly Func<ClientWebSocket, byte[], CancellationToken, Task> sendSocketBytes;
     private readonly SemaphoreSlim sendLock = new(1, 1);
     private readonly SemaphoreSlim finishedFlushLock = new(1, 1);
     private readonly ReliablePlaybackOutbox reliableMessages;
     private readonly ReliablePlaybackOutboxStore reliableMessageStore;
     private readonly PendingPlaybackReportStore pendingFinishedStore;
     private readonly PendingPlaybackReportQueue pendingFinishedReports;
+    private readonly TimeSpan heartbeatInterval = TimeSpan.FromSeconds(15);
     private readonly SyncChunkAssembler syncChunkAssembler = new();
     private readonly CancellationTokenSource lifetime = new();
+    private readonly object lifecycleGate = new();
     private ClientWebSocket? socket;
+    private Task? runTask;
+    private volatile bool disposed;
     private long generation;
 
     public KtvWebSocketClient(
         ServerEndpoint endpoint,
         string clientToken,
         string? playerCredential = null,
-        string? reliableOutboxPath = null)
+        string? reliableOutboxPath = null,
+        string? pendingFinishedPath = null)
     {
         this.endpoint = endpoint;
         this.clientToken = clientToken;
         this.playerCredential = playerCredential;
+        sendSocketBytes = SendThroughClientWebSocketAsync;
         reliableMessageStore = new(
             reliableOutboxPath,
             scope: $"{endpoint.BaseUri.AbsoluteUri}|{clientToken}");
         reliableMessages = new(reliableMessageStore.Load(), reliableMessageStore.Save);
         pendingFinishedStore = new(
+            pendingFinishedPath,
             scope: $"{endpoint.BaseUri.AbsoluteUri}|{clientToken}");
         pendingFinishedReports = new(
             pendingFinishedStore.Load(),
             pendingFinishedStore.Save);
+    }
+
+    internal KtvWebSocketClient(
+        ServerEndpoint endpoint,
+        string clientToken,
+        TimeSpan heartbeatInterval,
+        string? playerCredential = null,
+        string? reliableOutboxPath = null,
+        string? pendingFinishedPath = null,
+        Func<ClientWebSocket, byte[], CancellationToken, Task>? sendMessageAsync = null)
+        : this(endpoint, clientToken, playerCredential, reliableOutboxPath, pendingFinishedPath)
+    {
+        this.heartbeatInterval = heartbeatInterval;
+        if (sendMessageAsync is not null) sendSocketBytes = sendMessageAsync;
     }
 
     public event Action<bool>? ConnectionChanged;
@@ -65,11 +87,22 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
 
     public bool IsConnected => socket?.State == WebSocketState.Open;
 
-    public async Task RunAsync(CancellationToken cancellationToken = default)
+    public Task RunAsync(CancellationToken cancellationToken = default)
+    {
+        lock (lifecycleGate)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (runTask is { IsCompleted: false }) return runTask;
+            runTask = RunCoreAsync(cancellationToken);
+            return runTask;
+        }
+    }
+
+    private async Task RunCoreAsync(CancellationToken cancellationToken)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.Token);
         var attempt = 0;
-        while (!linked.IsCancellationRequested)
+        while (!linked.IsCancellationRequested && !disposed)
         {
             try
             {
@@ -93,7 +126,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
                 socket = null;
             }
 
-            if (linked.IsCancellationRequested) break;
+            if (linked.IsCancellationRequested || disposed) break;
             await Task.Delay(ReconnectPolicy.DelayMilliseconds(attempt), linked.Token).ConfigureAwait(false);
             attempt++;
         }
@@ -169,9 +202,11 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
 
     private async Task SendHeartbeatsAsync(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
-        while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+        using var timer = new PeriodicTimer(heartbeatInterval);
+        while (true)
         {
+            // The timer is owned by this method and disposed only after the loop exits.
+            await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
             var currentGeneration = Volatile.Read(ref generation);
             if (currentGeneration > 0)
             {
@@ -292,8 +327,8 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
     {
         var active = socket;
         if (active?.State != WebSocketState.Open) return;
-        var bytes = EncodeBounded(text);
-        if (bytes is null) return;
+        // This private path only sends the fixed-shape progress message made from numeric fields.
+        var bytes = Encoding.UTF8.GetBytes(text);
         await sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -340,8 +375,8 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
 
         try
         {
-            var bytes = Utf8ByteBudget.EncodeBounded(message.Text, MaxWebSocketMessageBytes)
-                ?? throw new WebSocketException("WebSocket message exceeded the size limit.");
+            // The immutable text was checked against the same limit before it entered the outbox.
+            var bytes = Encoding.UTF8.GetBytes(message.Text);
             await SendOnSocketAsync(active, bytes, cancellationToken).ConfigureAwait(false);
             return ReliableSendResult.Sent;
         }
@@ -406,8 +441,8 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
                 continue;
             }
 
-            var bytes = Utf8ByteBudget.EncodeBounded(text, MaxWebSocketMessageBytes)
-                ?? throw new WebSocketException("WebSocket message exceeded the size limit.");
+            // The immutable text was checked against the same limit immediately above.
+            var bytes = Encoding.UTF8.GetBytes(text);
             await SendOnSocketAsync(active, bytes, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -417,8 +452,8 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         string text,
         CancellationToken cancellationToken)
     {
-        var bytes = EncodeBounded(text)
-            ?? throw new WebSocketException("WebSocket message exceeded the size limit.");
+        // The only caller serializes a finished report containing bounded numeric identifiers.
+        var bytes = Encoding.UTF8.GetBytes(text);
         await SendOnSocketAsync(active, bytes, cancellationToken).ConfigureAwait(false);
     }
 
@@ -435,8 +470,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
                 throw new WebSocketException("WebSocket is no longer open.");
             }
 
-            await active.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken)
-                .ConfigureAwait(false);
+            await sendSocketBytes(active, bytes, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -449,6 +483,15 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         return Utf8ByteBudget.EncodeBounded(text, MaxWebSocketMessageBytes);
     }
 
+    private static async Task SendThroughClientWebSocketAsync(
+        ClientWebSocket active,
+        byte[] bytes,
+        CancellationToken cancellationToken)
+    {
+        await active.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     private void NotifyReliableRejected(string key, string reason)
     {
         ReliableMessageRejected?.Invoke(key, reason);
@@ -458,19 +501,50 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        lifetime.Cancel();
-        var active = socket;
-        if (active?.State is WebSocketState.Open or WebSocketState.CloseReceived)
+        Task? activeRun;
+        ClientWebSocket? active;
+        lock (lifecycleGate)
         {
-            try
-            {
-                await active.CloseAsync(WebSocketCloseStatus.NormalClosure, "client closing",
-                    CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (WebSocketException) { }
+            if (disposed) return;
+            disposed = true;
+            activeRun = runTask;
+            active = socket;
         }
-        lifetime.Dispose();
-        sendLock.Dispose();
-        finishedFlushLock.Dispose();
+
+        try
+        {
+            if (active?.State == WebSocketState.Open)
+            {
+                try
+                {
+                    await active.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "client closing",
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (WebSocketException) { }
+            }
+
+            if (activeRun is not null
+                && active?.State is (WebSocketState.CloseSent or WebSocketState.CloseReceived))
+            {
+                try
+                {
+                    await activeRun.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                }
+                catch (TimeoutException) { }
+            }
+
+            lifetime.Cancel();
+            if (activeRun is not null)
+            {
+                try { await activeRun.ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+            }
+        }
+        finally
+        {
+            lifetime.Dispose();
+            sendLock.Dispose();
+            finishedFlushLock.Dispose();
+        }
     }
 }

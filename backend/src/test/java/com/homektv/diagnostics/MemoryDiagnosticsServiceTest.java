@@ -1,6 +1,7 @@
 package com.homektv.diagnostics;
 
 import com.homektv.library.LibraryScanService;
+import com.homektv.resource.ResourceBudget;
 import org.junit.jupiter.api.Test;
 
 import java.lang.management.MemoryMXBean;
@@ -23,7 +24,8 @@ class MemoryDiagnosticsServiceTest {
                 OffsetDateTime.parse("2026-08-29T12:00:00Z"), null,
                 "MEDIA_PROBE", 48_122, 48_122, 64, 17_500);
 
-        MemoryDiagnosticsService service = new MemoryDiagnosticsService(() -> progress, memory);
+        ResourceBudget budget = new ResourceBudget(2, 1, 4, 1, () -> false);
+        MemoryDiagnosticsService service = new MemoryDiagnosticsService(() -> progress, memory, budget);
 
         MemoryDiagnostics diagnostics = service.snapshot();
 
@@ -35,6 +37,9 @@ class MemoryDiagnosticsServiceTest {
         assertThat(diagnostics.scanPhase()).isEqualTo("MEDIA_PROBE");
         assertThat(diagnostics.discoveredFiles()).isEqualTo(48_122);
         assertThat(diagnostics.probeProcessed()).isEqualTo(17_500);
+        assertThat(diagnostics.resourceBudget().probes().limit()).isEqualTo(2);
+        assertThat(diagnostics.resourceBudget().activeLiveTranscodes()).isZero();
+        assertThat(diagnostics.resourceBudget().managedTranscodes().limit()).isEqualTo(1);
         assertThat(diagnostics.toString()).doesNotContain("secret-source");
     }
 
@@ -44,7 +49,8 @@ class MemoryDiagnosticsServiceTest {
         when(memory.getHeapMemoryUsage()).thenReturn(new MemoryUsage(0, 1, 2, -1));
         when(memory.getNonHeapMemoryUsage()).thenReturn(new MemoryUsage(0, 3, 4, -1));
 
-        MemoryDiagnostics diagnostics = new MemoryDiagnosticsService(() -> null, memory).snapshot();
+        ResourceBudget budget = new ResourceBudget(2, 1, 4, 1, () -> false);
+        MemoryDiagnostics diagnostics = new MemoryDiagnosticsService(() -> null, memory, budget).snapshot();
 
         assertThat(diagnostics.heapMaxBytes()).isZero();
         assertThat(diagnostics.scanRunning()).isFalse();

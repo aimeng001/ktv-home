@@ -375,7 +375,8 @@ public class PlaybackService {
         Set<Long> playableSongIds = availabilityPolicy.playableSongIds(songs.values());
 
         for (QueueItem nextItem : waiting) {
-            if (!playableSongIds.contains(nextItem.getSongId())) {
+            Long songId = nextItem.getSongId();
+            if (songId == null || !playableSongIds.contains(songId)) {
                 nextItem.setStatus(QueueService.SKIPPED);
                 nextItem.setPlayedAt(OffsetDateTime.now());
                 queueRepo.save(nextItem);

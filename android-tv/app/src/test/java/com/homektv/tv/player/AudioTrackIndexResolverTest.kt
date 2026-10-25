@@ -52,4 +52,22 @@ class AudioTrackIndexResolverTest {
     fun noAudioTracksProducesNoSelection() {
         assertNull(resolveAudioTrackIndex(AudioLayout(layout = "DUAL_TRACK"), "original", 0, 0))
     }
+
+    @Test
+    fun roleNamesAreCaseInsensitiveAndUnknownRolesUseTheOriginalTrackFallback() {
+        val layout = AudioLayout(
+            layout = "DUAL_TRACK",
+            originalTrackIndex = 2,
+            accompanimentTrackIndex = 1,
+        )
+
+        assertEquals(2, resolveAudioTrackIndex(layout, "ORIGINAL", 3, legacyAccompanimentIndex = 0))
+        assertEquals(1, resolveAudioTrackIndex(layout, "AcCoMpAnImEnT", 3, legacyAccompanimentIndex = 0))
+        assertEquals(0, resolveAudioTrackIndex(layout, "unknown", 3, legacyAccompanimentIndex = null))
+    }
+
+    @Test
+    fun negativeAudioTrackCountProducesNoSelection() {
+        assertNull(resolveAudioTrackIndex(AudioLayout(layout = "DUAL_TRACK"), "accompaniment", -1, 0))
+    }
 }

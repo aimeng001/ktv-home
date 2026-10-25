@@ -20,6 +20,30 @@ import static org.mockito.Mockito.when;
 
 class SettingServiceTest {
 
+    private static final class MessageLessJsonProcessingException
+            extends com.fasterxml.jackson.core.JsonProcessingException {
+        private MessageLessJsonProcessingException() {
+            super("placeholder");
+        }
+
+        @Override
+        public String getMessage() {
+            return null;
+        }
+    }
+
+    private static final class BlankMessageJsonProcessingException
+            extends com.fasterxml.jackson.core.JsonProcessingException {
+        private BlankMessageJsonProcessingException() {
+            super("placeholder");
+        }
+
+        @Override
+        public String getMessage() {
+            return " \t ";
+        }
+    }
+
     private final SettingRepository repository = mock(SettingRepository.class);
     private final SettingService service = new SettingService(repository, new ObjectMapper());
 
@@ -29,6 +53,10 @@ class SettingServiceTest {
         Setting stored = new Setting(SettingService.EXTERNAL_DEFAULT_AUDIO_LAYOUT, "\"DUAL_CHANNEL\"");
         when(repository.findAll()).thenReturn(java.util.List.of(stored));
         assertThat(service.externalDefaultAudioLayout()).isEqualTo(AudioLayout.DUAL_CHANNEL);
+
+        when(repository.findAll()).thenReturn(List.of(
+                new Setting(SettingService.EXTERNAL_DEFAULT_AUDIO_LAYOUT, "\"unknown\"")));
+        assertThat(service.externalDefaultAudioLayout()).isEqualTo(AudioLayout.NORMAL_STEREO);
     }
 
     @Test
@@ -77,6 +105,86 @@ class SettingServiceTest {
     }
 
     @Test
+    void getEditableFiltersInvalidLegacyStandbyIdsAndPreservesValidOrder() throws Exception {
+        Setting stored = new Setting("standby_song_ids",
+                new ObjectMapper().writeValueAsString(java.util.Arrays.asList(-1, 0, 1.5, "3", null, 3, 2, 3)));
+        when(repository.findAll()).thenReturn(List.of(stored));
+
+        Object value = service.getEditable().get("standby_song_ids");
+
+        assertThat(value).isEqualTo(List.of(3L, 2L));
+    }
+
+    @Test
+    void getEditableNormalizesNonArrayStandbyIdsAndBlankLogoState() {
+        when(repository.findAll()).thenReturn(List.of(
+                new Setting("standby_song_ids", "{\"unexpected\":true}"),
+                new Setting("standby_logo_path", "\"  \"")));
+        when(repository.findById(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(java.util.Optional.empty());
+
+        Map<String, Object> editable = service.getEditable();
+
+        assertThat(editable.get("standby_song_ids")).isEqualTo(List.of());
+        assertThat(editable).containsEntry("standby_logo_configured", false);
+        Map<String, Object> payload = new java.util.HashMap<>(editable);
+        payload.remove("standby_logo_configured");
+        assertThatCode(() -> service.putEditable(payload)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void getEditableMarksANonBlankLogoAsConfigured() {
+        when(repository.findAll()).thenReturn(List.of(
+                new Setting("standby_logo_path", "\"/data/assets/logo.png\"")));
+
+        assertThat(service.getEditable()).containsEntry("standby_logo_configured", true);
+    }
+
+    @Test
+    void getEditableTreatsANullLogoPathAsNotConfigured() {
+        when(repository.findAll()).thenReturn(List.of(
+                new Setting("standby_logo_path", "null")));
+
+        assertThat(service.getEditable()).containsEntry("standby_logo_configured", false);
+    }
+
+    @Test
+    void putAllRejectsUnknownKeys() {
+        assertThatThrownBy(() -> service.putAll(Map.of("unknown_setting", true)))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_NOT_ALLOWED");
+        verify(repository, never()).save(org.mockito.ArgumentMatchers.any(Setting.class));
+    }
+
+    @Test
+    void putAllTreatsNullAsNoOpAndPersistsAValidStringSetting() {
+        service.putAll(null);
+        when(repository.findById("display_address")).thenReturn(java.util.Optional.empty());
+
+        service.putAll(Map.of("display_address", "living room"));
+
+        org.mockito.ArgumentCaptor<Setting> saved = org.mockito.ArgumentCaptor.forClass(Setting.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().getKey()).isEqualTo("display_address");
+        assertThat(saved.getValue().getValue()).isEqualTo("\"living room\"");
+    }
+
+    @Test
+    void getAllFiltersPrivateNamespacesAndKeepsMalformedLegacyValuesReadable() {
+        when(repository.findAll()).thenReturn(List.of(
+                new Setting("ai.api_key", "\"must-not-leak\""),
+                new Setting("music_sources.provider.token", "\"must-not-leak\""),
+                new Setting("display_address", "not-json"),
+                new Setting("room_host_user_id", "123")));
+
+        Map<String, Object> all = service.getAll();
+
+        assertThat(all).doesNotContainKeys("ai.api_key", "music_sources.provider.token");
+        assertThat(all).containsEntry("display_address", "not-json");
+        assertThat(all).containsEntry("room_host_user_id", 123);
+    }
+
+    @Test
     void failsTheWholeWriteWhenASettingCannotBeSerialized() throws Exception {
         ObjectMapper mapper = mock(ObjectMapper.class);
         when(mapper.writeValueAsString("bad-value"))
@@ -88,6 +196,36 @@ class SettingServiceTest {
         assertThatThrownBy(() -> service.putAll(Map.of("standby_welcome", "bad-value")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("设置序列化失败");
+        verify(repository, never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void serializationFailureWithoutMessageReportsTheExceptionType() throws Exception {
+        ObjectMapper mapper = mock(ObjectMapper.class);
+        when(mapper.writeValueAsString("bad-value"))
+                .thenThrow(new MessageLessJsonProcessingException());
+        SettingRepository repository = mock(SettingRepository.class);
+        when(repository.findById("standby_welcome")).thenReturn(java.util.Optional.empty());
+        SettingService service = new SettingService(repository, mapper);
+
+        assertThatThrownBy(() -> service.putAll(Map.of("standby_welcome", "bad-value")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("JsonProcessingException");
+        verify(repository, never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void serializationFailureWithBlankMessageReportsTheExceptionType() throws Exception {
+        ObjectMapper mapper = mock(ObjectMapper.class);
+        when(mapper.writeValueAsString("bad-value"))
+                .thenThrow(new BlankMessageJsonProcessingException());
+        SettingRepository repository = mock(SettingRepository.class);
+        when(repository.findById("standby_welcome")).thenReturn(java.util.Optional.empty());
+        SettingService service = new SettingService(repository, mapper);
+
+        assertThatThrownBy(() -> service.putAll(Map.of("standby_welcome", "bad-value")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("BlankMessageJsonProcessingException");
         verify(repository, never()).save(org.mockito.ArgumentMatchers.any());
     }
 
@@ -110,6 +248,14 @@ class SettingServiceTest {
         assertThatThrownBy(() -> service.putEditable(Map.of("standby_interval_sec", 3.5)))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo("SETTING_INVALID_RANGE"));
+
+        for (Object invalid : List.of(2, 61, "8")) {
+            assertThatThrownBy(() -> service.putEditable(Map.of("standby_interval_sec", invalid)))
+                    .isInstanceOf(ApiException.class)
+                    .satisfies(e -> assertThat(((ApiException) e).getCode()).isEqualTo("SETTING_INVALID_RANGE"));
+        }
+        assertThatCode(() -> service.putEditable(Map.of("standby_interval_sec", 3))).doesNotThrowAnyException();
+        assertThatCode(() -> service.putEditable(Map.of("standby_interval_sec", 60))).doesNotThrowAnyException();
     }
 
     @Test
@@ -123,5 +269,35 @@ class SettingServiceTest {
 
         assertThat(result).doesNotContainKey("room_host_user_id");
         assertThat(result).doesNotContainKey("standby_logo_path");
+    }
+
+    @Test
+    void transcodePolicyFallsBackForMalformedPersistedOptionsAndEnums() {
+        when(repository.findAll()).thenReturn(List.of(
+                new Setting("direct_copy_containers", "\"not-an-array\""),
+                new Setting("direct_copy_video_codecs", "[1,\"unsupported\"]"),
+                new Setting("direct_copy_audio_codecs", "[]"),
+                new Setting("transcode_output_container", "\"avi\""),
+                new Setting("transcode_video_codec", "\"vp9\""),
+                new Setting("transcode_audio_codec", "\"flac\""),
+                new Setting("transcode_audio_only", "\"yes\"")));
+
+        SettingService.TranscodePolicy policy = service.transcodePolicy();
+
+        assertThat(policy.directCopyContainers()).containsExactly("mp4", "m4v", "mkv");
+        assertThat(policy.directCopyVideoCodecs()).containsExactly("h264", "hevc");
+        assertThat(policy.directCopyAudioCodecs()).containsExactly("aac", "mp3");
+        assertThat(policy.outputContainer()).isEqualTo("mkv");
+        assertThat(policy.videoCodec()).isEqualTo("h264");
+        assertThat(policy.audioCodec()).isEqualTo("aac");
+        assertThat(policy.transcodeAudioOnly()).isFalse();
+    }
+
+    @Test
+    void directCopyPolicyNormalizesAndDeduplicatesSupportedOptions() {
+        when(repository.findAll()).thenReturn(List.of(
+                new Setting("direct_copy_containers", "[\" MKV \",\"mp4\",\"mkv\"]")));
+
+        assertThat(service.transcodePolicy().directCopyContainers()).containsExactly("mkv", "mp4");
     }
 }

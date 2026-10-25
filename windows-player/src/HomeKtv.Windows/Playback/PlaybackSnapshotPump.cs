@@ -20,7 +20,7 @@ public sealed class PlaybackSnapshotPump : IAsyncDisposable
         PlaybackSnapshotWork work,
         CancellationToken cancellationToken);
 
-    private sealed class WorkItem
+    internal sealed class WorkItem
     {
         public WorkItem(PlaybackSnapshotWork work, CancellationTokenSource cancellationSource)
         {
@@ -32,13 +32,45 @@ public sealed class PlaybackSnapshotPump : IAsyncDisposable
         public CancellationTokenSource CancellationSource { get; }
     }
 
-    private readonly Channel<WorkItem> channel = Channel.CreateBounded<WorkItem>(
-        new BoundedChannelOptions(1)
+    internal interface IWorkQueue
+    {
+        bool TryWrite(WorkItem item);
+        bool TryRead(out WorkItem item);
+        IAsyncEnumerable<WorkItem> ReadAllAsync(CancellationToken cancellationToken);
+        void Complete();
+    }
+
+    private sealed class ChannelWorkQueue : IWorkQueue
+    {
+        private readonly Channel<WorkItem> channel = Channel.CreateBounded<WorkItem>(
+            new BoundedChannelOptions(1)
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = true,
+                SingleWriter = false,
+            });
+
+        public bool TryWrite(WorkItem item) => channel.Writer.TryWrite(item);
+
+        public bool TryRead(out WorkItem item)
         {
-            FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = true,
-            SingleWriter = false,
-        });
+            if (channel.Reader.TryRead(out var readItem))
+            {
+                item = readItem;
+                return true;
+            }
+
+            item = null!;
+            return false;
+        }
+
+        public IAsyncEnumerable<WorkItem> ReadAllAsync(CancellationToken cancellationToken) =>
+            channel.Reader.ReadAllAsync(cancellationToken);
+
+        public void Complete() => channel.Writer.TryComplete();
+    }
+
+    private readonly IWorkQueue queue;
     private readonly ProjectionHandler projectionHandler;
     private readonly CancellationTokenSource lifetime = new();
     private readonly object stateLock = new();
@@ -51,8 +83,14 @@ public sealed class PlaybackSnapshotPump : IAsyncDisposable
     private readonly Task worker;
 
     public PlaybackSnapshotPump(ProjectionHandler projectionHandler)
+        : this(projectionHandler, new ChannelWorkQueue())
+    {
+    }
+
+    internal PlaybackSnapshotPump(ProjectionHandler projectionHandler, IWorkQueue queue)
     {
         this.projectionHandler = projectionHandler;
+        this.queue = queue;
         worker = RunAsync();
     }
 
@@ -79,9 +117,9 @@ public sealed class PlaybackSnapshotPump : IAsyncDisposable
                 idle = NewSignal();
             }
 
-            while (!channel.Writer.TryWrite(item))
+            while (!queue.TryWrite(item))
             {
-                if (!channel.Reader.TryRead(out var discarded))
+                if (!queue.TryRead(out var discarded))
                 {
                     Thread.Yield();
                     continue;
@@ -128,7 +166,7 @@ public sealed class PlaybackSnapshotPump : IAsyncDisposable
     {
         try
         {
-            await foreach (var item in channel.Reader.ReadAllAsync(lifetime.Token).ConfigureAwait(false))
+            await foreach (var item in queue.ReadAllAsync(lifetime.Token).ConfigureAwait(false))
             {
                 lock (stateLock)
                 {
@@ -161,7 +199,7 @@ public sealed class PlaybackSnapshotPump : IAsyncDisposable
                     {
                         if (ReferenceEquals(activeItem, item)) activeItem = null;
                         if (ReferenceEquals(latestItem, item)) latestItem = null;
-                        if (activeItem is null && queuedItem is null) idle.TrySetResult(true);
+                        if (queuedItem is null) idle.TrySetResult(true);
                     }
 
                     item.CancellationSource.Dispose();
@@ -176,13 +214,15 @@ public sealed class PlaybackSnapshotPump : IAsyncDisposable
         {
             lock (stateLock)
             {
-                while (channel.Reader.TryRead(out var remaining))
+                while (queue.TryRead(out var remaining))
                 {
-                    if (ReferenceEquals(queuedItem, remaining)) queuedItem = null;
-                    if (ReferenceEquals(latestItem, remaining)) latestItem = null;
                     remaining.CancellationSource.Dispose();
                 }
 
+                // The bounded single-slot queue can contain only queuedItem/latestItem.
+                // The pump is disposed here, so no newer state can be installed.
+                queuedItem = null;
+                latestItem = null;
                 activeItem = null;
                 idle.TrySetResult(true);
             }
@@ -196,7 +236,7 @@ public sealed class PlaybackSnapshotPump : IAsyncDisposable
             if (disposed) return;
             disposed = true;
             latestItem?.CancellationSource.Cancel();
-            channel.Writer.TryComplete();
+            queue.Complete();
             lifetime.Cancel();
         }
 

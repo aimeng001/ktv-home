@@ -25,4 +25,15 @@ describe('buildScrapeRoute', () => {
       query: undefined
     })
   })
+
+  it('filters falsey IDs and ignores a non-array input', () => {
+    expect(buildScrapeRoute([0, null, 12, false])).toEqual({
+      name: 'admin-metadata-scrape',
+      query: { songIds: '12' }
+    })
+    expect(buildScrapeRoute('12,34', true)).toEqual({
+      name: 'admin-metadata-scrape',
+      query: undefined
+    })
+  })
 })

@@ -48,6 +48,157 @@ public sealed class PlaybackCoordinatorTests
         Assert.Equal("http://server/api/stream/31?transcode=true&start=65.250", output.LoadedStreamUrls.Single());
         Assert.Equal(new[] { 1 }, output.AudioTrackIndices);
     }
+
+    [Fact]
+    public async Task Live_pipe_recovery_and_seek_reopen_at_absolute_positions_without_changing_queue_identity()
+    {
+        var output = new RecordingPlaybackOutput();
+        var source = FileSourceFor(AudioLayout.DUAL_TRACK, fileId: 31);
+        var descriptor = new PlaybackDescriptor(
+            "LIVE_TRANSCODE", "READY", 31, null,
+            "http://server/api/stream/31?token=local&transcode=true", 2, 1,
+            new AudioLayoutDto(AudioLayout.DUAL_TRACK, 0, 1), null, null);
+        var coordinator = new PlaybackCoordinator(
+            new ResolvingServerApi(source, descriptor), output, TimeSpan.Zero);
+
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot(
+            "accompaniment", queueId: 41, state: "paused", positionMs: 60_000,
+            seekSequence: 3, audioLayout: AudioLayout.DUAL_TRACK, playback: descriptor));
+        var firstOutput = Assert.IsType<ActiveOutputIdentity>(coordinator.ActiveOutput);
+
+        await coordinator.ApplySnapshotAsync("playback_seeked", Snapshot(
+            "accompaniment", queueId: 41, state: "paused", positionMs: 120_000,
+            seekSequence: 4, audioLayout: AudioLayout.DUAL_TRACK, playback: descriptor));
+
+        var restartedOutput = Assert.IsType<ActiveOutputIdentity>(coordinator.ActiveOutput);
+        Assert.Equal(new long[] { 31, 31 }, output.LoadedFileIds);
+        Assert.Equal(new[]
+        {
+            "http://server/api/stream/31?token=local&transcode=true&start=60.000",
+            "http://server/api/stream/31?token=local&transcode=true&start=120.000",
+        }, output.LoadedStreamUrls);
+        Assert.Equal(1, output.StopCount);
+        Assert.Empty(output.SeekPositions);
+        Assert.Equal(firstOutput.QueueId, restartedOutput.QueueId);
+        Assert.Equal(firstOutput.FileId, restartedOutput.FileId);
+        Assert.True(restartedOutput.Generation > firstOutput.Generation);
+        Assert.Equal(new[] { 1, 1 }, output.AudioTrackIndices);
+        Assert.Equal(new[] { (60, false), (60, false) }, output.VolumeChanges);
+        Assert.Equal(2, output.PauseCount);
+    }
+
+    [Fact]
+    public async Task Live_pipe_pause_resume_and_vocal_switch_do_not_reopen_or_seek()
+    {
+        var output = new RecordingPlaybackOutput();
+        var source = FileSourceFor(AudioLayout.DUAL_TRACK, fileId: 31);
+        var descriptor = new PlaybackDescriptor(
+            "LIVE_TRANSCODE", "READY", 31, null,
+            "http://server/api/stream/31?token=local&transcode=true", 2, 1,
+            new AudioLayoutDto(AudioLayout.DUAL_TRACK, 0, 1), null, null);
+        var coordinator = new PlaybackCoordinator(
+            new ResolvingServerApi(source, descriptor), output, TimeSpan.Zero);
+
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot(
+            "original", queueId: 41, state: "playing", positionMs: 60_000,
+            seekSequence: 3, audioLayout: AudioLayout.DUAL_TRACK, playback: descriptor));
+        var active = Assert.IsType<ActiveOutputIdentity>(coordinator.ActiveOutput);
+        await coordinator.ApplySnapshotAsync("player_state", Snapshot(
+            "original", queueId: 41, state: "paused", positionMs: 60_000,
+            seekSequence: 3, audioLayout: AudioLayout.DUAL_TRACK, playback: descriptor));
+        await coordinator.ApplySnapshotAsync("player_state", Snapshot(
+            "original", queueId: 41, state: "playing", positionMs: 60_000,
+            seekSequence: 3, audioLayout: AudioLayout.DUAL_TRACK, playback: descriptor));
+        await coordinator.ApplySnapshotAsync("vocal_changed", Snapshot(
+            "accompaniment", queueId: 41, state: "playing", positionMs: 60_000,
+            seekSequence: 3, audioLayout: AudioLayout.DUAL_TRACK, playback: descriptor));
+
+        Assert.Equal(1, output.LoadCount);
+        Assert.Equal(0, output.StopCount);
+        Assert.Empty(output.SeekPositions);
+        Assert.Equal(new[] { 0, 1 }, output.AudioTrackIndices);
+        Assert.Equal(new[] { (60, false) }, output.VolumeChanges);
+        Assert.Equal(active, coordinator.ActiveOutput);
+    }
+
+    [Fact]
+    public async Task Preparing_variant_that_disappears_falls_back_to_the_ready_native_source()
+    {
+        var output = new RecordingPlaybackOutput();
+        var source = FileSourceFor(AudioLayout.DUAL_TRACK, fileId: 10);
+        var api = new ResolvingServerApi(source, null);
+        var coordinator = new PlaybackCoordinator(api, output, TimeSpan.Zero);
+
+        await coordinator.ApplySnapshotAsync(
+            "sync_full",
+            Snapshot("accompaniment", audioLayout: AudioLayout.DUAL_TRACK,
+                playback: new PlaybackDescriptor("TRANSCODE", "PREPARING", 10, 88)));
+
+        Assert.Equal(1, api.ResolveCalls);
+        Assert.Equal(new long[] { 10 }, output.LoadedFileIds);
+        Assert.Equal("http://server/api/stream/10", output.LoadedStreamUrls.Single());
+        Assert.Equal(new[] { 1 }, output.AudioTrackIndices);
+    }
+
+    [Fact]
+    public async Task Ready_variant_without_audio_metadata_uses_the_selected_source_layout()
+    {
+        var output = new RecordingPlaybackOutput();
+        var source = FileSourceFor(AudioLayout.DUAL_TRACK, fileId: 10);
+        var descriptor = new PlaybackDescriptor(
+            "TRANSCODE", "READY", 10, 88,
+            "http://server/api/playback/stream/88", 0, null, null, null, null);
+        var coordinator = new PlaybackCoordinator(new ResolvingServerApi(source, descriptor), output);
+
+        await coordinator.ApplySnapshotAsync(
+            "sync_full",
+            Snapshot("accompaniment", audioLayout: AudioLayout.DUAL_TRACK, playback: descriptor));
+
+        Assert.Equal(new long[] { 88 }, output.LoadedFileIds);
+        Assert.Equal(new[] { 1 }, output.AudioTrackIndices);
+        Assert.Equal(new[] { ChannelMapMode.STEREO }, output.ChannelModes);
+    }
+
+    [Theory]
+    [InlineData(null, "服务器未能生成可播放的 MV 变体。")]
+    [InlineData("synthetic encoder failure", "synthetic encoder failure")]
+    public async Task Failed_transcode_preserves_server_error_or_uses_a_safe_default(
+        string? errorMessage,
+        string expectedMessage)
+    {
+        var output = new RecordingPlaybackOutput();
+        var source = FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 10);
+        var descriptor = new PlaybackDescriptor(
+            "TRANSCODE", "FAILED", 10, 88, ErrorMessage: errorMessage);
+        var coordinator = new PlaybackCoordinator(new ResolvingServerApi(source, descriptor), output);
+
+        var exception = await Assert.ThrowsAsync<PlaybackAttemptException>(() =>
+            coordinator.ApplySnapshotAsync("sync_full", Snapshot("original", playback: descriptor)));
+
+        Assert.Equal(PlaybackFailureKind.TranscodeFailure, exception.FailureKind);
+        Assert.Equal(expectedMessage, exception.Message);
+        Assert.Empty(output.LoadedFileIds);
+        Assert.Equal(1, output.StopCount);
+        Assert.Null(coordinator.ActiveOutput);
+    }
+
+    [Fact]
+    public async Task Regular_transcode_ready_without_variant_identity_fails_closed()
+    {
+        var output = new RecordingPlaybackOutput();
+        var source = FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 10);
+        var descriptor = new PlaybackDescriptor(
+            "TRANSCODE", "READY", 10, null, "http://server/api/playback/stream/unknown");
+        var coordinator = new PlaybackCoordinator(new ResolvingServerApi(source, descriptor), output);
+
+        var exception = await Assert.ThrowsAsync<PlaybackAttemptException>(() =>
+            coordinator.ApplySnapshotAsync("sync_full", Snapshot("original", playback: descriptor)));
+
+        Assert.Equal(PlaybackFailureKind.TranscodeFailure, exception.FailureKind);
+        Assert.Equal("MV 变体缺少播放标识。", exception.Message);
+        Assert.Empty(output.LoadedFileIds);
+        Assert.Equal(1, output.StopCount);
+    }
     [Fact]
     public async Task Preparing_playback_waits_until_ready_beyond_two_minutes()
     {
@@ -63,6 +214,30 @@ public sealed class PlaybackCoordinatorTests
         Assert.Equal(new long[] { 88 }, output.LoadedFileIds);
         Assert.Equal(121, api.ResolveCalls);
     }    [Fact]
+    public async Task Preparing_playback_uses_a_configured_nonzero_poll_delay()
+    {
+        var output = new RecordingPlaybackOutput();
+        var source = FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 10);
+        var api = new SlowPreparingServerApi(source, preparingResponses: 1);
+        var coordinator = new PlaybackCoordinator(api, output, TimeSpan.FromMilliseconds(1));
+
+        await coordinator.ApplySnapshotAsync(
+            "sync_full",
+            Snapshot("original", playback: new PlaybackDescriptor("TRANSCODE", "PREPARING", 10, 88)));
+
+        Assert.Equal(2, api.ResolveCalls);
+        Assert.Equal(new long[] { 88 }, output.LoadedFileIds);
+    }
+
+    [Fact]
+    public void Negative_poll_delay_is_rejected()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new PlaybackCoordinator(new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO)),
+                new RecordingPlaybackOutput(), TimeSpan.FromTicks(-1)));
+    }
+
+    [Fact]
     public async Task Vocal_change_on_same_queue_does_not_reload_or_seek()
     {
         var output = new RecordingPlaybackOutput();
@@ -120,6 +295,19 @@ public sealed class PlaybackCoordinatorTests
         await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original"));
 
         Assert.Equal(1L, coordinator.ActiveOutputQueueId);
+    }
+
+    [Fact]
+    public async Task Active_queue_lookup_rejects_a_stale_output_generation()
+    {
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO)), new RecordingPlaybackOutput());
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original"));
+        var active = Assert.IsType<ActiveOutputIdentity>(coordinator.ActiveOutput);
+
+        Assert.True(coordinator.TryGetActiveQueueId(active, out var queueId));
+        Assert.Equal(1L, queueId);
+        Assert.False(coordinator.TryGetActiveQueueId(active with { Generation = active.Generation + 1 }, out _));
     }
 
     [Fact]
@@ -210,6 +398,30 @@ public sealed class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public async Task Missing_playing_queue_or_song_identity_stops_the_current_projection()
+    {
+        var invalidSnapshots = new[]
+        {
+            Snapshot("original") with { Playing = null },
+            Snapshot("original") with { Playing = new NowPlaying(null, new SongDto(100, "Song", "Artist"), null) },
+            Snapshot("original") with { Playing = new NowPlaying(1, null, null) },
+        };
+
+        foreach (var invalidSnapshot in invalidSnapshots)
+        {
+            var output = new RecordingPlaybackOutput();
+            var coordinator = new PlaybackCoordinator(
+                new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO)), output);
+            await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original"));
+
+            await coordinator.ApplySnapshotAsync("player_state", invalidSnapshot);
+
+            Assert.Equal(1, output.StopCount);
+            Assert.Null(coordinator.ActiveOutput);
+        }
+    }
+
+    [Fact]
     public async Task Paused_snapshot_pauses_without_reloading_the_current_media()
     {
         var output = new RecordingPlaybackOutput();
@@ -291,6 +503,68 @@ public sealed class PlaybackCoordinatorTests
 
         Assert.Equal(401, exception.StatusCode);
         Assert.Equal(1, output.StopCount);
+        Assert.Null(coordinator.ActiveOutput);
+    }
+
+    [Fact]
+    public async Task Output_playback_failure_keeps_its_domain_identity_instead_of_being_wrapped()
+    {
+        var source = FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 10);
+        var domainFailure = new PlaybackAttemptException(
+            1, 10, "synthetic output playback failure", PlaybackFailureKind.OutputFailure);
+        var output = new DomainFailingPlaybackOutput(domainFailure);
+        var coordinator = new PlaybackCoordinator(new FakeServerApi(source), output);
+
+        var thrown = await Assert.ThrowsAsync<PlaybackAttemptException>(() =>
+            coordinator.ApplySnapshotAsync("sync_full", Snapshot("original")));
+
+        Assert.Same(domainFailure, thrown);
+        Assert.Equal(1, output.StopCount);
+        Assert.Null(coordinator.ActiveOutput);
+    }
+
+    [Fact]
+    public async Task Invalidate_uses_the_output_fence_when_the_renderer_provides_one()
+    {
+        var output = new FencedRecordingPlaybackOutput();
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO)), output);
+        await coordinator.ApplySnapshotAsync("sync_full", Snapshot("original"));
+
+        await coordinator.InvalidateOutputProjectionAsync();
+
+        Assert.Equal(1, output.FenceStopCount);
+        Assert.Equal(0, output.StopCount);
+        Assert.Null(coordinator.ActiveOutput);
+    }
+
+    [Fact]
+    public async Task Superseded_work_is_rejected_even_when_its_token_is_not_cancelled()
+    {
+        var output = new RecordingPlaybackOutput();
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO)), output);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => coordinator.ApplySnapshotAsync(
+            "sync_full", Snapshot("original"), CancellationToken.None, static () => false));
+
+        Assert.Empty(output.LoadedFileIds);
+        Assert.Equal(0, output.PlayCount);
+    }
+
+    [Fact]
+    public async Task Superseded_output_failure_does_not_stop_the_newer_projection()
+    {
+        var isCurrent = true;
+        var output = new SupersededFailingLoadOutput(() => isCurrent = false) { ThrowOnLoad = true };
+        var coordinator = new PlaybackCoordinator(
+            new FakeServerApi(FileSourceFor(AudioLayout.NORMAL_STEREO)), output);
+
+        var exception = await Assert.ThrowsAsync<PlaybackAttemptException>(() => coordinator.ApplySnapshotAsync(
+            "sync_full", Snapshot("original"), CancellationToken.None, () => isCurrent));
+
+        Assert.Equal(PlaybackFailureKind.OutputFailure, exception.FailureKind);
+        Assert.Equal(0, output.StopCount);
         Assert.Null(coordinator.ActiveOutput);
     }
 
@@ -400,6 +674,24 @@ public sealed class PlaybackCoordinatorTests
 
         Assert.Empty(output.LoadedFileIds);
         Assert.Empty(api.RequestedStreams);
+    }
+
+    [Fact]
+    public async Task Idle_playback_descriptor_without_a_resolved_stream_fails_closed()
+    {
+        var output = new RecordingPlaybackOutput();
+        var source = FileSourceFor(AudioLayout.NORMAL_STEREO, fileId: 10);
+        var descriptor = new PlaybackDescriptor("TRANSCODE", "IDLE", 10, 88);
+        var api = new ResolvingServerApi(source, descriptor);
+        var coordinator = new PlaybackCoordinator(api, output, TimeSpan.Zero);
+
+        var exception = await Assert.ThrowsAsync<PlaybackAttemptException>(() =>
+            coordinator.ApplySnapshotAsync("sync_full", Snapshot("original", playback: descriptor)));
+
+        Assert.Equal(1, api.ResolveCalls);
+        Assert.Equal(PlaybackFailureKind.SourceUnavailable, exception.FailureKind);
+        Assert.Equal("服务器没有返回可播放的媒体地址。", exception.Message);
+        Assert.Empty(output.LoadedFileIds);
     }
 
     /** An older server omits the ready flag; the client must keep working. */
@@ -515,8 +807,10 @@ public sealed class PlaybackCoordinatorTests
     }
     private sealed class ResolvingServerApi(
         FileSource source,
-        PlaybackDescriptor readyDescriptor) : IPlaybackServerApi
+        PlaybackDescriptor? readyDescriptor) : IPlaybackServerApi
     {
+        public int ResolveCalls { get; private set; }
+
         public Task<SongDetail?> GetSongDetailAsync(long songId, CancellationToken cancellationToken = default)
             => Task.FromResult<SongDetail?>(new SongDetail(
                 songId, "Song", "Artist", "AUDIO", false, 100_000, "none", null, null,
@@ -526,7 +820,10 @@ public sealed class PlaybackCoordinatorTests
 
         public Task<PlaybackDescriptor?> ResolvePlaybackAsync(
             long fileId, bool forceTranscode, CancellationToken cancellationToken = default)
-            => Task.FromResult<PlaybackDescriptor?>(readyDescriptor);
+        {
+            ResolveCalls++;
+            return Task.FromResult(readyDescriptor);
+        }
     }
     private sealed class FakeServerApi(params FileSource[] files) : IPlaybackServerApi
     {
@@ -573,7 +870,7 @@ public sealed class PlaybackCoordinatorTests
         public string StreamUrl(long fileId) => $"http://server/api/stream/{fileId}";
     }
 
-    private sealed class RecordingPlaybackOutput : IPlaybackOutput
+    private class RecordingPlaybackOutput : IPlaybackOutput
     {
         public int LoadCount { get; private set; }
         public int SeekCount => SeekPositions.Count;
@@ -589,7 +886,7 @@ public sealed class PlaybackCoordinatorTests
         public List<ChannelMapMode> ChannelModes { get; } = new();
         public List<(int Volume, bool Muted)> VolumeChanges { get; } = new();
 
-        public Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default)
+        public virtual Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default)
         {
             if (ThrowOnLoad || ThrowOnNextLoad)
             {
@@ -643,6 +940,32 @@ public sealed class PlaybackCoordinatorTests
             ChannelModes.Add(mode);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class FencedRecordingPlaybackOutput : RecordingPlaybackOutput, IPlaybackOutputFence
+    {
+        public int FenceStopCount { get; private set; }
+
+        public Task StopIfRunningAsync(CancellationToken cancellationToken = default)
+        {
+            FenceStopCount++;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class SupersededFailingLoadOutput(Action markSuperseded) : RecordingPlaybackOutput
+    {
+        public override Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default)
+        {
+            markSuperseded();
+            return base.LoadAsync(streamUrl, fileId, cancellationToken);
+        }
+    }
+
+    private sealed class DomainFailingPlaybackOutput(PlaybackAttemptException failure) : RecordingPlaybackOutput
+    {
+        public override Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default) =>
+            Task.FromException(failure);
     }
 
     private sealed class SupersededLoadOutput : IPlaybackOutput

@@ -2,6 +2,7 @@ package com.homektv.musicsource;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -18,8 +19,13 @@ public class QqMusicMetadataProvider implements MusicMetadataProvider {
     private static final String HOST = "https://c.y.qq.com";
     private final MusicSourceHttp http;
 
+    @Autowired
     public QqMusicMetadataProvider(ObjectMapper mapper, ProviderCallGuard guard) {
-        this.http = new MusicSourceHttp(mapper, MusicProvider.QQ, Set.of("c.y.qq.com"), guard);
+        this(new MusicSourceHttp(mapper, MusicProvider.QQ, Set.of("c.y.qq.com"), guard));
+    }
+
+    QqMusicMetadataProvider(MusicSourceHttp http) {
+        this.http = http;
     }
 
     @Override public MusicProvider provider() { return MusicProvider.QQ; }
@@ -60,8 +66,9 @@ public class QqMusicMetadataProvider implements MusicMetadataProvider {
             if (albumMid == null && album.isObject()) albumMid = ProviderJson.text(album, "mid", 160);
             String cover = albumMid == null ? null : ProviderJson.https(
                     "https://y.gtimg.cn/music/photo_new/T002R300x300M000" + albumMid + ".jpg", "y.gtimg.cn");
-            Integer duration = song.has("interval") ? song.path("interval").asInt() * 1000
-                    : (song.has("duration") ? song.path("duration").asInt() * 1000 : null);
+            Integer duration = null;
+            if (song.has("interval")) duration = song.path("interval").asInt() * 1000;
+            else if (song.has("duration")) duration = song.path("duration").asInt() * 1000;
             String release = null;
             long pubtime = song.path("pubtime").asLong(0);
             if (pubtime > 0) release = Instant.ofEpochSecond(pubtime).atZone(ZoneOffset.UTC).toLocalDate().toString();

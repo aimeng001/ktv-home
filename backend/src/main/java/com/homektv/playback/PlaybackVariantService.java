@@ -6,13 +6,13 @@ import com.homektv.domain.PlaybackVariantProfile;
 import com.homektv.domain.PlaybackVariantStatus;
 import com.homektv.domain.SongFile;
 import com.homektv.library.LibraryModePolicy;
-import com.homektv.library.SongAvailabilityPolicy;
+import com.homektv.library.MediaProbeStage;
 import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
+import com.homektv.resource.ResourceBudget;
 import com.homektv.repo.PlaybackVariantRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.web.ApiException;
-import com.homektv.web.dto.PlaybackDescriptor;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,7 +20,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.BufferedInputStream;
@@ -37,9 +36,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -47,8 +44,8 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Resolves a source file to a native stream or a server-generated H.264/AAC
- * sidecar. Source files are only read; all writes go below app.data-path.
+ * Retains legacy playback-variant reads and job compatibility. Current source
+ * selection is handled by PlaybackResolutionService.
  */
 @Service
 public class PlaybackVariantService {
@@ -56,7 +53,6 @@ public class PlaybackVariantService {
     private static final Logger log = LoggerFactory.getLogger(PlaybackVariantService.class);
     private static final int MAX_PROCESS_OUTPUT = 64 * 1024;
     private static final Duration OUTPUT_DRAIN_TIMEOUT = Duration.ofSeconds(5);
-    private static final Set<String> UNSUPPORTED_CONTAINERS = Set.of("rm", "rmvb", "realmedia");
     private static final long DEFAULT_MAX_CACHE_BYTES = 20L * 1024 * 1024 * 1024;
     private static final Duration STREAM_LEASE = Duration.ofMinutes(10);
 
@@ -67,30 +63,29 @@ public class PlaybackVariantService {
 
     private final SongFileRepository files;
     private final PlaybackVariantRepository variants;
-    private final FFprobeService ffprobe;
+    private final MediaProbeStage mediaProbeStage;
     private final AppProperties props;
     private final String ffmpegPath;
     private final Duration timeout;
-    private final Executor executor;
     private final ExecutorService ownedExecutor;
     private final long maxCacheBytes;
     private final ProcessLauncher processLauncher;
-    private final ConcurrentHashMap<Long, Boolean> activeJobs = new ConcurrentHashMap<>();
 
     @Autowired
     public PlaybackVariantService(SongFileRepository files,
                                   PlaybackVariantRepository variants,
-                                  FFprobeService ffprobe,
+                                  MediaProbeStage mediaProbeStage,
                                   AppProperties props,
                                   @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath,
                                   @Value("${app.transcode.timeout-seconds:1800}") long timeoutSeconds,
                                   @Value("${app.playback-cache.max-bytes:21474836480}") long maxCacheBytes) {
-        this(files, variants, ffprobe, props, ffmpegPath,
+        this(files, variants, mediaProbeStage, props, ffmpegPath,
                 Executors.newFixedThreadPool(2, Thread.ofVirtual().factory()),
                 true, PlaybackVariantService::startProcess,
                 Duration.ofSeconds(timeoutSeconds), maxCacheBytes);
     }
 
+    /** Compatibility constructor for isolated legacy tests. */
     PlaybackVariantService(SongFileRepository files,
                            PlaybackVariantRepository variants,
                            FFprobeService ffprobe,
@@ -99,12 +94,38 @@ public class PlaybackVariantService {
                            Executor executor,
                            ProcessLauncher processLauncher,
                            Duration timeout) {
-        this(files, variants, ffprobe, props, ffmpegPath, executor, false, processLauncher, timeout, DEFAULT_MAX_CACHE_BYTES);
+        this(files, variants, standaloneProbeStage(ffprobe), props, ffmpegPath, executor, false,
+                processLauncher, timeout, DEFAULT_MAX_CACHE_BYTES);
+    }
+
+    PlaybackVariantService(SongFileRepository files,
+                           PlaybackVariantRepository variants,
+                           MediaProbeStage mediaProbeStage,
+                           AppProperties props,
+                           String ffmpegPath,
+                           Executor executor,
+                           ProcessLauncher processLauncher,
+                           Duration timeout) {
+        this(files, variants, mediaProbeStage, props, ffmpegPath, executor,
+                processLauncher, timeout, DEFAULT_MAX_CACHE_BYTES);
+    }
+
+    PlaybackVariantService(SongFileRepository files,
+                           PlaybackVariantRepository variants,
+                           MediaProbeStage mediaProbeStage,
+                           AppProperties props,
+                           String ffmpegPath,
+                           Executor executor,
+                           ProcessLauncher processLauncher,
+                           Duration timeout,
+                           long maxCacheBytes) {
+        this(files, variants, mediaProbeStage, props, ffmpegPath, executor, false,
+                processLauncher, timeout, maxCacheBytes);
     }
 
     private PlaybackVariantService(SongFileRepository files,
                                    PlaybackVariantRepository variants,
-                                   FFprobeService ffprobe,
+                                   MediaProbeStage mediaProbeStage,
                                    AppProperties props,
                                    String ffmpegPath,
                                    Executor executor,
@@ -117,49 +138,24 @@ public class PlaybackVariantService {
         }
         this.files = files;
         this.variants = variants;
-        this.ffprobe = ffprobe;
+        this.mediaProbeStage = java.util.Objects.requireNonNull(mediaProbeStage, "mediaProbeStage");
         this.props = props;
         this.ffmpegPath = ffmpegPath;
-        this.executor = executor;
-        this.ownedExecutor = owned && executor instanceof ExecutorService service ? service : null;
+        // Only the Spring constructor sets owned=true, and it supplies a fixed-thread-pool ExecutorService.
+        this.ownedExecutor = owned ? (ExecutorService) executor : null;
         this.processLauncher = processLauncher;
         this.timeout = timeout;
         if (maxCacheBytes <= 0) throw new IllegalArgumentException("playback cache max bytes must be positive");
         this.maxCacheBytes = maxCacheBytes;
     }
 
-    /**
-     * Resolve one source file. forceTranscode is used after a client reports an
-     * unsupported video track; it never changes the original SongFile row.
-     */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public PlaybackDescriptor resolve(Long sourceFileId, boolean forceTranscode) {
-        return resolve(sourceFileId, forceTranscode, false);
-    }
-
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public PlaybackDescriptor resolve(Long sourceFileId, boolean forceTranscode, boolean retryFailed) {
-        SongFile source = files.findById(sourceFileId).orElseThrow(
-                () -> new ApiException("FILE_NOT_FOUND", "歌曲文件不存在"));
-        if (!SongAvailabilityPolicy.isReadyMediaFile(source)) {
-            throw new ApiException(SongAvailabilityPolicy.SONG_NOT_READY, "媒体探测尚未完成");
-        }
-        if (!forceTranscode) return PlaybackDescriptor.nativeSource(source);
-        if (!"MV".equalsIgnoreCase(source.getMediaType())
-                && !"KTV_VIDEO".equalsIgnoreCase(source.getMediaType())) {
-            throw new ApiException("LIVE_TRANSCODE_VIDEO_REQUIRED", "仅视频媒体支持实时转码回退");
-        }
-        return PlaybackDescriptor.liveTranscode(source);
-    }
-
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public PlaybackDescriptor resolve(Long sourceFileId) {
-        return resolve(sourceFileId, false, false);
+    private static MediaProbeStage standaloneProbeStage(FFprobeService ffprobe) {
+        return new MediaProbeStage(ffprobe, new ResourceBudget(2, 1, 4, () -> false));
     }
 
     /** Resolve a cache path only after a READY row has been persisted. */
     public Path readableCachePath(PlaybackVariant variant) {
-        if (variant == null || !variant.isReady() || variant.getCachePath() == null) {
+        if (variant == null || !variant.isReady()) {
             throw new ApiException("PLAYBACK_NOT_READY", "播放变体尚未就绪");
         }
         Path root = cacheRoot();
@@ -181,7 +177,7 @@ public class PlaybackVariantService {
         }
     }
 
-    private void ensureCacheCapacity(long requiredBytes, Long keepVariantId) {
+    private void ensureCacheCapacity(long requiredBytes, long keepVariantId) {
         Path root = cacheRoot();
         try {
             Files.createDirectories(root);
@@ -206,7 +202,7 @@ public class PlaybackVariantService {
         List<PlaybackVariant> victims = new java.util.ArrayList<>(ready);
         victims.sort(java.util.Comparator.comparing(this::lastAccessOrReady));
         for (PlaybackVariant victim : victims) {
-            if (keepVariantId != null && keepVariantId.equals(victim.getId())) continue;
+            if (keepVariantId == victim.getId()) continue;
             if (victim.hasActiveStreamLease(now)) continue;
             Path path = safeCachePath(root, victim.getCachePath());
             long size = 0;
@@ -234,7 +230,7 @@ public class PlaybackVariantService {
     }
 
     private Path safeCachePath(Path root, String relativePath) {
-        if (relativePath == null || relativePath.isBlank()) return null;
+        // ensureCacheCapacity filters null and blank cache paths before calling this helper.
         Path candidate = root.resolve(relativePath).normalize();
         if (!candidate.startsWith(root) || !Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)) return null;
         try {
@@ -261,96 +257,29 @@ public class PlaybackVariantService {
         }
     }
 
-    /** Recovers abandoned jobs and bounds sidecar disk use without touching source files. */
+    /** Reconciles expired legacy jobs without creating or deleting historical cache files. */
     @Scheduled(
             fixedDelayString = "${app.playback-cache.cleanup-ms:900000}",
             initialDelayString = "${app.playback-cache.cleanup-initial-delay-ms:60000}")
     @Transactional
     public void cleanupCache() {
         try {
-            Path root = cacheRoot();
-            Files.createDirectories(root);
             OffsetDateTime now = OffsetDateTime.now();
-            List<PlaybackVariant> all = variants.findAll();
-            Set<String> referenced = new java.util.HashSet<>();
-            Set<String> activeParts = new java.util.HashSet<>();
-            for (PlaybackVariant variant : all) {
+            for (PlaybackVariant variant : variants.findAll()) {
                 if (variant.getStatus() == PlaybackVariantStatus.PREPARING
                         && (variant.getLeaseUntil() == null || variant.getLeaseUntil().isBefore(now))) {
                     variant.setStatus(PlaybackVariantStatus.STALE);
                     variants.save(variant);
                 }
-                if (variant.getStatus() == PlaybackVariantStatus.READY && variant.getCachePath() != null) {
-                    referenced.add(Path.of(variant.getCachePath()).getFileName().toString());
-                }
-                if (variant.getStatus() == PlaybackVariantStatus.PREPARING
-                        && variant.getLeaseUntil() != null && variant.getLeaseUntil().isAfter(now)
-                        && variant.getId() != null) {
-                    activeParts.add(variant.getId() + ".part");
-                }
             }
-            try (var paths = Files.list(root)) {
-                paths.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)).forEach(path -> {
-                    try {
-                        String name = path.getFileName().toString();
-                        if (name.endsWith(".part")) {
-                            var age = Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS).toInstant();
-                            if (!activeParts.contains(name) && age.isBefore(java.time.Instant.now().minus(Duration.ofHours(1)))) {
-                                Files.deleteIfExists(path);
-                            }
-                        } else if (!referenced.contains(name)) {
-                            Files.deleteIfExists(path);
-                        }
-                    } catch (IOException e) {
-                        log.debug("Unable to clean playback cache file {}: {}", path, e.getMessage());
-                    }
-                });
-            }
-            ensureCacheCapacity(0, null);
         } catch (Exception e) {
-            log.warn("Playback cache cleanup failed: {}", e.getMessage());
+            log.warn("Legacy playback job reconciliation failed: {}", e.getMessage());
         }
     }
     Path cacheRoot() {
         Path root = Path.of(props.getDataPath()).resolve("playback-cache").toAbsolutePath().normalize();
         LibraryModePolicy.requireCacheOutsideExternalSource(props, root);
         return root;
-    }
-
-    private void submitJobAfterCommit(Long variantId) {
-        if (variantId == null || activeJobs.putIfAbsent(variantId, Boolean.TRUE) != null) return;
-        Runnable submit = () -> {
-            try {
-                executor.execute(() -> {
-                    try {
-                        transcodeVariant(variantId);
-                    } finally {
-                        activeJobs.remove(variantId);
-                    }
-                });
-            } catch (RuntimeException rejected) {
-                activeJobs.remove(variantId);
-                throw rejected;
-            }
-        };
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                    new org.springframework.transaction.support.TransactionSynchronization() {
-                        @Override
-                        public void afterCommit() {
-                            submit.run();
-                        }
-
-                        @Override
-                        public void afterCompletion(int status) {
-                            if (status != org.springframework.transaction.support.TransactionSynchronization.STATUS_COMMITTED) {
-                                activeJobs.remove(variantId);
-                            }
-                        }
-                    });
-        } else {
-            submit.run();
-        }
     }
 
     void transcodeVariant(Long variantId) {
@@ -380,7 +309,7 @@ public class PlaybackVariantService {
             if (result.exitCode() != 0 || !Files.isRegularFile(temp) || Files.size(temp) <= 0) {
                 throw new ApiException("TRANSCODE_FAILED", result.output().isBlank() ? "MV 转码失败" : result.output());
             }
-            MediaProbe outputProbe = ffprobe.probe(temp);
+            MediaProbe outputProbe = mediaProbeStage.probeRequired(temp);
             validateOutput(source, outputProbe);
             ensureCacheCapacity(Files.size(temp), variant.getId());
             moveAtomically(temp, output);
@@ -416,30 +345,11 @@ public class PlaybackVariantService {
         }
     }
 
-    private boolean isCacheFileValid(PlaybackVariant variant) {
-        try {
-            readableCachePath(variant);
-            return Files.size(cacheRoot().resolve(variant.getCachePath())) == variant.getFileSize();
-        } catch (RuntimeException | IOException ignored) {
-            return false;
-        }
-    }
-
     private Path readableSource(SongFile source) {
         if (source.getFilePath() == null || source.getFilePath().isBlank()) {
             throw new ApiException("FILE_NOT_FOUND", "媒体路径为空");
         }
         return LibraryModePolicy.requireReadablePathInsideActiveLibrary(props, Path.of(source.getFilePath()));
-    }
-
-    public boolean requiresSidecar(SongFile source) {
-        return false;
-    }
-
-    private static boolean requiresVariant(SongFile source) {
-        String format = source.getFormat() == null ? "" : source.getFormat().trim().toLowerCase();
-        String path = source.getFilePath() == null ? "" : source.getFilePath().toLowerCase();
-        return UNSUPPORTED_CONTAINERS.stream().anyMatch(value -> format.contains(value) || path.endsWith("." + value));
     }
 
     private String cacheFileName(PlaybackVariant variant) {

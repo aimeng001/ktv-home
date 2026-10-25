@@ -3,6 +3,7 @@ package com.homektv.repo;
 import com.homektv.domain.PlayerState;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
+import com.homektv.queue.SnapshotService;
 import com.homektv.library.JdbcLibraryScanSeenPathStore;
 import com.homektv.library.CategoryBrowseService;
 import com.homektv.library.ArtistDirectoryProjectionService;
@@ -13,18 +14,28 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.OffsetDateTime;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.doAnswer;
 
 /**
  * 用真实 PostgreSQL（Testcontainers）验证：
@@ -61,14 +72,20 @@ class PersistenceIntegrationTest {
     @Autowired
     private PlaybackVariantRepository playbackVariantRepository;
 
-    @Autowired
+    @SpyBean
     private PlayerStateRepository playerStateRepository;
+
+    @Autowired
+    private SnapshotService snapshotService;
 
     @Autowired
     private SongMergeService songMergeService;
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private JdbcLibraryScanSeenPathStore scanSeenPathStore;
@@ -95,6 +112,152 @@ class PersistenceIntegrationTest {
         assertThat(ps.getState()).isEqualTo("idle");
         assertThat(ps.getVolume()).isEqualTo(60);
         assertThat(ps.getVocalMode()).isEqualTo("accompaniment");
+    }
+
+    @Test
+    void snapshotReadsPlayerAndQueueFromOneCommittedPostgresView() throws Exception {
+        String suffix = UUID.randomUUID().toString();
+        Song queuedSong = songRepository.save(song("快照事务歌曲-" + suffix, "事务测试", "snapshot-tx-" + suffix));
+        Long queueId = jdbc.queryForObject(
+                "INSERT INTO queue (song_id, order_index, status) VALUES (?, 1, 'waiting') RETURNING id",
+                Long.class, queuedSong.getId());
+        int originalVolume = jdbc.queryForObject("SELECT volume FROM player_state WHERE id = 1", Integer.class);
+        String originalState = jdbc.queryForObject("SELECT state FROM player_state WHERE id = 1", String.class);
+        CountDownLatch playerRowRead = new CountDownLatch(1);
+        CountDownLatch releaseSnapshotRead = new CountDownLatch(1);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        doAnswer(invocation -> {
+            PlayerState state = (PlayerState) invocation.callRealMethod();
+            if (Thread.currentThread().getName().equals("postgres-snapshot-reader")) {
+                playerRowRead.countDown();
+                if (!releaseSnapshotRead.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Timed out waiting to resume PostgreSQL snapshot read");
+                }
+            }
+            return state;
+        }).when(playerStateRepository).getSingleton();
+
+        Future<com.homektv.web.dto.QueueSnapshot> snapshotFuture = null;
+        try {
+            snapshotFuture = executor.submit(() -> {
+                Thread.currentThread().setName("postgres-snapshot-reader");
+                return snapshotService.snapshot();
+            });
+            assertThat(playerRowRead.await(10, TimeUnit.SECONDS)).isTrue();
+
+            TransactionTemplate writer = new TransactionTemplate(transactionManager);
+            writer.executeWithoutResult(status -> {
+                jdbc.update("UPDATE player_state SET volume = 90, state = 'paused' WHERE id = 1");
+                jdbc.update("UPDATE queue SET status = 'done' WHERE id = ?", queueId);
+            });
+
+            releaseSnapshotRead.countDown();
+            var snapshot = snapshotFuture.get(10, TimeUnit.SECONDS);
+
+            assertThat(snapshot.volume()).isEqualTo(originalVolume);
+            assertThat(snapshot.state()).isEqualTo(originalState);
+            assertThat(snapshot.list()).extracting(entry -> entry.queueId()).contains(queueId);
+        } finally {
+            releaseSnapshotRead.countDown();
+            executor.shutdownNow();
+            executor.awaitTermination(10, TimeUnit.SECONDS);
+            jdbc.update("DELETE FROM queue WHERE id = ?", queueId);
+            jdbc.update("UPDATE player_state SET volume = ?, state = ? WHERE id = 1", originalVolume, originalState);
+            songRepository.deleteById(queuedSong.getId());
+        }
+    }
+
+    @Test
+    void overlappingPostgresSnapshotsKeepRevisionAndCapturedVolumeInTheSameOrder() throws Exception {
+        int originalVolume = jdbc.queryForObject("SELECT volume FROM player_state WHERE id = 1", Integer.class);
+        String originalState = jdbc.queryForObject("SELECT state FROM player_state WHERE id = 1", String.class);
+        jdbc.update("UPDATE player_state SET volume = 10, state = 'idle' WHERE id = 1");
+        CountDownLatch firstCallBeforeRead = new CountDownLatch(1);
+        CountDownLatch releaseFirstCall = new CountDownLatch(1);
+        CountDownLatch secondReadCaptured = new CountDownLatch(1);
+        CountDownLatch releaseSecondCall = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        doAnswer(invocation -> {
+            String threadName = Thread.currentThread().getName();
+            if (threadName.equals("postgres-snapshot-A")) {
+                firstCallBeforeRead.countDown();
+                if (!releaseFirstCall.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Timed out waiting to start the first player-state read");
+                }
+                return invocation.callRealMethod();
+            }
+            PlayerState state = (PlayerState) invocation.callRealMethod();
+            if (threadName.equals("postgres-snapshot-B")) {
+                secondReadCaptured.countDown();
+                if (!releaseSecondCall.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Timed out waiting to finish the second snapshot");
+                }
+            }
+            return state;
+        }).when(playerStateRepository).getSingleton();
+
+        Future<com.homektv.web.dto.QueueSnapshot> firstSnapshot = null;
+        try {
+            firstSnapshot = executor.submit(() -> {
+                Thread.currentThread().setName("postgres-snapshot-A");
+                return snapshotService.snapshot();
+            });
+            assertThat(firstCallBeforeRead.await(10, TimeUnit.SECONDS)).isTrue();
+
+            Future<com.homektv.web.dto.QueueSnapshot> secondSnapshot = executor.submit(() -> {
+                Thread.currentThread().setName("postgres-snapshot-B");
+                return snapshotService.snapshot();
+            });
+            // Without serialization B reads volume 10 here. With the corrected
+            // service it waits outside the transaction's first SQL statement.
+            secondReadCaptured.await(2, TimeUnit.SECONDS);
+            TransactionTemplate writer = new TransactionTemplate(transactionManager);
+            writer.executeWithoutResult(status ->
+                    jdbc.update("UPDATE player_state SET volume = 90, state = 'paused' WHERE id = 1"));
+
+            releaseFirstCall.countDown();
+            var first = firstSnapshot.get(10, TimeUnit.SECONDS);
+            releaseSecondCall.countDown();
+            var second = secondSnapshot.get(10, TimeUnit.SECONDS);
+
+            assertThat(first.volume()).isEqualTo(90);
+            assertThat(first.state()).isEqualTo("paused");
+            assertThat(second.volume()).isEqualTo(90);
+            assertThat(second.state()).isEqualTo("paused");
+            assertThat(second.stateRevision()).isGreaterThan(first.stateRevision());
+
+            CountDownLatch benchmarkStart = new CountDownLatch(1);
+            Future<Long> benchmarkFirst = executor.submit(() -> {
+                Thread.currentThread().setName("postgres-snapshot-benchmark-1");
+                benchmarkStart.await();
+                long startedAt = System.nanoTime();
+                snapshotService.snapshot();
+                return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            });
+            Future<Long> benchmarkSecond = executor.submit(() -> {
+                Thread.currentThread().setName("postgres-snapshot-benchmark-2");
+                benchmarkStart.await();
+                long startedAt = System.nanoTime();
+                snapshotService.snapshot();
+                return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            });
+            long batchStartedAt = System.nanoTime();
+            benchmarkStart.countDown();
+            long firstDurationMs = benchmarkFirst.get(10, TimeUnit.SECONDS);
+            long secondDurationMs = benchmarkSecond.get(10, TimeUnit.SECONDS);
+            long batchDurationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStartedAt);
+            System.out.println("F3 snapshot benchmark requests=2 concurrent synthetic-library-size=1 "
+                    + "batch_ms=" + batchDurationMs + " request_ms="
+                    + firstDurationMs + "," + secondDurationMs);
+        } finally {
+            releaseFirstCall.countDown();
+            releaseSecondCall.countDown();
+            executor.shutdownNow();
+            executor.awaitTermination(10, TimeUnit.SECONDS);
+            jdbc.update("UPDATE player_state SET volume = ?, state = ? WHERE id = 1", originalVolume, originalState);
+        }
     }
 
     @Test
@@ -624,6 +787,47 @@ class PersistenceIntegrationTest {
         scanSeenPathStore.delete(scanId);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM library_scan_seen_paths WHERE scan_id = ?",
                 Long.class, scanId)).isZero();
+    }
+
+    @Test
+    void scanSeenPathQueriesSplitA501PathBatchAtTheBoundedPageSize() {
+        UUID scanId = UUID.randomUUID();
+        List<String> paths = IntStream.range(0, 501)
+                .mapToObj(index -> "/synthetic-library/song-" + index + ".mkv")
+                .toList();
+
+        scanSeenPathStore.recordPendingBatch(scanId, "LIBRARY", paths);
+
+        assertThat(scanSeenPathStore.findPendingAtStart(scanId, "LIBRARY", paths))
+                .containsExactlyInAnyOrderElementsOf(paths);
+        scanSeenPathStore.delete(scanId);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM library_scan_seen_paths WHERE scan_id = ?",
+                Long.class, scanId)).isZero();
+    }
+
+    @Test
+    void missingFileReconciliationHonorsTrailingSlashAndPathBoundaries() {
+        String suffix = String.valueOf(System.nanoTime());
+        String rootName = "/music-scan-" + suffix;
+        String activeRoot = rootName + "/";
+        Song insideSong = songRepository.save(song("扫描目录内", "扫描歌手", "scan-root-inside-" + suffix));
+        Song siblingSong = songRepository.save(song("扫描同名前缀", "扫描歌手", "scan-root-sibling-" + suffix));
+        SongFile inside = songFile(activeRoot + "child-" + suffix + ".mkv", insideSong.getId(), true);
+        SongFile sibling = songFile(rootName + "-old/child-" + suffix + ".mkv", siblingSong.getId(), true);
+        songFileRepository.saveAll(List.of(inside, sibling));
+        songFileRepository.flush();
+
+        JdbcLibraryScanSeenPathStore.MissingFiles missing = scanSeenPathStore.markMissing(
+                UUID.randomUUID(), "LIBRARY", activeRoot);
+
+        assertThat(missing.filesMarked()).isEqualTo(1);
+        assertThat(missing.songsMarked()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT valid FROM song_files WHERE id = ?", Boolean.class, inside.getId()))
+                .isFalse();
+        assertThat(jdbc.queryForObject("SELECT valid FROM song_files WHERE id = ?", Boolean.class, sibling.getId()))
+                .isTrue();
+        assertThat(songRepository.findById(insideSong.getId()).orElseThrow().getStatus()).isEqualTo("file_missing");
+        assertThat(songRepository.findById(siblingSong.getId()).orElseThrow().getStatus()).isEqualTo("ok");
     }
 
     private SongFile songFile(String path, Long songId, boolean valid) {

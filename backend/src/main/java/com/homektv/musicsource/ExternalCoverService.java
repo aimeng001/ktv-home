@@ -18,6 +18,11 @@ import java.util.Set;
 
 @Service
 public class ExternalCoverService {
+    @FunctionalInterface
+    interface HostAddressResolver {
+        InetAddress[] resolve(String host) throws Exception;
+    }
+
     private static final int MAX_BYTES = 5 * 1024 * 1024;
     private static final Map<MusicProvider, Set<String>> ALLOWED_HOSTS = Map.of(
             MusicProvider.QQ, Set.of("y.gtimg.cn"),
@@ -28,19 +33,26 @@ public class ExternalCoverService {
     private final AssetWriter writer;
     private final ProviderCallGuard guard;
     private final CoverImageNormalizer imageNormalizer;
+    private final HostAddressResolver hostAddressResolver;
 
     @Autowired
     public ExternalCoverService(AssetWriter writer, ProviderCallGuard guard, CoverImageNormalizer imageNormalizer) {
         this(writer, guard, imageNormalizer,
-                HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build());
+                HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(), InetAddress::getAllByName);
     }
 
     ExternalCoverService(AssetWriter writer, ProviderCallGuard guard, CoverImageNormalizer imageNormalizer,
                          HttpClient client) {
+        this(writer, guard, imageNormalizer, client, InetAddress::getAllByName);
+    }
+
+    ExternalCoverService(AssetWriter writer, ProviderCallGuard guard, CoverImageNormalizer imageNormalizer,
+                         HttpClient client, HostAddressResolver hostAddressResolver) {
         this.writer = writer;
         this.guard = guard;
         this.imageNormalizer = imageNormalizer;
         this.client = Objects.requireNonNull(client, "client");
+        this.hostAddressResolver = Objects.requireNonNull(hostAddressResolver, "hostAddressResolver");
     }
 
     public String download(MusicProvider provider, String coverUrl, String fingerprint, Duration timeout) {
@@ -98,9 +110,9 @@ public class ExternalCoverService {
                 .anyMatch(allowed -> host.equalsIgnoreCase(allowed) || host.toLowerCase().endsWith("." + allowed));
     }
 
-    private static void rejectPrivateAddress(String host) {
+    private void rejectPrivateAddress(String host) {
         try {
-            for (InetAddress address : InetAddress.getAllByName(host)) {
+            for (InetAddress address : hostAddressResolver.resolve(host)) {
                 if (address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isLinkLocalAddress()
                         || address.isSiteLocalAddress() || address.isMulticastAddress()) throw invalid();
             }

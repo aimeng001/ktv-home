@@ -32,25 +32,26 @@ interface KtvTransport {
  * owns a cancellable OkHttp call, so a cancelled search cannot keep consuming
  * a connection after the UI has moved to a newer query.
  */
-class KtvHttpTransport(
-    private val config: AppConfig,
-    private val http: OkHttpClient = defaultClient(),
+class KtvHttpTransport internal constructor(
+    private val serverHost: () -> String?,
+    private val callFactory: Call.Factory = defaultClient(),
 ) : KtvTransport, Closeable {
+    constructor(config: AppConfig, http: OkHttpClient = defaultClient()) : this({ config.serverHost }, http)
 
     override suspend fun get(path: String): KtvApiResult<String> {
-        val host = config.serverHost
+        val host = serverHost()
         serverConfigurationFailure(host)?.let { return it }
         return execute(Request.Builder().url(url(host!!, path)).get().build())
     }
 
     override suspend fun getBytes(path: String): KtvApiResult<ByteArray> {
-        val host = config.serverHost
+        val host = serverHost()
         serverConfigurationFailure(host)?.let { return it }
         return executeBytes(Request.Builder().url(url(host!!, path)).get().build())
     }
 
     override suspend fun post(path: String, body: JsonObject): KtvApiResult<String> {
-        val host = config.serverHost
+        val host = serverHost()
         serverConfigurationFailure(host)?.let { return it }
         return execute(
             Request.Builder()
@@ -61,20 +62,20 @@ class KtvHttpTransport(
     }
 
     override suspend fun delete(path: String): KtvApiResult<String> {
-        val host = config.serverHost
+        val host = serverHost()
         serverConfigurationFailure(host)?.let { return it }
         return execute(Request.Builder().url(url(host!!, path)).delete().build())
     }
 
     override fun close() {
-        http.closeResources()
+        (callFactory as? OkHttpClient)?.closeResources()
     }
 
     private fun url(host: String, path: String): String = resolveUrl(host, path)
 
     private suspend fun execute(request: Request): KtvApiResult<String> =
         suspendCancellableCoroutine { continuation ->
-            val call = http.newCall(request)
+            val call = callFactory.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
@@ -114,7 +115,7 @@ class KtvHttpTransport(
 
     private suspend fun executeBytes(request: Request): KtvApiResult<ByteArray> =
         suspendCancellableCoroutine { continuation ->
-            val call = http.newCall(request)
+            val call = callFactory.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {

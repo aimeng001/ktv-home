@@ -23,7 +23,20 @@ public sealed record DisplayInfo(int Index, string Name, int Width, int Height, 
 
 public sealed class DisplayManager
 {
-    public IReadOnlyList<DisplayInfo> GetDisplays()
+    private readonly Func<IReadOnlyList<DisplayInfo>> _displayProvider;
+
+    public DisplayManager() : this(EnumerateDisplays)
+    {
+    }
+
+    internal DisplayManager(Func<IReadOnlyList<DisplayInfo>> displayProvider)
+    {
+        _displayProvider = displayProvider ?? throw new ArgumentNullException(nameof(displayProvider));
+    }
+
+    public IReadOnlyList<DisplayInfo> GetDisplays() => _displayProvider();
+
+    private static IReadOnlyList<DisplayInfo> EnumerateDisplays()
     {
         return System.Windows.Forms.Screen.AllScreens
             .Select((screen, index) => new DisplayInfo(

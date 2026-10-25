@@ -50,55 +50,79 @@ private data class ExtractedSignatures(
     val current: List<String>,
 )
 
+internal interface ApkIdentityProvider {
+    fun installedIdentity(packageName: String): ApkIdentity?
+    fun archiveIdentity(apkFile: File): ApkIdentity?
+}
+
 object ApkArchiveVerifier {
     fun verifyApk(
         context: Context,
         apkFile: File,
         expectedVersionCode: Long,
+    ): Boolean = verifyApk(
+        apkFile = apkFile,
+        expectedPackageName = context.packageName,
+        expectedVersionCode = expectedVersionCode,
+        identityProvider = AndroidApkIdentityProvider(context),
+    )
+
+    internal fun verifyApk(
+        apkFile: File,
+        expectedPackageName: String,
+        expectedVersionCode: Long,
+        identityProvider: ApkIdentityProvider,
     ): Boolean {
         if (!apkFile.exists() || !apkFile.isFile || apkFile.length() <= 0) return false
-        val pm = context.packageManager
-        val expectedPackageName = context.packageName
-
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            PackageManager.GET_SIGNING_CERTIFICATES
-        } else {
-            @Suppress("DEPRECATION")
-            PackageManager.GET_SIGNATURES
-        }
-
         val installedSignatures = runCatching {
-            val installed = pm.getPackageInfo(expectedPackageName, flags)
-            extractSignatures(installed)
+            identityProvider.installedIdentity(expectedPackageName)
         }.getOrNull() ?: return false
-        if (installedSignatures.history.isEmpty() || installedSignatures.current.isEmpty()) return false
+        if (installedSignatures.signatureDigests.isEmpty()
+            || installedSignatures.currentSignatureDigests.isEmpty()
+        ) return false
 
         val archive = runCatching {
-            pm.getPackageArchiveInfo(apkFile.absolutePath, flags)
+            identityProvider.archiveIdentity(apkFile)
         }.getOrNull() ?: return false
-
-        val actualVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            archive.longVersionCode
-        } else {
-            @Suppress("DEPRECATION")
-            archive.versionCode.toLong()
-        }
-
-        val actualSignatures = extractSignatures(archive)
-
-        val actualIdentity = ApkIdentity(
-            packageName = archive.packageName ?: "",
-            versionCode = actualVersionCode,
-            signatureDigests = actualSignatures.history,
-            currentSignatureDigests = actualSignatures.current,
-        )
 
         return ApkArchivePolicy.verify(
             expectedPackageName = expectedPackageName,
             expectedVersionCode = expectedVersionCode,
-            expectedSignatures = installedSignatures.history,
-            expectedCurrentSignatures = installedSignatures.current,
-            actual = actualIdentity,
+            expectedSignatures = installedSignatures.signatureDigests,
+            expectedCurrentSignatures = installedSignatures.currentSignatureDigests,
+            actual = archive,
+        )
+    }
+}
+
+private class AndroidApkIdentityProvider(private val context: Context) : ApkIdentityProvider {
+    private val packageManager = context.packageManager
+    private val signingFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        PackageManager.GET_SIGNING_CERTIFICATES
+    } else {
+        @Suppress("DEPRECATION")
+        PackageManager.GET_SIGNATURES
+    }
+
+    override fun installedIdentity(packageName: String): ApkIdentity =
+        packageManager.getPackageInfo(packageName, signingFlags).toApkIdentity()
+
+    override fun archiveIdentity(apkFile: File): ApkIdentity? =
+        packageManager.getPackageArchiveInfo(apkFile.absolutePath, signingFlags)?.toApkIdentity()
+
+    private fun PackageInfo.toApkIdentity(): ApkIdentity {
+        val actualVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            versionCode.toLong()
+        }
+        val signatures = extractSignatures(this)
+        return ApkIdentity(
+            packageName = packageName ?: "",
+            versionCode = actualVersionCode,
+            signatureDigests = signatures.history,
+            currentSignatureDigests = signatures.current,
         )
     }
 

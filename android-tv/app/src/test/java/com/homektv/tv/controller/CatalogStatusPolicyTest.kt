@@ -83,4 +83,78 @@ class CatalogStatusPolicyTest {
         assertEquals(CatalogLoadState.ROOT_UNAVAILABLE, unknown.state)
     }
 
+    @Test
+    fun legacyServerResponsesResolveReadyFilteredEmptyAndEmptyStates() {
+        val legacy = LibraryStatus()
+
+        assertEquals(CatalogLoadState.READY, CatalogStatusPolicy.from(legacy, true, false).state)
+        assertEquals(CatalogLoadState.FILTER_EMPTY, CatalogStatusPolicy.from(legacy, false, true).state)
+        assertEquals(CatalogLoadState.EMPTY, CatalogStatusPolicy.from(legacy, false, false).state)
+    }
+
+    @Test
+    fun completedCatalogWithKnownCountsAndUnknownIdentityRemainsAvailable() {
+        val status = CatalogStatusPolicy.from(
+            LibraryStatus(
+                rootState = "READABLE",
+                rootIdentityState = "UNKNOWN",
+                countsKnown = true,
+                scanState = "COMPLETED",
+                catalogRevision = 0,
+                statusRevision = 9,
+            ),
+            hasItems = true,
+            hasFilter = false,
+        )
+
+        assertEquals(CatalogLoadState.READY, status.state)
+        assertEquals(9L, status.revision)
+    }
+
+    @Test
+    fun unavailableAndCompletedPhasesAreNotReportedAsScanning() {
+        val missingRoot = CatalogStatusPolicy.from(
+            LibraryStatus(rootState = "NOT_FOUND", statusRevision = 3), false, false,
+        )
+        val completedIdle = CatalogStatusPolicy.from(
+            LibraryStatus(rootState = "READABLE", scanState = "IDLE", phase = "COMPLETED"), false, false,
+        )
+
+        assertEquals(CatalogLoadState.ROOT_UNAVAILABLE, missingRoot.state)
+        assertEquals(3L, missingRoot.revision)
+        assertEquals(CatalogLoadState.EMPTY, completedIdle.state)
+    }
+
+    @Test
+    fun partialFailuresAndServerErrorCodesRemainVisible() {
+        val failed = CatalogStatusPolicy.from(
+            LibraryStatus(rootState = "READABLE", scanState = "FAILED", statusRevision = 6), true, false,
+        )
+        val partial = CatalogStatusPolicy.from(
+            LibraryStatus(rootState = "READABLE", scanState = "PARTIAL", catalogRevision = 7), true, false,
+        )
+        val errorCode = CatalogStatusPolicy.from(
+            LibraryStatus(rootState = "READABLE", scanState = "COMPLETED", errorCode = "SCAN_WARNING"),
+            true,
+            false,
+        )
+
+        assertEquals(CatalogLoadState.PARTIAL_FAILURE, failed.state)
+        assertEquals(CatalogLoadState.PARTIAL_FAILURE, partial.state)
+        assertEquals(CatalogLoadState.PARTIAL_FAILURE, errorCode.state)
+        assertEquals("SCAN_WARNING", errorCode.code)
+    }
+
+    @Test
+    fun networkErrorsAndNonPositiveRevisionsRemainBackwardCompatible() {
+        val network = CatalogStatusPolicy.fromError(
+            KtvApiError(KtvApiErrorKind.NETWORK, "OFFLINE", "network unavailable"),
+        )
+
+        assertEquals(CatalogLoadState.OFFLINE, network.state)
+        assertTrue(CatalogStatusPolicy.acceptsRevision(8, 0))
+        assertTrue(CatalogStatusPolicy.acceptsRevision(8, -1))
+        assertTrue(CatalogStatusPolicy.acceptsRevision(0, 1))
+        assertTrue(CatalogStatusPolicy.acceptsRevision(-1, 1))
+    }
 }

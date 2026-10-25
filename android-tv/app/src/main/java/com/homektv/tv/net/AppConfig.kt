@@ -10,17 +10,41 @@ import com.homektv.tv.session.DeviceModeRouter
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
+/** Snapshot of the Android form-factor signals used by address and mode policy. */
+internal data class AppConfigPlatformInfo(
+    val hasLeanback: Boolean,
+    val hasTouchscreen: Boolean,
+    val uiMode: Int,
+    val smallestScreenWidthDp: Int,
+) {
+    val isTelevision: Boolean
+        get() = hasLeanback ||
+            (uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
+}
+
 /**
  * NAS 服务端地址与历史连接持久化。
  *
  * Persists the NAS server address and the history of successful connections.
  */
-class AppConfig(context: Context) {
+class AppConfig private constructor(
+    context: Context,
+    credentialStoreFactory: (Context) -> CredentialStore,
+    private val platformInfoProvider: (Context) -> AppConfigPlatformInfo,
+) {
+
+    constructor(context: Context) : this(context, { CredentialStore(it) }, ::readPlatformInfo)
+
+    internal constructor(context: Context, keyProvider: CredentialKeyProvider) :
+        this(context, { CredentialStore(it, keyProvider) }, ::readPlatformInfo)
+
+    internal constructor(context: Context, platformInfo: AppConfigPlatformInfo) :
+        this(context, { CredentialStore(it) }, { platformInfo })
 
     val appContext = context.applicationContext
     private val prefs = appContext
         .getSharedPreferences("ktv_tv", Context.MODE_PRIVATE)
-    private val credentialStore = CredentialStore(appContext)
+    private val credentialStore = credentialStoreFactory(appContext)
     private val json = Json { ignoreUnknownKeys = true }
 
     init {
@@ -153,8 +177,8 @@ class AppConfig(context: Context) {
                 remove(ServerSessionScope.preferenceKey(KEY_PENDING_PLAYBACK_ERRORS_PREFIX, scope))
             }
             if (selectedHost == normalizedHost) {
-                remaining.firstOrNull()?.hostPort?.let { host -> putString(KEY_HOST, host) }
-                    ?: remove(KEY_HOST)
+                val nextServer = remaining.firstOrNull()
+                if (nextServer == null) remove(KEY_HOST) else putString(KEY_HOST, nextServer.hostPort)
                 remove(KEY_TOKEN)
             }
         }
@@ -177,11 +201,13 @@ class AppConfig(context: Context) {
 
     internal fun pendingFinishedQueueIds(server: SavedServer?): List<Long> {
         val scope = server ?: return emptyList()
-        return prefs.getString(ServerSessionScope.preferenceKey(KEY_PENDING_FINISHED_PREFIX, scope), null)
-            ?.split(',')
-            ?.mapNotNull { it.trim().toLongOrNull()?.takeIf { id -> id > 0 } }
-            ?.let(PendingFinishedPolicy::sanitize)
-            ?: emptyList()
+        val raw = prefs.getString(ServerSessionScope.preferenceKey(KEY_PENDING_FINISHED_PREFIX, scope), null)
+            ?: return emptyList()
+        val ids = raw.split(',').mapNotNull { value ->
+            val id = value.trim().toLongOrNull() ?: return@mapNotNull null
+            id.takeIf { it > 0 }
+        }
+        return PendingFinishedPolicy.sanitize(ids)
     }
 
     /** Persists only valid, bounded queue IDs; the source media is never touched. */
@@ -248,11 +274,9 @@ class AppConfig(context: Context) {
     /** Explicit form-factor metadata lets the server count phones without
      * conflating them with browser H5 sessions. */
     fun controllerPlatform(): String {
-        val configuration = appContext.resources.configuration
-        val television = appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-            (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
-        if (television) return "ANDROID_TV"
-        return if (configuration.smallestScreenWidthDp >= 600) "ANDROID_TABLET" else "ANDROID_PHONE"
+        val platform = platformInfoProvider(appContext)
+        if (platform.isTelevision) return "ANDROID_TV"
+        return if (platform.smallestScreenWidthDp >= 600) "ANDROID_TABLET" else "ANDROID_PHONE"
     }
 
     /** REST/资源基址；服务器显式配置 HTTPS 时保持 TLS。 */
@@ -295,14 +319,14 @@ class AppConfig(context: Context) {
 
     /** The first-run recommendation; a saved choice always wins per server. */
     val recommendedMode: DeviceMode
-        get() = DeviceModeRouter.recommend(
-            DeviceCapabilities(
-                isTelevision = appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-                    (appContext.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
-                    Configuration.UI_MODE_TYPE_TELEVISION,
-                hasTouchscreen = appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN),
-            ),
-        )
+        get() = platformInfoProvider(appContext).let { platform ->
+            DeviceModeRouter.recommend(
+                DeviceCapabilities(
+                    isTelevision = platform.isTelevision,
+                    hasTouchscreen = platform.hasTouchscreen,
+                ),
+            )
+        }
 
     fun modeFor(hostPort: String? = serverHost): DeviceMode? =
         readScopedString(KEY_MODE_PREFIX, serverForHost(hostPort))
@@ -327,12 +351,25 @@ class AppConfig(context: Context) {
         server: SavedServer?,
         migrateLegacy: Boolean = false,
     ): String {
-        val key = server?.let { ServerSessionScope.preferenceKey(prefix, it) }
-            ?: ServerSessionScope.hostPreferenceKey(prefix, null)
-        prefs.getString(key, null)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val key = if (server == null) {
+            ServerSessionScope.hostPreferenceKey(prefix, null)
+        } else {
+            ServerSessionScope.preferenceKey(prefix, server)
+        }
+        val scopedToken = prefs.getString(key, null)?.trim()
+        if (!scopedToken.isNullOrEmpty()) return scopedToken
 
-        val legacy = if (migrateLegacy && server?.instanceId == null && server?.hostPort == serverHost?.trim()) {
-            prefs.getString(KEY_TOKEN, null)?.trim()?.takeIf { it.isNotEmpty() }
+        val matchingLegacyScope = migrateLegacy &&
+            server?.instanceId == null &&
+            server?.hostPort == serverHost?.trim()
+        val legacy = if (matchingLegacyScope) {
+            val rawLegacyToken = prefs.getString(KEY_TOKEN, null)
+            if (rawLegacyToken == null) {
+                null
+            } else {
+                val trimmedLegacyToken = rawLegacyToken.trim()
+                if (trimmedLegacyToken.isEmpty()) null else trimmedLegacyToken
+            }
         } else null
         val token = legacy ?: label + java.util.UUID.randomUUID().toString().replace("-", "").take(16)
         prefs.edit(commit = true) {
@@ -344,7 +381,8 @@ class AppConfig(context: Context) {
     private fun readScopedString(prefix: String, server: SavedServer?): String? {
         if (server == null) return null
         val key = ServerSessionScope.preferenceKey(prefix, server)
-        return prefs.getString(key, null)?.trim()?.takeIf { it.isNotEmpty() }
+        val stored = prefs.getString(key, null) ?: return null
+        return stored.trim().takeIf { it.isNotEmpty() }
     }
 
     private fun writeScopedString(prefix: String, server: SavedServer?, value: String) {
@@ -397,6 +435,17 @@ class AppConfig(context: Context) {
         private const val MAX_SAVED_SERVERS = 10
         private const val MAX_NICKNAME_LENGTH = 32
 
+        private fun readPlatformInfo(context: Context): AppConfigPlatformInfo {
+            val configuration = context.resources.configuration
+            val packageManager = context.packageManager
+            return AppConfigPlatformInfo(
+                hasLeanback = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK),
+                hasTouchscreen = packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN),
+                uiMode = configuration.uiMode,
+                smallestScreenWidthDp = configuration.smallestScreenWidthDp,
+            )
+        }
+
         internal fun serverScopedPreferenceKey(prefix: String, serverHost: String?): String =
             ServerSessionScope.hostPreferenceKey(prefix, serverHost)
 
@@ -432,8 +481,12 @@ internal fun buildWebSocketBaseUrl(serverHost: String): String =
 internal fun isHttpsServerAddress(serverHost: String): Boolean =
     serverHost.trim().startsWith("https://", ignoreCase = true)
 
-internal fun playerCredentialForTransport(serverHost: String, credential: String?): String? =
-    credential?.trim()?.takeIf { it.isNotEmpty() && isHttpsServerAddress(serverHost) }
+internal fun playerCredentialForTransport(serverHost: String, credential: String?): String? {
+    if (credential == null) return null
+    val trimmed = credential.trim()
+    if (trimmed.isEmpty()) return null
+    return if (isHttpsServerAddress(serverHost)) trimmed else null
+}
 
 private fun serverAddress(serverHost: String): String =
     serverHost.trim().replace(Regex("^https?://", RegexOption.IGNORE_CASE), "").trimEnd('/')

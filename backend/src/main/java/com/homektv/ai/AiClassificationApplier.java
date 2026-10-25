@@ -186,10 +186,10 @@ public class AiClassificationApplier {
     private String[] mergeTags(String[] current, AiSongClassification result) {
         LinkedHashSet<String> tags = new LinkedHashSet<>();
         if (current != null) tags.addAll(Arrays.asList(current));
-        tags.addAll(result.genres());
-        tags.addAll(result.themes());
-        if (result.era() != null) tags.add(result.era());
-        if (result.vocalForm() != null) tags.add(result.vocalForm());
+        tags.addAll(Arrays.asList(clean(result.genres())));
+        tags.addAll(Arrays.asList(clean(result.themes())));
+        if (result.era() != null) tags.add(normalize(result.era()));
+        if (result.vocalForm() != null) tags.add(normalize(result.vocalForm()));
         tags.removeIf(value -> value == null || value.isBlank() || "未知".equals(value));
         return tags.toArray(String[]::new);
     }

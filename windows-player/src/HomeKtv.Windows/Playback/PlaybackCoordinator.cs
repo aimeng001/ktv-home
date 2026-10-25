@@ -13,6 +13,8 @@ public sealed class PlaybackCoordinator
     private readonly object projectionStateLock = new();
     private long? loadedQueueId;
     private FileSource? loadedFile;
+    private string? loadedStreamUrl;
+    private bool loadedLiveTranscode;
     private long outputGeneration;
     private ActiveOutputIdentity? activeOutput;
     private string? lastVocalMode;
@@ -49,9 +51,11 @@ public sealed class PlaybackCoordinator
     {
         lock (projectionStateLock)
         {
-            if (activeOutput == expected && expected.QueueId is { } activeQueueId)
+            if (activeOutput == expected)
             {
-                queueId = activeQueueId;
+                // Every committed identity comes from ApplySnapshotCoreAsync after
+                // it has rejected snapshots without a queue id.
+                queueId = expected.QueueId!.Value;
                 return true;
             }
         }
@@ -147,14 +151,37 @@ public sealed class PlaybackCoordinator
                     .ConfigureAwait(false);
                 EnsureCurrent(cancellationToken, isCurrent);
                 file = ToPlayableFile(source, descriptor);
+                var liveTranscode = string.Equals(
+                    descriptor.Kind, "LIVE_TRANSCODE", StringComparison.OrdinalIgnoreCase);
+                var streamUrl = descriptor.StreamUrl!;
+                var pipeStartPositionMs = liveTranscode
+                    ? snapshot.PositionMs > 0
+                        ? Math.Max(0, snapshot.PositionMs)
+                        : LiveTranscodeStreamUrl.StartPositionMs(streamUrl)
+                    : 0;
+                if (liveTranscode && snapshot.PositionMs > 0)
+                {
+                    streamUrl = LiveTranscodeStreamUrl.WithStart(streamUrl, pipeStartPositionMs);
+                }
                 if (loadedQueueId is not null)
                 {
                     await output.PauseAsync(cancellationToken).ConfigureAwait(false);
                     EnsureCurrent(cancellationToken, isCurrent);
                 }
-                await output.LoadAsync(descriptor.StreamUrl!, file.Id, cancellationToken)
-                    .ConfigureAwait(false);
+                if (liveTranscode)
+                {
+                    await output.LoadLiveTranscodeAsync(
+                            streamUrl, file.Id, pipeStartPositionMs, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    await output.LoadAsync(streamUrl, file.Id, cancellationToken)
+                        .ConfigureAwait(false);
+                }
                 EnsureCurrent(cancellationToken, isCurrent);
+                loadedStreamUrl = streamUrl;
+                loadedLiveTranscode = liveTranscode;
             }
             catch (OperationCanceledException)
             {
@@ -170,14 +197,14 @@ public sealed class PlaybackCoordinator
                 if (exception is PlaybackAttemptException || file is null) throw;
                 throw new PlaybackAttemptException(
                     playing.QueueId.Value,
-                    file?.Id,
-                    $"Failed to load file {file?.Id} for queue item {playing.QueueId.Value}.",
+                    file.Id,
+                    $"Failed to load file {file.Id} for queue item {playing.QueueId.Value}.",
                     PlaybackFailureKind.OutputFailure,
                     exception);
             }
             loadedQueueId = playing.QueueId;
             loadedFile = file;
-            CommitActiveOutput(playing.QueueId, file.Id);
+            CommitActiveOutput(playing.QueueId.Value, file.Id);
             lastVocalMode = null;
             lastAudioLayout = null;
             lastVolume = null;
@@ -185,21 +212,58 @@ public sealed class PlaybackCoordinator
             lastSeekSequence = -1;
         }
 
-        if (loadedFile is null)
-        {
-            return;
-        }
+        // ResetLocalProjection clears loadedQueueId and loadedFile together, and a
+        // successful queue change assigns both before this unchanged-queue path.
+        var currentFile = loadedFile!;
 
         // On a new queue item, bind the layout to the file actually selected
         // from SongDetail. Later vocal_changed snapshots describe a deliberate
         // runtime layout change for that same loaded file.
-        var effectiveLayout = queueChanged ? loadedFile.AudioLayout : snapshot.AudioLayout;
+        var effectiveLayout = queueChanged ? currentFile.AudioLayout : snapshot.AudioLayout;
+        var seekChanged = snapshot.SeekSequence > lastSeekSequence;
+        var restartedLivePipe = !queueChanged && seekChanged && loadedLiveTranscode;
+        if (restartedLivePipe)
+        {
+            var positionMs = Math.Max(0, snapshot.PositionMs);
+            var streamUrl = LiveTranscodeStreamUrl.WithStart(loadedStreamUrl!, positionMs);
+            try
+            {
+                await output.StopAsync(cancellationToken).ConfigureAwait(false);
+                EnsureCurrent(cancellationToken, isCurrent);
+                await output.LoadLiveTranscodeAsync(streamUrl, currentFile.Id, positionMs, cancellationToken)
+                    .ConfigureAwait(false);
+                EnsureCurrent(cancellationToken, isCurrent);
+            }
+            catch (OperationCanceledException)
+            {
+                ResetLocalProjection();
+                throw;
+            }
+            catch (Exception exception)
+            {
+                await StopAfterProjectionFailureAsync(isCurrent).ConfigureAwait(false);
+                throw new PlaybackAttemptException(
+                    playing.QueueId.Value,
+                    currentFile.Id,
+                    $"Failed to restart live pipe for file {currentFile.Id} at {positionMs} ms.",
+                    PlaybackFailureKind.OutputFailure,
+                    exception);
+            }
+
+            loadedStreamUrl = streamUrl;
+            CommitActiveOutput(playing.QueueId.Value, currentFile.Id);
+            lastVocalMode = null;
+            lastAudioLayout = null;
+            lastVolume = null;
+            lastMuted = null;
+        }
+
         var audioChanged = queueChanged
             || !string.Equals(lastVocalMode, snapshot.VocalMode, StringComparison.OrdinalIgnoreCase)
             || lastAudioLayout != effectiveLayout;
         if (audioChanged)
         {
-            await ApplyAudioAsync(snapshot.VocalMode, effectiveLayout, loadedFile, cancellationToken, isCurrent)
+            await ApplyAudioAsync(snapshot.VocalMode, effectiveLayout, currentFile, cancellationToken, isCurrent)
                 .ConfigureAwait(false);
             EnsureCurrent(cancellationToken, isCurrent);
             lastVocalMode = snapshot.VocalMode;
@@ -215,8 +279,8 @@ public sealed class PlaybackCoordinator
             lastMuted = snapshot.Muted;
         }
 
-        if ((queueChanged && snapshot.PositionMs > 0)
-            || (!queueChanged && snapshot.SeekSequence > lastSeekSequence))
+        if ((queueChanged && snapshot.PositionMs > 0 && !loadedLiveTranscode)
+            || (!queueChanged && seekChanged && !restartedLivePipe))
         {
             await output.SeekAsync(Math.Max(0, snapshot.PositionMs), cancellationToken)
                 .ConfigureAwait(false);
@@ -312,9 +376,7 @@ public sealed class PlaybackCoordinator
             throw new PlaybackAttemptException(
                 queueId,
                 source.Id,
-                descriptor.IsPreparing
-                    ? "MV 变体仍在准备，超过等待上限。"
-                    : "服务器没有返回可播放的媒体地址。",
+                "服务器没有返回可播放的媒体地址。",
                 PlaybackFailureKind.SourceUnavailable);
         }
 
@@ -345,12 +407,14 @@ public sealed class PlaybackCoordinator
 
     private static FileSource ToPlayableFile(FileSource source, PlaybackDescriptor descriptor)
     {
-        if (!string.Equals(descriptor.Kind, "TRANSCODE", StringComparison.OrdinalIgnoreCase)
-            || descriptor.VariantId is not { } variantId)
+        if (!string.Equals(descriptor.Kind, "TRANSCODE", StringComparison.OrdinalIgnoreCase))
         {
             return source;
         }
 
+        // ResolvePlaybackDescriptorAsync rejects READY TRANSCODE descriptors
+        // without a variant id before this private conversion is reached.
+        var variantId = descriptor.VariantId!.Value;
         return source with
         {
             Id = variantId,
@@ -392,6 +456,8 @@ public sealed class PlaybackCoordinator
     {
         loadedQueueId = null;
         loadedFile = null;
+        loadedStreamUrl = null;
+        loadedLiveTranscode = false;
         ClearActiveOutput();
         lastVocalMode = null;
         lastAudioLayout = null;
@@ -438,7 +504,7 @@ public sealed class PlaybackCoordinator
         }
     }
 
-    private void CommitActiveOutput(long? queueId, long fileId)
+    private void CommitActiveOutput(long queueId, long fileId)
     {
         lock (projectionStateLock)
         {

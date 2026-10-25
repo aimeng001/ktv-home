@@ -4,8 +4,9 @@ import { searchViewState } from './searchState'
 
 function deferred() {
   let resolve
-  const promise = new Promise(r => { resolve = r })
-  return { promise, resolve }
+  let reject
+  const promise = new Promise((r, j) => { resolve = r; reject = j })
+  return { promise, resolve, reject }
 }
 
 const runImmediately = callback => {
@@ -29,6 +30,75 @@ describe('search controller', () => {
     expect(controller.state().loading).toBe(false)
   })
 
+  it('reads paged response envelopes and treats a missing content array as empty', async () => {
+    const client = {
+      searchSongs: vi.fn()
+        .mockResolvedValueOnce({ content: [{ id: 1, title: '第一页' }] })
+        .mockResolvedValueOnce({})
+    }
+    const controller = createSearchController(client, { schedule: runImmediately })
+
+    await controller.setFilter('', ' 周杰伦 ')
+    expect(controller.state().results).toEqual([{ id: 1, title: '第一页' }])
+
+    await controller.retry('林俊杰')
+    expect(controller.state().results).toEqual([])
+    expect(controller.state().hasMore).toBe(false)
+  })
+
+  it('clears blank queries through both debounced and immediate entry points', async () => {
+    const client = { searchSongs: vi.fn().mockResolvedValue([{ id: 1 }]) }
+    const controller = createSearchController(client, { schedule: runImmediately })
+    await controller.retry('Song')
+
+    controller.setQuery('   ')
+    expect(controller.state()).toMatchObject({ results: [], page: 0, hasMore: false, loading: false })
+    controller.setQuery(null)
+    await controller.setFilter('MV', null)
+    expect(controller.state()).toMatchObject({ results: [], page: 0, hasMore: false, loading: false })
+    expect(client.searchSongs).toHaveBeenCalledOnce()
+  })
+
+  it('cancels pending debounce timers when replacing a query or disposing the view', () => {
+    const timers = []
+    const cancel = vi.fn()
+    const controller = createSearchController({ searchSongs: vi.fn() }, {
+      schedule: vi.fn(callback => {
+        const timer = { callback }
+        timers.push(timer)
+        return timer
+      }),
+      cancel,
+    })
+
+    controller.setQuery('first')
+    controller.setQuery('second')
+    expect(cancel).toHaveBeenCalledWith(timers[0])
+    controller.dispose()
+    expect(cancel).toHaveBeenCalledWith(timers[1])
+  })
+
+  it('uses setFilter and retry as immediate searches with their supplied filters', async () => {
+    const client = { searchSongs: vi.fn().mockResolvedValue([{ id: 2 }]) }
+    const controller = createSearchController(client)
+
+    await controller.setFilter('MV', ' Song ')
+    await controller.retry('Song', 'KTV_VIDEO')
+
+    expect(client.searchSongs.mock.calls.map(([query, filter, page]) => [query, filter, page]))
+      .toEqual([['Song', 'MV', 0], ['Song', 'KTV_VIDEO', 0]])
+  })
+
+  it('uses the fallback message when a search rejects without a message', async () => {
+    const controller = createSearchController({ searchSongs: vi.fn().mockRejectedValue({}) }, { schedule: runImmediately })
+
+    controller.setQuery('Song')
+    await controller.waitForIdle()
+
+    expect(controller.state().error).toBe('搜索请求失败')
+    expect(controller.state().loading).toBe(false)
+  })
+
   it('invalidates an in-flight request when the query is cleared', async () => {
     const pending = deferred()
     const client = { searchSongs: vi.fn().mockReturnValue(pending.promise) }
@@ -43,6 +113,26 @@ describe('search controller', () => {
     expect(controller.state().results).toEqual([])
     expect(controller.state().error).toBe('')
     expect(controller.state().loading).toBe(false)
+  })
+
+  it('ignores a late non-abort search failure after a newer query succeeds', async () => {
+    const oldRequest = deferred()
+    const client = {
+      searchSongs: vi.fn()
+        .mockReturnValueOnce(oldRequest.promise)
+        .mockResolvedValueOnce([{ id: 8, title: '新结果' }])
+    }
+    const controller = createSearchController(client, { schedule: runImmediately })
+
+    controller.setQuery('旧歌')
+    const oldIdle = controller.waitForIdle()
+    controller.setQuery('新歌')
+    await controller.waitForIdle()
+    oldRequest.reject(new Error('旧请求迟到失败'))
+    await oldIdle
+
+    expect(controller.state().results).toEqual([{ id: 8, title: '新结果' }])
+    expect(controller.state().error).toBe('')
   })
 
   it('supports loadMore to paginate results beyond the first page', async () => {
@@ -103,6 +193,136 @@ describe('search controller', () => {
     expect(controller.state().results).toHaveLength(51)
     expect(controller.state().page).toBe(1)
     expect(controller.state().error).toBe('')
+  })
+
+  it('accepts a content envelope for a later page and uses empty content when absent', async () => {
+    const page0 = Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }))
+    const client = {
+      searchSongs: vi.fn()
+        .mockResolvedValueOnce(page0)
+        .mockResolvedValueOnce({ content: [{ id: 51 }] })
+        .mockResolvedValueOnce(page0)
+        .mockResolvedValueOnce({})
+    }
+    const controller = createSearchController(client, { schedule: runImmediately })
+    controller.setQuery('Song')
+    await controller.waitForIdle()
+
+    await controller.loadMore('Song')
+    expect(controller.state().results).toHaveLength(51)
+    expect(controller.state().page).toBe(1)
+
+    // Restore a page with more data so the final loadMore call is eligible.
+    controller.setQuery('Song')
+    await controller.waitForIdle()
+    await controller.loadMore('Song')
+    expect(controller.state().results).toEqual(page0)
+    expect(controller.state().page).toBe(1)
+    expect(controller.state().hasMore).toBe(false)
+  })
+
+  it('skips loadMore while loading, while another page loads, without more pages, or with a blank query', async () => {
+    const page0 = Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }))
+    const firstRequest = deferred()
+    const pageRequest = deferred()
+    const client = { searchSongs: vi.fn().mockReturnValueOnce(firstRequest.promise).mockReturnValueOnce(pageRequest.promise) }
+    const controller = createSearchController(client, { schedule: runImmediately })
+
+    controller.setQuery('Song')
+    expect(controller.state().loading).toBe(true)
+    expect(controller.loadMore('Song')).toBeUndefined()
+    firstRequest.resolve(page0)
+    await controller.waitForIdle()
+
+    expect(controller.loadMore(null)).toBeUndefined()
+    expect(controller.loadMore('   ')).toBeUndefined()
+    const loadingMore = controller.loadMore('Song')
+    expect(controller.state().loadingMore).toBe(true)
+    expect(controller.loadMore('Song')).toBeUndefined()
+    pageRequest.resolve([{ id: 51 }])
+    await loadingMore
+    expect(controller.state().results).toHaveLength(51)
+  })
+
+  it('ignores a stale page response after a new search starts', async () => {
+    const stalePage = deferred()
+    const page0 = Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }))
+    const client = {
+      searchSongs: vi.fn()
+        .mockResolvedValueOnce(page0)
+        .mockReturnValueOnce(stalePage.promise)
+        .mockResolvedValueOnce([{ id: 100 }])
+    }
+    const controller = createSearchController(client, { schedule: runImmediately })
+    controller.setQuery('old')
+    await controller.waitForIdle()
+    const oldPage = controller.loadMore('old')
+    await Promise.resolve()
+    controller.setQuery('new')
+    await controller.waitForIdle()
+    stalePage.resolve([{ id: 51 }])
+    await oldPage
+
+    expect(controller.state().results).toEqual([{ id: 100 }])
+    expect(controller.state().page).toBe(0)
+  })
+
+  it('does not expose an aborted loadMore request as an error', async () => {
+    const page0 = Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }))
+    const client = {
+      searchSongs: vi.fn()
+        .mockResolvedValueOnce(page0)
+        .mockImplementationOnce((_query, _filter, _page, { signal }) => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { name: 'AbortError' })), { once: true })
+        }))
+        .mockResolvedValueOnce([{ id: 100 }])
+    }
+    const controller = createSearchController(client, { schedule: runImmediately })
+    controller.setQuery('old')
+    await controller.waitForIdle()
+    const oldPage = controller.loadMore('old')
+    await Promise.resolve()
+    controller.setQuery('new')
+    await Promise.all([oldPage, controller.waitForIdle()])
+
+    expect(controller.state().results).toEqual([{ id: 100 }])
+    expect(controller.state().error).toBe('')
+  })
+
+  it('ignores a late page failure after a newer search has replaced it', async () => {
+    const stalePage = deferred()
+    const page0 = Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }))
+    const client = {
+      searchSongs: vi.fn()
+        .mockResolvedValueOnce(page0)
+        .mockReturnValueOnce(stalePage.promise)
+        .mockResolvedValueOnce([{ id: 100 }])
+    }
+    const controller = createSearchController(client, { schedule: runImmediately })
+    controller.setQuery('old')
+    await controller.waitForIdle()
+    const oldPage = controller.loadMore('old')
+    await Promise.resolve()
+    controller.setQuery('new')
+    await controller.waitForIdle()
+    stalePage.reject(new Error('old request failed late'))
+    await oldPage
+
+    expect(controller.state().results).toEqual([{ id: 100 }])
+    expect(controller.state().error).toBe('')
+  })
+
+  it('uses the fallback message when a later page rejects without a message', async () => {
+    const page0 = Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }))
+    const client = { searchSongs: vi.fn().mockResolvedValueOnce(page0).mockRejectedValueOnce({}) }
+    const controller = createSearchController(client, { schedule: runImmediately })
+    controller.setQuery('Song')
+    await controller.waitForIdle()
+
+    await controller.loadMore('Song')
+
+    expect(controller.state().error).toBe('加载更多失败')
+    expect(controller.state().loadingMore).toBe(false)
   })
 
   it('waitForIdle waits for an in-flight loadMore request', async () => {

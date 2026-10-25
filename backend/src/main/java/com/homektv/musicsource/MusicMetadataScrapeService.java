@@ -201,6 +201,7 @@ public class MusicMetadataScrapeService {
                 SELECT id,mode,status,auto_apply_threshold,skipped_existing,created_at,started_at,finished_at,updated_at
                 FROM music_metadata_scrape_batches WHERE id=?
                 """, rs -> rs.next() ? batchRow(rs) : null, batchId);
+        if (batch == null) throw new ApiException("METADATA_SCRAPE_NOT_FOUND", "刮削任务不存在");
         Map<String, Long> counts = new LinkedHashMap<>();
         for (String itemStatus : ITEM_STATUSES) counts.put(itemStatus, 0L);
         jdbc.query("SELECT status,COUNT(*) amount FROM music_metadata_scrape_items WHERE batch_id=? GROUP BY status",

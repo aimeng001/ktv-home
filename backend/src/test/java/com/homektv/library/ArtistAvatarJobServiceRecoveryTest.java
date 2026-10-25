@@ -11,17 +11,34 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ArtistAvatarJobServiceRecoveryTest {
+    @Test
+    void scheduledRefreshDoesNothingWithoutAPendingRequest() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistAvatarWorker worker = mock(ArtistAvatarWorker.class);
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        ConcurrentLinkedQueue<Runnable> tasks = new ConcurrentLinkedQueue<>();
+        ArtistAvatarJobService service = new ArtistAvatarJobService(jdbc, worker, config, tasks::add);
+
+        service.retryRejectedUnresolvedRefresh();
+
+        assertThat(tasks).isEmpty();
+        verifyNoInteractions(jdbc, worker, config);
+    }
+
     @Test
     void rejectedConfigurationRefreshIsRetriedWithoutLosingTheRequest() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);

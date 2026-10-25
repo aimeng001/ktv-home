@@ -9,6 +9,45 @@ namespace HomeKtv.Windows.Tests;
 public sealed class HttpServerApiTests
 {
     [Fact]
+    public async Task Health_check_reads_the_home_ktv_health_contract()
+    {
+        HttpRequestMessage? request = null;
+        var handler = new RecordingHandler(message =>
+        {
+            request = message;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new { status = "UP", service = "home-ktv" }),
+            };
+        });
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        var health = await api.CheckHealthAsync();
+
+        Assert.Equal("GET", request!.Method.Method);
+        Assert.Equal("http://server:8080/api/health", request.RequestUri!.ToString());
+        Assert.Equal(new ServerHealth("UP", "home-ktv"), health);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "{\"status\":\"DOWN\",\"service\":\"home-ktv\"}")]
+    [InlineData(HttpStatusCode.OK, "{\"status\":\"UP\",\"service\":\"another-service\"}")]
+    [InlineData(HttpStatusCode.OK, "null")]
+    public async Task Health_check_returns_null_for_unavailable_or_unrecognized_services(
+        HttpStatusCode status, string body)
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(status)
+        {
+            Content = new StringContent(body),
+        });
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        Assert.Null(await api.CheckHealthAsync());
+    }
+
+    [Fact]
     public async Task Control_request_reuses_shared_action_and_params_shape()
     {
         HttpRequestMessage? request = null;
@@ -148,6 +187,29 @@ public sealed class HttpServerApiTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Artist_avatar_asset_rejects_empty_paths_without_http(string? path)
+    {
+        var handler = new RecordingHandler(_ => throw new InvalidOperationException("network must not be used"));
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        Assert.Null(await api.GetAssetBytesAsync(path));
+    }
+
+    [Fact]
+    public async Task Artist_avatar_asset_returns_null_for_http_errors()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        Assert.Null(await api.GetAssetBytesAsync("/api/artists/avatar"));
+    }
+
+    [Theory]
     [InlineData(HttpStatusCode.Conflict, "TV_OFFLINE", "电视离线")]
     [InlineData(HttpStatusCode.InternalServerError, "SERVER_ERROR", "服务端异常")]
     public async Task Control_non_success_response_is_not_silently_treated_as_success(
@@ -191,6 +253,33 @@ public sealed class HttpServerApiTests
         Assert.Null(detail);
     }
 
+    [Fact]
+    public async Task Song_detail_success_deserializes_the_song_and_file_list()
+    {
+        HttpRequestMessage? request = null;
+        var handler = new RecordingHandler(message =>
+        {
+            request = message;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"id\":42,\"title\":\"Test Song\",\"artist\":\"Artist\",\"mediaType\":\"VIDEO\",\"hasVocalTrack\":true,\"durationMs\":123000,\"lyricType\":\"LRC\",\"coverUrl\":null,\"lyricUrl\":null,\"files\":[]}"),
+            };
+        });
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        var detail = await api.GetSongDetailAsync(42);
+
+        Assert.Equal("GET", request!.Method.Method);
+        Assert.Equal("http://server:8080/api/songs/42", request.RequestUri!.ToString());
+        Assert.NotNull(detail);
+        Assert.Equal(42, detail!.Id);
+        Assert.Equal("Test Song", detail.Title);
+        Assert.Equal(123000, detail.DurationMs);
+        Assert.Empty(detail.Files);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.Forbidden)]
@@ -206,6 +295,94 @@ public sealed class HttpServerApiTests
         var error = await Assert.ThrowsAsync<KtvApiException>(() => api.GetSongDetailAsync(42));
 
         Assert.Equal((int)status, error.StatusCode);
+    }
+
+    [Fact]
+    public async Task Queue_http_error_returns_null()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        Assert.Null(await api.GetQueueAsync());
+    }
+
+    [Theory]
+    [InlineData("not-json", null, "HTTP 502")]
+    [InlineData("{}", null, "HTTP 502")]
+    [InlineData("{\"code\":\"BAD_REQUEST\"}", "BAD_REQUEST", "HTTP 502")]
+    [InlineData("{\"message\":\"rejected\"}", null, "rejected")]
+    public async Task Api_error_parser_uses_safe_fallbacks_for_partial_or_invalid_json(
+        string body, string? expectedCode, string expectedMessage)
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent(body),
+        });
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        var error = await Assert.ThrowsAsync<KtvApiException>(() => api.SendControlAsync("play"));
+
+        Assert.Equal(502, error.StatusCode);
+        Assert.Equal(expectedCode, error.Code);
+        Assert.Equal(expectedMessage, error.Message);
+    }
+
+    [Fact]
+    public async Task Playback_resolver_returns_null_for_legacy_server_endpoint()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        Assert.Null(await api.ResolvePlaybackAsync(42, forceTranscode: false));
+    }
+
+    [Fact]
+    public async Task Playback_resolver_preserves_null_descriptor_and_blank_stream_url()
+    {
+        var responses = new Queue<string>(["null", "{\"kind\":\"NATIVE\",\"status\":\"READY\",\"streamUrl\":\" \"}"]);
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responses.Dequeue()),
+        });
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        Assert.Null(await api.ResolvePlaybackAsync(42, forceTranscode: false));
+        var blank = await api.ResolvePlaybackAsync(42, forceTranscode: false);
+        Assert.NotNull(blank);
+        Assert.Equal(" ", blank!.StreamUrl);
+    }
+
+    [Fact]
+    public async Task Playback_resolver_preserves_absolute_stream_urls()
+    {
+        const string streamUrl = "https://media.example.test/stream/42";
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent.Create(new { kind = "NATIVE", status = "READY", streamUrl }),
+        });
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        var descriptor = await api.ResolvePlaybackAsync(42, forceTranscode: false);
+
+        Assert.Equal(streamUrl, descriptor!.StreamUrl);
+    }
+
+    [Fact]
+    public async Task Playback_resolver_surfaces_server_failure_status()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.BadGateway));
+        using var api = new HttpServerApi(
+            new ServerEndpoint(new Uri("http://server:8080/")), handler: handler);
+
+        var error = await Assert.ThrowsAsync<KtvApiException>(
+            () => api.ResolvePlaybackAsync(42, forceTranscode: false));
+
+        Assert.Equal(502, error.StatusCode);
     }
 
     [Fact]

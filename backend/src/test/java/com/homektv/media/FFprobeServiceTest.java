@@ -41,6 +41,67 @@ class FFprobeServiceTest {
     }
 
     @Test
+    void rejectsMissingZeroAndNegativeTimeouts() {
+        assertThat(catchThrowable(() -> new FFprobeService(new AppProperties(), args -> new CompletedProcess("", ""), null)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(catchThrowable(() -> new FFprobeService(new AppProperties(), args -> new CompletedProcess("", ""), Duration.ZERO)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(catchThrowable(() -> new FFprobeService(new AppProperties(), args -> new CompletedProcess("", ""), Duration.ofMillis(-1))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void wrapsProcessStartupIoFailureWithTheConfiguredProbePath() {
+        FFprobeService service = new FFprobeService(new AppProperties(), args -> {
+            throw new IOException("synthetic start failure");
+        }, Duration.ofSeconds(1));
+
+        assertThat(catchThrowable(() -> service.probe(Path.of("missing.ts"))))
+                .isInstanceOf(MediaProbeException.class)
+                .hasRootCauseInstanceOf(IOException.class)
+                .hasMessageContaining("ffprobe");
+    }
+
+    @Test
+    void rejectsNonzeroProcessExitAndIncludesTrimmedStderr() {
+        FFprobeService service = new FFprobeService(new AppProperties(), args -> new CompletedProcess(
+                "{\"streams\":[],\"format\":{}}", "  unsupported codec  ", 7), Duration.ofSeconds(1));
+
+        assertThat(catchThrowable(() -> service.probe(Path.of("unsupported.ts"))))
+                .isInstanceOf(MediaProbeException.class)
+                .hasMessageContaining("exit=7")
+                .hasMessageContaining("unsupported codec");
+    }
+
+    @Test
+    void restoresInterruptStatusAndDestroysTheProbeProcess() {
+        InterruptibleProcess process = new InterruptibleProcess();
+        FFprobeService service = new FFprobeService(new AppProperties(), args -> process, Duration.ofSeconds(1));
+
+        try {
+            assertThat(catchThrowable(() -> service.probe(Path.of("interrupted.ts"))))
+                    .isInstanceOf(MediaProbeException.class)
+                    .hasMessageContaining("中断");
+            assertThat(process.destroyed.get()).isTrue();
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    void ignoresZeroLengthReadsAndContinuesDrainingUtf8Output() {
+        String json = "{\"streams\":[],\"format\":{}}";
+        FFprobeService service = new FFprobeService(new AppProperties(), args -> new CompletedProcess(
+                new ZeroReadThenDataInputStream(json), new ByteArrayInputStream(new byte[0])), Duration.ofSeconds(1));
+
+        MediaProbe result = service.probe(Path.of("zero-read.ts"));
+
+        assertThat(result.audioTracks()).isZero();
+        assertThat(result.durationMs()).isZero();
+    }
+
+    @Test
     void probeTimeoutDestroysProcessWhenOutputDoesNotClose() {
         AtomicReference<HangingProcess> process = new AtomicReference<>();
         FFprobeService service = new FFprobeService(new AppProperties(), args -> {
@@ -179,24 +240,110 @@ class FFprobeServiceTest {
         assertThat(p.resolution()).isNull();
     }
 
+    @Test
+    void parseHandlesFallbackTagsAlternateStreamTitleAndUnusableVideoDimensions() {
+        String json = """
+            {
+              "format": {"duration": "180.5", "tags": {"title": "  ", "album_artist": " Artist ", "language": "zh"}},
+              "streams": [
+                {"codec_type": "video", "width": 0, "height": 1080, "disposition": {"attached_pic": 0}},
+                {"codec_type": "data"},
+                {"codec_type": "audio", "codec_name": "aac", "channels": 2, "tags": {"title": " ", "name": " Lead "}},
+                {"codec_type": "subtitle"}
+              ]
+            }
+            """;
+
+        MediaProbe probe = service.parse(json);
+
+        assertThat(probe.hasVideo()).isTrue();
+        assertThat(probe.resolution()).isNull();
+        assertThat(probe.subtitleTracks()).isEqualTo(1);
+        assertThat(probe.audioTracks()).isEqualTo(1);
+        assertThat(probe.audioCodec()).isEqualTo("aac");
+        assertThat(probe.audioStreams().getFirst().title()).isEqualTo("Lead");
+        assertThat(probe.artist()).isEqualTo("Artist");
+        assertThat(probe.language()).isEqualTo("zh");
+        assertThat(probe.title()).isNull();
+    }
+
+    @Test
+    void rejectsMalformedJsonInsteadOfReturningAnEmptyProbe() {
+        assertThat(catchThrowable(() -> service.parse("{ invalid json")))
+                .isInstanceOf(MediaProbeException.class)
+                .hasMessageContaining("解析 ffprobe JSON 失败");
+    }
+
     private static final class CompletedProcess extends Process {
         private final InputStream stdout;
         private final InputStream stderr;
+        private final int exitCode;
 
         private CompletedProcess(String stdout, String stderr) {
-            this.stdout = new ByteArrayInputStream(stdout.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            this.stderr = new ByteArrayInputStream(stderr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            this(new ByteArrayInputStream(stdout.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    new ByteArrayInputStream(stderr.getBytes(java.nio.charset.StandardCharsets.UTF_8)), 0);
+        }
+
+        private CompletedProcess(String stdout, String stderr, int exitCode) {
+            this(new ByteArrayInputStream(stdout.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    new ByteArrayInputStream(stderr.getBytes(java.nio.charset.StandardCharsets.UTF_8)), exitCode);
+        }
+
+        private CompletedProcess(InputStream stdout, InputStream stderr) {
+            this(stdout, stderr, 0);
+        }
+
+        private CompletedProcess(InputStream stdout, InputStream stderr, int exitCode) {
+            this.stdout = stdout;
+            this.stderr = stderr;
+            this.exitCode = exitCode;
         }
 
         @Override public OutputStream getOutputStream() { return new ByteArrayOutputStream(); }
         @Override public InputStream getInputStream() { return stdout; }
         @Override public InputStream getErrorStream() { return stderr; }
-        @Override public int waitFor() { return 0; }
+        @Override public int waitFor() { return exitCode; }
         @Override public boolean waitFor(long timeout, TimeUnit unit) { return true; }
-        @Override public int exitValue() { return 0; }
+        @Override public int exitValue() { return exitCode; }
         @Override public void destroy() { }
         @Override public Process destroyForcibly() { return this; }
         @Override public boolean isAlive() { return false; }
+    }
+
+    private static final class ZeroReadThenDataInputStream extends InputStream {
+        private final ByteArrayInputStream delegate;
+        private boolean returnZero = true;
+
+        private ZeroReadThenDataInputStream(String value) {
+            delegate = new ByteArrayInputStream(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+
+        @Override public int read() { return delegate.read(); }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) {
+            if (returnZero) {
+                returnZero = false;
+                return 0;
+            }
+            return delegate.read(buffer, offset, length);
+        }
+    }
+
+    private static final class InterruptibleProcess extends Process {
+        private final AtomicBoolean destroyed = new AtomicBoolean();
+
+        @Override public OutputStream getOutputStream() { return new ByteArrayOutputStream(); }
+        @Override public InputStream getInputStream() { return new ByteArrayInputStream(new byte[0]); }
+        @Override public InputStream getErrorStream() { return new ByteArrayInputStream(new byte[0]); }
+        @Override public int waitFor() throws InterruptedException { throw new InterruptedException("synthetic interrupt"); }
+        @Override public boolean waitFor(long timeout, TimeUnit unit) throws InterruptedException {
+            throw new InterruptedException("synthetic timed wait interrupt");
+        }
+        @Override public int exitValue() { return destroyed.get() ? 143 : 0; }
+        @Override public void destroy() { destroyForcibly(); }
+        @Override public Process destroyForcibly() { destroyed.set(true); return this; }
+        @Override public boolean isAlive() { return !destroyed.get(); }
     }
 
     private static final class HangingProcess extends Process {

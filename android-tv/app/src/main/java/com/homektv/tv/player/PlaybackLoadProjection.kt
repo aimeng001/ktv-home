@@ -4,7 +4,11 @@ import com.homektv.tv.net.AudioLayout
 import com.homektv.tv.net.QueueSnapshot
 
 /** Latest server state used when an asynchronous media load reaches its commit point. */
-internal class DesiredPlaybackState {
+internal fun interface DesiredPlaybackSnapshotProvider {
+    fun forQueue(queueId: Long?): QueueSnapshot?
+}
+
+internal class DesiredPlaybackState : DesiredPlaybackSnapshotProvider {
     @Volatile
     private var latest: QueueSnapshot? = null
 
@@ -12,7 +16,7 @@ internal class DesiredPlaybackState {
         latest = snapshot
     }
 
-    fun forQueue(queueId: Long?): QueueSnapshot? {
+    override fun forQueue(queueId: Long?): QueueSnapshot? {
         val snapshot = latest ?: return null
         return snapshot.playing
             ?.takeIf { it.queueId == queueId }
@@ -55,10 +59,11 @@ internal class PlaybackLoadProjection(private val desiredState: DesiredPlaybackS
     ): PlaybackLoadCommand? {
         val snapshot = desiredState.forQueue(queueId) ?: return null
         val recoveryApplies = recovery?.takeIf {
-            it.forceTranscode && LiveTranscodeStreamUrl.isLiveTranscode(streamUrl)
+            LiveTranscodeStreamUrl.isLiveTranscode(streamUrl)
         }
-        val recoverySeekIsCurrent = recoveryApplies?.recoverySeekSequence == null ||
-            recoveryApplies.recoverySeekSequence == snapshot.seekSequence
+        val recoverySeekSequence = recoveryApplies?.recoverySeekSequence
+        val recoverySeekIsCurrent = recoverySeekSequence == null ||
+            recoverySeekSequence == snapshot.seekSequence
         val positionMs = if (recoveryApplies?.recoveryPositionMs != null && recoverySeekIsCurrent) {
             maxOf(snapshot.positionMs, recoveryApplies.recoveryPositionMs.coerceAtLeast(0L))
         } else snapshot.positionMs.coerceAtLeast(0L)

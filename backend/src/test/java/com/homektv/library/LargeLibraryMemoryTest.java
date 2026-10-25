@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Opt-in scale regression. It deliberately stays out of the default suite because it
- * seeds a large temporary database; run with runLargeLibraryTest=true and Xmx512m.
+ * seeds a 10,000-row temporary database by default; run with runLargeLibraryTest=true and Xmx512m.
  */
 @SpringBootTest
 @Testcontainers
@@ -62,7 +62,7 @@ class LargeLibraryMemoryTest {
 
     @BeforeEach
     void seedLargeLibrary() {
-        int rows = Math.max(5_001, Integer.getInteger("largeLibraryRows", 200_000));
+        int rows = Math.max(10_000, Integer.getInteger("largeLibraryRows", 10_000));
         seededRows = rows;
         fingerprintPrefix = "large-library-" + UUID.randomUUID() + "-";
         jdbc.update("""

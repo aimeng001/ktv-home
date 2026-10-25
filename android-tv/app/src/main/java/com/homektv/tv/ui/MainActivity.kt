@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import android.view.View
 import android.view.WindowManager
+import android.util.Log
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.KeyEvent
 import android.widget.Toast
@@ -74,8 +75,10 @@ import com.homektv.tv.player.LiveTranscodeStreamUrl
 import com.homektv.tv.player.PlaybackSeekGate
 import com.homektv.tv.player.supportsVocalSwitch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -132,7 +135,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var loadedQueueId: Long? = null
     private var currentFileId: Long? = null
     private val playbackLoadGate = PlaybackLoadGate()
-    private var playbackLoadJob: Job? = null
+    private var playbackAssetsJob: Job? = null
     private var playbackReplacementJob: Job? = null
     private var activePlaybackLoadTicket: PlaybackLoadTicket? = null
     private val desiredPlaybackState = DesiredPlaybackState()
@@ -326,8 +329,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 // Invalidate the old output before waiting on the next REST
                 // resolution. The coordinator owns retries; this callback only
                 // performs the synchronous player-side stop.
-                playbackLoadJob?.cancel()
-                playbackLoadJob = null
+                playbackAssetsJob?.cancel()
+                playbackAssetsJob = null
                 engine?.stop()
                 loadedQueueId = null
                 currentFileId = null
@@ -1142,9 +1145,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         val muted = snapshot.muted
 
         // 同一首：只处理播放/暂停 + 音量，不重新装载
-        if (playing.queueId == currentQueueId &&
-            (playbackReplacementJob?.isActive == true || playbackLoadJob?.isActive == true)
-        ) {
+        if (playing.queueId == currentQueueId && playbackReplacementJob?.isActive == true) {
             return
         }
         if (playing.queueId == currentQueueId && loadedQueueId == playing.queueId) {
@@ -1212,67 +1213,96 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         val songId = token.request.songId
         val audioMode = snapshot.playing?.song?.mediaType.equals("AUDIO", ignoreCase = true)
         val eng = engine ?: return
+        playbackAssetsJob?.cancel()
+        playbackAssetsJob = null
         accompanimentTrackIndex = file.audioLayout.accompanimentTrackIndex ?: file.vocalTrackIndex
         audioTrackCount = file.audioTracks
         currentAudioLayout = file.audioLayout
         currentFileId = file.id
-        playbackLoadJob = lifecycleScope.launch {
-            lyricLines = mediaApi.fetchLyric(songId)?.let(LrcParser::parse).orEmpty()
-            if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
-            if (audioMode) {
-                val audioUi = ensureAudioOverlayBinding()
-                val coverBytes = mediaApi.fetchCover(songId)
-                if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
-                coverBytes?.let { bytes ->
-                    val bitmap = withContext(Dispatchers.Default) {
-                        ArtworkDecoder.decode(bytes, ArtworkProfile.COVER)
-                    }
-                    if (bitmap != null && playbackCoordinator.isCurrent(token) && isCurrentPlaybackLoad(loadTicket)) {
-                        audioUi.imgAudioCover.setImageBitmap(bitmap)
+        val command = playbackLoadProjection.commandForLoadedFile(
+            queueId = targetQueueId,
+            fileId = file.id,
+            streamUrl = streamUrl,
+            accompanimentTrackIndex = accompanimentTrackIndex,
+            audioTrackCount = audioTrackCount,
+            audioLayout = currentAudioLayout,
+            recovery = token.request.takeIf {
+                LiveTranscodeStreamUrl.isLiveTranscode(streamUrl)
+            },
+        ) ?: return
+        eng.setVocalMode(
+            command.vocalMode,
+            command.accompanimentTrackIndex,
+            command.audioTrackCount,
+            command.audioLayout,
+        )
+        eng.applyVolume(command.volume, command.muted)
+        if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return
+        val hasVideoDeclared = !snapshot.playing?.song?.mediaType.equals("AUDIO", ignoreCase = true)
+        eng.play(
+            command.fileId,
+            command.streamUrl,
+            command.queueId,
+            command.playWhenReady,
+            command.positionMs,
+            hasVideoDeclared = hasVideoDeclared,
+            format = file.format,
+            songDurationMs = snapshot.playing?.song?.durationMs?.toLong() ?: 0L,
+        )
+        if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return
+        loadedQueueId = targetQueueId
+        playbackSeekGate.markApplied(command.seekSequence)
+        playbackAssetsJob = lifecycleScope.launch {
+            supervisorScope {
+                launch {
+                    try {
+                        val text = mediaApi.fetchLyric(songId)
+                        val lines = withContext(Dispatchers.Default) {
+                            text?.let(LrcParser::parse).orEmpty()
+                        }
+                        if (isCurrentPlaybackAssets(loadTicket, token, file.id)) {
+                            lyricLines = lines
+                            lastLyricIndex = -1
+                            updateProgress(eng.currentPositionMs)
+                            if (audioMode && lines.isNotEmpty()) {
+                                audioOverlayBinding?.txtAudioLyricNext?.text = lines.first().text
+                            }
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        Log.w("MainActivity", "optional lyric load failed: " + failure.javaClass.simpleName)
                     }
                 }
-                if (lyricLines.isNotEmpty()) audioUi.txtAudioLyricNext.text = lyricLines.first().text
+                if (audioMode) launch {
+                    try {
+                        val coverBytes = mediaApi.fetchCover(songId) ?: return@launch
+                        val bitmap = withContext(Dispatchers.Default) {
+                            ArtworkDecoder.decode(coverBytes, ArtworkProfile.COVER)
+                        }
+                        if (bitmap != null && isCurrentPlaybackAssets(loadTicket, token, file.id)) {
+                            ensureAudioOverlayBinding().imgAudioCover.setImageBitmap(bitmap)
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        Log.w("MainActivity", "optional artwork load failed: " + failure.javaClass.simpleName)
+                    }
+                }
             }
-            if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
-            val command = playbackLoadProjection.commandForLoadedFile(
-                queueId = targetQueueId,
-                fileId = file.id,
-                streamUrl = streamUrl,
-                accompanimentTrackIndex = accompanimentTrackIndex,
-                audioTrackCount = audioTrackCount,
-                audioLayout = currentAudioLayout,
-                recovery = token.request.takeIf {
-                    it.forceTranscode && LiveTranscodeStreamUrl.isLiveTranscode(streamUrl)
-                },
-            ) ?: return@launch
-            eng.setVocalMode(
-                command.vocalMode,
-                command.accompanimentTrackIndex,
-                command.audioTrackCount,
-                command.audioLayout,
-            )
-            eng.applyVolume(command.volume, command.muted)
-            if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
-            val hasVideoDeclared = !snapshot.playing?.song?.mediaType.equals("AUDIO", ignoreCase = true)
-            eng.play(
-                command.fileId,
-                command.streamUrl,
-                command.queueId,
-                command.playWhenReady,
-                command.positionMs,
-                hasVideoDeclared = hasVideoDeclared,
-                format = file.format,
-                songDurationMs = snapshot.playing?.song?.durationMs?.toLong() ?: 0L,
-            )
-            if (!playbackCoordinator.isCurrent(token) || !isCurrentPlaybackLoad(loadTicket)) return@launch
-            loadedQueueId = targetQueueId
-            playbackSeekGate.markApplied(command.seekSequence)
         }
     }
 
+    private fun isCurrentPlaybackAssets(
+        ticket: PlaybackLoadTicket,
+        token: PlaybackReplacementToken,
+        fileId: Long,
+    ): Boolean = isCurrentPlaybackLoad(ticket) && playbackCoordinator.isCurrent(token) &&
+        loadedQueueId == token.request.queueId && currentFileId == fileId
+
     private fun beginPlaybackLoad(queueId: Long?): PlaybackLoadTicket {
-        playbackLoadJob?.cancel()
-        playbackLoadJob = null
+        playbackAssetsJob?.cancel()
+        playbackAssetsJob = null
         playbackReplacementJob?.cancel()
         playbackReplacementJob = null
         return playbackLoadGate.begin(queueId)
@@ -1282,8 +1312,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         playbackLoadGate.isCurrent(ticket)
 
     private fun invalidatePlaybackLoad() {
-        playbackLoadJob?.cancel()
-        playbackLoadJob = null
+        playbackAssetsJob?.cancel()
+        playbackAssetsJob = null
         playbackReplacementJob?.cancel()
         playbackReplacementJob = null
         activePlaybackLoadTicket = null

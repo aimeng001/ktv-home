@@ -60,6 +60,7 @@ public interface SongFileRepository extends JpaRepository<SongFile, Long> {
     boolean existsBySourceMd5(String sourceMd5);
     boolean existsByOutputMd5(String outputMd5);
     List<SongFile> findByFileRoleOrderByImportedAtDesc(String fileRole);
+    Optional<SongFile> findByFileRoleAndFilePath(String fileRole, String filePath);
     List<SongFile> findByFileRoleAndFilePathIn(String fileRole, Collection<String> filePaths);
     List<SongFile> findByFileRoleAndRelativePathIn(String fileRole, Collection<String> relativePaths);
     Slice<SongFile> findByFileRoleAndFilePathGreaterThanOrderByFilePath(

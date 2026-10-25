@@ -44,4 +44,24 @@ describe('useAsyncResource', () => {
     expect(resource.status.value).toBe('success')
     expect(resource.data.value).toEqual([{ id: 2 }])
   })
+
+  it('ignores a late failure from an older refresh after a newer success', async () => {
+    let rejectFirst
+    let resolveSecond
+    const loader = vi.fn()
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveSecond = resolve }))
+    const resource = useAsyncResource(loader, [])
+
+    const first = resource.load()
+    const second = resource.load()
+    resolveSecond([{ id: 2 }])
+    await second
+    rejectFirst(new Error('stale failure'))
+    await first
+
+    expect(resource.status.value).toBe('success')
+    expect(resource.data.value).toEqual([{ id: 2 }])
+    expect(resource.error.value).toBeNull()
+  })
 })

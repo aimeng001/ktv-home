@@ -84,4 +84,41 @@ class KioskPipResponsivePolicyTest {
         assertEquals(0, oneDpTooShort.widthDp)
         assertFalse(oneDpTooShort.visible)
     }
+
+    @Test
+    fun invalidNegativeMeasurementsAndLimitsFailClosed() {
+        val size = KioskPipResponsivePolicy.resolve(
+            availableWidthDp = -1,
+            availableHeightDp = -1,
+            minContentHeightDp = -1,
+            bottomMarginDp = -1,
+            contentGapDp = -1,
+            minWidthDp = 0,
+            maxWidthDp = 0,
+        )
+
+        assertEquals(0, size.widthDp)
+        assertFalse(size.visible)
+    }
+
+    @Test
+    fun preferredWidthIsClampedByMinimumFractionAndMaximumWidth() {
+        val belowZeroFraction = KioskPipResponsivePolicy.resolve(
+            availableWidthDp = 900,
+            availableHeightDp = 900,
+            minContentHeightDp = 100,
+            widthFraction = -1f,
+        )
+        val aboveOneFraction = KioskPipResponsivePolicy.resolve(
+            availableWidthDp = 900,
+            availableHeightDp = 900,
+            minContentHeightDp = 100,
+            widthFraction = 2f,
+        )
+
+        assertEquals(128, belowZeroFraction.widthDp)
+        assertTrue(belowZeroFraction.visible)
+        assertEquals(340, aboveOneFraction.widthDp)
+        assertTrue(aboveOneFraction.visible)
+    }
 }

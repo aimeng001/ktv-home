@@ -1,11 +1,28 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { usePlayerStore } from './player'
 
+class SocketStub {
+  static OPEN = 1
+  static instances = []
+
+  constructor(url) {
+    this.url = url
+    this.readyState = 0
+    this.close = vi.fn()
+    SocketStub.instances.push(this)
+  }
+}
+
 describe('usePlayerStore', () => {
-  beforeEach(() => setActivePinia(createPinia()))
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    SocketStub.instances = []
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
 
   const snapshot = {
     playing: { queueId: 1, song: { id: 10, title: '晴天', durationMs: 269000 }, orderedByNick: '小明' },
@@ -96,6 +113,35 @@ describe('usePlayerStore', () => {
     expect(p.historyRevision).toBe(1)
   })
 
+  it('connects once and safely disconnects an absent or active socket', () => {
+    vi.stubGlobal('WebSocket', SocketStub)
+    const p = usePlayerStore()
+    p.disconnect()
+    p.connect()
+    const socket = p.socket
+    p.connect()
+
+    expect(SocketStub.instances).toHaveLength(1)
+    expect(p.socket).toBe(socket)
+    p.disconnect()
+    expect(socket.closed).toBe(true)
+    expect(p.socket).toBeNull()
+    p.disconnect()
+  })
+
+  it('ignores progress events without a numeric position and defaults missing effect ids', () => {
+    const p = usePlayerStore()
+    p.positionMs = 123
+    p.handleEvent('progress', null)
+    p.handleEvent('progress', { position_ms: '456' })
+    expect(p.positionMs).toBe(123)
+
+    p.handleEvent('effect_play', {})
+    expect(p.lastEffect).toBeNull()
+    p.handleEvent('unknown-event', {})
+    expect(p.positionMs).toBe(123)
+  })
+
   it('无播放时 nowPlaying 为 null', () => {
     const p = usePlayerStore()
     p.handleEvent('sync_full', { ...snapshot, playing: null })
@@ -119,14 +165,35 @@ describe('usePlayerStore', () => {
     expect([...p.orderedSongIds]).toEqual([])
   })
 
-  it('rejects a stale control response after a newer websocket snapshot', () => {
+  it('tolerates missing queues and non-song queue entries when deriving ordered ids', () => {
     const p = usePlayerStore()
-    p.handleEvent('queue_updated', { ...snapshot, stateRevision: 20, list: [] })
+    p.queue = null
+    expect([...p.orderedSongIds]).toEqual([])
 
-    p.applyControlResponse({ ...snapshot, stateRevision: 19, list: snapshot.list })
+    p.queue = [null, {}, { song: { id: 'not-a-number' } }, { song: { id: '12' } }]
+    expect([...p.orderedSongIds]).toEqual([12])
+  })
+
+  it('keeps newer playback state when an older control response arrives after the websocket snapshot', () => {
+    const p = usePlayerStore()
+    const newer = { ...snapshot, state: 'paused', volume: 90, stateRevision: 20 }
+    const stale = {
+      ...snapshot,
+      playing: null,
+      list: [],
+      state: 'idle',
+      volume: 10,
+      stateRevision: 19
+    }
+    p.handleEvent('queue_updated', newer)
+
+    p.applyControlResponse(stale)
 
     expect(p.stateRevision).toBe(20)
-    expect(p.queue).toEqual([])
+    expect(p.state).toBe('paused')
+    expect(p.volume).toBe(90)
+    expect(p.nowPlaying.queueId).toBe(snapshot.playing.queueId)
+    expect(p.queue).toEqual(snapshot.list)
   })
 
   it('rejects legacy snapshots after the first revisioned snapshot', () => {
@@ -136,6 +203,73 @@ describe('usePlayerStore', () => {
     p.applySnapshot({ ...snapshot, list: snapshot.list })
 
     expect(p.stateRevision).toBe(20)
+    expect(p.queue).toEqual([])
+  })
+
+  it('ignores empty and unsafe snapshots after revisioned state', () => {
+    const p = usePlayerStore()
+    expect(p.applySnapshot(null)).toBeUndefined()
+
+    p.handleEvent('sync_full', {
+      ...snapshot,
+      stateRevision: 10,
+      positionMs: 500,
+      volume: 42,
+      muted: true,
+      vocalMode: 'original',
+      tvOnline: true,
+      connectedPhones: 2,
+      playback: { kind: 'FILE', status: 'READY' }
+    })
+    const previous = {
+      positionMs: p.positionMs,
+      volume: p.volume,
+      muted: p.muted,
+      vocalMode: p.vocalMode,
+      tvOnline: p.tvOnline,
+      connectedPhones: p.connectedPhones,
+      playback: p.playback
+    }
+
+    expect(p.applySnapshot({ ...snapshot, stateRevision: 10.5 })).toBe(false)
+    expect(p.applySnapshot({ ...snapshot, stateRevision: 9 })).toBe(false)
+    expect(p.applySnapshot({ ...snapshot, stateRevision: 0 })).toBe(false)
+    expect(p.$state).toMatchObject(previous)
+    expect(p.stateRevision).toBe(10)
+  })
+
+  it('applies compatibility defaults and preserves optional values for partial snapshots', () => {
+    const p = usePlayerStore()
+    p.positionMs = 321
+    p.volume = 44
+    p.vocalMode = 'original'
+    p.audioLayout = { layout: 'DUAL_TRACK' }
+    p.tvOnline = true
+
+    expect(p.applySnapshot({})).toBe(true)
+
+    expect(p.nowPlaying).toBeNull()
+    expect(p.state).toBe('idle')
+    expect(p.positionMs).toBe(321)
+    expect(p.volume).toBe(44)
+    expect(p.muted).toBe(false)
+    expect(p.vocalMode).toBe('original')
+    expect(p.audioLayout).toEqual({ layout: 'DUAL_TRACK' })
+    expect(p.queue).toEqual([])
+    expect(p.tvOnline).toBe(true)
+    expect(p.connectedPhones).toBe(0)
+    expect(p.playback).toEqual({ kind: 'NONE', status: 'IDLE' })
+  })
+
+  it('accepts wrapped control snapshots and ignores invalid response shapes', () => {
+    const p = usePlayerStore()
+    p.applyControlResponse({ snapshot: { ...snapshot, stateRevision: 2, list: [] } })
+    expect(p.stateRevision).toBe(2)
+    expect(p.queue).toEqual([])
+
+    p.applyControlResponse({ snapshot: { list: 'not-an-array', state: 'playing' } })
+    p.applyControlResponse(null)
+    expect(p.state).toBe('playing')
     expect(p.queue).toEqual([])
   })
 
@@ -155,6 +289,22 @@ describe('usePlayerStore', () => {
     expect(p.roomHost.claimed).toBe(true)
     expect(p.roomHost.hostUserId).toBe(9)
     expect(p.roomHost.revision).toBe(3)
+  })
+
+  it('ignores non-object room-host events and accepts an unrevisioned first event only at revision zero', () => {
+    const p = usePlayerStore()
+    p.handleEvent('room_host_changed', null)
+    p.handleEvent('room_host_changed', 'invalid')
+    expect(p.roomHost.revision).toBe(0)
+
+    p.handleEvent('room_host_changed', { claimed: true, hostUserId: 7, revision: 'invalid' })
+    expect(p.roomHost.claimed).toBe(true)
+    expect(p.roomHost.revision).toBe(0)
+
+    p.handleEvent('room_host_changed', { claimed: true, hostUserId: 7, revision: 1 })
+    p.handleEvent('room_host_changed', { claimed: false, hostUserId: null, revision: 'invalid' })
+    expect(p.roomHost.claimed).toBe(true)
+    expect(p.roomHost.revision).toBe(1)
   })
 
   it('derives isHost locally based on userStore serverUserId', () => {

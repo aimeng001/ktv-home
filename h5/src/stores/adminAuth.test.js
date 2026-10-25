@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { clearAdminToken, useAdminAuthStore } from './adminAuth'
+import { clearAdminToken, getAdminToken, useAdminAuthStore } from './adminAuth'
 
 describe('useAdminAuthStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     localStorage.clear()
   })
+
+  afterEach(() => vi.unstubAllGlobals())
 
   it('persists an admin token and can clear it', () => {
     const auth = useAdminAuthStore()
@@ -30,5 +32,31 @@ describe('useAdminAuthStore', () => {
     clearAdminToken()
 
     expect(localStorage.getItem('home-ktv.admin.token')).toBeNull()
+  })
+
+  it('clears non-string and empty tokens from state and storage', () => {
+    localStorage.setItem('home-ktv.admin.token', 'old-token')
+    const auth = useAdminAuthStore()
+
+    auth.setToken(42)
+    expect(auth.token).toBe('')
+    expect(auth.isAuthenticated).toBe(false)
+    expect(localStorage.getItem('home-ktv.admin.token')).toBeNull()
+
+    auth.setToken('')
+    expect(auth.token).toBe('')
+  })
+
+  it('supports environments without localStorage', () => {
+    vi.stubGlobal('localStorage', undefined)
+
+    expect(getAdminToken()).toBe('')
+    expect(() => clearAdminToken()).not.toThrow()
+
+    const auth = useAdminAuthStore()
+    expect(auth.token).toBe('')
+    auth.setToken('')
+    auth.clearToken()
+    expect(auth.token).toBe('')
   })
 })

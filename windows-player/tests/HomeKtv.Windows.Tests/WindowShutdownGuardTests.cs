@@ -28,4 +28,19 @@ public sealed class WindowShutdownGuardTests
 
         Assert.Empty(reported);
     }
+
+    [Fact]
+    public async Task Cleanup_failure_without_reporter_is_swallowed()
+    {
+        await WindowShutdownGuard.RunAsync(
+            () => throw new InvalidOperationException("socket already closed"));
+    }
+
+    [Fact]
+    public async Task Failure_in_reporter_is_also_swallowed_during_shutdown()
+    {
+        await WindowShutdownGuard.RunAsync(
+            () => throw new InvalidOperationException("cleanup failed"),
+            _ => throw new InvalidOperationException("reporter failed"));
+    }
 }

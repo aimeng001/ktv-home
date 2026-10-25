@@ -80,6 +80,13 @@ class ExternalReadOnlyLibraryTest {
 
         lenient().when(songFileRepository.findByFilePath(anyString())).thenAnswer(invocation ->
                 Optional.ofNullable(filesByPath.get(invocation.getArgument(0))));
+        lenient().when(songFileRepository.findByFileRoleAndFilePath(anyString(), anyString()))
+                .thenAnswer(invocation -> Optional.ofNullable(filesByPath.get(invocation.getArgument(1)))
+                        .filter(file -> invocation.getArgument(0).equals(file.getFileRole())));
+        lenient().when(songFileRepository.findById(anyLong())).thenAnswer(invocation ->
+                filesByPath.values().stream()
+                        .filter(file -> invocation.getArgument(0).equals(file.getId()))
+                        .findFirst());
                 lenient().when(songFileRepository.findMaxIdByFileRole(anyString()))
                 .thenAnswer(invocation -> {
                     String role = invocation.getArgument(0);

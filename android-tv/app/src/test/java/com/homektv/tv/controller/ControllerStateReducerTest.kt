@@ -6,6 +6,7 @@ import com.homektv.tv.net.NowPlaying
 import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.RoomHostStatus
 import com.homektv.tv.net.SongDto
+import com.homektv.tv.net.UserProfile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -53,6 +54,24 @@ class ControllerStateReducerTest {
 
         assertTrue(updated.queueLoading)
         assertEquals(12L, updated.queue.stateRevision)
+    }
+
+    @Test
+    fun equalRevisionSnapshotIsAcceptedAndUpdatesQueueProjectionForRegisteredUser() {
+        val current = ControllerUiState(
+            currentUser = UserProfile(7L, "房主"),
+            queueLoading = true,
+            queue = QueueSnapshot(stateRevision = 12L),
+        )
+
+        val updated = ControllerStateReducer.withSnapshot(
+            current,
+            QueueSnapshot(stateRevision = 12L),
+        )
+
+        assertEquals(12L, updated.queue.stateRevision)
+        assertFalse(updated.queueLoading)
+        assertEquals(ControllerConnection.ONLINE, updated.connection)
     }
 
     @Test
@@ -299,6 +318,48 @@ class ControllerStateReducerTest {
     }
 
     @Test
+    fun legacyQueueErrorFallbackAndDomainSpecificMessagesRemainIsolated() {
+        val globalError = KtvApiError(KtvApiErrorKind.NETWORK, "NETWORK_ERROR", "offline")
+        val queueOnly = ControllerUiState(error = globalError)
+
+        assertEquals(globalError, queueOnly.errorFor(UiDomain.QUEUE))
+        assertNull(queueOnly.errorFor(UiDomain.CATALOG))
+        assertEquals("无法连接点歌服务", queueOnly.messageFor(UiDomain.QUEUE))
+        assertNull(queueOnly.messageFor(UiDomain.HISTORY))
+
+        val otherDomainError = KtvApiError(KtvApiErrorKind.HTTP, "HTTP_ERROR", "catalog")
+        val withOtherDomain = queueOnly.copy(domainErrors = mapOf(UiDomain.CATALOG to otherDomainError))
+        assertNull(withOtherDomain.errorFor(UiDomain.QUEUE))
+        assertEquals(otherDomainError, withOtherDomain.errorFor(UiDomain.CATALOG))
+    }
+
+    @Test
+    fun eachDomainFailureStopsOnlyThatDomainsLoadIndicators() {
+        UiDomain.entries.forEach { domain ->
+            val before = ControllerUiState(
+                catalogLoadingMore = true,
+                catalogLoading = true,
+                favoritesLoading = true,
+                historyLoading = true,
+                queueLoading = true,
+            )
+
+            val after = ControllerStateReducer.withDomainFailure(
+                before,
+                domain,
+                KtvApiError(KtvApiErrorKind.NETWORK, "NETWORK_ERROR", domain.name),
+            )
+
+            assertEquals(domain != UiDomain.CATALOG, after.catalogLoadingMore)
+            assertEquals(domain != UiDomain.CATALOG, after.catalogLoading)
+            assertEquals(domain != UiDomain.FAVORITES, after.favoritesLoading)
+            assertEquals(domain != UiDomain.HISTORY, after.historyLoading)
+            assertEquals(domain != UiDomain.QUEUE, after.queueLoading)
+            assertEquals(domain, after.domainErrors.keys.single())
+        }
+    }
+
+    @Test
     fun legacyRoomHostStatusCannotReplaceRevisionedState() {
         val current = ControllerUiState(
             roomHost = RoomHostStatus(claimed = true, hostUserId = 9L, revision = 3L),
@@ -344,5 +405,144 @@ class ControllerStateReducerTest {
             com.homektv.tv.net.UserProfile(7L, "手机A"),
         )
         assertTrue(registered.roomHost.isHost)
+    }
+
+    @Test
+    fun blankSearchClearsResultsAndDoesNotStartLoading() {
+        val current = ControllerUiState(
+            query = "previous",
+            results = listOf(SongDto(1L, "旧歌", "旧歌手")),
+            searchPage = 3,
+            searchHasMore = true,
+            loading = true,
+        )
+
+        val updated = ControllerStateReducer.withSearchStarted(current, "  ")
+
+        assertEquals("  ", updated.query)
+        assertTrue(updated.results.isEmpty())
+        assertEquals(0, updated.searchPage)
+        assertFalse(updated.searchHasMore)
+        assertFalse(updated.loading)
+    }
+
+    @Test
+    fun connectionReducerMapsBothOnlineAndOfflineTransitions() {
+        val online = ControllerStateReducer.withConnection(ControllerUiState(), true)
+        val offline = ControllerStateReducer.withConnection(online, false)
+
+        assertEquals(ControllerConnection.ONLINE, online.connection)
+        assertEquals(ControllerConnection.OFFLINE, offline.connection)
+    }
+
+    @Test
+    fun successfulReadsPreserveRegistrationRetryFeedbackAndCanClearAllDomainErrors() {
+        val registrationError = KtvApiError(KtvApiErrorKind.NETWORK, "USER_REGISTRATION_FAILED", "retry")
+        val state = ControllerUiState(
+            registration = RegistrationStatus.RETRY_REQUIRED,
+            error = registrationError,
+            message = "请重试注册",
+            domainErrors = mapOf(
+                UiDomain.QUEUE to KtvApiError(KtvApiErrorKind.NETWORK, "NETWORK_ERROR", "queue"),
+                UiDomain.CATALOG to KtvApiError(KtvApiErrorKind.HTTP, "HTTP_ERROR", "catalog"),
+            ),
+        )
+
+        val updated = ControllerStateReducer.withSuccessfulRead(state)
+
+        assertEquals(registrationError, updated.error)
+        assertEquals("请重试注册", updated.message)
+        assertTrue(updated.domainErrors.isEmpty())
+    }
+
+    @Test
+    fun successfulQueueSnapshotPreservesRegistrationRetryError() {
+        val registrationError = KtvApiError(KtvApiErrorKind.NETWORK, "USER_REGISTRATION_FAILED", "retry")
+        val state = ControllerUiState(
+            registration = RegistrationStatus.RETRY_REQUIRED,
+            error = registrationError,
+            domainErrors = mapOf(UiDomain.QUEUE to KtvApiError(KtvApiErrorKind.NETWORK, "NETWORK_ERROR", "queue")),
+        )
+
+        val updated = ControllerStateReducer.withSnapshot(state, QueueSnapshot(stateRevision = 1L))
+
+        assertEquals(registrationError, updated.error)
+        assertTrue(updated.domainErrors.isEmpty())
+        assertFalse(updated.queueLoading)
+    }
+
+    @Test
+    fun personalLoadingReducersLeaveUnrelatedDomainsUnchanged() {
+        val state = ControllerUiState(catalogLoading = true, queueLoading = true)
+
+        assertEquals(state, ControllerStateReducer.withPersonalLoadStarted(state, UiDomain.QUEUE))
+        assertEquals(state, ControllerStateReducer.withPersonalLoadFinished(state, UiDomain.CATALOG))
+    }
+
+    @Test
+    fun roomHostReducerAcceptsEqualRevisionButDoesNotTrustClaimOrHostFlagsWithoutIdentity() {
+        val stateWithoutUser = ControllerUiState(
+            roomHost = RoomHostStatus(claimed = true, hostUserId = 7L, revision = 3L, isHost = true),
+        )
+        val claimedWithoutUser = ControllerStateReducer.withRoomHost(
+            stateWithoutUser,
+            RoomHostStatus(claimed = true, hostUserId = 7L, revision = 3L, isHost = true),
+        )
+        assertTrue(claimedWithoutUser.roomHost.claimed)
+        assertFalse(claimedWithoutUser.roomHost.isHost)
+        assertEquals(3L, claimedWithoutUser.roomHost.revision)
+
+        val stateWithUser = stateWithoutUser.copy(currentUser = UserProfile(7L, "房主"))
+        val unclaimed = ControllerStateReducer.withRoomHost(
+            stateWithUser,
+            RoomHostStatus(claimed = false, hostUserId = 7L, revision = 4L, isHost = true),
+        )
+        assertFalse(unclaimed.roomHost.isHost)
+
+        val claimedWithoutHostId = ControllerStateReducer.withRoomHost(
+            stateWithUser,
+            RoomHostStatus(claimed = true, hostUserId = null, revision = 5L, isHost = true),
+        )
+        assertFalse(claimedWithoutHostId.roomHost.isHost)
+    }
+
+    @Test
+    fun mapsEveryKnownBusinessCodeAndEachFallbackErrorKind() {
+        val knownMessages = mapOf(
+            "SONG_IN_QUEUE" to "这首歌已在队列中",
+            "SONG_NOT_READY" to "歌曲尚未准备好，请稍后再试",
+            "TV_OFFLINE" to "电视未连接",
+            "FORBIDDEN" to "没有操作权限",
+            "QUEUE_ITEM_NOT_FOUND" to "队列项已不存在",
+            "SERVER_NOT_CONFIGURED" to "请先配置点歌服务",
+            "NETWORK_ERROR" to "无法连接点歌服务",
+            "INVALID_RESPONSE" to "服务端数据格式异常",
+            "INVALID_QUEUE" to "服务端数据格式异常",
+            "PAYLOAD_TOO_LARGE" to "服务端响应过大",
+        )
+        knownMessages.forEach { (code, message) ->
+            assertEquals(message, ControllerStateReducer.userMessage(
+                KtvApiError(KtvApiErrorKind.BUSINESS, code, "ignored"),
+            ))
+        }
+
+        assertEquals("无法连接点歌服务", ControllerStateReducer.userMessage(
+            KtvApiError(KtvApiErrorKind.NETWORK, "UNKNOWN", "ignored"),
+        ))
+        assertEquals("服务端暂时不可用", ControllerStateReducer.userMessage(
+            KtvApiError(KtvApiErrorKind.HTTP, "UNKNOWN", "ignored"),
+        ))
+        assertEquals("服务端数据格式异常", ControllerStateReducer.userMessage(
+            KtvApiError(KtvApiErrorKind.DECODE, "UNKNOWN", "ignored"),
+        ))
+        assertEquals("服务端响应过大", ControllerStateReducer.userMessage(
+            KtvApiError(KtvApiErrorKind.PAYLOAD_TOO_LARGE, "UNKNOWN", "ignored"),
+        ))
+        assertEquals("操作未完成", ControllerStateReducer.userMessage(
+            KtvApiError(KtvApiErrorKind.BUSINESS, "UNKNOWN", "  "),
+        ))
+        assertEquals("服务端说明", ControllerStateReducer.userMessage(
+            KtvApiError(KtvApiErrorKind.BUSINESS, "UNKNOWN", "服务端说明"),
+        ))
     }
 }

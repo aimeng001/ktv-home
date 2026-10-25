@@ -61,7 +61,6 @@ public sealed class HttpServerApi : IPlaybackServerApi, IDisposable
         {
             throw await ReadApiExceptionAsync(response, cancellationToken).ConfigureAwait(false);
         }
-        if (!response.IsSuccessStatusCode) return null;
         return await ReadJsonAsync<SongDetail>(response.Content, BoundedHttpContentReader.MaxJsonBytes,
             cancellationToken).ConfigureAwait(false);
     }

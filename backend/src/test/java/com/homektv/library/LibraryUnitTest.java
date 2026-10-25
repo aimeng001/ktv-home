@@ -4,12 +4,28 @@ import com.homektv.domain.AudioLayout;
 import com.homektv.media.MediaProbe;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 曲库入库纯逻辑单测：拼音、类型判定、指纹、文件名解析、歌词类型（P1.2-P1.5）。
  */
 class LibraryUnitTest {
+
+    @Test
+    void mediaFileClassificationHandlesNullHiddenUnknownAndCaseInsensitiveExtensions() {
+        assertThat(LibraryScanService.isMediaFile(null)).isFalse();
+        assertThat(LibraryScanService.isAudioFile(null)).isFalse();
+        assertThat(LibraryScanService.extOf(Path.of(".mkv"))).isEmpty();
+        assertThat(LibraryScanService.isMediaFile(Path.of(".mkv"))).isFalse();
+        assertThat(LibraryScanService.isAudioFile(Path.of(".mp3"))).isFalse();
+
+        assertThat(LibraryScanService.isMediaFile(Path.of("草蜢-爱.MKV"))).isTrue();
+        assertThat(LibraryScanService.isAudioFile(Path.of("草蜢-爱.MP3"))).isTrue();
+        assertThat(LibraryScanService.isAudioFile(Path.of("草蜢-爱.MKV"))).isFalse();
+        assertThat(LibraryScanService.isMediaFile(Path.of("cover.jpg"))).isFalse();
+    }
 
     // ---- P1.5 拼音 ----
     @Test

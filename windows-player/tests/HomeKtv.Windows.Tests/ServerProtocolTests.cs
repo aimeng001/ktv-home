@@ -1,4 +1,5 @@
 using System.Text.Json;
+using HomeKtv.Windows.Protocol;
 using HomeKtv.Windows.ServerConnection;
 
 namespace HomeKtv.Windows.Tests;
@@ -54,6 +55,29 @@ public sealed class ServerProtocolTests
     }
 
     [Fact]
+    public void Player_credential_header_omits_blank_values()
+    {
+        var endpoint = ServerEndpoint.Parse("https://192.168.1.10:8443");
+
+        Assert.Null(endpoint.PlayerCredentialHeader(null));
+        Assert.Null(endpoint.PlayerCredentialHeader(string.Empty));
+        Assert.Null(endpoint.PlayerCredentialHeader(" \t "));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" \t ")]
+    [InlineData("ftp://192.168.1.10:21")]
+    [InlineData("http://")]
+    [InlineData("http://192.168.1.10:0")]
+    [InlineData("https://192.168.1.10:65536")]
+    [InlineData("http://[::1")]
+    public void Manual_address_rejects_empty_unsupported_or_invalid_authorities(string raw)
+    {
+        Assert.Throws<FormatException>(() => ServerEndpoint.Parse(raw));
+    }
+
+    [Fact]
     public void Discovery_response_requires_the_existing_home_ktv_protocol_marker()
     {
         var response = DiscoveryResponseParser.Parse(
@@ -65,9 +89,33 @@ public sealed class ServerProtocolTests
         Assert.Equal("http://192.168.1.10:9090/api/", response.Endpoint.ApiBaseUri.ToString());
     }
 
+    [Fact]
+    public void Discovery_response_uses_source_host_when_name_is_blank_and_brackets_ipv6_hosts()
+    {
+        var response = DiscoveryResponseParser.Parse(
+            "{\"service\":\"home-ktv\",\"protocolVersion\":1,\"name\":\"  \",\"port\":9090}",
+            "2001:db8::10");
+
+        Assert.NotNull(response);
+        Assert.Equal("2001:db8::10", response!.Name);
+        Assert.Equal("http://[2001:db8::10]:9090/api/", response.Endpoint.ApiBaseUri.ToString());
+    }
+
+    [Fact]
+    public void Discovery_response_rejects_empty_source_host_null_json_and_malformed_json()
+    {
+        const string validPayload = "{\"service\":\"home-ktv\",\"protocolVersion\":1,\"port\":9090}";
+
+        Assert.Null(DiscoveryResponseParser.Parse(validPayload, string.Empty));
+        Assert.Null(DiscoveryResponseParser.Parse(validPayload, " \t "));
+        Assert.Null(DiscoveryResponseParser.Parse("null", "192.168.1.10"));
+        Assert.Null(DiscoveryResponseParser.Parse("{invalid", "192.168.1.10"));
+    }
+
     [Theory]
     [InlineData("{\"service\":\"other\",\"protocolVersion\":1,\"port\":8080}")]
     [InlineData("{\"service\":\"home-ktv\",\"protocolVersion\":2,\"port\":8080}")]
+    [InlineData("{\"service\":\"home-ktv\",\"protocolVersion\":1,\"port\":0}")]
     [InlineData("{\"service\":\"home-ktv\",\"protocolVersion\":1,\"port\":70000}")]
     public void Discovery_response_rejects_unknown_or_invalid_payloads(string payload)
     {
@@ -135,5 +183,27 @@ public sealed class ServerProtocolTests
 
         Assert.NotNull(snapshot);
         Assert.Equal(42, snapshot!.StateRevision);
+    }
+
+    [Fact]
+    public void Json_element_snapshot_parser_returns_null_for_null_and_undefined_payloads()
+    {
+        using var document = JsonDocument.Parse("null");
+
+        Assert.Null(ProtocolParser.ParseSnapshot(document.RootElement));
+        Assert.Null(ProtocolParser.ParseSnapshot(default(JsonElement)));
+    }
+
+    [Fact]
+    public void Json_element_snapshot_parser_deserializes_snapshot_payload()
+    {
+        using var document = JsonDocument.Parse(
+            "{\"playing\":null,\"list\":[],\"state\":\"idle\",\"volume\":60,\"muted\":false,\"vocalMode\":\"accompaniment\",\"audioLayout\":{\"layout\":\"DUAL_CHANNEL\"},\"tvOnline\":false,\"connectedPhones\":0,\"positionMs\":321}");
+
+        var snapshot = ProtocolParser.ParseSnapshot(document.RootElement);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(321, snapshot!.PositionMs);
+        Assert.Equal(AudioLayout.DUAL_CHANNEL, snapshot.AudioLayout.Layout);
     }
 }

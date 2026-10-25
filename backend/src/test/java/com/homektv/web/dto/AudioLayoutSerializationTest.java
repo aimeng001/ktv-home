@@ -30,6 +30,19 @@ class AudioLayoutSerializationTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
+    void missingLayoutFieldsDefaultToNormalStereoSemantics() {
+        AudioLayoutDto fromNulls = new AudioLayoutDto(null, null, null, null, null);
+        AudioLayoutDto missingFile = AudioLayoutDto.from(null);
+        AudioLayoutDto unsetFile = AudioLayoutDto.from(new SongFile());
+
+        assertThat(fromNulls.layout()).isEqualTo(AudioLayout.NORMAL_STEREO);
+        assertThat(fromNulls.originalChannel()).isEqualTo(AudioChannel.LEFT);
+        assertThat(fromNulls.accompanimentChannel()).isEqualTo(AudioChannel.RIGHT);
+        assertThat(missingFile).isEqualTo(AudioLayoutDto.normalStereo());
+        assertThat(unsetFile).isEqualTo(AudioLayoutDto.normalStereo());
+    }
+
+    @Test
     void songDetailExposesPlatformNeutralAudioLayoutSemantics() throws Exception {
         SongFile file = new SongFile();
         file.setId(7L);
@@ -105,6 +118,9 @@ class AudioLayoutSerializationTest {
         song.setTitle("测试歌曲");
         song.setArtist("测试歌手");
         SongFile file = new SongFile();
+        file.setValid(true);
+        file.setProbePending(false);
+        file.setMediaType("MV");
         file.setAudioLayout(AudioLayout.DUAL_CHANNEL);
 
         when(playerRepository.getSingleton()).thenReturn(player);

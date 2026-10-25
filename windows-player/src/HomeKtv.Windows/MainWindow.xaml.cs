@@ -13,8 +13,8 @@ namespace HomeKtv.Windows;
 
 public partial class MainWindow : Window
 {
-    private readonly PlayerSettingsStore settingsStore = new();
-    private readonly DisplayManager displayManager = new();
+    private readonly PlayerSettingsStore settingsStore;
+    private readonly DisplayManager displayManager;
     private IReadOnlyList<DisplayInfo> displays = [];
     private PlayerSettings settings = new();
     private PlaybackTerminal? terminal;
@@ -30,8 +30,14 @@ public partial class MainWindow : Window
     private const long ArtistAvatarCacheBytesLimit = 16L * 1024L * 1024L;
     private static readonly TimeSpan ArtistAvatarRetryDelay = TimeSpan.FromSeconds(30);
 
-    public MainWindow()
+    public MainWindow() : this(new PlayerSettingsStore(), new DisplayManager())
     {
+    }
+
+    internal MainWindow(PlayerSettingsStore settingsStore, DisplayManager displayManager)
+    {
+        this.settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
+        this.displayManager = displayManager ?? throw new ArgumentNullException(nameof(displayManager));
         InitializeComponent();
         settings = settingsStore.Load();
         ServerAddressText.Text = settings.ServerAddress;

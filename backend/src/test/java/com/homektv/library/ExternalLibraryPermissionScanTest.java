@@ -10,6 +10,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.IOException;
@@ -56,6 +57,8 @@ class ExternalLibraryPermissionScanTest {
         lenient().when(songRepository.findDistinctArtistByStatus(anyString())).thenReturn(List.of());
         lenient().when(songFileRepository.findMaxIdByFileRole(anyString())).thenReturn(0L);
         lenient().when(songFileRepository.countByFileRoleAndProbePendingTrue(anyString())).thenReturn(0L);
+        lenient().when(songFileRepository.findPendingForScan(anyString(), any(), any(), anyString(), any()))
+                .thenReturn(new PageImpl<>(List.of()));
 
         InMemoryLibraryScanSeenPathStore seenStore = new InMemoryLibraryScanSeenPathStore(songFileRepository, songRepository);
         scanService = new LibraryScanService(

@@ -190,7 +190,7 @@ docker compose -f docker-compose.prebuilt.yml up -d --pull always --wait
 `KTV_DATA_DIR` 对应的 `/data` 目录后退出，由 Docker 自动重启。若 `.env` 中已有旧的
 `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=70 -Xmx512m`，请删除或改为
 `.env.example` 中的新值，否则旧值会覆盖安全默认值。管理员登录后可访问
-`/api/admin/diagnostics/memory` 查看堆内存和扫描进度。
+`/api/admin/diagnostics/memory` 查看堆内存、扫描进度，以及探测和 Managed 转码的当前占用、等待人数与累计/最大等待时间；实时转码显示当前占用和上限。
 
 选择 `EXTERNAL_READ_ONLY` 模式时，请继续使用上面的 `docker-compose.nas.yml` 命令。需要从源码构建 Managed 模式时使用：
 
@@ -535,29 +535,35 @@ cd android-tv && ./gradlew testDebugUnitTest
 cd windows-player && dotnet test HomeKtv.Windows.sln -c Release
 ```
 
-本地需要反复跑全部可执行门禁时，可从仓库根目录并行启动各模块：
+本地按风险分档运行跨端测试：
 
 ```bash
-# 默认包含后端 Testcontainers；需要 Docker daemon
-python scripts/full_test_runner.py --backend all --backend-parallelism 8
+# 默认核心档：关键业务测试及少量 PostgreSQL/Testcontainers 烟测，需要 Docker Desktop
+python scripts/full_test_runner.py
 
-# 当前没有 Docker 时的快速本地门禁（明确排除 13 个 Testcontainers 类）
-python scripts/full_test_runner.py --backend local --backend-parallelism 8
+# 没有 Docker 时运行核心单测
+python scripts/full_test_runner.py --profile core --backend local
+
+# 扩展档：各端其余测试、构建和发布契约检查
+python scripts/full_test_runner.py --profile extended --backend all --jobs 3
+
+# 对所选档位生成覆盖率报告
+python scripts/full_test_runner.py --profile core --coverage
 ```
 
-执行器为每个模块保留独立日志，并在最后报告总墙钟时间；Android 默认复用 Gradle daemon，CI 或需要隔离时再加 `--no-daemon`。`--backend local` 不是完整发布 Gate，Docker 集成测试仍须在有 Docker 的环境单独执行。
+`core` 是默认档，覆盖扫描只读、播放/队列/转码音频、安全与跨端协议；后端保留迁移/事务、扫描、队列和 WebSocket 的 PostgreSQL 烟测。`extended` 保留各端独有的低风险边界、完整测试套件及构建检查。旧名称 `fast` / `full` 分别映射到 `core` / `extended`。`--backend local` 明确跳过后端 Testcontainers；Docker 环境下的核心档默认包含上述少量集成烟测。执行器为每个模块保留独立日志并报告总耗时；Android 默认复用 Gradle daemon，CI 或需要隔离时可加 `--no-daemon`。
 
 大型曲库与检索基准测试（需 Docker 环境与足够内存，默认不进入日常测试套件）：
 
 ```bash
-# 10000 首扫描内存基准测试（受限堆 512M）
-cd backend && ./mvnw test -Dtest=LargeExternalLibraryScanTest -DrunLargeLibraryScanTest=true -DscanRows=10000 -DargLine="-Xms128m -Xmx512m"
+# 可选的合成曲库扫描压测，最多 10000 条；默认核心/扩展档均不运行
+cd backend && ./mvnw test -Dtest=LargeExternalLibraryScanTest -DrunLargeLibraryScanTest=true -DscanRows=10000 -DnasReadOnlyScanRoot= -DargLine="-Xms128m -Xmx512m"
 
 # 大曲库并发读与聚合基准测试（Opt-in，需 Docker）
 cd backend && ./mvnw test -Dtest=LargeLibraryMemoryTest -DrunLargeLibraryTest=true -DargLine="-Xmx512m"
 
-# 20万行规模检索性能与执行计划基准测试（Opt-in，需 Docker）
-cd backend && ./mvnw test -Dtest=SearchLargeLibraryPerformanceTest -DrunSearchPerformanceTest=true
+# 可选的 PostgreSQL 检索性能基准测试，固定最多 10000 行；默认核心/扩展档均不运行
+cd backend && ./mvnw test -Dtest=SearchLargeLibraryPerformanceTest -DrunSearchPerformanceTest=true -DsearchLibraryRows=10000
 ```
 
 目录结构：

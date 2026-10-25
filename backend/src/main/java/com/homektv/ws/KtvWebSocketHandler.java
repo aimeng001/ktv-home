@@ -107,24 +107,19 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
             case "progress" -> {
                 // TV 上行播放进度 → 转发给所有端（详设§4.2 progress）
                 long positionMs = node.path("payload").path("position_ms").asLong(0);
-                Long queueId = node.path("payload").path("queue_id").isNumber()
-                        ? node.path("payload").path("queue_id").asLong() : null;
+                long queueId = node.path("payload").path("queue_id").asLong();
                 PositionUpdateResult result = playbackService.updatePosition(queueId, positionMs);
                 if (!result.accepted()) {
                     return;
                 }
                 java.util.Map<String, Object> progress = new java.util.LinkedHashMap<>();
                 progress.put("position_ms", result.state().getPositionMs());
-                if (queueId != null) progress.put("queue_id", queueId);
+                progress.put("queue_id", queueId);
                 broadcaster.broadcastPlayback(WsEvent.of(WsEvent.PROGRESS, progress));
             }
             case "finished" -> {
                 // TV 上报当前曲目播放完成 → 推进队列并广播
-                Long queueId = node.path("payload").path("queue_id").isNumber()
-                        ? node.path("payload").path("queue_id").asLong() : null;
-                if (queueId == null || queueId <= 0) {
-                    return;
-                }
+                long queueId = node.path("payload").path("queue_id").asLong();
                 FinishResult result = playbackService.onFinished(queueId);
                 broadcaster.sendTo(session, WsEvent.of(WsEvent.PLAYBACK_REPORT_ACK,
                         java.util.Map.of(
@@ -144,12 +139,11 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                         MAX_PLAYBACK_REASON_BYTES);
                 Long fileId = node.path("payload").path("file_id").isNumber()
                         ? node.path("payload").path("file_id").asLong() : null;
-                Long queueId = node.path("payload").path("queue_id").isNumber()
-                        ? node.path("payload").path("queue_id").asLong() : null;
+                long queueId = node.path("payload").path("queue_id").asLong();
                 PlaybackTransitionResult result = playbackService.onPlayError(fileId, queueId);
                 broadcaster.sendTo(session, WsEvent.of(WsEvent.PLAYBACK_REPORT_ACK,
                         java.util.Map.of(
-                                "queue_id", queueId == null ? 0L : queueId,
+                                "queue_id", queueId,
                                 "report_type", "play_error",
                                 "status", result.accepted() ? "APPLIED" : "STALE")));
                 if (!result.accepted()) return;
@@ -202,12 +196,6 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         return "tv".equals(type == null ? null : type.toString());
     }
 
-    private void notifyOfflineIfTv(String clientType) {
-        if ("tv".equals(clientType)) {
-            tvOfflineWatcher.onTvDisconnected();
-        }
-    }
-
     private void unregister(WebSocketSession session) {
         String clientType = broadcaster.unregister(session);
         ActivePlayerRegistry.Unregistration removal = playerRegistry.unregisterPlayer(session.getId());
@@ -232,7 +220,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         if (playerRegistry.activeSessionId().isEmpty()) {
-            notifyOfflineIfTv(clientType);
+            tvOfflineWatcher.onTvDisconnected();
         }
     }
 
@@ -253,7 +241,6 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         JsonNode generation = node.path("payload").path("generation");
         Long value = generation.isIntegralNumber() ? generation.asLong() : null;
         if (!playerRegistry.authorizesUpstream(session.getId(), value)) return false;
-        if (!playerRegistry.requiresQueueIdentity(session.getId())) return true;
         JsonNode queueId = node.path("payload").path("queue_id");
         return queueId.isIntegralNumber() && queueId.asLong() > 0;
     }

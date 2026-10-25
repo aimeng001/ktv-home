@@ -39,5 +39,13 @@ class PlaybackDecodeRecoveryPolicyTest {
                 requestedFileId = null,
             ),
         )
+        assertFalse(
+            PlaybackDecodeRecoveryPolicy.shouldRequestLiveTranscode(
+                isVideo = true,
+                isAlreadyLiveTranscoded = false,
+                fileId = null,
+                requestedFileId = null,
+            ),
+        )
     }
 }

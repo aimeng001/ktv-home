@@ -1,6 +1,7 @@
 package com.homektv.web.dto;
 
 import com.homektv.domain.SongFile;
+import com.homektv.domain.Song;
 import com.homektv.library.MediaClassifier;
 import org.junit.jupiter.api.Test;
 
@@ -53,6 +54,25 @@ class SongDetailReadyFlagTest {
         file.setValid(false);
 
         assertThat(SongDetailDto.FileSourceDto.from(file).ready()).isFalse();
+    }
+
+    @Test
+    void detailIncludesCoverAndLyricUrlsOnlyWhenTheirSourcesExist() {
+        Song song = new Song();
+        song.setId(21L);
+        song.setTitle("晴天");
+        song.setArtist("周杰伦");
+        song.setLyricType("none");
+
+        SongDetailDto withoutAssets = SongDetailDto.from(song, java.util.List.of());
+        assertThat(withoutAssets.coverUrl()).isNull();
+        assertThat(withoutAssets.lyricUrl()).isNull();
+
+        song.setCoverPath("/data/covers/21.jpg");
+        song.setLyricType("manual");
+        SongDetailDto withAssets = SongDetailDto.from(song, java.util.List.of());
+        assertThat(withAssets.coverUrl()).isEqualTo("/api/cover/21");
+        assertThat(withAssets.lyricUrl()).isEqualTo("/api/lyric/21");
     }
 
     private static SongFile file(long id) {

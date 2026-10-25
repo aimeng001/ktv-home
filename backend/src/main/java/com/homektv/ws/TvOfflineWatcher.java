@@ -5,6 +5,7 @@ import com.homektv.queue.SnapshotService;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.Executors;
@@ -34,19 +35,30 @@ public class TvOfflineWatcher {
     private final WsBroadcaster broadcaster;
     private final PlaybackService playbackService;
     private final SnapshotService snapshotService;
-
-    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "tv-offline-watcher");
-        t.setDaemon(true);
-        return t;
-    });
+    private final ScheduledExecutorService scheduler;
     private ScheduledFuture<?> pending;
 
+    @Autowired
     public TvOfflineWatcher(WsBroadcaster broadcaster, PlaybackService playbackService,
                             SnapshotService snapshotService) {
+        this(broadcaster, playbackService, snapshotService, newScheduler());
+    }
+
+    /** Package-private scheduler seam for deterministic timer tests. */
+    TvOfflineWatcher(WsBroadcaster broadcaster, PlaybackService playbackService,
+                     SnapshotService snapshotService, ScheduledExecutorService scheduler) {
         this.broadcaster = broadcaster;
         this.playbackService = playbackService;
         this.snapshotService = snapshotService;
+        this.scheduler = scheduler;
+    }
+
+    private static ScheduledExecutorService newScheduler() {
+        return Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "tv-offline-watcher");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     /** TV 会话建立：取消待执行的离线清理。

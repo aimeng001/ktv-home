@@ -67,7 +67,10 @@ class TranscodeHardwareServiceTest {
 
         TranscodeHardwareService.HardwareStatus status = service.detect();
 
-        assertThat(status.available()).isTrue();
+        assertThat(status.available())
+                .as("status=%s; mpp exists/readable/writable=%s/%s/%s", status,
+                        Files.exists(mpp), Files.isReadable(mpp), Files.isWritable(mpp))
+                .isTrue();
         assertThat(status.vendor()).isEqualTo("Rockchip RK MPP");
         assertThat(status.acceleration()).isEqualTo("rkmpp");
         assertThat(status.supportedCodecs()).containsExactly("h264", "hevc");

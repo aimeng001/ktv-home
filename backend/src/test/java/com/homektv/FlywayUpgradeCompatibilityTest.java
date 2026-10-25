@@ -1,10 +1,12 @@
 package com.homektv;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.flywaydb.core.api.exception.FlywayValidateException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;
+import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -13,8 +15,12 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
@@ -95,6 +101,49 @@ class FlywayUpgradeCompatibilityTest {
             flyway.repair();
             flyway.migrate();
         }).doesNotThrowAnyException();
+    }
+
+    @Test
+    void failedPostgresMigrationRollsBackEveryStatementInThatMigration(@TempDir Path tempDir) throws Exception {
+        Path migrationDirectory = Files.createDirectories(tempDir.resolve("migration"));
+        Files.writeString(migrationDirectory.resolve("V1__stable_data.sql"), """
+                CREATE TABLE stable_data(id INTEGER PRIMARY KEY);
+                INSERT INTO stable_data(id) VALUES (1);
+                """, StandardCharsets.UTF_8);
+        Files.writeString(migrationDirectory.resolve("V2__partially_applied.sql"), """
+                CREATE TABLE partial_data(id INTEGER PRIMARY KEY);
+                INSERT INTO partial_data(id) VALUES (2);
+                INSERT INTO stable_data(id) VALUES (1);
+                """, StandardCharsets.UTF_8);
+
+        String location = "filesystem:" + migrationDirectory.toAbsolutePath().toString().replace('\\', '/');
+        Flyway flyway = Flyway.configure()
+                .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+                .locations(location)
+                .table("flyway_rollback_history")
+                .load();
+
+        assertThatThrownBy(flyway::migrate)
+                .isInstanceOf(FlywayException.class)
+                .hasMessageContaining("stable_data");
+
+        try (Connection conn = DriverManager.getConnection(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+             Statement stmt = conn.createStatement()) {
+            try (var rs = stmt.executeQuery("SELECT COUNT(*) FROM stable_data")) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getInt(1)).isEqualTo(1);
+            }
+            try (var rs = stmt.executeQuery("SELECT to_regclass('public.partial_data')")) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getString(1)).isNull();
+            }
+            try (var rs = stmt.executeQuery(
+                    "SELECT success FROM flyway_rollback_history WHERE version='1'")) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getBoolean(1)).isTrue();
+            }
+        }
     }
 
     private void setupLegacyV24SchemaHistory(String jdbcUrl, String username, String password, int legacyChecksum)

@@ -136,7 +136,7 @@ heap dump under `/data` and exits so Docker can restart it. If an existing
 `.env` still contains the old `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=70 -Xmx512m`,
 remove it or replace it with the value from `.env.example`; an explicit old
 value overrides the safer Compose default. After administrator login,
-`/api/admin/diagnostics/memory` reports heap usage and scan progress.
+`/api/admin/diagnostics/memory` reports heap usage, scan progress, current active/waiting counts and limits for probes and Managed transcodes, and their cumulative/maximum wait times. Live transcodes report their current count and limit.
 
 To build from source instead, run:
 

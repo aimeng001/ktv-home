@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.config.AppProperties;
+import com.homektv.musicsource.CoverImageNormalizer;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -8,13 +9,19 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -61,6 +68,7 @@ class LocalAvatarResolverTest {
         Files.createDirectories(customDir);
         Files.write(customDir.resolve("王力宏 (Leehom Wang).jpg"), new byte[]{1, 2, 3});
         Files.write(customDir.resolve("Beyond [乐队].png"), new byte[]{4, 5, 6});
+        Files.write(customDir.resolve("Solo [ ].jpg"), new byte[]{2, 4, 6});
         // Direct file in data directory root
         Files.write(tempDir.resolve("张学友.webp"), new byte[]{7, 8, 9});
 
@@ -124,6 +132,14 @@ class LocalAvatarResolverTest {
         Files.write(image, new byte[(int) LocalAvatarResolver.MAX_FILE_SIZE + 1]);
 
         assertThat(LocalAvatarResolver.readBounded(image)).isNull();
+    }
+
+    @Test
+    void boundedImageReadRejectsNullAndDirectories(@TempDir Path tempDir) throws Exception {
+        Path directory = Files.createDirectory(tempDir.resolve("not-an-image"));
+
+        assertThat(LocalAvatarResolver.readBounded(null)).isNull();
+        assertThat(LocalAvatarResolver.readBounded(directory)).isNull();
     }
 
     @Test
@@ -195,5 +211,192 @@ class LocalAvatarResolverTest {
                 .filter(p -> p.equals(dataDir) || p.startsWith(dataDir))
                 .count();
         assertThat(dataDirCount).isEqualTo(1);
+    }
+
+    @Test
+    void collectCandidateDirectoriesIncludesOnlyExistingRootsAndKnownSourceFolders(@TempDir Path tempDir)
+            throws Exception {
+        Path avatarLibrary = Files.createDirectory(tempDir.resolve("avatar-library"));
+        Path dataDirectory = Files.createDirectory(tempDir.resolve("data"));
+        Path sourceDirectory = Files.createDirectory(tempDir.resolve("source"));
+        Path sourceAvatars = Files.createDirectory(sourceDirectory.resolve("avatars"));
+        Path sourcePortraits = Files.createDirectory(sourceDirectory.resolve("歌手写真"));
+
+        AppProperties props = new AppProperties();
+        props.setAvatarLibraryPath(avatarLibrary.toString());
+        props.setDataPath(dataDirectory.toString());
+        props.setSourceLibraryPath(sourceDirectory.toString());
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, null, null);
+
+        assertThat(resolver.collectCandidateDirectories())
+                .containsExactly(avatarLibrary, dataDirectory, sourceAvatars, sourcePortraits);
+    }
+
+    @Test
+    void collectCandidateDirectoriesIgnoresBlankAndMissingPaths(@TempDir Path tempDir) {
+        AppProperties props = new AppProperties();
+        props.setAvatarLibraryPath("  ");
+        props.setDataPath(tempDir.resolve("missing-data").toString());
+        props.setSourceLibraryPath(tempDir.resolve("missing-source").toString());
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, null, null);
+
+        assertThat(resolver.collectCandidateDirectories()).isEmpty();
+
+        props.setDataPath(" ");
+        props.setSourceLibraryPath("");
+        assertThat(resolver.collectCandidateDirectories()).isEmpty();
+    }
+
+    @Test
+    void indexDirectoryIgnoresMissingRootsAndNonImageFiles(@TempDir Path tempDir) throws Exception {
+        Path avatarDirectory = Files.createDirectory(tempDir.resolve("avatars"));
+        Files.write(avatarDirectory.resolve("notes.txt"), new byte[]{1});
+        Files.write(avatarDirectory.resolve("no-extension"), new byte[]{2});
+        Files.write(avatarDirectory.resolve(".jpg"), new byte[]{3});
+        Files.write(avatarDirectory.resolve(" .jpg"), new byte[]{4});
+
+        AppProperties props = new AppProperties();
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, null, null);
+        var index = new java.util.HashMap<String, Path>();
+
+        resolver.indexDirectory(null, index);
+        resolver.indexDirectory(tempDir.resolve("missing-avatars"), index);
+        resolver.indexDirectory(avatarDirectory, index);
+
+        assertThat(index).isEmpty();
+    }
+
+    @Test
+    void indexDirectoryKeepsTheRawKeyWhenBracketCleanupIsEmpty(@TempDir Path tempDir) throws Exception {
+        Path avatarDirectory = Files.createDirectory(tempDir.resolve("avatars"));
+        Path image = avatarDirectory.resolve("[].jpg");
+        Files.write(image, new byte[]{1, 2, 3});
+
+        AppProperties props = new AppProperties();
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, null, null);
+        var index = new java.util.HashMap<String, Path>();
+
+        resolver.indexDirectory(avatarDirectory, index);
+
+        assertThat(index).containsOnlyKeys("[]");
+        assertThat(index).containsEntry("[]", image);
+    }
+
+    @Test
+    void resolveAllCandidatesFallsBackToDisplayNameAndNormalizesImportedImage(@TempDir Path tempDir)
+            throws Exception {
+        Path avatarsDir = Files.createDirectory(tempDir.resolve("avatars"));
+        Files.write(avatarsDir.resolve("王力宏.png"), new byte[]{1, 2, 3});
+
+        AppProperties props = new AppProperties();
+        props.setDataPath(tempDir.toString());
+
+        byte[] normalizedImage = new byte[]{9, 8, 7};
+        CoverImageNormalizer normalizer = mock(CoverImageNormalizer.class);
+        when(normalizer.normalize(any(byte[].class))).thenReturn(normalizedImage);
+
+        AssetWriter assetWriter = mock(AssetWriter.class);
+        when(assetWriter.writeArtistCover(eq("wanglihong-custom"), any(byte[].class), eq("jpg")))
+                .thenReturn("artist-covers/wanglihong-custom.jpg");
+
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+        when(profileService.unresolvedProfiles(50_000)).thenReturn(List.of(
+                new ArtistProfileService.Profile("wanglihong-custom", "王力宏", "PERSON", null, null, null, "PENDING")
+        ));
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, assetWriter, profileService);
+        resolver.setCoverImageNormalizer(normalizer);
+
+        assertThat(resolver.resolveAllCandidates()).isEqualTo(1);
+
+        verify(normalizer).normalize(any(byte[].class));
+        verify(assetWriter).writeArtistCover(eq("wanglihong-custom"), same(normalizedImage), eq("jpg"));
+        verify(profileService).setAvatarReady(
+                "wanglihong-custom", "LOCAL_PACK", "artist-covers/wanglihong-custom.jpg");
+    }
+
+    @Test
+    void resolveAllCandidatesSkipsNullProfilesAndProfilesWithoutArtistKeys(@TempDir Path tempDir)
+            throws Exception {
+        Path avatarsDir = Files.createDirectory(tempDir.resolve("avatars"));
+        Files.write(avatarsDir.resolve("张学友.jpg"), new byte[]{1, 2, 3});
+
+        AppProperties props = new AppProperties();
+        props.setDataPath(tempDir.toString());
+
+        AssetWriter assetWriter = mock(AssetWriter.class);
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+        when(profileService.unresolvedProfiles(50_000)).thenReturn(Arrays.asList(
+                null,
+                new ArtistProfileService.Profile(null, "张学友", "PERSON", null, null, null, "PENDING")
+        ));
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, assetWriter, profileService);
+
+        assertThat(resolver.resolveAllCandidates()).isZero();
+
+        verify(assetWriter, never()).writeArtistCover(any(), any(), any());
+        verify(profileService, never()).setAvatarReady(any(), any(), any());
+    }
+
+    @Test
+    void resolveAllCandidatesDoesNotStartASecondConcurrentScan(@TempDir Path tempDir) throws Exception {
+        Path avatarsDir = Files.createDirectory(tempDir.resolve("avatars"));
+        Files.write(avatarsDir.resolve("张学友.jpg"), new byte[]{1, 2, 3});
+
+        AppProperties props = new AppProperties();
+        props.setDataPath(tempDir.toString());
+
+        CountDownLatch scanEntered = new CountDownLatch(1);
+        CountDownLatch continueScan = new CountDownLatch(1);
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+        when(profileService.unresolvedProfiles(50_000)).thenAnswer(invocation -> {
+            scanEntered.countDown();
+            if (!continueScan.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("test did not release the first scan");
+            }
+            return List.of();
+        });
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, mock(AssetWriter.class), profileService);
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            var firstScan = executor.submit(resolver::resolveAllCandidates);
+            assertThat(scanEntered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(resolver.resolveAllCandidates()).isZero();
+
+            continueScan.countDown();
+            assertThat(firstScan.get(5, TimeUnit.SECONDS)).isZero();
+            verify(profileService, times(1)).unresolvedProfiles(50_000);
+        } finally {
+            continueScan.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void resolveAllCandidatesContainsAvatarWriteFailureAndLeavesProfileUnchanged(@TempDir Path tempDir)
+            throws Exception {
+        Path avatarsDir = Files.createDirectory(tempDir.resolve("avatars"));
+        Files.write(avatarsDir.resolve("张学友.jpg"), new byte[]{1, 2, 3});
+
+        AppProperties props = new AppProperties();
+        props.setDataPath(tempDir.toString());
+
+        AssetWriter assetWriter = mock(AssetWriter.class);
+        when(assetWriter.writeArtistCover(any(), any(byte[].class), any()))
+                .thenThrow(new IllegalStateException("synthetic asset store failure"));
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+        when(profileService.unresolvedProfiles(50_000)).thenReturn(List.of(
+                new ArtistProfileService.Profile("zhangxueyou", "张学友", "PERSON", null, null, null, "PENDING")
+        ));
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, assetWriter, profileService);
+
+        assertThat(resolver.resolveAllCandidates()).isZero();
+        verify(profileService, never()).setAvatarReady(any(), any(), any());
     }
 }

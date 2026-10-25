@@ -7,7 +7,10 @@ import com.homektv.queue.*;
 import com.homektv.repo.PlaylistRepository;
 import com.homektv.repo.PlaylistSongRepository;
 import com.homektv.repo.SongRepository;
+import com.homektv.repo.SongFileRepository;
 import com.homektv.web.ApiException;
+import com.homektv.web.dto.SongDto;
+import com.homektv.ws.WsEvent;
 import com.homektv.ws.WsBroadcaster;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,7 +18,10 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.IntStream;
+
+import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -155,5 +161,141 @@ class PlaylistPublicServiceTest {
         assertThat(songs).hasSize(100);
         verify(songRepo, times(1)).findAllById(any());
         verify(songRepo, never()).findById(any());
+    }
+
+    @Test
+    void listHidesPrivatePlaylistsAndSkipsDependentQueriesWhenNoneArePublic() {
+        Playlist hidden = new Playlist();
+        hidden.setId(2L);
+        hidden.setPublicVisible(false);
+        when(playlistRepo.findAllByOrderByUpdatedAtDesc()).thenReturn(List.of(hidden));
+
+        assertThat(service.list()).isEmpty();
+
+        verify(playlistSongRepo, never()).findByPlaylistIdInOrderByPlaylistIdAscSortOrderAsc(any());
+        verifyNoInteractions(songRepo);
+    }
+
+    @Test
+    void listAndDetailHandleNullRowsAndBuildCoverUrls() {
+        Playlist playlist = new Playlist();
+        playlist.setId(1L);
+        playlist.setName("公开歌单");
+        playlist.setPublicVisible(true);
+        playlist.setCoverPath("covers/list.jpg");
+        when(playlistRepo.findById(1L)).thenReturn(Optional.of(playlist));
+        when(playlistRepo.findAllByOrderByUpdatedAtDesc()).thenReturn(List.of(playlist));
+        when(playlistSongRepo.findByPlaylistIdInOrderByPlaylistIdAscSortOrderAsc(any())).thenReturn(null);
+        when(playlistSongRepo.findByPlaylistIdOrderBySortOrder(1L)).thenReturn(null);
+
+        Map<String, Object> listItem = service.list().get(0);
+        Map<String, Object> detail = service.detail(1L);
+
+        assertThat(listItem).containsEntry("coverUrl", "/api/playlists/1/cover")
+                .containsEntry("songCount", 0);
+        assertThat(detail).containsEntry("coverUrl", "/api/playlists/1/cover")
+                .containsEntry("songs", List.of());
+        verifyNoInteractions(songRepo);
+    }
+
+    @Test
+    void detailRejectsMissingAndPrivatePlaylists() {
+        Playlist privatePlaylist = new Playlist();
+        privatePlaylist.setId(3L);
+        privatePlaylist.setPublicVisible(false);
+        when(playlistRepo.findById(2L)).thenReturn(Optional.empty());
+        when(playlistRepo.findById(3L)).thenReturn(Optional.of(privatePlaylist));
+
+        assertThatThrownBy(() -> service.detail(2L))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "PLAYLIST_NOT_FOUND");
+        assertThatThrownBy(() -> service.detail(3L))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "PLAYLIST_NOT_FOUND");
+
+        verify(playlistSongRepo, never()).findByPlaylistIdOrderBySortOrder(any());
+    }
+
+    @Test
+    void detailReturnsEmptyWhenSongRepositoryHasNoBatchResult() {
+        PlaylistSong row = new PlaylistSong();
+        row.setPlaylistId(1L);
+        row.setSongId(301L);
+        when(playlistSongRepo.findByPlaylistIdOrderBySortOrder(1L)).thenReturn(List.of(row));
+        when(songRepo.findAllById(any())).thenReturn(null);
+
+        Map<String, Object> detail = service.detail(1L);
+
+        assertThat(detail.get("songs")).isEqualTo(List.of());
+        verify(songRepo).findAllById(Set.of(301L));
+    }
+
+    @Test
+    void detailUsesSharedReadinessPolicyForPlayableAndPendingSongs() {
+        PlaylistSong readyRow = new PlaylistSong();
+        readyRow.setPlaylistId(1L);
+        readyRow.setSongId(301L);
+        PlaylistSong pendingRow = new PlaylistSong();
+        pendingRow.setPlaylistId(1L);
+        pendingRow.setSongId(302L);
+        when(playlistSongRepo.findByPlaylistIdOrderBySortOrder(1L)).thenReturn(List.of(readyRow, pendingRow));
+
+        Song ready = song(301L, "已就绪");
+        ready.setStatus("ok");
+        Song pending = song(302L, "探测中");
+        pending.setStatus("processing");
+        when(songRepo.findAllById(any())).thenReturn(List.of(ready, pending));
+        SongFileRepository fileRepository = mock(SongFileRepository.class);
+        when(fileRepository.findSongIdsWithReadyFile(any())).thenReturn(Set.of(301L));
+        service.setAvailabilityPolicy(new SongAvailabilityPolicy(fileRepository));
+
+        @SuppressWarnings("unchecked")
+        List<SongDto> songs = (List<SongDto>) service.detail(1L).get("songs");
+
+        assertThat(songs).extracting(SongDto::playable).containsExactly(true, false);
+        assertThat(songs.get(0).unavailableReason()).isNull();
+        assertThat(songs.get(1).unavailableReason()).isEqualTo(SongAvailabilityPolicy.SONG_NOT_READY);
+        verify(fileRepository).findSongIdsWithReadyFile(Set.of(301L));
+    }
+
+    @Test
+    void orderAllDoesNotStartOrBroadcastWhenEverySongIsSkipped() {
+        PlaylistSong row = new PlaylistSong();
+        row.setSongId(101L);
+        when(playlistSongRepo.findByPlaylistIdOrderBySortOrder(1L)).thenReturn(List.of(row));
+        doThrow(new ApiException("FILE_MISSING", "missing source"))
+                .when(queueService).order(101L, 10L, false);
+
+        Map<String, Object> result = service.orderAll(1L, "tok");
+
+        assertThat(result).containsEntry("ordered", 0).containsEntry("skipped", 1)
+                .containsEntry("queueFull", false);
+        verify(playbackService, never()).startIfIdle();
+        verifyNoInteractions(broadcaster);
+    }
+
+    @Test
+    void orderAllBroadcastsNowPlayingOnlyWhenTheNewQueueStartsPlayback() {
+        PlaylistSong row = new PlaylistSong();
+        row.setSongId(101L);
+        when(playlistSongRepo.findByPlaylistIdOrderBySortOrder(1L)).thenReturn(List.of(row));
+        when(playbackService.startIfIdle()).thenReturn(true);
+
+        Map<String, Object> result = service.orderAll(1L, "tok");
+
+        assertThat(result).containsEntry("ordered", 1).containsEntry("skipped", 0);
+        ArgumentCaptor<WsEvent> eventCaptor = ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster, times(2)).broadcastPlayback(eventCaptor.capture());
+        assertThat(eventCaptor.getAllValues()).extracting(WsEvent::type)
+                .containsExactly(WsEvent.QUEUE_UPDATED, WsEvent.NOW_PLAYING);
+    }
+
+    private static Song song(Long id, String title) {
+        Song song = new Song();
+        song.setId(id);
+        song.setTitle(title);
+        song.setArtist("测试歌手");
+        song.setMediaType("KTV_VIDEO");
+        return song;
     }
 }

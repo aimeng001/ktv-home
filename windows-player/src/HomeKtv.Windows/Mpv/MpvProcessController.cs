@@ -18,6 +18,8 @@ public sealed class MpvProcessController : IPlaybackOutput, IPlaybackOutputFence
     private ChannelMapMode channelMode = ChannelMapMode.STEREO;
     private int? audioTrackRelativeIndex;
     private long positionMs;
+    private long livePipeStartPositionMs;
+    private bool loadedLiveTranscode;
     private bool? paused;
     private long? playlistEntryId;
     private bool mediaReady;
@@ -60,7 +62,9 @@ public sealed class MpvProcessController : IPlaybackOutput, IPlaybackOutputFence
             }
 
             positionMs = Math.Max(0, (long)Math.Round(seconds * 1000, MidpointRounding.AwayFromZero));
-            return positionMs;
+            return loadedLiveTranscode
+                ? ToAbsolutePositionMs(positionMs, livePipeStartPositionMs)
+                : positionMs;
         }
         finally
         {
@@ -69,7 +73,22 @@ public sealed class MpvProcessController : IPlaybackOutput, IPlaybackOutputFence
     }
 
     public Task LoadAsync(string streamUrl, long fileId, CancellationToken cancellationToken = default) =>
-        ExecuteWithRecoveryAsync(async active =>
+        LoadCoreAsync(streamUrl, fileId, false, 0, cancellationToken);
+
+    public Task LoadLiveTranscodeAsync(
+        string streamUrl, long fileId, long pipeStartPositionMs, CancellationToken cancellationToken = default) =>
+        LoadCoreAsync(streamUrl, fileId, true, Math.Max(0, pipeStartPositionMs), cancellationToken);
+
+    private Task LoadCoreAsync(
+        string streamUrl,
+        long fileId,
+        bool liveTranscode,
+        long pipeStartPositionMs,
+        CancellationToken cancellationToken)
+    {
+        // Fence EOF/error callbacks from the old playlist entry as soon as a replacement is requested.
+        ResetMediaIdentity();
+        return ExecuteWithRecoveryAsync(async active =>
         {
             // A replacement must never become audible before the coordinator has applied the
             // latest server snapshot. This also protects callers other than PlaybackCoordinator.
@@ -79,12 +98,15 @@ public sealed class MpvProcessController : IPlaybackOutput, IPlaybackOutputFence
                 .ConfigureAwait(false);
             loadedUrl = streamUrl;
             loadedFileId = fileId;
+            loadedLiveTranscode = liveTranscode;
+            livePipeStartPositionMs = liveTranscode ? pipeStartPositionMs : 0;
             ResetMediaIdentity();
             positionMs = 0;
             audioTrackRelativeIndex = null;
             channelMode = ChannelMapMode.STEREO;
             paused = null;
         }, cancellationToken);
+    }
 
     public Task PlayAsync(CancellationToken cancellationToken = default) =>
         ExecuteWithRecoveryAsync(async active =>
@@ -102,11 +124,14 @@ public sealed class MpvProcessController : IPlaybackOutput, IPlaybackOutputFence
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
+        ResetMediaIdentity();
         await ExecuteWithRecoveryAsync(async active =>
         {
             await ExecuteCommandAsync(active, MpvCommands.Stop(), cancellationToken).ConfigureAwait(false);
             loadedUrl = null;
             loadedFileId = null;
+            loadedLiveTranscode = false;
+            livePipeStartPositionMs = 0;
             ResetMediaIdentity();
             positionMs = 0;
             audioTrackRelativeIndex = null;
@@ -129,6 +154,7 @@ public sealed class MpvProcessController : IPlaybackOutput, IPlaybackOutputFence
 
             try
             {
+                ResetMediaIdentity();
                 await ExecuteCommandAsync(active, MpvCommands.Stop(), cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -152,9 +178,12 @@ public sealed class MpvProcessController : IPlaybackOutput, IPlaybackOutputFence
     public Task SeekAsync(long requestedPositionMs, CancellationToken cancellationToken = default) =>
         ExecuteWithRecoveryAsync(async active =>
         {
-            var target = Math.Max(0, requestedPositionMs);
-            await ExecuteCommandAsync(active, MpvCommands.Seek(target), cancellationToken).ConfigureAwait(false);
-            positionMs = target;
+            var absoluteTarget = Math.Max(0, requestedPositionMs);
+            var pipeTarget = loadedLiveTranscode
+                ? Math.Max(0, absoluteTarget - livePipeStartPositionMs)
+                : absoluteTarget;
+            await ExecuteCommandAsync(active, MpvCommands.Seek(pipeTarget), cancellationToken).ConfigureAwait(false);
+            positionMs = pipeTarget;
         }, cancellationToken);
 
     public Task SetVolumeAsync(int requestedVolume, bool requestedMuted,
@@ -545,9 +574,18 @@ public sealed class MpvProcessController : IPlaybackOutput, IPlaybackOutputFence
         loadedFileId = null;
         ResetMediaIdentity();
         positionMs = 0;
+        livePipeStartPositionMs = 0;
+        loadedLiveTranscode = false;
         audioTrackRelativeIndex = null;
         channelMode = ChannelMapMode.STEREO;
         paused = null;
+    }
+
+    private static long ToAbsolutePositionMs(long pipePositionMs, long pipeStartPositionMs)
+    {
+        var relative = Math.Max(0, pipePositionMs);
+        var start = Math.Max(0, pipeStartPositionMs);
+        return relative > long.MaxValue - start ? long.MaxValue : start + relative;
     }
 
     private void HandleDisconnected(IMpvSession source, Exception exception)

@@ -1,6 +1,6 @@
 package com.homektv.web;
 
-import com.homektv.playback.PlaybackVariantService;
+import com.homektv.playback.PlaybackResolutionService;
 import com.homektv.web.dto.PlaybackDescriptor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -13,16 +13,16 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/playback")
 public class PlaybackController {
 
-    private final PlaybackVariantService variants;
+    private final PlaybackResolutionService playbackResolution;
 
-    public PlaybackController(PlaybackVariantService variants) {
-        this.variants = variants;
+    public PlaybackController(PlaybackResolutionService playbackResolution) {
+        this.playbackResolution = playbackResolution;
     }
 
     @GetMapping("/resolve/{fileId}")
     public PlaybackDescriptor resolve(@PathVariable Long fileId,
                                       @RequestParam(defaultValue = "false") boolean forceTranscode,
                                       @RequestParam(defaultValue = "false") boolean retryFailed) {
-        return variants.resolve(fileId, forceTranscode, retryFailed);
+        return playbackResolution.resolve(fileId, forceTranscode);
     }
 }

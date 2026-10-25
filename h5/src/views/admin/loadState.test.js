@@ -19,6 +19,16 @@ describe('admin request state', () => {
       error: null
     })
   })
+
+  it('uses the previous value or a safe fallback error for malformed failures', () => {
+    const previous = { total: 5 }
+    const result = requestState({ status: 'rejected' }, previous)
+
+    expect(result.status).toBe('error')
+    expect(result.value).toBe(previous)
+    expect(result.error).toEqual(new Error('读取失败'))
+    expect(requestState(null)).toMatchObject({ status: 'error', value: null, error: expect.any(Error) })
+  })
 })
 
 describe('metadata polling delay', () => {
@@ -27,5 +37,7 @@ describe('metadata polling delay', () => {
     expect(pollingDelay('stale', 1)).toBe(3000)
     expect(pollingDelay('stale', 4)).toBe(24000)
     expect(pollingDelay('stale', 10)).toBe(30000)
+    expect(pollingDelay('stale', 0)).toBe(3000)
+    expect(pollingDelay('stale', 'invalid')).toBe(3000)
   })
 })

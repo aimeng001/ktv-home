@@ -17,6 +17,11 @@ import java.util.Arrays;
 public final class AiBaseUrlPolicy {
     private AiBaseUrlPolicy() { }
 
+    @FunctionalInterface
+    interface AddressResolver {
+        InetAddress[] resolve(String host) throws UnknownHostException;
+    }
+
     public static String normalize(String value) {
         if (value == null || value.trim().isBlank()) return "";
         String normalized = value.trim().replaceAll("/+$", "");
@@ -34,16 +39,24 @@ public final class AiBaseUrlPolicy {
 
     public static String normalizeAndValidate(String value, boolean allowPrivateNetwork) {
         String normalized = normalize(value);
-        requireSafeNormalized(normalized, allowPrivateNetwork);
+        requireSafeNormalized(normalized, allowPrivateNetwork, InetAddress::getAllByName);
         return normalized;
     }
 
     public static void requireSafe(String value, boolean allowPrivateNetwork) {
-        requireSafeNormalized(normalize(value), allowPrivateNetwork);
+        requireSafe(value, allowPrivateNetwork, InetAddress::getAllByName);
+    }
+
+    static void requireSafe(String value, boolean allowPrivateNetwork, AddressResolver addressResolver) {
+        requireSafeNormalized(normalize(value), allowPrivateNetwork, addressResolver);
     }
 
     /** Returns true only when every resolved address is private/local. */
     public static boolean isPrivateNetwork(String value) {
+        return isPrivateNetwork(value, InetAddress::getAllByName);
+    }
+
+    static boolean isPrivateNetwork(String value, AddressResolver addressResolver) {
         String normalized = normalize(value);
         if (normalized.isBlank()) return false;
         try {
@@ -51,14 +64,15 @@ public final class AiBaseUrlPolicy {
             String host = uri.getHost();
             if (host == null || host.isBlank()) return false;
             host = host.replace("[", "").replace("]", "");
-            InetAddress[] addresses = InetAddress.getAllByName(host);
+            InetAddress[] addresses = addressResolver.resolve(host);
             return addresses.length > 0 && Arrays.stream(addresses).allMatch(AiBaseUrlPolicy::isPrivate);
         } catch (Exception ignored) {
             return false;
         }
     }
 
-    private static void requireSafeNormalized(String normalized, boolean allowPrivateNetwork) {
+    private static void requireSafeNormalized(String normalized, boolean allowPrivateNetwork,
+                                              AddressResolver addressResolver) {
         if (normalized.isBlank()) return;
         URI uri = URI.create(normalized);
         String host = uri.getHost();
@@ -67,7 +81,7 @@ public final class AiBaseUrlPolicy {
 
         InetAddress[] addresses;
         try {
-            addresses = InetAddress.getAllByName(host);
+            addresses = addressResolver.resolve(host);
         } catch (UnknownHostException e) {
             throw invalid("API Base URL 主机无法解析，已拒绝发送 API Key");
         }

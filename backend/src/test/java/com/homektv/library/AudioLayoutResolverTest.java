@@ -119,4 +119,69 @@ class AudioLayoutResolverTest {
 
         assertThat(result.layout()).isEqualTo(AudioLayout.NORMAL_STEREO);
     }
+
+    @Test
+    void missingLayoutMetadataDefaultsToLegacyNormalStereo() {
+        var result = resolver.resolve(
+                LibraryMode.MANAGED,
+                null,
+                null,
+                1,
+                null);
+
+        assertThat(result.layout()).isEqualTo(AudioLayout.NORMAL_STEREO);
+        assertThat(result.source()).isEqualTo(AudioLayoutSource.LEGACY);
+    }
+
+    @Test
+    void manualDualTrackFallsBackWhenTheMediaHasOnlyOneTrack() {
+        var result = resolver.resolve(
+                LibraryMode.EXTERNAL_READ_ONLY,
+                AudioLayoutSource.MANUAL,
+                AudioLayout.DUAL_TRACK,
+                1,
+                AudioLayout.DUAL_TRACK);
+
+        assertThat(result.layout()).isEqualTo(AudioLayout.NORMAL_STEREO);
+        assertThat(result.source()).isEqualTo(AudioLayoutSource.MANUAL);
+    }
+
+    @Test
+    void manualDualTrackIsKeptWhenBothTracksExist() {
+        var result = resolver.resolve(
+                LibraryMode.EXTERNAL_READ_ONLY,
+                AudioLayoutSource.MANUAL,
+                AudioLayout.DUAL_TRACK,
+                2,
+                AudioLayout.NORMAL_STEREO);
+
+        assertThat(result.layout()).isEqualTo(AudioLayout.DUAL_TRACK);
+        assertThat(result.source()).isEqualTo(AudioLayoutSource.MANUAL);
+    }
+
+    @Test
+    void missingExternalDefaultUsesNormalStereo() {
+        var result = resolver.resolve(
+                LibraryMode.EXTERNAL_READ_ONLY,
+                AudioLayoutSource.AUTO_DEFAULT,
+                null,
+                1,
+                null);
+
+        assertThat(result.layout()).isEqualTo(AudioLayout.NORMAL_STEREO);
+        assertThat(result.source()).isEqualTo(AudioLayoutSource.AUTO_DEFAULT);
+    }
+
+    @Test
+    void managedSingleTrackUsesNormalStereoForAutomaticDefault() {
+        var result = resolver.resolve(
+                LibraryMode.MANAGED,
+                AudioLayoutSource.AUTO_DEFAULT,
+                AudioLayout.DUAL_CHANNEL,
+                1,
+                AudioLayout.DUAL_CHANNEL);
+
+        assertThat(result.layout()).isEqualTo(AudioLayout.NORMAL_STEREO);
+        assertThat(result.source()).isEqualTo(AudioLayoutSource.AUTO_DEFAULT);
+    }
 }

@@ -11,7 +11,7 @@ import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.library.SongAvailabilityPolicy;
-import com.homektv.playback.PlaybackVariantService;
+import com.homektv.playback.PlaybackResolutionService;
 import com.homektv.web.ApiException;
 import com.homektv.web.dto.AudioLayoutDto;
 import com.homektv.web.dto.PlaybackDescriptor;
@@ -19,6 +19,8 @@ import com.homektv.web.dto.QueueSnapshot;
 import com.homektv.web.dto.SongDto;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
@@ -38,7 +40,7 @@ public class SnapshotService {
     private final AppUserRepository userRepo;
     private final com.homektv.ws.WsBroadcaster broadcaster;
     private final SongFileRepository songFileRepo;
-    private final PlaybackVariantService playbackVariants;
+    private final PlaybackResolutionService playbackResolution;
     /** Monotonic wire revision used to reject an older HTTP response. */
     private final AtomicLong snapshotRevision = new AtomicLong(System.currentTimeMillis());
 
@@ -47,14 +49,14 @@ public class SnapshotService {
                            SongRepository songRepo, AppUserRepository userRepo,
                            com.homektv.ws.WsBroadcaster broadcaster,
                            SongFileRepository songFileRepo,
-                           PlaybackVariantService playbackVariants) {
+                           PlaybackResolutionService playbackResolution) {
         this.playerRepo = playerRepo;
         this.queueRepo = queueRepo;
         this.songRepo = songRepo;
         this.userRepo = userRepo;
         this.broadcaster = broadcaster;
         this.songFileRepo = songFileRepo;
-        this.playbackVariants = playbackVariants;
+        this.playbackResolution = playbackResolution;
     }
 
     /** Compatibility constructor for isolated service tests. */
@@ -72,8 +74,15 @@ public class SnapshotService {
         this(playerRepo, queueRepo, songRepo, userRepo, broadcaster, songFileRepo, null);
     }
 
-    @Transactional(readOnly = true)
-    public QueueSnapshot snapshot() {
+    /**
+     * Capture one ordered, consistent wire view. The transaction proxy opens an
+     * independent REPEATABLE_READ transaction before entering this monitor;
+     * PostgreSQL establishes its read snapshot on the first query below, after
+     * a waiting caller has acquired the monitor.
+     */
+    @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW,
+            isolation = Isolation.REPEATABLE_READ)
+    public synchronized QueueSnapshot snapshot() {
         long stateRevision = snapshotRevision.incrementAndGet();
         PlayerState ps = playerRepo.getSingleton();
         long waitingCount = queueRepo.countByStatus(QueueService.WAITING);
@@ -112,17 +121,14 @@ public class SnapshotService {
         PlaybackDescriptor playback = PlaybackDescriptor.idle();
         if (songFileRepo != null && current != null) {
             List<SongFile> sources = songFileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(current.getSongId());
-            audioLayout = sources.stream().findFirst().map(AudioLayoutDto::from)
-                    .orElseGet(AudioLayoutDto::normalStereo);
-            if (playbackVariants != null) {
-                SongFile source = sources.stream()
-                        .filter(SongAvailabilityPolicy::isReadyMediaFile)
-                        .findFirst().orElse(null);
-                if (source != null) {
+            SongFile source = sources.stream()
+                    .filter(SongAvailabilityPolicy::isReadyMediaFile)
+                    .findFirst().orElse(null);
+            if (source != null) {
+                audioLayout = AudioLayoutDto.from(source);
+                if (playbackResolution != null) {
                     try {
-                        playback = playbackVariants.requiresSidecar(source)
-                                ? playbackVariants.resolve(source.getId())
-                                : PlaybackDescriptor.nativeSource(source);
+                        playback = playbackResolution.resolveReady(source, false);
                     } catch (ApiException failure) {
                         playback = PlaybackDescriptor.failed(source, failure.getCode(), failure.getMessage());
                     }

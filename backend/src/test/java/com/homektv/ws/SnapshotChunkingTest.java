@@ -15,6 +15,35 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class SnapshotChunkingTest {
 
     @Test
+    void emptyQueueProducesOneFinalEmptyChunk() {
+        List<QueueSnapshotChunk> chunks = new ArrayList<>();
+
+        QueueSnapshotChunker.stream(WsEvent.SYNC_FULL, snapshotWithEntries(0, "unused"),
+                new ObjectMapper(), chunks::add);
+
+        assertThat(chunks).singleElement().satisfies(chunk -> {
+            assertThat(chunk.index()).isZero();
+            assertThat(chunk.total()).isEqualTo(1);
+            assertThat(chunk.last()).isTrue();
+            assertThat(chunk.entries()).isEmpty();
+        });
+    }
+
+    @Test
+    void nullSnapshotOrQueueListIsRejectedBeforeEmittingChunks() {
+        List<QueueSnapshotChunk> chunks = new ArrayList<>();
+        ObjectMapper mapper = new ObjectMapper();
+        QueueSnapshot missingQueue = new QueueSnapshot(null, null, "idle", 60,
+                false, "accompaniment", false, 0);
+
+        assertThatThrownBy(() -> QueueSnapshotChunker.stream(WsEvent.SYNC_FULL, null, mapper, chunks::add))
+                .isInstanceOf(QueueChunkTooLargeException.class);
+        assertThatThrownBy(() -> QueueSnapshotChunker.stream(WsEvent.SYNC_FULL, missingQueue, mapper, chunks::add))
+                .isInstanceOf(QueueChunkTooLargeException.class);
+        assertThat(chunks).isEmpty();
+    }
+
+    @Test
     void chunks_preserve_order_and_each_wire_frame_stays_within_budget() {
         QueueSnapshot snapshot = snapshotWithEntries(1_000, "较长但合法的歌曲标题".repeat(12));
         List<QueueSnapshotChunk> chunks = new ArrayList<>();

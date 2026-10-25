@@ -137,40 +137,18 @@ jobs:
   compose-config:
     name: Compose configuration checks
     runs-on: ubuntu-latest
-    env:
-      KTV_DB_PASSWORD: ci-validation-only
     steps:
       - uses: actions/checkout@v4
-      - name: Validate every Compose definition
-        shell: bash
-        run: |
-          set -euo pipefail
-          files=(
-            docker-compose.yml
-            docker-compose.dev.yml
-            docker-compose.nas.yml
-            docker-compose.prebuilt.yml
-            docker-compose.ci.yml
-            docker-compose.hardware.yml
-            docker-compose.rockchip.yml
-          )
-          for file in "${files[@]}"; do
-            echo "Validating $file"
-            case "$file" in
-              docker-compose.hardware.yml|docker-compose.rockchip.yml)
-                docker compose -f docker-compose.yml -f "$file" config --quiet
-                ;;
-              *)
-                docker compose -f "$file" config --quiet
-                ;;
-            esac
-          done
+      - name: Validate Compose variants and read-only boundaries
+        run: python scripts/compose_config_test.py
 
   release-config:
     name: Release workflow contract tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test CI workflow contract
+        run: python scripts/ci_workflow_test.py
       - name: Test release workflow contracts
         run: python scripts/release_workflow_test.py
       - name: Test merge-gate contracts

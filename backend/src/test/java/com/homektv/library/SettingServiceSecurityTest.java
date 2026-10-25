@@ -71,6 +71,17 @@ class SettingServiceSecurityTest {
     }
 
     @Test
+    void nullBatchWritesAreNoOpsAndInternalWriterRejectsEditableKeys() {
+        service.putAll(null);
+        service.putEditable(null);
+
+        assertThatThrownBy(() -> service.putInternal("standby_interval_sec", 8))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("非内部设置键");
+        verify(repo, never()).save(any(Setting.class));
+    }
+
+    @Test
     void getEditable_doesNotExposeLegacyQrAddress() {
         Map<String, Object> editable = service.getEditable();
         assertThat(editable).doesNotContainKey("qr_address");
@@ -88,7 +99,23 @@ class SettingServiceSecurityTest {
     }
 
     @Test
+    void putEditable_rejectsTextOverTheLengthLimitAndNonBooleanFlags() {
+        assertThatThrownBy(() -> service.putEditable(Map.of("display_address", "x".repeat(1001))))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_RANGE");
+
+        assertThatThrownBy(() -> service.putEditable(Map.of("standby_carousel", "true")))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_TYPE");
+        verify(repo, never()).save(any(Setting.class));
+    }
+
+    @Test
     void putAll_rejectsNonStringAndUnknownDirectCopyOptions() {
+        assertThatThrownBy(() -> service.putAll(Map.of("direct_copy_containers", "mkv")))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_TYPE");
+
         assertThatThrownBy(() -> service.putAll(Map.of(
                         "direct_copy_containers", List.of("mkv", 7))))
                 .isInstanceOf(ApiException.class)
@@ -98,6 +125,65 @@ class SettingServiceSecurityTest {
                         "direct_copy_containers", List.of("file://source"))))
                 .isInstanceOf(ApiException.class)
                 .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_VALUE");
+    }
+
+    @Test
+    void directCopyOptionsRejectBlankAndOverlongValues() {
+        for (String invalid : List.of("   ", "x".repeat(33))) {
+            assertThatThrownBy(() -> service.putAll(Map.of("direct_copy_containers", List.of(invalid))))
+                    .isInstanceOf(ApiException.class)
+                    .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_RANGE");
+        }
+        verify(repo, never()).save(any(Setting.class));
+    }
+
+    @Test
+    void putAllRejectsUnsupportedPolicyEnums() {
+        Map<String, Object> invalidSettings = Map.of(
+                "transcode_output_container", "avi",
+                "tv_video_scale_mode", "stretch",
+                "standby_source", "random");
+
+        for (Map.Entry<String, Object> entry : invalidSettings.entrySet()) {
+            assertThatThrownBy(() -> service.putAll(Map.of(entry.getKey(), entry.getValue())))
+                    .isInstanceOf(ApiException.class)
+                    .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_VALUE");
+        }
+        verify(repo, never()).save(any(Setting.class));
+    }
+
+    @Test
+    void externalDefaultAudioLayoutRequiresAStringValue() {
+        assertThatThrownBy(() -> service.putAll(Map.of("external_default_audio_layout", 1)))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_VALUE");
+        verify(repo, never()).save(any(Setting.class));
+    }
+
+    @Test
+    void standbySongIdsRejectInvalidShapeValuesDuplicatesAndOversizedLists() {
+        assertThatThrownBy(() -> service.putEditable(Map.of("standby_song_ids", "1,2")))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_TYPE");
+        assertThatThrownBy(() -> service.putEditable(Map.of("standby_song_ids", List.of(0L))))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_VALUE");
+        assertThatThrownBy(() -> service.putEditable(Map.of("standby_song_ids", List.of("7"))))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_VALUE");
+        assertThatThrownBy(() -> service.putEditable(Map.of("standby_song_ids", List.of(1.5))))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_VALUE");
+        assertThatThrownBy(() -> service.putEditable(Map.of("standby_song_ids", List.of(7L, 7L))))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_VALUE");
+
+        List<Long> oversized = new ArrayList<>();
+        for (long id = 1; id <= SettingService.MAX_STANDBY_SONGS + 1L; id++) oversized.add(id);
+        assertThatThrownBy(() -> service.putEditable(Map.of("standby_song_ids", oversized)))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_RANGE");
+        verify(repo, never()).save(any(Setting.class));
     }
 
     @Test

@@ -194,16 +194,22 @@ class ControllerActivityInstrumentedTest {
                 "history server row" to R.layout.item_history_server,
                 "LAN server row" to R.layout.item_lan_server,
             )
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            lateinit var host: FrameLayout
             scenario.onActivity { activity ->
-                val host = FrameLayout(activity)
+                host = FrameLayout(activity)
                 activity.setContentView(host)
-                val width = activity.resources.displayMetrics.widthPixels.coerceAtLeast(320)
-                val height = activity.resources.displayMetrics.heightPixels.coerceAtLeast(480)
-                val widthSpec = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY)
-                val heightSpec = View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
-                val inflater = LayoutInflater.from(activity)
+            }
+            instrumentation.waitForIdleSync()
 
-                layoutCases.forEach { (label, layoutId) ->
+            layoutCases.forEach { (label, layoutId) ->
+                scenario.onActivity { activity ->
+                    val width = activity.resources.displayMetrics.widthPixels.coerceAtLeast(320)
+                    val height = activity.resources.displayMetrics.heightPixels.coerceAtLeast(480)
+                    val widthSpec = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY)
+                    val heightSpec = View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
+                    val inflater = LayoutInflater.from(activity)
+
                     host.removeAllViews()
                     try {
                         inflater.inflate(layoutId, host, true)
@@ -218,8 +224,9 @@ class ControllerActivityInstrumentedTest {
                         throw AssertionError("$label failed to inflate or measure", failure)
                     }
                 }
-                assertEquals("all primary UI surfaces are listed", 16, layoutCases.size)
+                instrumentation.waitForIdleSync()
             }
+            assertEquals("all primary UI surfaces are listed", 16, layoutCases.size)
         } finally {
             scenario.close()
         }

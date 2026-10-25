@@ -125,6 +125,104 @@ class ApkArchivePolicyTest {
     }
 
     @Test
+    fun missingExpectedCurrentSignaturesReturnsFalse() {
+        val actual = ApkIdentity(
+            packageName = expectedPackage,
+            versionCode = expectedVersion,
+            signatureDigests = expectedSigs,
+        )
+
+        assertFalse(
+            ApkArchivePolicy.verify(
+                expectedPackageName = expectedPackage,
+                expectedVersionCode = expectedVersion,
+                expectedSignatures = expectedSigs,
+                expectedCurrentSignatures = emptyList(),
+                actual = actual,
+            ),
+        )
+    }
+
+    @Test
+    fun expectedCurrentSignerMustBelongToExpectedHistory() {
+        val actual = ApkIdentity(
+            packageName = expectedPackage,
+            versionCode = expectedVersion,
+            signatureDigests = listOf("candidate"),
+        )
+
+        assertFalse(
+            ApkArchivePolicy.verify(
+                expectedPackageName = expectedPackage,
+                expectedVersionCode = expectedVersion,
+                expectedSignatures = listOf("previous"),
+                expectedCurrentSignatures = listOf("current"),
+                actual = actual,
+            ),
+        )
+    }
+
+    @Test
+    fun actualCurrentSignersMustBelongToActualHistory() {
+        val actual = ApkIdentity(
+            packageName = expectedPackage,
+            versionCode = expectedVersion,
+            signatureDigests = listOf("old_signature"),
+            currentSignatureDigests = listOf("unverified_current"),
+        )
+
+        assertFalse(
+            ApkArchivePolicy.verify(
+                expectedPackageName = expectedPackage,
+                expectedVersionCode = expectedVersion,
+                expectedSignatures = listOf("old_signature"),
+                expectedCurrentSignatures = listOf("old_signature"),
+                actual = actual,
+            ),
+        )
+    }
+
+    @Test
+    fun multiSignerRotationIsNotAccepted() {
+        val actual = ApkIdentity(
+            packageName = expectedPackage,
+            versionCode = expectedVersion,
+            signatureDigests = listOf("new_signature", "old_a", "old_b"),
+            currentSignatureDigests = listOf("new_signature"),
+        )
+
+        assertFalse(
+            ApkArchivePolicy.verify(
+                expectedPackageName = expectedPackage,
+                expectedVersionCode = expectedVersion,
+                expectedSignatures = listOf("old_a", "old_b"),
+                expectedCurrentSignatures = listOf("old_a", "old_b"),
+                actual = actual,
+            ),
+        )
+    }
+
+    @Test
+    fun rotationToMultipleCurrentSignersIsNotAccepted() {
+        val actual = ApkIdentity(
+            packageName = expectedPackage,
+            versionCode = expectedVersion,
+            signatureDigests = listOf("old_signature", "new_a", "new_b"),
+            currentSignatureDigests = listOf("new_a", "new_b"),
+        )
+
+        assertFalse(
+            ApkArchivePolicy.verify(
+                expectedPackageName = expectedPackage,
+                expectedVersionCode = expectedVersion,
+                expectedSignatures = listOf("old_signature"),
+                expectedCurrentSignatures = listOf("old_signature"),
+                actual = actual,
+            ),
+        )
+    }
+
+    @Test
     fun forwardSignatureRotationIsAcceptedWhenCandidateCarriesInstalledSignerInLineage() {
         val actual = ApkIdentity(
             packageName = expectedPackage,

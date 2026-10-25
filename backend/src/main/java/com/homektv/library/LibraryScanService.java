@@ -7,10 +7,10 @@ import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
-import com.homektv.media.MediaProbeException;
 import com.homektv.musicsource.CoverImageNormalizer;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
+import com.homektv.resource.ResourceBudget;
 import com.homektv.web.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
@@ -23,7 +23,6 @@ import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -41,16 +40,14 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 /**
- * 曲库扫描入库管线（P1.1-P1.5，详设§9.3）。
- * 枚举文件 → ffprobe 探测 → 标签解析 → 文件名兜底 → 类型判定
- * → 指纹去重 → 拼音字段 → 歌词/封面落盘 → 写 songs/song_files。
+ * 曲库扫描协调器：枚举、快索引、探测准入、租约和扫描状态由此管理；探测后的歌曲与文件入库交给
+ * {@link LibraryIngestionWriter} 在独立写事务内完成。
  *
- * Library scanning and ingestion pipeline (P1.1-P1.5, Detailed Design §9.3).
- * Enumerates files, probes media, parses tags, applies filename fallbacks,
- * classifies media, deduplicates by fingerprint, generates Pinyin fields,
- * stores lyrics/covers, and persists songs/song_files.
+ * Library scan coordinator for filesystem enumeration, fast indexing, probe admission,
+ * leases, and scan state. Probed-song reconciliation is delegated to LibraryIngestionWriter.
  */
 @Service
 public class LibraryScanService {
@@ -83,21 +80,21 @@ public class LibraryScanService {
         return file != null && AUDIO_EXT.contains(extOf(file));
     }
 
-    private static String extOf(Path file) {
+    static String extOf(Path file) {
         String name = file.getFileName().toString();
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(dot + 1).toLowerCase() : "";
     }
 
     private final AppProperties props;
-    private final FFprobeService ffprobe;
+    private final MediaProbeStage mediaProbeStage;
+    private final LibraryIngestionWriter ingestionWriter;
     private final TagReader tagReader;
     private final SongRepository songRepo;
     private final SongFileRepository fileRepo;
     private final AssetWriter assetWriter;
     private final SettingService settingService;
     private final SongProjectionService songProjectionService;
-    private final AudioLayoutResolver audioLayoutResolver = new AudioLayoutResolver();
     private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "library-scan");
         thread.setDaemon(true);
@@ -121,14 +118,14 @@ public class LibraryScanService {
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
                               LibraryScanSeenPathStore seenPathStore) {
         this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, null, null, seenPathStore,
-                new SongProjectionService(songRepo, fileRepo));
+                new SongProjectionService(songRepo, fileRepo), standaloneProbeStage(ffprobe));
     }
 
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
                               SettingService settingService, LibraryScanSeenPathStore seenPathStore) {
         this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, settingService, null, seenPathStore,
-                new SongProjectionService(songRepo, fileRepo));
+                new SongProjectionService(songRepo, fileRepo), standaloneProbeStage(ffprobe));
     }
 
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
@@ -136,7 +133,7 @@ public class LibraryScanService {
                               SettingService settingService, PlatformTransactionManager transactionManager,
                               LibraryScanSeenPathStore seenPathStore) {
         this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, settingService, transactionManager,
-                seenPathStore, new SongProjectionService(songRepo, fileRepo));
+                seenPathStore, new SongProjectionService(songRepo, fileRepo), standaloneProbeStage(ffprobe));
     }
 
     @Autowired
@@ -144,9 +141,10 @@ public class LibraryScanService {
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
                               SettingService settingService, PlatformTransactionManager transactionManager,
                               LibraryScanSeenPathStore seenPathStore,
-                              SongProjectionService songProjectionService) {
+                              SongProjectionService songProjectionService,
+                              MediaProbeStage mediaProbeStage) {
         this.props = props;
-        this.ffprobe = ffprobe;
+        this.mediaProbeStage = mediaProbeStage;
         this.tagReader = tagReader;
         this.songRepo = songRepo;
         this.fileRepo = fileRepo;
@@ -155,11 +153,42 @@ public class LibraryScanService {
         this.songProjectionService = songProjectionService;
         this.batchTransaction = transactionManager == null ? null : new TransactionTemplate(transactionManager);
         this.seenPathStore = seenPathStore;
+        this.ingestionWriter = new LibraryIngestionWriter(props, tagReader, songRepo, fileRepo,
+                assetWriter, settingService, transactionManager, songProjectionService);
+    }
+
+    LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
+                       SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
+                       LibraryScanSeenPathStore seenPathStore, ResourceBudget resourceBudget) {
+        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, null, null, seenPathStore,
+                new SongProjectionService(songRepo, fileRepo), new MediaProbeStage(ffprobe, resourceBudget));
+    }
+
+    /** Compatibility constructor for isolated fixtures that do not provide the shared Spring budget. */
+    public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
+                              SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
+                              SettingService settingService, PlatformTransactionManager transactionManager,
+                              LibraryScanSeenPathStore seenPathStore,
+                              SongProjectionService songProjectionService) {
+        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, settingService, transactionManager,
+                seenPathStore, songProjectionService, standaloneProbeStage(ffprobe));
+    }
+
+    private static MediaProbeStage standaloneProbeStage(FFprobeService ffprobe) {
+        return new MediaProbeStage(ffprobe,
+                new ResourceBudget(PROBE_CONCURRENCY, PROBE_CONCURRENCY, 4, () -> false));
     }
 
     @Autowired
     void setCoverImageNormalizer(CoverImageNormalizer coverImageNormalizer) {
         this.coverImageNormalizer = coverImageNormalizer;
+        ingestionWriter.setCoverImageNormalizer(coverImageNormalizer);
+    }
+
+    @Autowired(required = false)
+    void setArtistCreditService(ArtistCreditService artistCreditService) {
+        this.artistCreditService = artistCreditService;
+        ingestionWriter.setArtistCreditService(artistCreditService);
     }
 
     @Autowired(required = false)
@@ -229,7 +258,6 @@ public class LibraryScanService {
         }
     }
 
-    @Autowired(required = false)
     private ArtistCreditService artistCreditService;
 
     @Autowired(required = false)
@@ -361,10 +389,9 @@ public class LibraryScanService {
 
                     @Override
                     public FileVisitResult postVisitDirectory(Path dir, IOException failure) {
-                        if (!directoryLyrics.isEmpty()
-                                && directoryLyrics.peek().directory().equals(dir)) {
-                            directoryLyrics.pop();
-                        }
+                        // NIO calls postVisitDirectory only after an accepted preVisitDirectory;
+                        // that callback pushes this exact directory onto the traversal stack.
+                        directoryLyrics.pop();
                         if (failure != null) {
                             enumerationComplete[0] = false;
                             counters.failedPaths++;
@@ -378,8 +405,8 @@ public class LibraryScanService {
                     public FileVisitResult visitFileFailed(Path file, IOException failure) {
                         enumerationComplete[0] = false;
                         counters.failedPaths++;
-                        lastErrorMessage[0] = failure == null ? "读取文件失败" : failure.getMessage();
-                        log.warn("读取曲库文件失败，保留待重试：{} - {}", file, failure == null ? "未知异常" : failure.getMessage());
+                        lastErrorMessage[0] = failure.getMessage();
+                        log.warn("读取曲库文件失败，保留待重试：{} - {}", file, failure.getMessage());
                         return FileVisitResult.CONTINUE;
                     }
                 });
@@ -462,7 +489,6 @@ public class LibraryScanService {
                                        OffsetDateTime startedAt, int discovered, String activeRole,
                                        UUID scanId, long maxIdAtScanStart,
                                        LibraryScanLeaseGuard leaseGuard) {
-        if (batch.isEmpty()) return;
         leaseGuard.assertOwned();
         List<FastIndexEntry> resolvedBatch;
         try {
@@ -479,28 +505,28 @@ public class LibraryScanService {
         Map<Long, Song> songsForFilenameRepair = loadSongsForFilenameRepair(resolvedBatch);
         Runnable work = () -> {
             for (FastIndexEntry entry : resolvedBatch) {
-                switch (snapshotChange(entry)) {
-                    case UNCHANGED -> {
-                        Song song = entry.existing().map(SongFile::getSongId)
-                                .map(songsForFilenameRepair::get)
-                                .orElse(null);
-                        boolean repaired = reconcileUnchangedFilenameMetadata(
-                                entry, song, knownArtists, counters);
-                        reactivateIfNeeded(entry, counters);
-                        if (repaired) totals.updated++;
-                        else totals.skipped++;
+                LibrarySnapshotPolicy.Change change = snapshotChange(entry);
+                if (change == LibrarySnapshotPolicy.Change.UNCHANGED) {
+                    Song song = entry.existing().map(SongFile::getSongId)
+                            .map(songsForFilenameRepair::get)
+                            .orElse(null);
+                    boolean repaired = reconcileUnchangedFilenameMetadata(
+                            entry, song, knownArtists, counters);
+                    reactivateIfNeeded(entry, counters);
+                    if (repaired) totals.updated++;
+                    else totals.skipped++;
+                } else if (change == LibrarySnapshotPolicy.Change.LYRIC_ONLY) {
+                    LyricRefreshOutcome outcome = refreshSidecarLyric(entry, counters);
+                    if (outcome == LyricRefreshOutcome.NEEDS_MEDIA_PROBE) {
+                        prepareFastIndex(entry, counters, externalDefault, knownArtists);
+                    } else if (outcome == LyricRefreshOutcome.UPDATED) {
+                        totals.updated++;
+                    } else {
+                        totals.skipped++;
                     }
-                    case LYRIC_ONLY -> {
-                        LyricRefreshOutcome outcome = refreshSidecarLyric(entry, counters);
-                        if (outcome == LyricRefreshOutcome.NEEDS_MEDIA_PROBE) {
-                            prepareFastIndex(entry, counters, externalDefault, true, knownArtists);
-                        } else if (outcome == LyricRefreshOutcome.UPDATED) {
-                            totals.updated++;
-                        } else {
-                            totals.skipped++;
-                        }
-                    }
-                    case MEDIA_CHANGED -> prepareFastIndex(entry, counters, externalDefault, false, knownArtists);
+                } else {
+                    // classify() returns MEDIA_CHANGED after the two states above.
+                    prepareFastIndex(entry, counters, externalDefault, knownArtists);
                 }
             }
         };
@@ -539,8 +565,7 @@ public class LibraryScanService {
     private Map<Long, Song> loadSongsForFilenameRepair(List<FastIndexEntry> batch) {
         Set<Long> songIds = new LinkedHashSet<>();
         for (FastIndexEntry entry : batch) {
-            if (snapshotChange(entry) != SnapshotChange.UNCHANGED
-                    || entry.filenameMeta() == null
+            if (snapshotChange(entry) != LibrarySnapshotPolicy.Change.UNCHANGED
                     || !entry.filenameMeta().recognized()) {
                 continue;
             }
@@ -575,7 +600,7 @@ public class LibraryScanService {
                                                        Collection<String> knownArtists,
                                                        ScanCounters counters) {
         ParsedMeta candidate = entry.filenameMeta();
-        if (song == null || candidate == null || !candidate.recognized()
+        if (song == null || !candidate.recognized()
                 || !"unrecognized".equalsIgnoreCase(song.getStatus())
                 || hasManualIdentityOverride(song)) {
             return false;
@@ -599,61 +624,45 @@ public class LibraryScanService {
             }
         }
 
-        boolean changed = false;
-        if (!song.isMetadataLocked("title")
-                && !Objects.equals(song.getTitle(), candidate.title())) {
+        // Manual title/artist locks are rejected above by hasManualIdentityOverride.
+        if (!Objects.equals(song.getTitle(), candidate.title())) {
             song.setTitle(candidate.title());
             song.setTitlePy(PinyinUtil.fullPinyin(candidate.title()));
             song.setTitleInit(PinyinUtil.initials(candidate.title()));
-            changed = true;
         }
-        if (!song.isMetadataLocked("artist")
-                && !Objects.equals(song.getArtist(), candidate.artist())) {
+        if (!Objects.equals(song.getArtist(), candidate.artist())) {
             song.setArtist(candidate.artist());
             song.setArtistPy(PinyinUtil.fullPinyin(candidate.artist()));
             song.setArtistInit(PinyinUtil.initials(candidate.artist()));
-            changed = true;
         }
         if (!song.isMetadataLocked("language")) {
             String language = normalizeLanguage(candidate.language());
             if (!Objects.equals(song.getLanguage(), language)) {
                 song.setLanguage(language);
-                changed = true;
             }
         }
         if (!song.isMetadataLocked("tags")) {
             String[] tags = new String[]{candidate.category()};
             if (!Arrays.equals(song.getTags(), tags)) {
                 song.setTags(tags);
-                changed = true;
             }
         }
         if (!song.isMetadataLocked("vocalForm")
                 && !candidate.vocalForm().isBlank()
                 && !Objects.equals(song.getVocalForm(), candidate.vocalForm())) {
             song.setVocalForm(candidate.vocalForm());
-            changed = true;
         }
         if (!Objects.equals(song.getCatalogNumber(), candidate.catalogNumber())) {
             song.setCatalogNumber(candidate.catalogNumber());
-            changed = true;
         }
         if (!Objects.equals(song.getFingerprint(), fingerprint)) {
             song.setFingerprint(fingerprint);
-            changed = true;
         }
-        if (!"ok".equalsIgnoreCase(song.getStatus())) {
-            song.setStatus("ok");
-            changed = true;
-        }
-        boolean needsAiOptimization = isBlank(song.getTitle())
-                || "未知歌手".equals(song.getArtist())
-                || "未知".equals(song.getLanguage());
+        song.setStatus("ok");
+        boolean needsAiOptimization = needsAiOptimization(candidate.recognized(), song);
         if (song.isNeedsAiOptimization() != needsAiOptimization) {
             song.setNeedsAiOptimization(needsAiOptimization);
-            changed = true;
         }
-        if (!changed) return false;
 
         song.setMetadataProvenance("{\"title\":{\"source\":\"filename_reparse\"},"
                 + "\"artist\":{\"source\":\"filename_reparse\"}}");
@@ -685,7 +694,6 @@ public class LibraryScanService {
         Set<String> relativePaths = batch.stream()
                 .filter(entry -> !byPath.containsKey(entry.path()))
                 .map(FastIndexEntry::relativePath)
-                .filter(path -> !isBlank(path))
                 .collect(java.util.stream.Collectors.toSet());
         Map<String, SongFile> byUniqueRelativePath = new HashMap<>();
         Set<String> ambiguous = new HashSet<>();
@@ -696,7 +704,7 @@ public class LibraryScanService {
                     if (row == null || isBlank(row.getRelativePath())
                             || ambiguous.contains(row.getRelativePath())) continue;
                     SongFile previous = byUniqueRelativePath.putIfAbsent(row.getRelativePath(), row);
-                    if (previous != null && !Objects.equals(previous.getId(), row.getId())) {
+                    if (previous != null) {
                         byUniqueRelativePath.remove(row.getRelativePath());
                         ambiguous.add(row.getRelativePath());
                     }
@@ -708,12 +716,12 @@ public class LibraryScanService {
         List<FastIndexEntry> resolved = new ArrayList<>(batch.size());
         for (FastIndexEntry entry : batch) {
             SongFile existing = byPath.get(entry.path());
-            if (existing == null && !isBlank(entry.relativePath())) {
+            if (existing == null) {
                 existing = byUniqueRelativePath.get(entry.relativePath());
             }
             boolean existedAtScanStart = wasPresentAtScanStart(existing, maxIdAtScanStart);
-            boolean pendingAtScanStart = existedAtScanStart && existing != null && existing.isProbePending();
-            if (pendingAtScanStart && !isBlank(entry.path())) pendingPathsAtStart.add(entry.path());
+            boolean pendingAtScanStart = existedAtScanStart && existing.isProbePending();
+            if (pendingAtScanStart) pendingPathsAtStart.add(entry.path());
             resolved.add(entry.withExisting(existing)
                     .withScanHistory(existedAtScanStart, pendingAtScanStart));
         }
@@ -753,16 +761,22 @@ public class LibraryScanService {
                 log.warn("读取媒体探测队列失败，保留 pending 记录等待重试：{}", failure.getMessage());
                 return;
             }
-            if (page == null || page.getContent().isEmpty()) return;
+            // Spring Data's Slice query returns an empty slice when no rows match;
+            // a null page is outside the repository contract.
+            if (page.getContent().isEmpty()) return;
 
             Set<String> pendingAtStartPaths;
             try {
                 pendingAtStartPaths = seenPathStore.findPendingAtStart(scanId, activeRole,
-                        page.getContent().stream().filter(Objects::nonNull)
-                                .map(SongFile::getFilePath).filter(path -> !isBlank(path)).toList());
+                        page.getContent().stream().map(SongFile::getFilePath)
+                                .filter(path -> !isBlank(path)).toList());
             } catch (RuntimeException failure) {
                 log.warn("读取扫描开始时的 pending 状态失败，保留队列等待下次扫描：{}", failure.getMessage());
-                pendingAtStartPaths = Set.of();
+                pendingAtStartPaths = page.getContent().stream()
+                        .filter(file -> file.getId() <= maxIdAtScanStart)
+                        .map(SongFile::getFilePath)
+                        .filter(path -> !isBlank(path))
+                        .collect(java.util.stream.Collectors.toSet());
             }
             Set<String> pendingPathsForProbe = pendingAtStartPaths;
 
@@ -770,7 +784,7 @@ public class LibraryScanService {
             List<Future<ProbeResult>> futures = new ArrayList<>();
             int submitted = 0;
             for (SongFile tracked : page.getContent()) {
-                if (tracked == null || isBlank(tracked.getFilePath())) continue;
+                if (isBlank(tracked.getFilePath())) continue;
                 afterPath = tracked.getFilePath();
                 Path file;
                 try {
@@ -779,8 +793,8 @@ public class LibraryScanService {
                     log.warn("探测队列存在无效路径，保留 pending：{}", tracked.getFilePath());
                     continue;
                 }
-                if (!rootContext.allowsExistingFile(file) || !Files.isRegularFile(file)
-                        || Files.isSymbolicLink(file) || !isMediaFile(file)) {
+                if (!rootContext.allowsExistingFile(file)
+                        || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || !isMediaFile(file)) {
                     continue;
                 }
                 futures.add(completionService.submit(() -> probePendingFile(file, tracked, rootContext,
@@ -801,7 +815,7 @@ public class LibraryScanService {
                     totals.skipped++;
                     totals.probeCompleted++;
                     log.warn("媒体探测任务异常，保留 pending：{}",
-                            failure.getCause() == null ? failure.getMessage() : failure.getCause().getMessage());
+                            failure.getCause().getMessage());
                     continue;
                 }
 
@@ -809,26 +823,15 @@ public class LibraryScanService {
                 IngestOutcome outcome = IngestOutcome.SKIPPED;
                 if (result.probe() == null) {
                     if (result.failure() != null) {
-                        log.debug("ffprobe 失败，保留 pending：{} - {}",
-                                result.file(), result.failure().getMessage());
+                        if (!(result.failure() instanceof InterruptedException)) {
+                            log.debug("ffprobe 失败，保留 pending：{} - {}",
+                                    result.file(), result.failure().getMessage());
+                        }
                     }
                 } else {
                     try {
-                        leaseGuard.assertOwned();
-                        if (batchTransaction == null) {
-                            leaseGuard.assertOwned();
-                            outcome = ingestInternal(result.entry(), null, null, null, false,
-                                    knownArtists, counters, externalDefault, result.probe()).outcome();
-                        } else {
-                            IngestOutcome[] batchOutcome = {IngestOutcome.SKIPPED};
-                            batchTransaction.executeWithoutResult(status -> {
-                                leaseGuard.assertOwned();
-                                batchOutcome[0] = ingestInternal(result.entry(), null, null, null, false,
-                                        knownArtists, counters, externalDefault, result.probe()).outcome();
-                                leaseGuard.assertOwned();
-                            });
-                            outcome = batchOutcome[0];
-                        }
+                        outcome = ingestionWriter.write(result.entry().toIngestionInput(), null, null, null, false,
+                                knownArtists, counters, externalDefault, result.probe(), leaseGuard).outcome();
                     } catch (LeaseLostException lost) {
                         throw lost;
                     } catch (RuntimeException failure) {
@@ -856,12 +859,14 @@ public class LibraryScanService {
                                          long maxIdAtScanStart,
                                          boolean pendingAtScanStart) {
         try {
-            if (!rootContext.allowsExistingFile(file) || !Files.isRegularFile(file)
-                    || Files.isSymbolicLink(file) || !isMediaFile(file)) {
+            if (!rootContext.allowsExistingFile(file)) {
                 return new ProbeResult(file, null, null, null, false);
             }
             BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class,
                     LinkOption.NOFOLLOW_LINKS);
+            if (!attrs.isRegularFile()) {
+                return new ProbeResult(file, null, null, null, false);
+            }
             LyricSnapshot persistedLyric = lyricSnapshotForPendingProbe(tracked, sidecarLyricOf(file));
             FastIndexEntry entry = fastIndex(file, attrs, artistIndex, null,
                     null, rootContext.configuredRoot(), null, persistedLyric);
@@ -869,30 +874,30 @@ public class LibraryScanService {
             boolean existedAtScanStart = wasPresentAtScanStart(resolved, maxIdAtScanStart);
             entry = entry.withExisting(resolved).withScanHistory(existedAtScanStart, pendingAtScanStart);
 
-            try {
-                return new ProbeResult(file, entry, ffprobe.probe(file), null, true);
-            } catch (RuntimeException failure) {
-                return new ProbeResult(file, entry, null, failure, true);
-            }
+            MediaProbeStage.Result result = mediaProbeStage.probe(file);
+            return new ProbeResult(file, entry, result.probe(), result.failure(), result.attempted());
         } catch (Exception failure) {
             return new ProbeResult(file, null, null, failure, false);
         }
     }
 
     private static void recordOutcome(ScanTotals totals, IngestOutcome outcome) {
-        switch (outcome) {
-            case ADDED -> totals.added++;
-            case UPDATED -> totals.updated++;
-            case SKIPPED -> totals.skipped++;
-            case UNRECOGNIZED -> {
-                totals.added++;
-                totals.unrecognized++;
-            }
+        Objects.requireNonNull(outcome, "outcome");
+        if (outcome == IngestOutcome.ADDED) {
+            totals.added++;
+        } else if (outcome == IngestOutcome.UPDATED) {
+            totals.updated++;
+        } else if (outcome == IngestOutcome.SKIPPED) {
+            totals.skipped++;
+        } else {
+            // UNRECOGNIZED is the only remaining IngestOutcome.
+            totals.added++;
+            totals.unrecognized++;
         }
     }
 
     private static boolean wasPresentAtScanStart(SongFile file, long maxIdAtScanStart) {
-        return file != null && file.getId() != null && file.getId() <= maxIdAtScanStart;
+        return file != null && file.getId() <= maxIdAtScanStart;
     }
 
     private void publishProgress(boolean running, int total, int completed, String currentFile,
@@ -911,38 +916,19 @@ public class LibraryScanService {
         double rate = 0.0;
         Long eta = null;
         if (running && probeCompleted > 0) {
-            OffsetDateTime phaseStart = totals != null && totals.probeStartedAt != null
-                    ? totals.probeStartedAt
-                    : startedAt;
-            if (phaseStart != null) {
-                long elapsedSeconds = Math.max(1, Duration.between(phaseStart, OffsetDateTime.now()).toSeconds());
-                rate = Math.round((double) probeCompleted / elapsedSeconds * 10.0) / 10.0;
-                if (rate > 0.05 && probeQueued > probeCompleted) {
-                    eta = (long) Math.ceil((probeQueued - probeCompleted) / rate);
-                }
+            long elapsedSeconds = Math.max(1,
+                    Duration.between(totals.probeStartedAt, OffsetDateTime.now()).toSeconds());
+            rate = Math.round((double) probeCompleted / elapsedSeconds * 10.0) / 10.0;
+            if (rate > 0.05 && probeQueued > probeCompleted) {
+                eta = (long) Math.ceil((probeQueued - probeCompleted) / rate);
             }
         }
-        ScanState state = explicitState;
-        if (state == null) {
-            if (running) {
-                state = ScanState.RUNNING;
-            } else if (finishedAt != null) {
-                if (failedPaths > 0 && total == 0) {
-                    state = ScanState.FAILED;
-                } else if (failedPaths > 0) {
-                    state = ScanState.PARTIAL;
-                } else {
-                    state = ScanState.COMPLETED;
-                }
-            } else {
-                state = ScanState.IDLE;
-            }
-        }
+        ScanState state = explicitState == null ? ScanState.RUNNING : explicitState;
         scanProgress.set(new ScanProgress(running, total, completed, currentFile,
-                totals == null ? 0 : totals.added,
-                totals == null ? 0 : totals.updated,
-                totals == null ? 0 : totals.skipped,
-                totals == null ? 0 : totals.unrecognized,
+                totals.added,
+                totals.updated,
+                totals.skipped,
+                totals.unrecognized,
                 startedAt, finishedAt, phase, total, fastIndexed, probeQueued, probeCompleted,
                 rate, eta, state, failedPaths, errorCode, errorMessage));
     }
@@ -990,20 +976,15 @@ public class LibraryScanService {
         return FilenameParser.parse(filename, artistIndexFor(existingArtistNames()));
     }
 
-    private void syncArtistCredits(Song song) {
-        syncArtistCredits(song, List.of());
-    }
-
     private void syncArtistCredits(Song song, Collection<String> knownArtists) {
-        if (artistCreditService != null && song != null && song.getId() != null) {
-            if (knownArtists == null || knownArtists.isEmpty()) {
-                // Preserve the original service seam for scans without any
-                // reliable artist evidence; explicit separators retain their
-                // historical behavior in the two-argument parser.
-                artistCreditService.replace(song.getId(), song.getArtist());
-            } else {
-                artistCreditService.replace(song.getId(), song.getArtist(), knownArtists);
-            }
+        if (artistCreditService == null) return;
+        if (knownArtists.isEmpty()) {
+            // Preserve the original service seam for scans without any
+            // reliable artist evidence; explicit separators retain their
+            // historical behavior in the two-argument parser.
+            artistCreditService.replace(song.getId(), song.getArtist());
+        } else {
+            artistCreditService.replace(song.getId(), song.getArtist(), knownArtists);
         }
     }
 
@@ -1068,7 +1049,7 @@ public class LibraryScanService {
         SongFile tracked = trackedByPath == null
                 ? fileRepo.findByFilePath(path).orElse(null)
                 : trackedByPath.get(path);
-        if (tracked == null && trackedByRelativePath != null && !isBlank(relativePath)) {
+        if (tracked == null && trackedByRelativePath != null) {
             tracked = trackedByRelativePath.get(relativePath);
         }
         return new FastIndexEntry(file, path, relativePath, attrs.size(), newestMtime(mediaMtime, lyricSnapshot),
@@ -1080,7 +1061,7 @@ public class LibraryScanService {
 
     /** Reuses the Fast Index sidecar snapshot instead of probing the same directory again. */
     private static LyricSnapshot lyricSnapshotForPendingProbe(SongFile tracked, Path sidecarLyric) {
-        if (tracked == null || tracked.getLyricSnapshotVersion() == null) {
+        if (tracked.getLyricSnapshotVersion() == null) {
             // Rows created before the independent snapshot columns are retained
             // conservatively; one legacy lookup upgrades them safely.
             return lyricSnapshotOf(sidecarLyric);
@@ -1095,117 +1076,54 @@ public class LibraryScanService {
      * enqueue a media probe, while an old row without independent snapshots is handled
      * conservatively and upgraded during the next safe fast-index pass.
      */
-    private static SnapshotChange snapshotChange(FastIndexEntry entry) {
+    private static LibrarySnapshotPolicy.Change snapshotChange(FastIndexEntry entry) {
         SongFile existing = entry.existing().orElse(null);
-        if (existing == null || existing.isProbePending()) return SnapshotChange.MEDIA_CHANGED;
-        if (!mediaSnapshotMatches(existing, entry)) return SnapshotChange.MEDIA_CHANGED;
-
-        if (existing.getLyricSnapshotVersion() == null) {
-            // Legacy rows do not tell us whether an in-place LRC edit occurred.
-            // Probe only rows that actually have a sidecar; rows without one can be
-            // upgraded without opening the media payload.
-            if (!entry.lyricSnapshot().readable()) return SnapshotChange.LYRIC_ONLY;
-            return entry.lyricSnapshot().present()
-                    ? SnapshotChange.MEDIA_CHANGED : SnapshotChange.UNCHANGED;
-        }
-        if (!entry.lyricSnapshot().readable()
-                || !lyricSnapshotMatches(existing, entry.lyricSnapshot())) {
-            return SnapshotChange.LYRIC_ONLY;
-        }
-        return SnapshotChange.UNCHANGED;
+        LyricSnapshot lyric = entry.lyricSnapshot();
+        LibrarySnapshotPolicy.Facts current = new LibrarySnapshotPolicy.Facts(
+                entry.size(), entry.mtime(), entry.fileIdentity(), entry.mediaMtime(), entry.mediaIdentity(),
+                LYRIC_SNAPSHOT_VERSION,
+                lyric.readable() ? lyric.size() : null,
+                lyric.readable() ? lyric.mtime() : null,
+                lyric.readable() ? lyric.fileIdentity() : null,
+                false);
+        return LibrarySnapshotPolicy.classify(LibrarySnapshotPolicy.fromSongFile(existing), current,
+                lyric.readable(), lyric.present());
     }
 
-    private static boolean mediaSnapshotMatches(SongFile existing, FastIndexEntry entry) {
-        if (existing.getMediaMtime() != null || existing.getMediaFileIdentity() != null) {
-            return existing.getFileSize() == entry.size()
-                    && sameMtime(existing.getMediaMtime(), entry.mediaMtime())
-                    && sameFileIdentity(existing.getMediaFileIdentity(), entry.mediaIdentity());
-        }
-        // V20 is additive. Keep interpreting pre-V20 rows through their legacy
-        // composite fields until their first safe fast-index pass.
-        return existing.getFileSize() == entry.size()
-                && sameMtime(existing.getFileMtime(), entry.mtime())
-                && sameFileIdentity(existing.getFileIdentity(), entry.fileIdentity());
+    static OffsetDateTime normalizeMtime(OffsetDateTime value) {
+        return LibrarySnapshotPolicy.normalizeMtime(value);
     }
 
-    private static boolean lyricSnapshotMatches(SongFile existing, LyricSnapshot current) {
-        return Objects.equals(existing.getLyricSize(), current.size())
-                && sameNullableMtime(existing.getLyricMtime(), current.mtime())
-                && sameFileIdentity(existing.getLyricFileIdentity(), current.fileIdentity());
-    }
-
-    private static boolean sameNullableMtime(OffsetDateTime left, OffsetDateTime right) {
-        return left == null && right == null || sameMtime(left, right);
-    }
-
-    private static boolean sameFileIdentity(String stored, String current) {
-        return stored == null && current == null
-                || stored != null && current != null && stored.equals(current);
-    }
-
-    private static boolean sameMtime(OffsetDateTime left, OffsetDateTime right) {
-        return left != null && right != null
-                && mtimeKey(left) == mtimeKey(right);
-    }
-
-    private static long mtimeKey(OffsetDateTime value) {
-        var instant = value.toInstant();
-        return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000;
-    }
-
-    private static OffsetDateTime normalizeMtime(OffsetDateTime value) {
-        if (value == null) return null;
-        return value.withNano((value.getNano() / 1_000) * 1_000);
-    }
-
-    /** Persist filename metadata before opening the media file for FFprobe. */
+    /** Persist a changed snapshot or an identity-triggered re-probe before FFprobe runs. */
     private FastIndexEntry prepareFastIndex(FastIndexEntry entry, ScanCounters counters,
-                                            AudioLayout externalDefault) {
-        return prepareFastIndex(entry, counters, externalDefault, false, List.of());
-    }
-
-    private FastIndexEntry prepareFastIndex(FastIndexEntry entry, ScanCounters counters,
-                                            AudioLayout externalDefault, boolean forceMediaProbe) {
-        return prepareFastIndex(entry, counters, externalDefault, forceMediaProbe, List.of());
-    }
-
-    private FastIndexEntry prepareFastIndex(FastIndexEntry entry, ScanCounters counters,
-                                            AudioLayout externalDefault, boolean forceMediaProbe,
-                                            Collection<String> knownArtists) {
+                                            AudioLayout externalDefault, Collection<String> knownArtists) {
         SongFile existing = entry.existing().orElse(null);
         OffsetDateTime normalizedMtime = normalizeMtime(entry.mtime());
         if (existing != null) {
-            boolean changed = forceMediaProbe
-                    || snapshotChange(entry) == SnapshotChange.MEDIA_CHANGED
-                    || !Objects.equals(existing.getFilePath(), entry.path())
-                    || !existing.isValid();
-            if (changed) {
-                existing.setFilePath(entry.path());
-                existing.setFileSize(entry.size());
-                existing.setFileMtime(normalizedMtime);
-                existing.setFileIdentity(entry.fileIdentity());
-                applySnapshots(existing, entry);
-                existing.setProbePending(true);
-                existing.setValid(true);
-            }
+            // Every caller selects this path only for MEDIA_CHANGED or an
+            // identity-bearing lyric update that explicitly requires a probe.
+            existing.setFilePath(entry.path());
+            existing.setFileSize(entry.size());
+            existing.setFileMtime(normalizedMtime);
+            existing.setFileIdentity(entry.fileIdentity());
+            applySnapshots(existing, entry);
+            existing.setProbePending(true);
+            existing.setValid(true);
             String relativePath = entry.relativePath();
-            if (isBlank(existing.getRelativePath()) && relativePath != null) {
+            if (isBlank(existing.getRelativePath())) {
                 existing.setRelativePath(relativePath);
-                changed = true;
             }
             reconcilePendingFilenameStatus(entry, existing, counters);
-            if (changed) {
-                fileRepo.save(existing);
-                counters.dbUpdates++;
-            }
+            fileRepo.save(existing);
+            counters.dbUpdates++;
             return entry.withExisting(existing);
         }
 
         Song provisional = new Song();
         ParsedMeta parsed = entry.filenameMeta();
-        String title = parsed.title() == null || parsed.title().isBlank()
+        String title = parsed.title().isBlank()
                 ? entry.file().getFileName().toString() : parsed.title();
-        String artist = parsed.artist() == null || parsed.artist().isBlank()
+        String artist = parsed.artist().isBlank()
                 ? "未知歌手" : parsed.artist();
         provisional.setTitle(title);
         provisional.setArtist(artist);
@@ -1213,7 +1131,7 @@ public class LibraryScanService {
         provisional.setTitleInit(PinyinUtil.initials(title));
         provisional.setArtistPy(PinyinUtil.fullPinyin(artist));
         provisional.setArtistInit(PinyinUtil.initials(artist));
-        provisional.setLanguage(parsed.language() == null || parsed.language().isBlank()
+        provisional.setLanguage(parsed.language().isBlank()
                 ? "未知" : normalizeLanguage(parsed.language()));
         provisional.setMediaType(MediaClassifier.PENDING_PROBE);
         provisional.setHasVocalTrack(false);
@@ -1224,19 +1142,19 @@ public class LibraryScanService {
         // Keep unrecognized filename metadata visible for review even if the
         // later media probe fails before it can apply the final status.
         provisional.setStatus(parsed.recognized() ? "ok" : "unrecognized");
-        provisional.setTags(parsed.category() == null || parsed.category().isBlank()
+        provisional.setTags(parsed.category().isBlank()
                 ? new String[0] : new String[]{parsed.category()});
-        if (parsed.vocalForm() != null && !parsed.vocalForm().isBlank()) {
+        if (!parsed.vocalForm().isBlank()) {
             provisional.setVocalForm(parsed.vocalForm());
         }
-        if (parsed.catalogNumber() != null && !parsed.catalogNumber().isBlank()) {
+        if (!parsed.catalogNumber().isBlank()) {
             provisional.setCatalogNumber(parsed.catalogNumber());
         }
         provisional.setMetadataProvenance("{\"title\":{\"source\":\"filename_fast_index\"},"
                 + "\"artist\":{\"source\":\"filename_fast_index\"}}");
         provisional.setNeedsAiOptimization(!parsed.recognized());
         provisional = songRepo.save(provisional);
-        if (artistCreditService != null && provisional.getId() != null) {
+        if (artistCreditService != null) {
             artistCreditService.createInitial(provisional.getId(), provisional.getArtist(), knownArtists);
             counters.initialArtistCreditSongIds.add(provisional.getId());
         }
@@ -1257,8 +1175,7 @@ public class LibraryScanService {
         if (LibraryModePolicy.isExternalReadOnly(props)) {
             // Store the configured default on the pending row so a later retry
             // can distinguish it from any per-file override made in the admin UI.
-            indexed.setAudioLayout(externalDefault == null
-                    ? AudioLayout.NORMAL_STEREO : externalDefault);
+            indexed.setAudioLayout(externalDefault);
         }
         indexed.setValid(true);
         indexed.setProbePending(true);
@@ -1275,8 +1192,8 @@ public class LibraryScanService {
      */
     private void reconcilePendingFilenameStatus(FastIndexEntry entry, SongFile existing,
                                                 ScanCounters counters) {
-        if (!existing.isProbePending() || existing.getSongId() == null
-                || entry.filenameMeta().recognized()) {
+        // prepareFastIndex marks the row pending immediately before this call.
+        if (entry.filenameMeta().recognized()) {
             return;
         }
         songRepo.findById(existing.getSongId()).ifPresent(song -> {
@@ -1298,8 +1215,7 @@ public class LibraryScanService {
     }
 
     private void reactivateIfNeeded(FastIndexEntry entry, ScanCounters counters) {
-        SongFile existing = entry.existing().orElse(null);
-        if (existing == null) return;
+        SongFile existing = entry.existing().orElseThrow();
 
         boolean wasInvalid = !existing.isValid();
         boolean changed = false;
@@ -1308,7 +1224,7 @@ public class LibraryScanService {
             changed = true;
         }
         String relativePath = entry.relativePath();
-        if (isBlank(existing.getRelativePath()) && relativePath != null) {
+        if (isBlank(existing.getRelativePath())) {
             existing.setRelativePath(relativePath);
             changed = true;
         }
@@ -1325,7 +1241,6 @@ public class LibraryScanService {
             counters.dbUpdates++;
         }
         if (!wasInvalid) return;
-        if (existing.getSongId() == null) return;
         songRepo.findById(existing.getSongId()).ifPresent(song -> {
             if ("file_missing".equals(song.getStatus())) {
                 song.setStatus("ok");
@@ -1337,8 +1252,7 @@ public class LibraryScanService {
 
     /** Refreshes only the sidecar cache and snapshot; the media file is never opened. */
     private LyricRefreshOutcome refreshSidecarLyric(FastIndexEntry entry, ScanCounters counters) {
-        SongFile file = entry.existing().orElse(null);
-        if (file == null || file.getSongId() == null) return LyricRefreshOutcome.UNAVAILABLE;
+        SongFile file = entry.existing().orElseThrow();
 
         SidecarLyricContent sidecar = readSidecarLyric(sidecarLyricOf(entry.file()));
         if (!sidecar.readable()) {
@@ -1387,7 +1301,6 @@ public class LibraryScanService {
     }
 
     private void recordSeenPaths(UUID scanId, String activeRole, Collection<FastIndexEntry> batch) {
-        if (batch == null || batch.isEmpty()) return;
         seenPathStore.recordBatch(scanId, activeRole,
                 batch.stream().map(FastIndexEntry::path).filter(Objects::nonNull).toList());
     }
@@ -1429,10 +1342,15 @@ public class LibraryScanService {
 
     private long countValidFilesAtScanStart(String activeRole, Path root) {
         String normalizedRoot = root.toAbsolutePath().normalize().toString();
-        String backslashPrefix = normalizedRoot.endsWith("\\") || normalizedRoot.endsWith("/")
-                ? normalizedRoot : normalizedRoot + "\\";
-        String slashPrefix = normalizedRoot.endsWith("/") || normalizedRoot.endsWith("\\")
-                ? normalizedRoot : normalizedRoot + "/";
+        String backslashPrefix;
+        String slashPrefix;
+        if (normalizedRoot.endsWith(root.getFileSystem().getSeparator())) {
+            backslashPrefix = normalizedRoot;
+            slashPrefix = normalizedRoot;
+        } else {
+            backslashPrefix = normalizedRoot + "\\";
+            slashPrefix = normalizedRoot + "/";
+        }
         try {
             return fileRepo.countValidByFileRoleAndRoot(activeRole, normalizedRoot,
                     backslashPrefix, slashPrefix);
@@ -1445,402 +1363,110 @@ public class LibraryScanService {
     enum IngestOutcome { ADDED, UPDATED, SKIPPED, UNRECOGNIZED }
 
     /** 单文件入库（幂等：已存在的路径按 path + size + mtime 判断是否需更新） */
-    @Transactional
     public IngestOutcome ingest(Path file) {
-        LibraryModePolicy.requireExternalPathInsideSource(props, file);
+        Path activeFile = requireActiveLibraryFile(file);
         Collection<String> knownArtists = existingArtistNames();
-        FastIndexEntry entry = fastIndex(file, knownArtists);
-        switch (snapshotChange(entry)) {
-            case UNCHANGED -> { return IngestOutcome.SKIPPED; }
-            case LYRIC_ONLY -> {
-                ScanCounters counters = new ScanCounters();
-                LyricRefreshOutcome outcome = refreshSidecarLyric(entry, counters);
-                if (outcome == LyricRefreshOutcome.UPDATED) return IngestOutcome.UPDATED;
-                if (outcome == LyricRefreshOutcome.UNAVAILABLE) return IngestOutcome.SKIPPED;
-                AudioLayout externalDefault = LibraryModePolicy.isExternalReadOnly(props)
-                        ? configuredExternalDefaultAudioLayout() : null;
-                FastIndexEntry prepared = prepareFastIndex(entry, counters, externalDefault, true);
-                return ingest(prepared, knownArtists, counters, externalDefault);
-            }
-            case MEDIA_CHANGED -> { /* continue through the media probe path */ }
-        }
+        FastIndexEntry entry = fastIndex(activeFile, knownArtists);
+        LibrarySnapshotPolicy.Change change = snapshotChange(entry);
+        if (change == LibrarySnapshotPolicy.Change.UNCHANGED) return IngestOutcome.SKIPPED;
+
+        ScanCounters counters = new ScanCounters();
         AudioLayout externalDefault = LibraryModePolicy.isExternalReadOnly(props)
                 ? configuredExternalDefaultAudioLayout() : null;
-        return ingest(entry, knownArtists, new ScanCounters(), externalDefault);
-    }
-
-    private IngestOutcome ingest(FastIndexEntry entry, Collection<String> knownArtists,
-                                 ScanCounters counters, AudioLayout externalDefault) {
-        LibraryModePolicy.requireExternalPathInsideSource(props, entry.file());
-        return ingestInternal(entry, null, null, null, false, knownArtists, counters, externalDefault).outcome();
-    }
-
-    private boolean isExternalPathAllowed(Path path) {
-        if (!LibraryModePolicy.isExternalReadOnly(props)) return true;
-        try {
-            LibraryModePolicy.requireExternalPathInsideSource(props, path);
-            return true;
-        } catch (ApiException e) {
-            log.warn("外部曲库路径越界，跳过：{} - {}", path, e.getMessage());
-            return false;
+        if (change == LibrarySnapshotPolicy.Change.LYRIC_ONLY) {
+            FastIndexEntry currentEntry = entry;
+            LyricRefreshOutcome outcome = writeTransaction(() -> refreshSidecarLyric(currentEntry, counters));
+            if (outcome == LyricRefreshOutcome.UPDATED) return IngestOutcome.UPDATED;
+            if (outcome == LyricRefreshOutcome.UNAVAILABLE) return IngestOutcome.SKIPPED;
+            FastIndexEntry lyricEntry = entry;
+            entry = writeTransaction(() -> prepareFastIndex(lyricEntry, counters, externalDefault, knownArtists));
         }
+        MediaProbe probe = probeForDirectIngest(entry.file(), counters);
+        if (probe == null) return IngestOutcome.SKIPPED;
+        FastIndexEntry preparedEntry = entry;
+        return ingestionWriter.write(preparedEntry.toIngestionInput(), null, null, null, false,
+                knownArtists, counters, externalDefault, probe, null).outcome();
     }
 
-    @Transactional
     public IngestResult ingestLibraryFile(Path file, Path sourceFile, String sourceMd5, String outputMd5, boolean transcodeRequired) {
+        return ingestLibraryFile(file, sourceFile, sourceMd5, outputMd5, transcodeRequired, null);
+    }
+
+    /** Performs admission and probing before the write transaction; callers may reuse an identical probe. */
+    public IngestResult ingestLibraryFile(Path file, Path sourceFile, String sourceMd5, String outputMd5,
+                                          boolean transcodeRequired, MediaProbe preProbed) {
         LibraryModePolicy.requireManaged(props, "导入");
+        Path managedOutput = requireActiveLibraryFile(file);
         Collection<String> knownArtists = existingArtistNames();
-        FastIndexEntry entry = fastIndex(file, knownArtists);
-        SnapshotChange change = snapshotChange(entry);
-        if (change == SnapshotChange.UNCHANGED) {
+        FastIndexEntry entry = fastIndex(managedOutput, knownArtists);
+        LibrarySnapshotPolicy.Change change = snapshotChange(entry);
+        if (change == LibrarySnapshotPolicy.Change.UNCHANGED) {
+            SongFile existing = entry.existing().orElseThrow();
+            return new IngestResult(false, existing.getSongId(), existing.getId());
+        }
+        ScanCounters counters = new ScanCounters();
+        if (change == LibrarySnapshotPolicy.Change.LYRIC_ONLY) {
+            FastIndexEntry currentEntry = entry;
+            LyricRefreshOutcome outcome = writeTransaction(() -> refreshSidecarLyric(currentEntry, counters));
+            SongFile existing = entry.existing().orElseThrow();
+            if (outcome == LyricRefreshOutcome.UPDATED || outcome == LyricRefreshOutcome.UNAVAILABLE) {
+                return new IngestResult(outcome == LyricRefreshOutcome.UPDATED,
+                        existing.getSongId(), existing.getId());
+            }
+            FastIndexEntry lyricEntry = entry;
+            entry = writeTransaction(() -> prepareFastIndex(lyricEntry, counters, null, knownArtists));
+        }
+        MediaProbe probe = preProbed == null ? probeForDirectIngest(file, counters) : preProbed;
+        if (probe == null) {
             SongFile existing = entry.existing().orElse(null);
             return new IngestResult(false, existing == null ? null : existing.getSongId(),
                     existing == null ? null : existing.getId());
         }
-        if (change == SnapshotChange.LYRIC_ONLY) {
-            ScanCounters counters = new ScanCounters();
-            LyricRefreshOutcome outcome = refreshSidecarLyric(entry, counters);
-            SongFile existing = entry.existing().orElse(null);
-            if (outcome == LyricRefreshOutcome.UPDATED || outcome == LyricRefreshOutcome.UNAVAILABLE) {
-                return new IngestResult(outcome == LyricRefreshOutcome.UPDATED,
-                        existing == null ? null : existing.getSongId(),
-                        existing == null ? null : existing.getId());
-            }
-            FastIndexEntry prepared = prepareFastIndex(entry, counters, null, true);
-            IngestState state = ingestInternal(prepared, sourceFile, sourceMd5, outputMd5,
-                    transcodeRequired, knownArtists, counters, null);
-            return new IngestResult(
-                    state.outcome() == IngestOutcome.ADDED || state.outcome() == IngestOutcome.UPDATED,
-                    state.songId(), state.songFileId());
-        }
-        IngestState state = ingestInternal(entry, sourceFile, sourceMd5, outputMd5,
-                transcodeRequired, knownArtists, new ScanCounters(), null);
-        return new IngestResult(
-                state.outcome() == IngestOutcome.ADDED || state.outcome() == IngestOutcome.UPDATED,
-                state.songId(),
-                state.songFileId()
-        );
+        FastIndexEntry preparedEntry = entry;
+        IngestState state = ingestionWriter.write(preparedEntry.toIngestionInput(), sourceFile, sourceMd5, outputMd5,
+                transcodeRequired, knownArtists, counters, null, probe, null);
+        return asIngestResult(state);
     }
 
-    private IngestState ingestInternal(FastIndexEntry entry, Path sourceFile, String sourceMd5, String outputMd5,
-                                        boolean transcodeRequired, Collection<String> knownArtists,
-                                        ScanCounters counters, AudioLayout externalDefault) {
-        return ingestInternal(entry, sourceFile, sourceMd5, outputMd5, transcodeRequired, knownArtists,
-                counters, externalDefault, null);
-    }
-
-    private IngestState ingestInternal(FastIndexEntry entry, Path sourceFile, String sourceMd5, String outputMd5,
-                                        boolean transcodeRequired, Collection<String> knownArtists,
-                                        ScanCounters counters, AudioLayout externalDefault, MediaProbe preProbed) {
-        Path file = entry.file();
-        String pathStr = entry.path();
-        Path sidecarLyric = sidecarLyricOf(file);
-        OffsetDateTime mtime = entry.mtime();
-        Optional<SongFile> existing = entry.existing();
-
-        // 1) ffprobe 探测
-        MediaProbe probe = preProbed;
-        if (probe == null) {
-            try {
-                counters.probeCalls++;
-                probe = ffprobe.probe(file);
-            } catch (MediaProbeException e) {
-                log.debug("ffprobe 失败：{} - {}", file.getFileName(), e.getMessage());
-                return new IngestState(IngestOutcome.SKIPPED, null, null);
+    private Path requireActiveLibraryFile(Path file) {
+        Path root = LibraryModePolicy.activeLibraryRoot(props).toAbsolutePath().normalize();
+        Path candidate = file.toAbsolutePath().normalize();
+        if (!candidate.startsWith(root)) {
+            if (LibraryModePolicy.isExternalReadOnly(props)) {
+                throw new ApiException(LibraryModePolicy.EXTERNAL_READ_ONLY_CODE,
+                        "EXTERNAL_READ_ONLY：媒体路径必须位于外部曲库目录内：" + candidate);
             }
+            throw new ApiException("FILE_PATH_OUTSIDE_LIBRARY", "媒体路径必须位于当前曲库目录内：" + candidate);
         }
-
-        // 2) 标签解析 + 容器标签 + LRC + 3) 文件名兜底
-        TagInfo tag = isAudioFile(file) ? tagReader.read(file.toFile()) : new TagInfo();
-        SidecarLyricContent sidecarLyricContent = readSidecarLyric(sidecarLyric, entry.lyricSnapshot());
-        String sidecarLyricText = sidecarLyricContent.text();
-        String lrcTitle = lrcTag(sidecarLyricText, "ti");
-        String lrcArtist = lrcTag(sidecarLyricText, "ar");
-        boolean recognized;
-        String title, artist;
-        String titleSource;
-        String artistSource;
-        ParsedMeta filenameMeta = entry.filenameMeta();
-        String legacyTitle;
-        String legacyTitleSource;
-        if (tag.hasTitle()) {
-            legacyTitle = tag.getTitle();
-            legacyTitleSource = "audio_tag";
-        } else if (probe.title() != null && !probe.title().isBlank()) {
-            legacyTitle = probe.title();
-            legacyTitleSource = "container_tag";
-        } else if (lrcTitle != null && !lrcTitle.isBlank()) {
-            legacyTitle = lrcTitle;
-            legacyTitleSource = "lrc_tag";
-        } else {
-            legacyTitle = filenameMeta.title();
-            legacyTitleSource = "filename";
-        }
-        String legacyArtist = firstNonBlank(
-                tag.getArtist(),
-                probe.artist(),
-                lrcArtist,
-                filenameMeta.artist()
-        );
-        String legacyArtistSource = legacyArtist.isBlank() ? "default" : sourceOfArtist(
-                tag.getArtist(), probe.artist(), lrcArtist, filenameMeta.artist());
-        boolean structuredFilenamePreferred = structuredFilenameMetadataPreferred();
-        boolean structuredFilename = LibraryMetadataResolver.isStructured(filenameMeta);
-        LibraryMetadataResolver.Value resolvedTitle = LibraryMetadataResolver.resolve(
-                new LibraryMetadataResolver.Candidates(
-                        false, null, structuredFilenamePreferred && structuredFilename,
-                        new LibraryMetadataResolver.Value(filenameMeta.title(), "filename"),
-                        new LibraryMetadataResolver.Value(legacyTitle, legacyTitleSource)));
-        LibraryMetadataResolver.Value resolvedArtist = LibraryMetadataResolver.resolve(
-                new LibraryMetadataResolver.Candidates(
-                        false, null, structuredFilenamePreferred && structuredFilename,
-                        new LibraryMetadataResolver.Value(filenameMeta.artist(), "filename"),
-                        new LibraryMetadataResolver.Value(legacyArtist, legacyArtistSource)));
-        title = resolvedTitle.text();
-        titleSource = resolvedTitle.source();
-        recognized = !"filename".equals(legacyTitleSource) || filenameMeta.recognized();
-        artist = resolvedArtist.text();
-        artistSource = resolvedArtist.source();
-        if (artist.isBlank()) artist = "未知歌手";
-
-        // 4) Resolve the file-level semantic layout before classification. A
-        // one-stream DUAL_CHANNEL video is a karaoke source even though the
-        // legacy probe-only classifier would call it an MV.
-        AudioLayout storedLayout = existing.map(SongFile::getAudioLayout).orElse(null);
-        AudioLayoutSource storedLayoutSource = existing.map(SongFile::getAudioLayoutSource)
-                .orElse(AudioLayoutSource.AUTO_DEFAULT);
-        AudioLayoutResolver.Result resolvedLayout = audioLayoutResolver.resolve(
-                LibraryModePolicy.isExternalReadOnly(props)
-                        ? LibraryMode.EXTERNAL_READ_ONLY : LibraryMode.MANAGED,
-                storedLayoutSource, storedLayout, probe.audioTracks(), externalDefault);
-        AudioLayout audioLayout = resolvedLayout.layout();
-        String mediaType = MediaClassifier.classify(probe, audioLayout);
-        boolean hasVocal = MediaClassifier.hasVocalTrack(probe, audioLayout);
-        VocalTrackDetector.Result vocalDetect = VocalTrackDetector.detect(probe);
-        Song existingSong = existing.map(SongFile::getSongId)
-                .filter(Objects::nonNull)
-                .flatMap(songRepo::findById)
-                .orElse(null);
-        boolean manualIdentity = hasManualIdentityOverride(existingSong);
-        String effectiveTitle = existingSong != null && existingSong.isMetadataLocked("title")
-                ? existingSong.getTitle() : title;
-        String effectiveArtist = existingSong != null && existingSong.isMetadataLocked("artist")
-                ? existingSong.getArtist() : artist;
-        String fingerprint = MediaClassifier.fingerprint(effectiveArtist, effectiveTitle, probe.durationMs());
-
-        // 5) 指纹去重：同指纹已存在 → 作为多文件源加入，按 priority 择优
-        Optional<Song> dup = songRepo.findByFingerprint(fingerprint);
-        Song provisional = existing.map(SongFile::getSongId)
-                .filter(Objects::nonNull)
-                .flatMap(songRepo::findById)
-                .filter(LibraryScanService::isProvisionalSong)
-                .orElse(null);
-        boolean initialCreditsAlreadyMatch = false;
-        Song song;
-        boolean isNew;
-        Song provisionalToDelete = null;
-        if (manualIdentity) {
-            Optional<Song> conflict = dup.filter(other -> !sameSong(other, existingSong));
-            if (conflict.isPresent()) {
-                throw new ApiException("FINGERPRINT_CONFLICT",
-                        "人工确认的歌曲身份与歌曲 #" + conflict.get().getId() + " 冲突");
-            }
-            song = existingSong;
-            applyProbedMetadata(song, title, artist, mediaType, hasVocal, probe,
-                    fingerprint, recognized, tag, filenameMeta, titleSource, artistSource);
-            isNew = false;
-        } else if (dup.isPresent() && !sameSong(dup.get(), provisional)) {
-            song = dup.get();
-            isNew = false;
-            provisionalToDelete = provisional;
-        } else if (provisional != null) {
-            String fastIndexedArtist = provisional.getArtist();
-            song = provisional;
-            applyProbedMetadata(song, title, artist, mediaType, hasVocal, probe,
-                    fingerprint, recognized, tag, filenameMeta, titleSource, artistSource);
-            initialCreditsAlreadyMatch = counters.initialArtistCreditSongIds.contains(provisional.getId())
-                    && Objects.equals(fastIndexedArtist, song.getArtist());
-            isNew = false;
-        } else if (dup.isPresent()) {
-            song = dup.get();
-            isNew = false;
-        } else {
-            song = new Song();
-            song.setTitle(title);
-            song.setArtist(artist);
-            song.setTitlePy(PinyinUtil.fullPinyin(title));
-            song.setTitleInit(PinyinUtil.initials(title));
-            song.setArtistPy(PinyinUtil.fullPinyin(artist));
-            song.setArtistInit(PinyinUtil.initials(artist));
-            song.setMediaType(mediaType);
-            song.setHasVocalTrack(hasVocal);
-            song.setDurationMs((int) probe.durationMs());
-            song.setLyricType(LyricType.NONE);
-            song.setFingerprint(fingerprint);
-            // 未识别（标签+文件名均无有效歌名）标记 unrecognized，供后台筛选补录；否则 ok
-            song.setStatus(recognized ? "ok" : "unrecognized");
-            String language = effectiveLanguage(tag, probe, filenameMeta);
-            if (!language.isBlank()) song.setLanguage(language);
-            if (filenameMeta != null && !filenameMeta.category().isBlank()) {
-                // 现有模型没有独立 category 列；沿用 Home KTV 的 tags 数组承载文件名分类。
-                song.setTags(new String[]{filenameMeta.category()});
-            }
-            if (filenameMeta != null && !filenameMeta.vocalForm().isBlank()) {
-                song.setVocalForm(filenameMeta.vocalForm());
-            }
-            song.setMetadataProvenance("{\"title\":{\"source\":\"" + titleSource
-                    + "\"},\"artist\":{\"source\":\"" + artistSource + "\"}}");
-            song.setNeedsAiOptimization(!recognized || "未知".equals(song.getLanguage()) || "未知歌手".equals(song.getArtist()));
-            isNew = true;
-        }
-
-        // The catalog number is filename-derived metadata. Keep it in sync for
-        // new, existing, and fingerprint-merged rows, including clearing a
-        // stale number when a file is renamed without the commercial prefix.
-        if (filenameMeta != null && !Objects.equals(song.getCatalogNumber(), filenameMeta.catalogNumber())) {
-            song.setCatalogNumber(filenameMeta.catalogNumber());
-        }
-
-        // 6) 歌词/封面落盘。同名增强 LRC 优先，且允许侧车文件独立更新。
-        if (sidecarLyricText != null) {
-            String lyricPath = assetWriter.writeLyric(fingerprint, sidecarLyricText);
-            song.setLyricPath(lyricPath);
-            song.setLyricType(LyricType.detect(sidecarLyricText));
-            song.setLyricSource(Song.LYRIC_SOURCE_SIDECAR);
-        } else if (sidecarLyricContent.readable()
-                && Song.LYRIC_SOURCE_SIDECAR.equals(song.getLyricSource())) {
-            // Only clear a cache that this scanner previously established from this
-            // sidecar. Legacy/embedded/manual lyric caches remain fail-closed.
-            song.setLyricPath(null);
-            song.setLyricType(LyricType.NONE);
-            song.setLyricSource(Song.LYRIC_SOURCE_NONE);
-        }
-        if (isNew) {
-            String lyricText = sidecarLyricText == null ? tag.getEmbeddedLyric() : null;
-            if (lyricText != null && !lyricText.isBlank()) {
-                String lyricPath = assetWriter.writeLyric(fingerprint, lyricText);
-                song.setLyricPath(lyricPath);
-                song.setLyricType(LyricType.detect(lyricText));
-                song.setLyricSource(Song.LYRIC_SOURCE_EMBEDDED);
-            } else if (sidecarLyricText == null && !sidecarLyricContent.readable()) {
-                song.setLyricSource(Song.LYRIC_SOURCE_UNKNOWN);
-            } else if (sidecarLyricText == null) {
-                song.setLyricSource(Song.LYRIC_SOURCE_NONE);
-            }
-            if (tag.getCoverImage() != null) {
-                byte[] normalizedCover = normalizeEmbeddedCover(tag.getCoverImage());
-                if (normalizedCover != null) {
-                    String coverPath = assetWriter.writeCover(fingerprint, normalizedCover, "jpg");
-                    song.setCoverPath(coverPath);
-                }
-            }
-        }
-        song = songRepo.save(song);
-        if (!initialCreditsAlreadyMatch) syncArtistCredits(song, knownArtists);
-        synchronized (counters) {
-            counters.dbUpdates++;
-        }
-
-        // 7) 写 song_files（KTV 视频优先级高）
-        int priority = switch (mediaType) {
-            case MediaClassifier.KTV_VIDEO -> 100;
-            case MediaClassifier.MV -> 50;
-            default -> 10;
-        };
-        SongFile sf = existing.orElseGet(SongFile::new);
-        sf.setSongId(song.getId());
-        sf.setFilePath(pathStr);
-        String relativePath = entry.relativePath();
-        if (relativePath != null) sf.setRelativePath(relativePath);
-        sf.setFormat(extOf(file));
-        sf.setAudioTracks(probe.audioTracks());
-        sf.setAudioLayout(audioLayout);
-        sf.setAudioLayoutSource(resolvedLayout.source());
-        sf.setMediaType(mediaType);
-        // 伴奏轨 index（0-based 音频相对序号）。已有值优先（尊重人工/历史校正），
-        // 否则用元数据判定，判不出再回落默认 1（多数双轨片源 track0=原唱、track1=伴奏）。
-        Integer existingVocalTrackIndex = existing.map(SongFile::getVocalTrackIndex).orElse(null);
-        Integer vocalTrackIndex = null;
-        String vocalConfidence = null;
-        if (audioLayout == AudioLayout.DUAL_TRACK) {
-            if (existingVocalTrackIndex != null) {
-                // 尊重人工/历史校正：index 不变，置信度视为已确认（HIGH）
-                vocalTrackIndex = existingVocalTrackIndex;
-                vocalConfidence = VocalTrackDetector.Confidence.HIGH.name();
-            } else if (vocalDetect.accompanimentIndex() != null) {
-                vocalTrackIndex = vocalDetect.accompanimentIndex();
-                vocalConfidence = vocalDetect.confidence().name();
-                log.debug("伴奏轨判定 {} → track#{}（{}，{}）", file.getFileName(),
-                        vocalTrackIndex, vocalDetect.confidence(), vocalDetect.reason());
-            } else {
-                // 判不出：回落默认 track#1，标 LOW 供后台筛选人工复核
-                vocalTrackIndex = 1;
-                vocalConfidence = VocalTrackDetector.Confidence.LOW.name();
-                log.info("伴奏轨无法确定，回落默认 track#1，建议人工复核：{}（{}）",
-                        file.getFileName(), vocalDetect.reason());
-            }
-        }
-        if (audioLayout == AudioLayout.DUAL_TRACK) {
-            sf.setAccompanimentTrackIndex(vocalTrackIndex);
-            Integer storedOriginalTrackIndex = existing.map(SongFile::getOriginalTrackIndex).orElse(null);
-            sf.setOriginalTrackIndex(storedOriginalTrackIndex != null
-                    ? storedOriginalTrackIndex
-                    : vocalTrackIndex == null ? null : vocalTrackIndex == 0 ? 1 : 0);
-        } else {
-            sf.setVocalTrackIndex(null);
-            sf.setOriginalTrackIndex(null);
-            sf.setAccompanimentTrackIndex(null);
-        }
-        sf.setVocalConfidence(vocalConfidence);
-        sf.setResolution(probe.resolution());
-        sf.setFileSize(entry.size());
-        sf.setFileMtime(normalizeMtime(mtime));
-        sf.setFileIdentity(entry.fileIdentity());
-        applySnapshots(sf, entry);
-        sf.setPriority(priority);
-        // 文件重新被成功探测，说明之前的瞬时播放失败不应永久屏蔽该源。
-        sf.setValid(true);
         if (LibraryModePolicy.isExternalReadOnly(props)) {
-            sf.setFileRole(LibraryModePolicy.EXTERNAL_FILE_ROLE);
-            sf.setSourcePath(null);
-            sf.setSourceMd5(null);
-            sf.setOutputMd5(null);
-            sf.setTranscodeRequired(false);
-            sf.setImportedAt(null);
-            sf.setSourceDeleted(false);
+            LibraryModePolicy.requireExternalPathInsideSource(props, candidate);
         } else {
-            sf.setFileRole("LIBRARY");
-            sf.setSourcePath(sourceFile != null ? sourceFile.toString() : sf.getSourcePath());
-            sf.setSourceMd5(sourceMd5);
-            sf.setOutputMd5(outputMd5);
-            sf.setTranscodeRequired(transcodeRequired);
-            sf.setImportedAt(OffsetDateTime.now());
+            LibraryModePolicy.requirePathInsideActiveLibrary(props, candidate);
         }
-        sf.setSourceDeleted(false);
-        sf.setProbePending(false);
-        sf = fileRepo.save(sf);
-        synchronized (counters) {
-            counters.dbUpdates++;
+        if (!Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)) {
+            throw new ApiException("FILE_NOT_FOUND", "媒体路径不是普通文件：" + candidate);
         }
-        restoreSongAfterSuccessfulProbe(song, counters);
-        songProjectionService.recompute(song.getId());
-        if (provisionalToDelete != null) songRepo.delete(provisionalToDelete);
-
-        IngestOutcome outcome;
-        if (!recognized) outcome = IngestOutcome.UNRECOGNIZED;
-        else if (!entry.existedBeforeScan() || entry.pendingBeforeScan()) outcome = IngestOutcome.ADDED;
-        else outcome = IngestOutcome.UPDATED;
-        return new IngestState(outcome, song.getId(), sf.getId());
+        return candidate;
     }
 
-    private byte[] normalizeEmbeddedCover(byte[] source) {
-        if (coverImageNormalizer == null) return source;
-        try {
-            return coverImageNormalizer.normalize(source);
-        } catch (ApiException failure) {
-            log.warn("内嵌封面无效，跳过缓存：{}", failure.getMessage());
-            return null;
+    private <T> T writeTransaction(Supplier<T> work) {
+        return batchTransaction == null ? work.get() : batchTransaction.execute(status -> work.get());
+    }
+
+    private MediaProbe probeForDirectIngest(Path file, ScanCounters counters) {
+        MediaProbeStage.Result result = mediaProbeStage.probe(file);
+        if (result.attempted()) counters.probeCalls++;
+        if (result.probe() != null) return result.probe();
+        if (result.failure() != null && !(result.failure() instanceof InterruptedException)) {
+            log.debug("ffprobe 失败：{} - {}", file.getFileName(), result.failure().getMessage());
         }
+        return null;
+    }
+
+    private static IngestResult asIngestResult(IngestState state) {
+        // The writer returns only after persisting the song and file rows. An
+        // unrecognized filename is a review state, not a failed import.
+        return new IngestResult(true, state.songId(), state.songFileId());
     }
 
     private AudioLayout configuredExternalDefaultAudioLayout() {
@@ -1850,97 +1476,27 @@ public class LibraryScanService {
         return configured;
     }
 
-    private void restoreSongAfterSuccessfulProbe(Song song, ScanCounters counters) {
-        if (song == null || !"file_missing".equals(song.getStatus())) return;
-        song.setStatus("ok");
-        songRepo.save(song);
-        counters.dbUpdates++;
-    }
-
-    private static boolean sameSong(Song left, Song right) {
+    static boolean sameSong(Song left, Song right) {
         if (left == null || right == null) return false;
         if (left == right) return true;
         return left.getId() != null && left.getId().equals(right.getId());
     }
 
-    private static boolean isProvisionalSong(Song song) {
+    /** Null is not provisional; the public scan and import paths also pass only resolved songs. */
+    static boolean isProvisionalSong(Song song) {
         return song != null && (MediaClassifier.PENDING_PROBE.equals(song.getMediaType())
                 || song.getFingerprint() != null && song.getFingerprint().startsWith("fast-index-"));
     }
 
-    private static boolean hasManualIdentityOverride(Song song) {
+    static boolean hasManualIdentityOverride(Song song) {
         return song != null && (song.isMetadataLocked("title") || song.isMetadataLocked("artist"));
     }
 
-    private void applyProbedMetadata(Song song, String title, String artist, String mediaType,
-                                            boolean hasVocal, MediaProbe probe, String fingerprint,
-                                            boolean recognized, TagInfo tag, ParsedMeta filenameMeta,
-                                            String titleSource, String artistSource) {
-        boolean titleLocked = song.isMetadataLocked("title");
-        boolean artistLocked = song.isMetadataLocked("artist");
-        boolean languageLocked = song.isMetadataLocked("language");
-        boolean tagsLocked = song.isMetadataLocked("tags");
-        if (!titleLocked) {
-            song.setTitle(title);
-            song.setTitlePy(PinyinUtil.fullPinyin(title));
-            song.setTitleInit(PinyinUtil.initials(title));
-        }
-        if (!artistLocked) {
-            song.setArtist(artist);
-            song.setArtistPy(PinyinUtil.fullPinyin(artist));
-            song.setArtistInit(PinyinUtil.initials(artist));
-        }
-        song.setMediaType(mediaType);
-        song.setHasVocalTrack(hasVocal);
-        song.setDurationMs((int) probe.durationMs());
-        song.setFingerprint(fingerprint);
-        if (!hasManualIdentityOverride(song)) {
-            song.setStatus(recognized ? "ok" : "unrecognized");
-        }
-        if (!languageLocked) {
-            String language = effectiveLanguage(tag, probe, filenameMeta);
-            if (!language.isBlank()) song.setLanguage(language);
-        }
-        if (!tagsLocked && filenameMeta != null && !filenameMeta.category().isBlank()) {
-            song.setTags(new String[]{filenameMeta.category()});
-        }
-        if (!song.isMetadataLocked("vocalForm")
-                && filenameMeta != null && !filenameMeta.vocalForm().isBlank()) {
-            song.setVocalForm(filenameMeta.vocalForm());
-        }
-        if (filenameMeta != null && !Objects.equals(song.getCatalogNumber(), filenameMeta.catalogNumber())) {
-            song.setCatalogNumber(filenameMeta.catalogNumber());
-        }
-        if (!titleLocked && !artistLocked) {
-            song.setMetadataProvenance("{\"title\":{\"source\":\"" + titleSource
-                    + "\"},\"artist\":{\"source\":\"" + artistSource + "\"}}");
-        }
-        if (!hasManualIdentityOverride(song)) {
-            song.setNeedsAiOptimization(!recognized || "未知".equals(song.getLanguage())
-                    || "未知歌手".equals(song.getArtist()));
-        }
+    static boolean needsAiOptimization(boolean recognized, Song song) {
+        return !recognized || "未知".equals(song.getLanguage()) || "未知歌手".equals(song.getArtist());
     }
 
-    private boolean structuredFilenameMetadataPreferred() {
-        return props != null && props.isStructuredFilenameMetadataPreferred();
-    }
-
-    private String effectiveLanguage(TagInfo tag, MediaProbe probe, ParsedMeta filenameMeta) {
-        if (structuredFilenameMetadataPreferred() && LibraryMetadataResolver.isStructured(filenameMeta)
-                && !filenameMeta.language().isBlank()) {
-            return normalizeLanguage(filenameMeta.language());
-        }
-        if (tag != null && tag.getLanguage() != null && !tag.getLanguage().isBlank()) {
-            return normalizeLanguage(tag.getLanguage());
-        }
-        if (probe != null && probe.language() != null && !probe.language().isBlank()) {
-            return normalizeLanguage(probe.language());
-        }
-        return filenameMeta == null || filenameMeta.language().isBlank()
-                ? "" : normalizeLanguage(filenameMeta.language());
-    }
-
-    private static Path sidecarLyricOf(Path mediaFile) {
+    static Path sidecarLyricOf(Path mediaFile) {
         String name = mediaFile.getFileName().toString();
         int dot = name.lastIndexOf('.');
         String stem = dot > 0 ? name.substring(0, dot) : name;
@@ -1959,8 +1515,8 @@ public class LibraryScanService {
     }
 
     private static String relativePathOf(Path file, Path root) {
+        // Scan visitors, pending probes, and managed imports validate the active root first.
         Path candidate = file.toAbsolutePath().normalize();
-        if (!candidate.startsWith(root)) return null;
         return root.relativize(candidate).toString().replace('\\', '/');
     }
 
@@ -1995,11 +1551,11 @@ public class LibraryScanService {
         }
     }
 
-    private static SidecarLyricContent readSidecarLyric(Path sidecarLyric) {
+    static SidecarLyricContent readSidecarLyric(Path sidecarLyric) {
         return readSidecarLyric(sidecarLyric, null);
     }
 
-    private static SidecarLyricContent readSidecarLyric(Path sidecarLyric, LyricSnapshot precomputedSnapshot) {
+    static SidecarLyricContent readSidecarLyric(Path sidecarLyric, LyricSnapshot precomputedSnapshot) {
         LyricSnapshot snapshot = precomputedSnapshot != null ? precomputedSnapshot : lyricSnapshotOf(sidecarLyric);
         if (!snapshot.present()) return SidecarLyricContent.absent();
         if (!snapshot.readable()) return SidecarLyricContent.unreadable();
@@ -2025,7 +1581,7 @@ public class LibraryScanService {
         }
     }
 
-    private static void applySnapshots(SongFile file, FastIndexEntry entry) {
+    static void applySnapshots(SongFile file, FastIndexEntry entry) {
         file.setMediaMtime(normalizeMtime(entry.mediaMtime()));
         file.setMediaFileIdentity(entry.mediaIdentity());
         LyricSnapshot lyric = entry.lyricSnapshot();
@@ -2037,7 +1593,19 @@ public class LibraryScanService {
         }
     }
 
-    private static String lrcTag(String lyric, String key) {
+    static void applySnapshots(SongFile file, LibraryIngestionWriter.Input entry) {
+        file.setMediaMtime(normalizeMtime(entry.mediaMtime()));
+        file.setMediaFileIdentity(entry.mediaIdentity());
+        LyricSnapshot lyric = entry.lyricSnapshot();
+        if (lyric.readable()) {
+            file.setLyricSize(lyric.size());
+            file.setLyricMtime(normalizeMtime(lyric.mtime()));
+            file.setLyricFileIdentity(lyric.fileIdentity());
+            file.setLyricSnapshotVersion(LYRIC_SNAPSHOT_VERSION);
+        }
+    }
+
+    static String lrcTag(String lyric, String key) {
         if (lyric == null) return null;
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(?im)^\\[" + key + "\\s*:\\s*(.+?)\\]\\s*$").matcher(lyric);
         return matcher.find() ? matcher.group(1).trim() : null;
@@ -2047,8 +1615,8 @@ public class LibraryScanService {
         return lrcTag(lyric, "ti") != null || lrcTag(lyric, "ar") != null;
     }
 
-    private static String normalizeLanguage(String raw) {
-        String value = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+    static String normalizeLanguage(String raw) {
+        String value = raw.trim().toLowerCase(Locale.ROOT);
         if (value.isBlank()) return "未知";
         if (value.matches("zh(-|_)?cn|中文|mandarin|国语|普通话")) return "国语";
         if (value.matches("yue|zh(-|_)?hk|粤语|cantonese")) return "粤语";
@@ -2061,8 +1629,6 @@ public class LibraryScanService {
     }
 
     private static final int LYRIC_SNAPSHOT_VERSION = 1;
-
-    private enum SnapshotChange { UNCHANGED, LYRIC_ONLY, MEDIA_CHANGED }
 
     private enum LyricRefreshOutcome { UPDATED, NEEDS_MEDIA_PROBE, UNAVAILABLE }
 
@@ -2082,7 +1648,7 @@ public class LibraryScanService {
         }
     }
 
-    private record LyricSnapshot(boolean present, boolean readable, Long size,
+    record LyricSnapshot(boolean present, boolean readable, Long size,
                                  OffsetDateTime mtime, String fileIdentity) {
         private static LyricSnapshot missing() {
             return new LyricSnapshot(false, true, null, null, null);
@@ -2093,7 +1659,7 @@ public class LibraryScanService {
         }
     }
 
-    private record SidecarLyricContent(boolean present, boolean readable, String text) {
+    record SidecarLyricContent(boolean present, boolean readable, String text) {
         private static SidecarLyricContent absent() {
             return new SidecarLyricContent(false, true, null);
         }
@@ -2103,12 +1669,18 @@ public class LibraryScanService {
         }
     }
 
-    private record FastIndexEntry(Path file, String path, String relativePath, long size, OffsetDateTime mtime,
+    record FastIndexEntry(Path file, String path, String relativePath, long size, OffsetDateTime mtime,
                                   String fileIdentity, ParsedMeta filenameMeta,
                                   OffsetDateTime mediaMtime, String mediaIdentity,
                                   LyricSnapshot lyricSnapshot,
                                   Optional<SongFile> existing, boolean existedBeforeScan,
                                   boolean pendingBeforeScan) {
+        LibraryIngestionWriter.Input toIngestionInput() {
+            return new LibraryIngestionWriter.Input(file, path, relativePath, size, mtime, fileIdentity,
+                    filenameMeta, mediaMtime, mediaIdentity, lyricSnapshot,
+                    existing.map(SongFile::getId).orElse(null), existedBeforeScan, pendingBeforeScan);
+        }
+
         private FastIndexEntry withExisting(SongFile replacement) {
             return new FastIndexEntry(file, path, relativePath, size, mtime, fileIdentity, filenameMeta,
                     mediaMtime, mediaIdentity, lyricSnapshot,
@@ -2125,7 +1697,7 @@ public class LibraryScanService {
     private record ProbeResult(Path file, FastIndexEntry entry, MediaProbe probe,
                                Throwable failure, boolean attempted) {}
 
-    private record IngestState(IngestOutcome outcome, Long songId, Long songFileId) {}
+    record IngestState(IngestOutcome outcome, Long songId, Long songFileId) {}
 
     enum PathAccessDecision {
         ALLOW,
@@ -2139,13 +1711,13 @@ public class LibraryScanService {
         static PathAccessResult failure(String reason) { return new PathAccessResult(PathAccessDecision.ACCESS_FAILURE, reason); }
     }
 
-    private static final class ScanCounters {
-        private final Set<Long> initialArtistCreditSongIds = new HashSet<>();
+    static final class ScanCounters {
+        final Set<Long> initialArtistCreditSongIds = new HashSet<>();
         private int fastIndexed;
         private int probeQueued;
         private int probeCalls;
         private int hashCalls;
-        private int dbUpdates;
+        int dbUpdates;
         private int missing;
         private int failedPaths;
     }
@@ -2188,11 +1760,11 @@ public class LibraryScanService {
             }
         }
 
-        private boolean allowsVisitedDirectory(Path directory) {
-            return checkVisitedDirectory(directory).decision() == PathAccessDecision.ALLOW;
-        }
-
-        /** Fast-path for walkFileTree: the parent directory was already boundary-checked. */
+        /**
+         * walkFileTree only supplies descendants of configuredRoot, and every
+         * visited directory has already passed the root boundary check. Keep a
+         * final link check here to reject a file entry replaced during traversal.
+         */
         private boolean allowsVisitedFile(Path file) {
             return file.toAbsolutePath().normalize().startsWith(configuredRoot)
                     && !Files.isSymbolicLink(file);
@@ -2235,24 +1807,24 @@ public class LibraryScanService {
     }
 
     private FilenameParser.ArtistIndex artistIndexFor(Collection<String> artistNames) {
-        Set<String> snapshot = artistNames == null || artistNames.isEmpty()
-                ? Set.of() : Set.copyOf(artistNames);
+        Set<String> snapshot = artistNames.isEmpty() ? Set.of() : Set.copyOf(artistNames);
         // The index is scoped to the current scan/request. Keeping it in this
         // Spring singleton retained every historical artist name after a large
         // scan, even though the next scan builds its own snapshot.
         return FilenameParser.prepareKnownArtists(snapshot);
     }
 
-    private static String firstNonBlank(String... values) {
+    static String firstNonBlank(String... values) {
         for (String value : values) {
             if (value != null && !value.isBlank()) return value.trim();
         }
         return "";
     }
 
-    private static String sourceOfArtist(String... values) {
+    static String sourceOfArtist(String... values) {
         String[] sources = {"audio_tag", "container_tag", "lrc_tag", "filename"};
-        for (int i = 0; i < values.length && i < sources.length; i++) {
+        int sourceCount = Math.min(values.length, sources.length);
+        for (int i = 0; i < sourceCount; i++) {
             if (values[i] != null && !values[i].isBlank()) return sources[i];
         }
         return "default";

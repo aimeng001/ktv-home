@@ -16,6 +16,32 @@ describe('artist AI configuration gate', () => {
     expect(onRedirect).not.toHaveBeenCalled()
   })
 
+  it('uses a safe message when the configuration read fails without an error message', async () => {
+    const onError = vi.fn()
+    const onRedirect = vi.fn()
+
+    await expect(resolveAiConfiguration(
+      () => Promise.reject({}),
+      { onError, onRedirect }
+    )).resolves.toBeNull()
+
+    expect(onError).toHaveBeenCalledWith('AI 配置读取失败')
+    expect(onRedirect).not.toHaveBeenCalled()
+  })
+
+  it('uses a safe message when the configuration read rejects with null', async () => {
+    const onError = vi.fn()
+    const onRedirect = vi.fn()
+
+    await expect(resolveAiConfiguration(
+      () => Promise.reject(null),
+      { onError, onRedirect }
+    )).resolves.toBeNull()
+
+    expect(onError).toHaveBeenCalledWith('AI 配置读取失败')
+    expect(onRedirect).not.toHaveBeenCalled()
+  })
+
   it('redirects only after a successful but incomplete configuration read', async () => {
     const onError = vi.fn()
     const onRedirect = vi.fn()
@@ -48,5 +74,11 @@ describe('artist AI configuration gate', () => {
     expect(result).toEqual(config)
     expect(onError).not.toHaveBeenCalled()
     expect(onRedirect).not.toHaveBeenCalled()
+  })
+
+  it('allows omitted optional callbacks for an incomplete configuration', async () => {
+    await expect(resolveAiConfiguration(
+      () => Promise.resolve({ enabled: false })
+    )).resolves.toBeNull()
   })
 })

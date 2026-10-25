@@ -7,6 +7,7 @@ import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
 import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.SongFileRepository;
+import com.homektv.resource.ResourceBudget;
 import com.homektv.web.ApiException;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,6 +48,7 @@ public class MediaImportService {
 
     private static final int RECORD_BATCH_SIZE = 200;
     static final int MAX_TRANSCODE_QUEUE = 10_000;
+    private static final int MAX_TARGET_NAME_ATTEMPTS = 10_000;
 
     private static final Logger log = LoggerFactory.getLogger(MediaImportService.class);
 
@@ -59,7 +61,10 @@ public class MediaImportService {
     public static final String OUTPUT_DUPLICATE = "SKIPPED_OUTPUT_MD5_DUPLICATE";
 
     private final AppProperties props;
-    private final FFprobeService ffprobeService;
+    private final int maxTranscodeQueue;
+    private final int maxTargetNameAttempts;
+    private final MediaProbeStage mediaProbeStage;
+    private final SourceSnapshotReader sourceSnapshotReader;
     private final TagReader tagReader;
     private final FileHashService hashService;
     private final MediaImportRecordRepository importRepo;
@@ -92,9 +97,45 @@ public class MediaImportService {
     public MediaImportService(AppProperties props, FFprobeService ffprobeService, FileHashService hashService,
                               MediaImportRecordRepository importRepo, SongFileRepository songFileRepo,
                               LibraryScanService scanService, SettingService settingService,
-                              MediaTranscoder mediaTranscoder, TagReader tagReader) {
+                              MediaTranscoder mediaTranscoder, TagReader tagReader,
+                              MediaProbeStage mediaProbeStage) {
+        this(props, ffprobeService, hashService, importRepo, songFileRepo, scanService,
+                settingService, mediaTranscoder, tagReader, mediaProbeStage,
+                MediaImportService::sourceSnapshot);
+    }
+
+    MediaImportService(AppProperties props, FFprobeService ffprobeService, FileHashService hashService,
+                       MediaImportRecordRepository importRepo, SongFileRepository songFileRepo,
+                       LibraryScanService scanService, SettingService settingService,
+                       MediaTranscoder mediaTranscoder, TagReader tagReader,
+                       MediaProbeStage mediaProbeStage, SourceSnapshotReader sourceSnapshotReader) {
+        this(props, ffprobeService, hashService, importRepo, songFileRepo, scanService, settingService,
+                mediaTranscoder, tagReader, mediaProbeStage, sourceSnapshotReader,
+                MAX_TRANSCODE_QUEUE, MAX_TARGET_NAME_ATTEMPTS);
+    }
+
+    MediaImportService(AppProperties props, FFprobeService ffprobeService, FileHashService hashService,
+                       MediaImportRecordRepository importRepo, SongFileRepository songFileRepo,
+                       LibraryScanService scanService, SettingService settingService,
+                       MediaTranscoder mediaTranscoder, TagReader tagReader,
+                       MediaProbeStage mediaProbeStage, SourceSnapshotReader sourceSnapshotReader,
+                       int maxTranscodeQueue) {
+        this(props, ffprobeService, hashService, importRepo, songFileRepo, scanService, settingService,
+                mediaTranscoder, tagReader, mediaProbeStage, sourceSnapshotReader,
+                maxTranscodeQueue, MAX_TARGET_NAME_ATTEMPTS);
+    }
+
+    MediaImportService(AppProperties props, FFprobeService ffprobeService, FileHashService hashService,
+                       MediaImportRecordRepository importRepo, SongFileRepository songFileRepo,
+                       LibraryScanService scanService, SettingService settingService,
+                       MediaTranscoder mediaTranscoder, TagReader tagReader,
+                       MediaProbeStage mediaProbeStage, SourceSnapshotReader sourceSnapshotReader,
+                       int maxTranscodeQueue, int maxTargetNameAttempts) {
         this.props = props;
-        this.ffprobeService = ffprobeService;
+        this.maxTranscodeQueue = maxTranscodeQueue;
+        this.maxTargetNameAttempts = maxTargetNameAttempts;
+        this.mediaProbeStage = mediaProbeStage;
+        this.sourceSnapshotReader = Objects.requireNonNull(sourceSnapshotReader, "sourceSnapshotReader");
         this.tagReader = tagReader;
         this.hashService = hashService;
         this.importRepo = importRepo;
@@ -104,6 +145,35 @@ public class MediaImportService {
         this.mediaTranscoder = mediaTranscoder;
     }
 
+    /** Test seam for exercising queue-capacity behavior without a 10,000-record fixture. */
+    MediaImportService(AppProperties props, FFprobeService ffprobeService, FileHashService hashService,
+                       MediaImportRecordRepository importRepo, SongFileRepository songFileRepo,
+                       LibraryScanService scanService, SettingService settingService,
+                       MediaTranscoder mediaTranscoder, int maxTranscodeQueue) {
+        this(props, ffprobeService, hashService, importRepo, songFileRepo, scanService, settingService,
+                mediaTranscoder, maxTranscodeQueue, MAX_TARGET_NAME_ATTEMPTS);
+    }
+
+    /** Test seam for exercising both queue bounds with a small deterministic fixture. */
+    MediaImportService(AppProperties props, FFprobeService ffprobeService, FileHashService hashService,
+                       MediaImportRecordRepository importRepo, SongFileRepository songFileRepo,
+                       LibraryScanService scanService, SettingService settingService,
+                       MediaTranscoder mediaTranscoder, int maxTranscodeQueue,
+                       int maxTargetNameAttempts) {
+        this(props, ffprobeService, hashService, importRepo, songFileRepo, scanService, settingService,
+                mediaTranscoder, new TagReader(), standaloneProbeStage(ffprobeService),
+                MediaImportService::sourceSnapshot, maxTranscodeQueue, maxTargetNameAttempts);
+    }
+
+    /** Compatibility constructor for isolated tests that provide media services directly. */
+    public MediaImportService(AppProperties props, FFprobeService ffprobeService, FileHashService hashService,
+                              MediaImportRecordRepository importRepo, SongFileRepository songFileRepo,
+                              LibraryScanService scanService, SettingService settingService,
+                              MediaTranscoder mediaTranscoder, TagReader tagReader) {
+        this(props, ffprobeService, hashService, importRepo, songFileRepo, scanService, settingService,
+                mediaTranscoder, tagReader, standaloneProbeStage(ffprobeService));
+    }
+
     /** Compatibility constructor for existing unit tests and integrations. */
     public MediaImportService(AppProperties props, FFprobeService ffprobeService, FileHashService hashService,
                               MediaImportRecordRepository importRepo, SongFileRepository songFileRepo,
@@ -111,6 +181,10 @@ public class MediaImportService {
                               MediaTranscoder mediaTranscoder) {
         this(props, ffprobeService, hashService, importRepo, songFileRepo, scanService, settingService,
                 mediaTranscoder, new TagReader());
+    }
+
+    private static MediaProbeStage standaloneProbeStage(FFprobeService ffprobeService) {
+        return new MediaProbeStage(ffprobeService, new ResourceBudget(1, 1, 4, () -> false));
     }
 
     public record SourceScanResult(int scanned, int copied, int pendingTranscode,
@@ -185,6 +259,7 @@ public class MediaImportService {
                     case SOURCE_DUPLICATE -> sourceDup++;
                     case OUTPUT_DUPLICATE -> outputDup++;
                     case UNRECOGNIZED -> unrecognized++;
+                    case FAILED -> failed++;
                     case UNCHANGED -> { }
                 }
             } catch (Exception e) {
@@ -274,7 +349,7 @@ public class MediaImportService {
     }
 
     private int enqueueAllTranscodable(boolean deleteSources) {
-        List<MediaImportRecord> candidates = new ArrayList<>(Math.min(RECORD_BATCH_SIZE, MAX_TRANSCODE_QUEUE));
+        List<MediaImportRecord> candidates = new ArrayList<>(Math.min(RECORD_BATCH_SIZE, maxTranscodeQueue));
         long afterId = 0;
         while (true) {
             Page<MediaImportRecord> page = importRepo.findByIdGreaterThanOrderByIdAsc(
@@ -283,9 +358,9 @@ public class MediaImportService {
             for (MediaImportRecord record : page.getContent()) {
                 if (!isTranscodable(record)) continue;
                 candidates.add(record);
-                if (candidates.size() > MAX_TRANSCODE_QUEUE) {
+                if (candidates.size() > maxTranscodeQueue) {
                     throw new ApiException("TRANSCODE_QUEUE_LIMIT",
-                            "单次转码任务最多排队 " + MAX_TRANSCODE_QUEUE + " 个源文件");
+                            "单次转码任务最多排队 " + maxTranscodeQueue + " 个源文件");
                 }
             }
             long nextId = page.getContent().stream()
@@ -306,9 +381,9 @@ public class MediaImportService {
         for (Long recordId : recordIds) {
             if (recordId == null) continue;
             boundedIds.add(recordId);
-            if (boundedIds.size() > MAX_TRANSCODE_QUEUE) {
+            if (boundedIds.size() > maxTranscodeQueue) {
                 throw new ApiException("TRANSCODE_QUEUE_LIMIT",
-                        "单次转码任务最多排队 " + MAX_TRANSCODE_QUEUE + " 个源文件");
+                        "单次转码任务最多排队 " + maxTranscodeQueue + " 个源文件");
             }
         }
         if (boundedIds.isEmpty()) return 0;
@@ -323,10 +398,6 @@ public class MediaImportService {
 
     private int enqueueTranscodable(MediaImportRecord record, boolean deleteSources) {
         if (record == null || record.getId() == null || !isTranscodable(record)) return 0;
-        if (transcodeQueue.size() >= MAX_TRANSCODE_QUEUE) {
-            throw new ApiException("TRANSCODE_QUEUE_LIMIT",
-                    "单次转码任务最多排队 " + MAX_TRANSCODE_QUEUE + " 个源文件");
-        }
         record.setDeleteSourceRequested(deleteSources);
         record.setCleanupStatus(deleteSources ? "PENDING" : "NOT_REQUESTED");
         importRepo.save(record);
@@ -354,9 +425,9 @@ public class MediaImportService {
                 return new PriorityResult("ALREADY_PRIORITY", recordId, current);
             }
             boolean moved = transcodeQueue.remove(recordId);
-            if (!moved && transcodeQueue.size() >= MAX_TRANSCODE_QUEUE) {
+            if (!moved && transcodeQueue.size() >= maxTranscodeQueue) {
                 throw new ApiException("TRANSCODE_QUEUE_LIMIT",
-                        "单次转码任务最多排队 " + MAX_TRANSCODE_QUEUE + " 个源文件");
+                        "单次转码任务最多排队 " + maxTranscodeQueue + " 个源文件");
             }
             transcodeQueue.addFirst(recordId);
             priorityRecordIds.add(recordId);
@@ -480,7 +551,7 @@ public class MediaImportService {
                     try {
                         if (Files.size(output) <= 0) return false;
                         if (record.getOutputSize() != null && record.getOutputMtime() != null) {
-                            SourceSnapshot snapshot = sourceSnapshot(output);
+                            SourceSnapshot snapshot = sourceSnapshotReader.read(output);
                             return snapshot != null
                                     && snapshot.size() == record.getOutputSize()
                                     && sameMtime(record.getOutputMtime(), snapshot.mtime());
@@ -536,7 +607,7 @@ public class MediaImportService {
     private ScanOutcome analyzeAndMaybeCopy(Path source, Path targetRoot) throws IOException {
         LibraryModePolicy.requireManaged(props, "导入、移动或转码");
         MediaImportRecord existing = importRepo.findBySourcePath(source.toString()).orElse(null);
-        SourceSnapshot snapshot = sourceSnapshot(source);
+        SourceSnapshot snapshot = sourceSnapshotReader.read(source);
         boolean unchangedSnapshot = existing != null && sameSourceSnapshot(existing, snapshot);
         String sourceMd5 = unchangedSnapshot && hasText(existing.getSourceMd5())
                 ? existing.getSourceMd5() : hashService.md5(source);
@@ -560,7 +631,16 @@ public class MediaImportService {
             }
         }
 
-        MediaProbe probe = ffprobeService.probe(source);
+        MediaProbe probe;
+        try {
+            probe = mediaProbeStage.probeRequired(source);
+        } catch (Exception failure) {
+            // The source digest was computed before probing. Persist it with the
+            // failed record so its snapshot cannot make a previous digest look current.
+            upsertRecord(source, sourceMd5, null, null, null, FAILED, messageOf(failure),
+                    false, false, false, null, null);
+            return ScanOutcome.FAILED;
+        }
         TagInfo tag = LibraryScanService.isAudioFile(source) ? tagReader.read(source.toFile()) : new TagInfo();
         ParsedMeta parsed = tag.hasTitle()
                 ? ParsedMeta.of(tag.getTitle(), tag.getArtist())
@@ -598,7 +678,7 @@ public class MediaImportService {
                 throw new IOException("移动后文件 MD5 校验失败");
             }
             movedCompanions = moveCompanions(source, output);
-            ingest = scanService.ingestLibraryFile(output, source, sourceMd5, outputMd5, false);
+            ingest = scanService.ingestLibraryFile(output, source, sourceMd5, outputMd5, false, probe);
             if (!ingest.imported() || ingest.songId() == null || ingest.songFileId() == null) {
                 throw new IOException("移动后的文件未能写入 KTV 曲库");
             }
@@ -667,6 +747,7 @@ public class MediaImportService {
     }
 
     private TranscodeOutcome transcodeRecord(MediaImportRecord record) {
+        String sourceIdentity = record.getSourcePath();
         Path source = null;
         Path output = null;
         List<Path> migratedCompanions = List.of();
@@ -676,7 +757,7 @@ public class MediaImportService {
             if (record.isSourceDeleted()) {
                 throw new ApiException("SOURCE_FILE_MISSING", "源文件不存在或已删除");
             }
-            source = LibraryModePolicy.requireReadablePathInsideSource(props, Path.of(record.getSourcePath()));
+            source = LibraryModePolicy.requireReadablePathInsideSource(props, Path.of(sourceIdentity));
             String sourceMd5 = hashService.md5(source);
             if (!Objects.equals(sourceMd5, record.getSourceMd5()) || isSourceDuplicate(source, sourceMd5)) {
                 record.setAction(SOURCE_DUPLICATE);
@@ -685,7 +766,7 @@ public class MediaImportService {
                 importRepo.save(record);
                 return TranscodeOutcome.SOURCE_DUPLICATE;
             }
-            MediaProbe probe = ffprobeService.probe(source);
+            MediaProbe probe = mediaProbeStage.probeRequired(source);
             output = transcodeToTarget(source, targetRoot(), probe);
             String outputMd5 = hashService.md5(output);
             if (isOutputDuplicate(source, outputMd5)) {
@@ -707,8 +788,7 @@ public class MediaImportService {
                 throw new IOException("转码后的文件未能写入 KTV 曲库");
             }
             ingested = true;
-            upsertRecord(source, sourceMd5, output, probe, outputMd5, TRANSCODED,
-                    "已转码入 KTV 曲库", true, false, true, ingest.songId(), ingest.songFileId());
+            updateTranscodedRecord(record, sourceIdentity, source, sourceMd5, output, probe, outputMd5, ingest);
             if (record.isDeleteSourceRequested()) cleanupImportedRecord(record.getId());
             return TranscodeOutcome.TRANSCODED;
         } catch (Exception e) {
@@ -744,6 +824,18 @@ public class MediaImportService {
         }
     }
 
+    private void updateTranscodedRecord(MediaImportRecord record, String sourceIdentity, Path sourceForIo,
+                                        String sourceMd5, Path output, MediaProbe probe, String outputMd5,
+                                        LibraryScanService.IngestResult ingest) {
+        applyRecordValues(record, sourceForIo, sourceMd5, output, probe, outputMd5, TRANSCODED,
+                "已转码入 KTV 曲库", true, false, true, ingest.songId(), ingest.songFileId());
+        // Keep the source_path identity loaded from the database. sourceForIo is
+        // intentionally real-path-resolved for safe filesystem access and may
+        // have a different string spelling on Windows (8.3 alias vs long path).
+        record.setSourcePath(sourceIdentity);
+        importRepo.saveAndFlush(record);
+    }
+
     private void applyRecordValues(MediaImportRecord record, Path source, String sourceMd5, Path output,
                                    MediaProbe probe, String outputMd5, String action, String reason,
                                    boolean transcodeRequired, boolean duplicate, boolean imported,
@@ -760,7 +852,7 @@ public class MediaImportService {
         record.setOutputMd5(outputMd5);
         record.setOutputFormat(output != null ? extOf(output) : record.getOutputFormat());
         if (output != null) {
-            SourceSnapshot outputSnapshot = sourceSnapshot(output);
+            SourceSnapshot outputSnapshot = sourceSnapshotReader.read(output);
             record.setOutputSize(outputSnapshot == null ? null : outputSnapshot.size());
             record.setOutputMtime(outputSnapshot == null ? null : outputSnapshot.mtime());
         }
@@ -774,13 +866,12 @@ public class MediaImportService {
         record.setSongId(songId);
         record.setSongFileId(songFileId);
         record.setSourceDeleted(false);
-        SourceSnapshot snapshot = sourceSnapshot(source);
-        if (snapshot != null) {
+        SourceSnapshot snapshot = sourceSnapshotReader.read(source);
+        if (snapshot != null && (sourceMd5 != null || !hasText(record.getSourceMd5()))) {
             record.setSourceSize(snapshot.size());
             record.setSourceMtime(snapshot.mtime());
             record.setSourceFileIdentity(snapshot.fileIdentity());
         }
-        if (record.getCleanupStatus() == null) record.setCleanupStatus("NOT_REQUESTED");
     }
 
     private static boolean hasText(String value) {
@@ -794,8 +885,8 @@ public class MediaImportService {
     }
 
     private static boolean sameSourceSnapshot(MediaImportRecord record, SourceSnapshot current) {
-        if (record == null || current == null || record.getSourceSize() == null
-                || record.getSourceMtime() == null) return false;
+        if (current == null || record.getSourceSize() == null
+                || record.getSourceMtime() == null || current.mtime() == null) return false;
         if (record.getSourceSize() != current.size()
                 || !sameMtime(record.getSourceMtime(), current.mtime())) return false;
         String storedIdentity = record.getSourceFileIdentity();
@@ -808,8 +899,7 @@ public class MediaImportService {
     }
 
     private static boolean sameMtime(OffsetDateTime left, OffsetDateTime right) {
-        return left != null && right != null
-                && mtimeKey(left) == mtimeKey(right);
+        return mtimeKey(left) == mtimeKey(right);
     }
 
     private static long mtimeKey(OffsetDateTime value) {
@@ -830,10 +920,15 @@ public class MediaImportService {
     }
 
     private static OffsetDateTime normalizeMtime(OffsetDateTime value) {
-        return value == null ? null : value.withNano((value.getNano() / 1_000) * 1_000);
+        return value.withNano((value.getNano() / 1_000) * 1_000);
     }
 
-    private record SourceSnapshot(long size, OffsetDateTime mtime, String fileIdentity) {}
+    @FunctionalInterface
+    interface SourceSnapshotReader {
+        SourceSnapshot read(Path source);
+    }
+
+    record SourceSnapshot(long size, OffsetDateTime mtime, String fileIdentity) {}
 
     private ParsedMeta parseFilename(Path source) {
         String filename = source.getFileName().toString();
@@ -946,9 +1041,9 @@ public class MediaImportService {
         Path desired = targetRoot.resolve(source.getFileName());
         String filename = desired.getFileName().toString();
         int dot = filename.lastIndexOf('.');
-        String base = dot > 0 ? filename.substring(0, dot) : filename;
-        String extension = dot > 0 ? filename.substring(dot) : "";
-        for (int index = 1; index < 10_000; index++) {
+        String base = filename.substring(0, dot);
+        String extension = filename.substring(dot);
+        for (int index = 1; index < maxTargetNameAttempts; index++) {
             Path candidate = index == 1 ? desired
                     : targetRoot.resolve(base + "-" + index + extension);
             try {
@@ -1001,7 +1096,6 @@ public class MediaImportService {
     }
 
     private void restoreMovedCompanions(List<MovedCompanion> moved) {
-        if (moved == null) return;
         for (int index = moved.size() - 1; index >= 0; index--) {
             MovedCompanion companion = moved.get(index);
             try {
@@ -1084,15 +1178,13 @@ public class MediaImportService {
     private void deleteSourceAndCompanions(MediaImportRecord record) throws IOException {
         LibraryModePolicy.requireManaged(props, "删除源文件");
         Path source = LibraryModePolicy.requirePathInsideSource(props, Path.of(record.getSourcePath()));
+        Path output = LibraryModePolicy.requirePathInsideActiveLibrary(props, Path.of(record.getOutputPath()));
         Files.deleteIfExists(source);
-        if (record.getOutputPath() != null) {
-            Path output = LibraryModePolicy.requirePathInsideActiveLibrary(props, Path.of(record.getOutputPath()));
-            for (String ext : new String[]{"lrc", "jpg", "jpeg", "png", "webp"}) {
-                Path companion = source.resolveSibling(stripExtension(source.getFileName().toString()) + "." + ext);
-                Path target = output.resolveSibling(stripExtension(output.getFileName().toString()) + "." + ext);
-                if (Files.isRegularFile(companion) && Files.isRegularFile(target)
-                        && Files.mismatch(companion, target) == -1L) Files.deleteIfExists(companion);
-            }
+        for (String ext : new String[]{"lrc", "jpg", "jpeg", "png", "webp"}) {
+            Path companion = source.resolveSibling(stripExtension(source.getFileName().toString()) + "." + ext);
+            Path target = output.resolveSibling(stripExtension(output.getFileName().toString()) + "." + ext);
+            if (Files.isRegularFile(companion) && Files.isRegularFile(target)
+                    && Files.mismatch(companion, target) == -1L) Files.deleteIfExists(companion);
         }
         removeSourceRecord(record);
     }
@@ -1128,11 +1220,21 @@ public class MediaImportService {
     private void deleteGeneratedFiles(Path output, List<Path> companionFiles) {
         List<Path> generated = new ArrayList<>();
         if (output != null) generated.add(output);
-        if (companionFiles != null) generated.addAll(companionFiles);
+        generated.addAll(companionFiles);
         for (Path file : generated) {
             try {
-                Path safePath = LibraryModePolicy.requirePathInsideActiveLibrary(props, file);
-                if (Files.isSymbolicLink(safePath)) continue;
+                Path candidate = file.toAbsolutePath().normalize();
+                if (Files.isSymbolicLink(candidate)) {
+                    deleteSymlinkEntry(candidate);
+                    continue;
+                }
+                Path safePath = LibraryModePolicy.requirePathInsideActiveLibrary(props, candidate);
+                // The boundary resolver follows symlinks, so recheck the original
+                // directory entry before deleting the resolved path.
+                if (Files.isSymbolicLink(candidate)) {
+                    deleteSymlinkEntry(candidate);
+                    continue;
+                }
                 Files.deleteIfExists(safePath);
             } catch (IOException cleanupFailure) {
                 log.warn("清理失败转码输出：{}", file, cleanupFailure);
@@ -1142,13 +1244,21 @@ public class MediaImportService {
         }
     }
 
+    private void deleteSymlinkEntry(Path candidate) throws IOException {
+        Path fileName = candidate.getFileName();
+        Path parent = candidate.getParent();
+        Path safeParent = LibraryModePolicy.requirePathInsideActiveLibrary(props, parent);
+        Path directoryEntry = safeParent.resolve(fileName);
+        if (Files.isSymbolicLink(directoryEntry)) Files.deleteIfExists(directoryEntry);
+    }
+
     @PreDestroy
     void shutdown() {
         scanExecutor.shutdownNow();
         transcodeExecutor.shutdownNow();
     }
 
-    private enum ScanOutcome { COPIED, PENDING, SOURCE_DUPLICATE, OUTPUT_DUPLICATE, UNRECOGNIZED, UNCHANGED }
+    private enum ScanOutcome { COPIED, PENDING, SOURCE_DUPLICATE, OUTPUT_DUPLICATE, UNRECOGNIZED, FAILED, UNCHANGED }
     private enum TranscodeOutcome { TRANSCODED, SOURCE_DUPLICATE, OUTPUT_DUPLICATE, FAILED }
     private record MovedCompanion(Path source, Path target) {}
 }

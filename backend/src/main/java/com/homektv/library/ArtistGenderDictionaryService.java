@@ -1,7 +1,9 @@
 package com.homektv.library;
 
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,9 +33,16 @@ public class ArtistGenderDictionaryService {
     private static final String BUILTIN_RESOURCE = "artist-gender-dictionary.csv";
 
     private final JdbcTemplate jdbc;
+    private final Resource builtinResource;
 
+    @Autowired
     public ArtistGenderDictionaryService(JdbcTemplate jdbc) {
+        this(jdbc, new ClassPathResource(BUILTIN_RESOURCE));
+    }
+
+    ArtistGenderDictionaryService(JdbcTemplate jdbc, Resource builtinResource) {
         this.jdbc = jdbc;
+        this.builtinResource = builtinResource;
     }
 
     public record DictionaryEntry(String displayName, String gender, List<String> aliases) {}
@@ -109,9 +118,8 @@ public class ArtistGenderDictionaryService {
     }
 
     private List<DictionaryEntry> readBuiltinEntries() throws IOException {
-        ClassPathResource resource = new ClassPathResource(BUILTIN_RESOURCE);
         try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8))) {
+                new InputStreamReader(builtinResource.getInputStream(), StandardCharsets.UTF_8))) {
             List<DictionaryEntry> entries = new ArrayList<>();
             String line;
             boolean header = true;

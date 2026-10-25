@@ -76,21 +76,14 @@ internal class SyncChunkAssembler(
         if (chunks.size != total) return null
         val snapshotEntries = ArrayList<QueueEntry>(entryCount)
         for (index in 0 until total) {
-            val entries = chunks[index] ?: run {
-                reset()
-                return null
-            }
+            // Every accepted index is range-checked and unique; once the map
+            // reaches total entries, every index in this range must be present.
+            val entries = chunks[index]!!
             snapshotEntries.addAll(entries)
         }
         val result = AssembledSnapshot(
-            eventType = eventType ?: run {
-                reset()
-                return null
-            },
-            snapshot = (header ?: run {
-                reset()
-                return null
-            }).toSnapshot(snapshotEntries),
+            eventType = eventType!!,
+            snapshot = header!!.toSnapshot(snapshotEntries),
         )
         reset()
         return result

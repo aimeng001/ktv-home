@@ -1,11 +1,14 @@
 package com.homektv;
 
 import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -16,6 +19,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -51,11 +55,35 @@ class FlywaySpringBootUpgradeIntegrationTest {
     @Autowired
     private ApplicationContext applicationContext;
 
+    @Autowired
+    @Qualifier("artistProfileExecutor")
+    private ThreadPoolTaskExecutor artistProfileExecutor;
+
     @Test
     void springBootContextStartsSuccessfullyOnLegacyDatabase() {
         // 验证 Spring Boot 上下文成功加载，未被 FlywayValidateException 阻断
         assertThat(applicationContext).isNotNull();
         assertThat(applicationContext.containsBean("flywayMigrationStrategy")).isTrue();
+    }
+
+    @AfterEach
+    void awaitStartupProfileWorkBeforeContainerStops() throws InterruptedException {
+        var executor = artistProfileExecutor.getThreadPoolExecutor();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+        long idleSince = 0L;
+        while (System.nanoTime() < deadline) {
+            if (executor.getActiveCount() == 0 && executor.getQueue().isEmpty()) {
+                if (idleSince == 0L) idleSince = System.nanoTime();
+                if (System.nanoTime() - idleSince >= TimeUnit.SECONDS.toNanos(1)) return;
+            } else {
+                idleSince = 0L;
+            }
+            Thread.sleep(50L);
+        }
+        assertThat(executor.getActiveCount()).as("startup profile work should finish before Testcontainers stops")
+                .isZero();
+        assertThat(executor.getQueue()).as("startup profile queue should be drained before Testcontainers stops")
+                .isEmpty();
     }
 
     private static void setupLegacyDatabase(String jdbcUrl, String username, String password) throws Exception {

@@ -1,6 +1,7 @@
 package com.homektv.tv.net
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -101,6 +102,39 @@ class LanScannerTest {
     }
 
     @Test
+    fun validationWithoutExpectedIdentityStillRequiresHomeKtvHealthAndReadiness() = runBlocking {
+        val scanner = LanScanner()
+        val valid = delayedHomeKtvServer(delayMs = 0)
+        val wrongService = delayedHomeKtvServer(delayMs = 0, serviceName = "other-service")
+        try {
+            assertTrue(scanner.validate("127.0.0.1:${valid.localPort}", null))
+            assertFalse(scanner.validate("127.0.0.1:${wrongService.localPort}", null))
+        } finally {
+            scanner.close()
+            valid.close()
+            wrongService.close()
+        }
+    }
+
+    @Test
+    fun identityAwareValidationRequiresAValidMatchingInstanceId() = runBlocking {
+        val expected = "550e8400-e29b-41d4-a716-446655440000"
+        val other = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+        val scanner = LanScanner()
+        val matching = delayedHomeKtvServer(delayMs = 0, instanceId = expected)
+        val different = delayedHomeKtvServer(delayMs = 0, instanceId = other)
+        try {
+            assertTrue(scanner.validate("127.0.0.1:${matching.localPort}", expected))
+            assertFalse(scanner.validate("127.0.0.1:${different.localPort}", expected))
+            assertFalse(scanner.validate("invalid-host-port", "not-a-uuid"))
+        } finally {
+            scanner.close()
+            matching.close()
+            different.close()
+        }
+    }
+
+    @Test
     fun identityValidationRejectsAHealthyDifferentServer() {
         val expected = "550e8400-e29b-41d4-a716-446655440000"
         val healthy = "{\"service\":\"home-ktv\",\"instanceId\":\"$expected\"}"
@@ -151,6 +185,16 @@ class LanScannerTest {
     }
 
     @Test
+    fun blankSubnetPrefixUsesOnlyPresetTargets() {
+        val scanner = LanScanner()
+        try {
+            assertEquals(LanScanner.PRESET_TARGETS, scanner.scanTargets("  "))
+        } finally {
+            scanner.close()
+        }
+    }
+
+    @Test
     fun prioritizesDefaultPortAcrossSubnet() {
         val targets = LanScanner().scanTargets("192.168.1.")
 
@@ -178,6 +222,8 @@ class LanScannerTest {
     private fun delayedHomeKtvServer(
         delayMs: Long,
         requestReceived: CountDownLatch? = null,
+        serviceName: String = "home-ktv",
+        instanceId: String = "550e8400-e29b-41d4-a716-446655440000",
     ): ServerSocket {
         val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
         Thread({
@@ -194,9 +240,9 @@ class LanScannerTest {
                         requestReceived?.countDown()
                         Thread.sleep(delayMs)
                         val body = if (requestLine.contains("/api/health")) {
-                            """{"service":"home-ktv","name":"Delayed fixture","instanceId":"550e8400-e29b-41d4-a716-446655440000"}"""
+                            """{"service":"$serviceName","name":"Delayed fixture","instanceId":"$instanceId"}"""
                         } else {
-                            """{"service":"home-ktv","status":"UP"}"""
+                            """{"service":"$serviceName","status":"UP"}"""
                         }
                         val bytes = body.toByteArray(Charsets.UTF_8)
                         output.write(

@@ -69,6 +69,7 @@ class ActivePlayerRegistryTest {
 
         assertThat(registry.authorizesUpstream("active-session", active.generation())).isTrue();
         assertThat(registry.authorizesUpstream("active-session", active.generation() + 1)).isFalse();
+        assertThat(registry.authorizesUpstream("active-session", null)).isFalse();
         assertThat(registry.authorizesUpstream("standby-session", standby.generation())).isFalse();
         assertThat(registry.authorizesUpstream("missing-session", active.generation())).isFalse();
     }
@@ -143,6 +144,116 @@ class ActivePlayerRegistryTest {
         assertThat(registry.connectedPlayerCount()).isEqualTo(1);
         assertThat(registry.authorizesUpstream("old-session", first.generation())).isFalse();
         assertThat(registry.authorizesUpstream("new-session", replacement.generation())).isTrue();
+    }
+
+    @Test
+    void reconnectingAStandbyKeepsItsPlaceAheadOfLaterRegisteredPlayers() {
+        ActivePlayerRegistry registry = registry();
+        registry.register("active", new ActivePlayerRegistry.PlayerHello("one", "ANDROID_TV", 2));
+        registry.register("old-standby", new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
+        registry.register("later-standby", new ActivePlayerRegistry.PlayerHello("three", "WINDOWS", 2));
+
+        ActivePlayerRegistry.Assignment replacement = registry.register(
+                "replacement-standby", new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
+
+        assertThat(replacement.role()).isEqualTo(ActivePlayerRegistry.Role.STANDBY);
+        assertThat(registry.connectedPlayerCount()).isEqualTo(3);
+        assertThat(registry.unregister("active").orElseThrow().sessionId())
+                .isEqualTo("replacement-standby");
+        assertThat(registry.authorizesUpstream("old-standby", replacement.generation())).isFalse();
+    }
+
+    @Test
+    void legacyPlayersKeepTheirAssignmentWithoutV2LeaseExpiryOrGenerationChecks() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-27T00:00:00Z"));
+        ActivePlayerRegistry registry = new ActivePlayerRegistry(clock, Duration.ofSeconds(45));
+        ActivePlayerRegistry.Assignment active = registry.register("legacy",
+                new ActivePlayerRegistry.PlayerHello("legacy-device", "WINDOWS", 1));
+        clock.advance(Duration.ofHours(1));
+
+        assertThat(registry.activeSessionId()).contains("legacy");
+        assertThat(registry.requiresQueueIdentity("legacy")).isTrue();
+        assertThat(registry.authorizesUpstream("legacy", null)).isTrue();
+        assertThat(registry.heartbeat("legacy", null)).contains(active);
+        assertThat(registry.expireAndPromote()).isEmpty();
+    }
+
+    @Test
+    void standbyHeartbeatReturnsAssignmentWhileActiveV2HeartbeatRequiresCurrentGeneration() {
+        ActivePlayerRegistry registry = registry();
+        ActivePlayerRegistry.Assignment active = registry.register("active",
+                new ActivePlayerRegistry.PlayerHello("one", "ANDROID_TV", 2));
+        ActivePlayerRegistry.Assignment standby = registry.register("standby",
+                new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
+
+        assertThat(registry.heartbeat("missing", null)).isEmpty();
+        assertThat(registry.heartbeat("standby", active.generation())).contains(standby);
+        assertThat(registry.heartbeat("active", null)).isEmpty();
+        assertThat(registry.heartbeat("active", active.generation() + 1)).isEmpty();
+        assertThat(registry.heartbeat("active", active.generation()))
+                .contains(new ActivePlayerRegistry.Assignment(
+                        ActivePlayerRegistry.Role.ACTIVE, active.generation(), 45_000));
+    }
+
+    @Test
+    void leaseExpiresOnlyAfterItsDeadlineAndUnregistrationIsIdempotent() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-27T00:00:00Z"));
+        ActivePlayerRegistry registry = new ActivePlayerRegistry(clock, Duration.ofSeconds(45));
+        ActivePlayerRegistry.Assignment active = registry.register("active",
+                new ActivePlayerRegistry.PlayerHello("one", "ANDROID_TV", 2));
+        registry.register("standby", new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
+
+        clock.advance(Duration.ofSeconds(45));
+        assertThat(registry.expireAndPromote()).isEmpty();
+        assertThat(registry.activeSessionId()).isEmpty();
+        assertThat(registry.renew("active", active.generation())).isEmpty();
+        assertThat(registry.heartbeat("active", active.generation())).isEmpty();
+        clock.advance(Duration.ofMillis(1));
+        ActivePlayerRegistry.Expiration expiration = registry.expireAndPromote().orElseThrow();
+        assertThat(expiration.expiredSessionId()).isEqualTo("active");
+        assertThat(expiration.promotion().orElseThrow().sessionId()).isEqualTo("standby");
+        assertThat(registry.authorizesUpstream("active", active.generation())).isFalse();
+
+        ActivePlayerRegistry empty = registry();
+        ActivePlayerRegistry.Assignment only = empty.register("only",
+                new ActivePlayerRegistry.PlayerHello("only-device", "WINDOWS", 2));
+        ActivePlayerRegistry.Unregistration removed = empty.unregisterPlayer("only");
+        assertThat(removed.removed()).isTrue();
+        assertThat(removed.promotion()).isEmpty();
+        assertThat(empty.unregisterPlayer("only").removed()).isFalse();
+        assertThat(empty.connectedPlayerCount()).isZero();
+        assertThat(empty.activeSessionId()).isEmpty();
+        assertThat(only.role()).isEqualTo(ActivePlayerRegistry.Role.ACTIVE);
+    }
+
+    @Test
+    void emptyRegistryHasNoActiveLeaseAndLegacyLeaseCannotBeRenewedAsProtocolV2() {
+        ActivePlayerRegistry registry = registry();
+
+        assertThat(registry.activeSessionId()).isEmpty();
+        assertThat(registry.expireAndPromote()).isEmpty();
+        assertThat(registry.renew("missing", 0)).isEmpty();
+        assertThat(registry.authorizesUpstream("missing", 0L)).isFalse();
+        assertThat(registry.heartbeat("missing", null)).isEmpty();
+
+        registry.register("legacy", new ActivePlayerRegistry.PlayerHello("legacy", "WINDOWS", 1));
+        assertThat(registry.renew("legacy", 1)).isEmpty();
+    }
+
+    @Test
+    void removingAStandbyDoesNotAffectTheActivePlayerOrPromoteAnotherSession() {
+        ActivePlayerRegistry registry = registry();
+        ActivePlayerRegistry.Assignment active = registry.register("active",
+                new ActivePlayerRegistry.PlayerHello("one", "ANDROID_TV", 2));
+        registry.register("standby", new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
+
+        ActivePlayerRegistry.Unregistration removed = registry.unregisterPlayer("standby");
+
+        assertThat(removed.removed()).isTrue();
+        assertThat(removed.promotion()).isEmpty();
+        assertThat(registry.connectedPlayerCount()).isEqualTo(1);
+        assertThat(registry.activeSessionId()).contains("active");
+        assertThat(registry.authorizesUpstream("active", active.generation())).isTrue();
     }
 
     private static ActivePlayerRegistry registry() {

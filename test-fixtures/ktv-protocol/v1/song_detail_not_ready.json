@@ -1,0 +1,35 @@
+{
+  "id": 72,
+  "title": "勇气",
+  "artist": "梁静茹",
+  "language": "国语",
+  "tags": ["流行", "经典"],
+  "mediaType": "AUDIO",
+  "hasVocalTrack": false,
+  "durationMs": 275000,
+  "lyricType": "none",
+  "coverUrl": null,
+  "artistAvatarUrl": null,
+  "lyricUrl": null,
+  "playCount": 4,
+  "files": [
+    {
+      "id": 7201,
+      "format": "matroska",
+      "audioTracks": 1,
+      "vocalTrackIndex": null,
+      "vocalConfidence": "UNKNOWN",
+      "resolution": "1920x1080",
+      "priority": 1,
+      "audioLayout": {
+        "layout": "DUAL_CHANNEL",
+        "originalTrackIndex": null,
+        "accompanimentTrackIndex": null,
+        "originalChannel": "RIGHT",
+        "accompanimentChannel": "LEFT"
+      },
+      "ready": false
+    }
+  ],
+  "catalogNumber": "87654321"
+}

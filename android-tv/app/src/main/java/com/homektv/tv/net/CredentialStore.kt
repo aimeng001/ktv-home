@@ -3,19 +3,26 @@ package com.homektv.tv.net
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.util.Base64
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+
+internal fun interface CredentialKeyProvider {
+    fun getOrCreate(): SecretKey
+}
 
 /**
  * Stores the optional TV WebSocket credential encrypted by Android Keystore.
  * A legacy plaintext value is migrated only after encryption succeeds.
  */
-internal class CredentialStore(context: Context) {
+internal class CredentialStore(
+    context: Context,
+    private val keyProvider: CredentialKeyProvider? = null,
+) {
     private val securePrefs = context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
     private val legacyPrefs = context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
 
@@ -64,7 +71,7 @@ internal class CredentialStore(context: Context) {
         val scope = server?.hostPort.orEmpty().trim()
         val scopedKey = server?.instanceId?.let { identityKey(it) } ?: scopedKey(scope)
         securePrefs.edit().remove(scopedKey).apply()
-        legacyPrefs.edit().remove(LEGACY_KEY).apply()
+        clearLegacyCredentialFor(scope)
     }
 
     /**
@@ -80,18 +87,33 @@ internal class CredentialStore(context: Context) {
         editor.remove(hostKey)
         identityKey?.let(editor::remove)
         editor.apply()
-        legacyPrefs.edit().remove(LEGACY_KEY).apply()
+        clearLegacyCredentialFor(server?.hostPort.orEmpty().trim())
     }
 
     @Synchronized
     fun migrate(from: SavedServer?, to: SavedServer): Boolean {
         if (from == null) return true
+        val sourceHost = from.hostPort.trim()
         val oldCred = read(from)
-        if (oldCred.isBlank()) return true
+        if (oldCred.isBlank()) {
+            // A matching legacy secret can remain when encryption failed. Do
+            // not treat that failure as an empty source and let the caller
+            // clear the only copy of the user's credential.
+            val matchingLegacyRemains = from.instanceId == null &&
+                shouldMigrateLegacyCredential(legacyPrefs.getString(LEGACY_HOST_KEY, null), sourceHost) &&
+                !legacyPrefs.getString(LEGACY_KEY, null).isNullOrBlank()
+            return !matchingLegacyRemains
+        }
         if (read(to).isBlank()) {
             write(oldCred, to)
         }
         return read(to) == oldCred
+    }
+
+    private fun clearLegacyCredentialFor(serverHost: String) {
+        if (shouldMigrateLegacyCredential(legacyPrefs.getString(LEGACY_HOST_KEY, null), serverHost)) {
+            legacyPrefs.edit().remove(LEGACY_KEY).apply()
+        }
     }
 
     private fun writeEncrypted(scopedKey: String, value: String): Boolean {
@@ -115,6 +137,7 @@ internal class CredentialStore(context: Context) {
     }.getOrNull()
 
     private fun key(): SecretKey {
+        keyProvider?.let { return it.getOrCreate() }
         val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         (store.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE).apply {
@@ -132,16 +155,15 @@ internal class CredentialStore(context: Context) {
     }
 
     private fun encode(value: ByteArray): String =
-        Base64.encodeToString(value, Base64.NO_WRAP)
+        Base64.getEncoder().encodeToString(value)
 
     private fun decode(value: String): ByteArray =
-        Base64.decode(value, Base64.NO_WRAP)
+        Base64.getDecoder().decode(value)
 
     private fun scopedKey(serverHost: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(serverHost.toByteArray(StandardCharsets.UTF_8))
-        val suffix = Base64.encodeToString(digest, Base64.NO_WRAP)
-            .replace('+', '-').replace('/', '_').trimEnd('=')
+        val suffix = Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
         return KEY_CIPHERTEXT_PREFIX + suffix
     }
 

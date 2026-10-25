@@ -109,10 +109,11 @@ public class LibraryScanStateStore {
         ScanSnapshot snapshot = ScanSnapshot.from(result, progress);
         String state = progress == null || progress.state() == LibraryScanService.ScanState.COMPLETED
                 ? State.COMPLETED.name() : progress.state().name();
+        // A non-completed state above can only come from a non-null progress snapshot.
         String errorCode = State.COMPLETED.name().equals(state)
-                ? null : safe(progress == null ? null : progress.errorCode(), "SCAN_INCOMPLETE");
+                ? null : safe(progress.errorCode(), "SCAN_INCOMPLETE");
         String errorMessage = State.COMPLETED.name().equals(state)
-                ? null : safe(progress == null ? null : progress.errorMessage(), "扫描未完成");
+                ? null : safe(progress.errorMessage(), "扫描未完成");
         return jdbc.update("""
                 UPDATE library_scan_state
                 SET state = ?, phase = ?, discovered_files = ?, indexed_files = ?,

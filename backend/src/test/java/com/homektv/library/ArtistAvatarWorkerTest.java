@@ -7,6 +7,7 @@ import com.homektv.musicsource.MusicProvider;
 import com.homektv.musicsource.MusicSourceConfig;
 import com.homektv.musicsource.MusicSourceConfigService;
 import com.homektv.musicsource.MusicSourceException;
+import com.homektv.musicsource.ProviderHttpException;
 import com.homektv.musicsource.ProviderRateLimitedException;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -14,7 +15,11 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 import java.sql.ResultSet;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -304,6 +309,61 @@ class ArtistAvatarWorkerTest {
                 && value.contains("'FAILED'") && value.contains("attempts=attempts+1"));
     }
 
+    @Test
+    void providerHttpRetryAfterHonorsFutureAndReplacesExpiredDeadlines() throws Exception {
+        Instant future = Instant.now().plus(Duration.ofHours(2));
+        OffsetDateTime scheduledFuture = processHttpFailure(0,
+                new ProviderHttpException(MusicProvider.QQ, 429, future, "rate limited"));
+        assertThat(scheduledFuture.toInstant()).isEqualTo(future);
+
+        Instant beforeExpired = Instant.now();
+        OffsetDateTime scheduledExpired = processHttpFailure(0,
+                new ProviderHttpException(MusicProvider.QQ, 429, beforeExpired.minusSeconds(30), "rate limited"));
+        assertThat(Duration.between(beforeExpired, scheduledExpired.toInstant()).toSeconds())
+                .isBetween(3590L, 3610L);
+    }
+
+    @Test
+    void rateLimitWithoutRetryAfterUsesTheAttemptBackoff() throws Exception {
+        Instant before = Instant.now();
+
+        OffsetDateTime scheduled = processHttpFailure(1,
+                new ProviderHttpException(MusicProvider.QQ, 429, null, "rate limited"));
+
+        assertThat(Duration.between(before, scheduled.toInstant()).toSeconds())
+                .isBetween(3590L, 3610L);
+    }
+
+    @Test
+    void forbiddenProviderResponseUsesAOneDayCooldown() throws Exception {
+        Instant before = Instant.now();
+
+        OffsetDateTime scheduled = processHttpFailure(0,
+                new ProviderHttpException(MusicProvider.QQ, 403, null, "forbidden"));
+
+        assertThat(Duration.between(before, scheduled.toInstant()).toSeconds())
+                .isBetween(86_390L, 86_410L);
+    }
+
+    @Test
+    void retryableHttpFailuresUseTheBoundedBackoffForEachAttemptTier() throws Exception {
+        Map<Integer, Long> backoffSeconds = Map.of(
+                1, 60 * 60L,
+                2, 6 * 60 * 60L,
+                3, 24 * 60 * 60L,
+                4, 24 * 60 * 60L);
+
+        for (var entry : backoffSeconds.entrySet()) {
+            Instant before = Instant.now();
+            OffsetDateTime scheduled = processHttpFailure(entry.getKey(),
+                    new ProviderHttpException(MusicProvider.QQ, 500, null, "upstream unavailable"));
+
+            assertThat(Duration.between(before, scheduled.toInstant()).toSeconds())
+                    .as("retry delay after %s previous attempts", entry.getKey())
+                    .isBetween(entry.getValue() - 10, entry.getValue() + 10);
+        }
+    }
+
     private static ResultSet claimRow(String artistKey, String provider, String token) throws Exception {
         ResultSet row = mock(ResultSet.class);
         when(row.getLong("id")).thenReturn(1L);
@@ -321,5 +381,31 @@ class ArtistAvatarWorkerTest {
                     return claimCount.getAndIncrement() == 0
                             ? List.of(mapper.mapRow(row, 0)) : List.of();
                 });
+    }
+
+    private static OffsetDateTime processHttpFailure(int attempts, ProviderHttpException failure) throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        ArtistMetadataProvider provider = mock(ArtistMetadataProvider.class);
+        ResultSet row = claimRow("zhoujielun", "QQ", "lease-token");
+        when(row.getInt("attempts")).thenReturn(attempts);
+        when(profiles.find("zhoujielun")).thenReturn(Optional.of(new ArtistProfileService.Profile(
+                "zhoujielun", "周杰伦", "PERSON", null, null, null, "PENDING")));
+        when(config.getConfig()).thenReturn(new MusicSourceConfig(
+                true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95));
+        when(provider.provider()).thenReturn(MusicProvider.QQ);
+        when(provider.search(eq("周杰伦"), eq(5), any())).thenThrow(failure);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+        stubOneClaimThenEmpty(jdbc, row);
+
+        new ArtistAvatarWorker(jdbc, profiles, config, mock(ExternalCoverService.class),
+                mock(AssetWriter.class), List.of(provider), Runnable::run).process();
+
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<Object[]> arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
+        verify(jdbc).update(sql.capture(), arguments.capture());
+        assertThat(sql.getValue()).contains("status=CASE");
+        return (OffsetDateTime) arguments.getValue()[2];
     }
 }

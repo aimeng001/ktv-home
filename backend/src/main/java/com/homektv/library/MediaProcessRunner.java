@@ -26,7 +26,7 @@ final class MediaProcessRunner {
         requirePositive(timeout);
         FutureTask<String> outputTask = new FutureTask<>(
                 () -> ProcessOutputTail.read(process.getInputStream(), StandardCharsets.UTF_8,
-                        MediaTranscoder.MAX_PROCESS_LOG_BYTES));
+                        ProcessOutputTail.DEFAULT_MAX_BYTES));
         Thread.ofVirtual().name("media-process-output-reader").start(outputTask);
         try {
             if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {

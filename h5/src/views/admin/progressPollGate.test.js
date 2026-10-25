@@ -36,4 +36,15 @@ describe('progress poll gate', () => {
     expect(gate.isCurrent(request)).toBe(false)
     expect(gate.finish(request)).toBe(false)
   })
+
+  it('rejects absent or mismatched request tokens without disturbing the active poll', () => {
+    const gate = createProgressPollGate()
+    const active = gate.begin()
+
+    expect(gate.isCurrent(null)).toBe(false)
+    expect(gate.finish(null)).toBe(false)
+    expect(gate.finish(active + 1)).toBe(false)
+    expect(gate.isCurrent(active)).toBe(true)
+    expect(gate.finish(active)).toBe(false)
+  })
 })

@@ -35,6 +35,39 @@ class FileSourceResolutionTest {
     }
 
     @Test
+    fun transientHttpStatusesRetryAndOtherHttpStatusesRemainFatal() = runBlocking {
+        val retryableStatuses = listOf(408, 425, 429, 500, 599)
+        retryableStatuses.forEach { status ->
+            val error = KtvApiError(KtvApiErrorKind.HTTP, "HTTP_$status", "temporary", status = status)
+            val resolver = FileSourceResolver(FakeTransport(KtvApiResult.Failure(error)), json)
+
+            assertEquals("status $status should be retryable", FileSourceResolution.Retryable(error), resolver.resolve(7L))
+        }
+
+        val fatalErrors = listOf(
+            KtvApiError(KtvApiErrorKind.HTTP, "HTTP_499", "client error", status = 499),
+            KtvApiError(KtvApiErrorKind.HTTP, "HTTP_UNKNOWN", "status absent"),
+            KtvApiError(KtvApiErrorKind.BUSINESS, "HTTP_500", "not an HTTP transport error", status = 500),
+        )
+        fatalErrors.forEach { error ->
+            val resolver = FileSourceResolver(FakeTransport(KtvApiResult.Failure(error)), json)
+
+            assertEquals("${error.kind} ${error.status} should be fatal", FileSourceResolution.Fatal(error), resolver.resolve(7L))
+        }
+    }
+
+    @Test
+    fun forbiddenIsAConfigurationFailureAndHttp404DoesNotDependOnTheErrorCode() = runBlocking {
+        val forbidden = KtvApiError(KtvApiErrorKind.HTTP, "HTTP_403", "forbidden", status = 403)
+        val forbiddenResolver = FileSourceResolver(FakeTransport(KtvApiResult.Failure(forbidden)), json)
+        assertEquals(FileSourceResolution.ConfigurationFailure(forbidden), forbiddenResolver.resolve(7L))
+
+        val missing = KtvApiError(KtvApiErrorKind.HTTP, "SONG_MISSING", "missing", status = 404)
+        val missingResolver = FileSourceResolver(FakeTransport(KtvApiResult.Failure(missing)), json)
+        assertEquals(FileSourceResolution.Absent(AbsentReason.SONG_NOT_FOUND), missingResolver.resolve(7L))
+    }
+
+    @Test
     fun unauthorizedIsConfigurationFailureAndDoesNotRetry() = runBlocking {
         val resolver = FileSourceResolver(FakeTransport(
             KtvApiResult.Failure(

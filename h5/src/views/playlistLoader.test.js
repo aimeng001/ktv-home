@@ -38,4 +38,54 @@ describe('playlist loader', () => {
     expect(current.items.value).toEqual(playlists)
     expect(current.error.value).toBe('')
   })
+
+  it('uses a fallback message when the failure does not contain one', async () => {
+    const current = state()
+    const client = { playlists: vi.fn().mockRejectedValue({}) }
+
+    await expect(loadPlaylists(client, current)).resolves.toBeNull()
+
+    expect(current.items.value).toEqual([])
+    expect(current.error.value).toBe('歌单加载失败，请稍后重试')
+    expect(current.loading.value).toBe(false)
+  })
+
+  it('uses a fallback message when the rejected value is null', async () => {
+    const current = state()
+    const client = { playlists: vi.fn().mockRejectedValue(null) }
+
+    await expect(loadPlaylists(client, current)).resolves.toBeNull()
+
+    expect(current.items.value).toEqual([])
+    expect(current.error.value).toBe('歌单加载失败，请稍后重试')
+    expect(current.loading.value).toBe(false)
+  })
+
+  it('uses a fallback message when the failure message is empty', async () => {
+    const current = state()
+    const client = { playlists: vi.fn().mockRejectedValue(new Error('')) }
+
+    await expect(loadPlaylists(client, current)).resolves.toBeNull()
+
+    expect(current.items.value).toEqual([])
+    expect(current.error.value).toBe('歌单加载失败，请稍后重试')
+    expect(current.loading.value).toBe(false)
+  })
+
+  it('keeps the loading state active until a pending request fails', async () => {
+    const current = state()
+    let rejectRequest
+    const pendingRequest = new Promise((resolve, reject) => { rejectRequest = reject })
+    const client = { playlists: vi.fn(() => pendingRequest) }
+
+    const result = loadPlaylists(client, current)
+    expect(current.loading.value).toBe(true)
+    expect(current.error.value).toBe('')
+
+    rejectRequest(new Error('HTTP 503'))
+    await expect(result).resolves.toBeNull()
+    expect(current.items.value).toEqual([])
+    expect(current.error.value).toBe('HTTP 503')
+    expect(current.loading.value).toBe(false)
+  })
 })

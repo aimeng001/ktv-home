@@ -73,6 +73,42 @@ public sealed class MpvIpcProtocolTests
     }
 
     [Fact]
+    public void Non_string_error_and_event_fields_are_ignored_without_throwing()
+    {
+        var parsed = MpvIpcProtocol.TryParseMessage(
+            "{\"request_id\":\"invalid\",\"error\":7,\"event\":true}",
+            out var message);
+
+        Assert.True(parsed);
+        Assert.NotNull(message);
+        Assert.Null(message!.RequestId);
+        Assert.Null(message.Error);
+        Assert.Null(message.Event);
+    }
+
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("null")]
+    public void Non_object_json_roots_are_rejected(string json)
+    {
+        var parsed = MpvIpcProtocol.TryParseMessage(json, out var message);
+
+        Assert.False(parsed);
+        Assert.Null(message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("{")]
+    public void Invalid_json_returns_false_and_clears_the_message(string json)
+    {
+        var parsed = MpvIpcProtocol.TryParseMessage(json, out var message);
+
+        Assert.False(parsed);
+        Assert.Null(message);
+    }
+
+    [Fact]
     public void Audio_track_mapper_ignores_video_tracks()
     {
         using var document = System.Text.Json.JsonDocument.Parse(
@@ -80,5 +116,28 @@ public sealed class MpvIpcProtocolTests
 
         Assert.Equal(7, MpvTrackMapper.ResolveAudioTrackId(document.RootElement, 0));
         Assert.Null(MpvTrackMapper.ResolveAudioTrackId(document.RootElement, 1));
+    }
+
+    [Fact]
+    public void Audio_track_mapper_returns_no_id_for_invalid_track_lists_or_negative_indexes()
+    {
+        Assert.Null(MpvTrackMapper.ResolveAudioTrackId(null, 0));
+        using var objectDocument = JsonDocument.Parse("{}");
+        using var emptyDocument = JsonDocument.Parse("[]");
+        Assert.Null(MpvTrackMapper.ResolveAudioTrackId(objectDocument.RootElement, 0));
+        Assert.Null(MpvTrackMapper.ResolveAudioTrackId(emptyDocument.RootElement, 0));
+
+        using var tracks = JsonDocument.Parse("[{\"type\":\"audio\",\"id\":7}]");
+        Assert.Null(MpvTrackMapper.ResolveAudioTrackId(tracks.RootElement, -1));
+    }
+
+    [Fact]
+    public void Audio_track_mapper_skips_audio_entries_with_missing_or_non_integer_ids()
+    {
+        using var tracks = JsonDocument.Parse(
+            "[{\"type\":\"audio\"},{\"type\":\"audio\",\"id\":\"7\"},{\"type\":42,\"id\":9},{\"id\":8}]");
+
+        Assert.Null(MpvTrackMapper.ResolveAudioTrackId(tracks.RootElement, 0));
+        Assert.Null(MpvTrackMapper.ResolveAudioTrackId(tracks.RootElement, 1));
     }
 }
