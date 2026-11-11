@@ -50,8 +50,6 @@
     <string name="time_zero">00:00</string>
     <string name="common_try_again_later">请稍后重试</string>
     <string name="main_queue_row">%1$02d    %2$s · %3$s    %4$s</string>
-    <string name="keyboard_switch_full">切换全键盘(26键)</string>
-    <string name="keyboard_switch_t9">切换九宫格(9键)</string>
 
     <!-- Home、连接页、点歌与播控布局文案。 -->
     <string name="brand_home_ktv">Home KTV</string>
@@ -116,8 +114,6 @@
     <string name="queue_drawer_download_delete_all">全部删除</string>
     <string name="queue_now_playing_indicator">当前播放状态</string>
     <string name="queue_shuffle_action">🔀 智能打散</string>
-    <string name="queue_now_singing_label">正在演唱</string>
-    <string name="queue_waiting_list_label">待播列表</string>
     <string name="queue_ordered_list_label">已点歌曲列表</string>
     <string name="queue_empty_hint">暂无排队歌曲，快去点歌吧~</string>
     <string name="controller_content_description">点歌内容</string>
@@ -154,10 +150,7 @@
     <string name="cheer_action">🎉 喝彩</string>
     <string name="qr_short_action">📱 扫码</string>
     <string name="queue_badge_initial">已点 0 首</string>
-    <string name="keyboard_keyword_prefix">拼音首字母: </string>
     <string name="keyboard_search_help">请输入首字母搜索</string>
-    <string name="keyboard_backspace">退格</string>
-    <string name="keyboard_ime_action">系统输入法</string>
     <string name="kiosk_title">KTV 点歌台</string>
     <string name="kiosk_brand_latin">KTV</string>
     <string name="kiosk_brand_title">点歌台</string>
@@ -190,7 +183,6 @@
     <string name="language_label">语种</string>
     <string name="category_tag_label">标签</string>
     <string name="category_select_heading">选择分类</string>
-    <string name="keyboard_clear_action">清空</string>
 
     <!-- 配置页 -->
     <string name="setup_title">连接点歌服务</string>

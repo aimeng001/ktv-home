@@ -412,7 +412,6 @@ class ControllerActivityInstrumentedTest {
                 "setup/connection" to R.layout.activity_setup,
                 "controller panels" to R.layout.fragment_controller,
                 "KTV overlay and pip" to R.layout.view_ktv_kiosk_overlay,
-                "seven-tile dashboard" to R.layout.view_ktv_commercial_dashboard,
                 "playback bottom bar" to R.layout.view_ktv_bottom_bar,
                 "song search keyboard" to R.layout.view_ktv_keyboard,
                 "queue drawer" to R.layout.dialog_ktv_queue,

@@ -675,8 +675,8 @@ public sealed class MpvControllerTests
     {
         public bool CancellationObserved { get; private set; }
         public bool IsAlive => true;
-        public event Action<MpvNotification>? NotificationReceived;
-        public event Action<Exception>? Disconnected;
+        event Action<MpvNotification>? IMpvSession.NotificationReceived { add {} remove {} }
+        event Action<Exception>? IMpvSession.Disconnected { add {} remove {} }
 
         public async Task<JsonElement?> ExecuteAsync(
             IReadOnlyList<object?> command, CancellationToken cancellationToken = default)

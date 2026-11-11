@@ -1,15 +1,16 @@
-# syntax=docker.m.daocloud.io/docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7
 
-ARG BASE_REGISTRY=docker.m.daocloud.io
+ARG BASE_REGISTRY=docker.io
 
 # Frontend compilation is architecture-independent. Run it on the native
 # builder platform so multi-architecture builds do not execute npm under QEMU.
 FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/library/node:20-alpine AS web-build
 WORKDIR /workspace
+ARG NPM_REGISTRY=""
 COPY h5/package.json h5/package-lock.json ./h5/
 RUN cd h5 \
+    && if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi \
     && npm ci \
-      --registry=https://registry.npmmirror.com \
       --no-audit \
       --no-fund \
       --fetch-timeout=120000 \

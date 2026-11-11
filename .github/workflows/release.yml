@@ -308,6 +308,7 @@ jobs:
           set -euo pipefail
           docker build \
             --file backend/Dockerfile \
+            --build-arg BASE_REGISTRY=docker.io \
             --build-arg KTV_RELEASE_VERSION="${{ needs.release-meta.outputs.version_name }}" \
             --build-arg KTV_RELEASE_VERSION_CODE="${{ needs.release-meta.outputs.version_code }}" \
             --build-arg KTV_GIT_SHA="$GITHUB_SHA" \
@@ -405,6 +406,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
+            BASE_REGISTRY=docker.io
             KTV_RELEASE_VERSION=${{ needs.release-meta.outputs.version_name }}
             KTV_RELEASE_VERSION_CODE=${{ needs.release-meta.outputs.version_code }}
             KTV_GIT_SHA=${{ github.sha }}
