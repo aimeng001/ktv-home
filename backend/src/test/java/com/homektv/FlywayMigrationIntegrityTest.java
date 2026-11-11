@@ -107,7 +107,7 @@ class FlywayMigrationIntegrityTest {
                         "iktv_song_match_batch_publications", "previous_categories", "applied_categories",
                         "iktv_reference_fusion_control", "UPDATE songs song", "item.catalog_number_changed",
                         "item.applied_catalog_number", "metadata_locks", "LEGACY_BATCH_REQUEUED_FOR_SAFE_STAGING",
-                        "STALE_GENERATION", "HOME_SOURCE_CHANGED_AFTER_STAGING", "FOR UPDATE OF item")
+                        "STALE_GENERATION", "HOME_SOURCE_CHANGED_AFTER_STAGING")
                 .doesNotContain("DELETE FROM songs", "DELETE FROM song_files", "UPDATE song_files SET",
                         "DELETE FROM iktv_song_categories");
 

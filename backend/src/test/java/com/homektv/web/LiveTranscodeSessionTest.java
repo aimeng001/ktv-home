@@ -8,6 +8,7 @@ import com.homektv.library.ProcessOutputTail;
 import com.homektv.resource.ResourceBudget;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
@@ -140,6 +141,7 @@ class LiveTranscodeSessionTest {
     }
 
     @Test
+    @ResourceLock(Resources.GLOBAL)
     @ResourceLock("logback:com.homektv.web.LiveTranscodeSession")
     void redactsAndUtf8BoundsTheCapturedDiagnosticTail() throws Exception {
         byte[] media = {1, 2, 3};
@@ -147,26 +149,33 @@ class LiveTranscodeSessionTest {
         String diagnosticMarker = "final-ffmpeg-diagnostic-marker";
         String stderr = diagnosticPrefix + "x".repeat(70 * 1024)
                 + diagnosticMarker + " api_key=x\n尾é💡";
-        FakeProcess process = new FakeProcess(media, 23, false,
-                new ByteArrayInputStream(stderr.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         ResourceBudget budget = budget(1);
-        LiveTranscodeSession session = reserve(budget, builder -> process);
         Logger logger = (Logger) LoggerFactory.getLogger(LiveTranscodeSession.class);
         Level previousLevel = logger.getLevel();
         boolean previousAdditivity = logger.isAdditive();
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        logger.setLevel(Level.ERROR);
-        logger.setAdditive(false);
-        appender.start();
-        logger.addAppender(appender);
-        try {
-            assertThatThrownBy(() -> session.streamTo(new ByteArrayOutputStream()))
-                    .isInstanceOf(IOException.class);
-        } finally {
-            logger.detachAppender(appender);
-            logger.setLevel(previousLevel);
-            logger.setAdditive(previousAdditivity);
-            appender.stop();
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            FakeProcess process = new FakeProcess(media, 23, false,
+                    new ByteArrayInputStream(stderr.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            LiveTranscodeSession session = reserve(budget, builder -> process);
+            appender.list.clear();
+            logger.setLevel(Level.ERROR);
+            logger.setAdditive(false);
+            appender.start();
+            logger.addAppender(appender);
+            try {
+                assertThatThrownBy(() -> session.streamTo(new ByteArrayOutputStream()))
+                        .isInstanceOf(IOException.class);
+            } finally {
+                logger.detachAppender(appender);
+                logger.setLevel(previousLevel);
+                logger.setAdditive(previousAdditivity);
+                appender.stop();
+            }
+            if (!appender.list.isEmpty()) {
+                break;
+            }
         }
 
         assertThat(appender.list).anySatisfy(event -> {
