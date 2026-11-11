@@ -2,6 +2,7 @@ package com.homektv.tv.ui
 
 import com.homektv.tv.net.DiscoveredServer
 import com.homektv.tv.net.SavedServer
+import com.homektv.tv.session.DeviceMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -86,5 +87,53 @@ class SetupCandidatePolicyTest {
         val differentHost = SavedServer("nas-b:8080", "旧服务", instanceId = "550e8400-e29b-41d4-a716-446655440000")
 
         assertFalse(SetupCandidatePolicy.shouldReuseInitialCredential(legacy, differentHost, credentialChanged = false))
+    }
+
+    @Test
+    fun playerModeWithoutCredentialDoesNotRequireHttps() {
+        assertFalse(
+            SetupCandidatePolicy.requiresHttpsForPlayerCredential(
+                DeviceMode.PLAYER,
+                "10.0.2.2:18080",
+                credential = "",
+                credentialWillBeUsed = true,
+            ),
+        )
+    }
+
+    @Test
+    fun playerModeWithCredentialRequiresHttps() {
+        assertTrue(
+            SetupCandidatePolicy.requiresHttpsForPlayerCredential(
+                DeviceMode.PLAYER,
+                "10.0.2.2:18080",
+                credential = "test-credential",
+                credentialWillBeUsed = true,
+            ),
+        )
+    }
+
+    @Test
+    fun playerModeWithCredentialAllowsHttps() {
+        assertFalse(
+            SetupCandidatePolicy.requiresHttpsForPlayerCredential(
+                DeviceMode.PLAYER,
+                "https://ktv.example:5443",
+                credential = "test-credential",
+                credentialWillBeUsed = true,
+            ),
+        )
+    }
+
+    @Test
+    fun controllerModeDoesNotRequirePlayerCredentialHttps() {
+        assertFalse(
+            SetupCandidatePolicy.requiresHttpsForPlayerCredential(
+                DeviceMode.CONTROLLER,
+                "10.0.2.2:18080",
+                credential = "test-credential",
+                credentialWillBeUsed = true,
+            ),
+        )
     }
 }

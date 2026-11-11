@@ -31,16 +31,16 @@ class KtvTabSeparationTest {
         assertNotEquals(state.rankings.value, state.newSongs.value)
 
         state.selectTab(KioskTab.RANKINGS)
-        assertEquals(KioskTab.DASHBOARD, state.currentTab.value)
+        assertEquals(KioskTab.RANKINGS, state.currentTab.value)
         assertEquals(2, state.rankings.value.size)
 
         state.selectTab(KioskTab.CATEGORIES)
         assertEquals(KioskTab.CATEGORIES, state.currentTab.value)
         assertEquals(2, state.newSongs.value.size)
 
-        // Legacy ranking state remains stored but is no longer a visible navigation destination.
+        // Ranking tab correctly retains its destination and dataset.
         state.selectTab(KioskTab.RANKINGS)
-        assertEquals(KioskTab.DASHBOARD, state.currentTab.value)
+        assertEquals(KioskTab.RANKINGS, state.currentTab.value)
         assertEquals("海阔天空", state.rankings.value.first().title)
     }
 

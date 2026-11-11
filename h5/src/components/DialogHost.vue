@@ -1,7 +1,7 @@
 <template>
   <teleport to="body">
     <transition name="dialog-fade">
-      <div v-if="state.open" class="dialog-mask" @click.self="close(false)">
+      <div v-if="state.open" ref="mask" class="dialog-mask" @click.self="close(false)">
         <section ref="card" class="dialog-card" role="dialog" aria-modal="true" :aria-label="state.title" tabindex="-1">
           <!-- 图标：根据色调切换 / Icon: switches by tone -->
           <div class="dialog-icon" :class="state.tone"><TriangleAlert v-if="state.tone === 'warning'" :size="22" /><CircleCheck v-else-if="state.tone === 'success'" :size="22" /><CircleAlert v-else :size="22" /></div>
@@ -33,18 +33,55 @@ import { dialogKeyAction } from './dialogHostState'
 
 const { state, close } = useDialog()
 const card = ref(null)
+const mask = ref(null)
 const confirmButton = ref(null)
 let opener = null
+let backgroundState = new Map()
+
+function setBackgroundInert(inert) {
+  if (inert) {
+    const modal = mask.value
+    if (!modal) return
+    for (const element of Array.from(document.body.children)) {
+      if (element === modal || backgroundState.has(element)) continue
+      backgroundState.set(element, {
+        inert: Boolean(element.inert),
+        ariaHidden: element.getAttribute('aria-hidden')
+      })
+      element.inert = true
+      element.setAttribute('aria-hidden', 'true')
+    }
+    return
+  }
+
+  for (const [element, previous] of backgroundState) {
+    if (!element.isConnected) continue
+    element.inert = previous.inert
+    if (previous.ariaHidden === null) element.removeAttribute('aria-hidden')
+    else element.setAttribute('aria-hidden', previous.ariaHidden)
+  }
+  backgroundState.clear()
+}
+
+function focusableElements() {
+  return Array.from(card.value?.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  ) || []).filter(element => !element.closest('[inert], [aria-hidden="true"]'))
+}
 
 watch(() => state.open, async open => {
   if (open) {
     opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     await nextTick()
+    setBackgroundInert(true)
     confirmButton.value?.focus({ preventScroll: true })
     if (!confirmButton.value) card.value?.focus({ preventScroll: true })
-  } else if (opener instanceof HTMLElement && opener.isConnected) {
-    await nextTick()
-    opener.focus({ preventScroll: true })
+  } else {
+    setBackgroundInert(false)
+    if (opener instanceof HTMLElement && opener.isConnected) {
+      await nextTick()
+      opener.focus({ preventScroll: true })
+    }
     opener = null
   }
 })
@@ -57,16 +94,34 @@ watch(() => state.open, async open => {
 const onKeydown = event => {
   const action = dialogKeyAction({
     open: state.open,
-    mode: state.mode,
-    key: event.key,
-    targetTag: event.target?.tagName || ''
+    key: event.key
   })
   if (action === 'ignore') return
+  if (action === 'trap-focus') {
+    const focusable = focusableElements()
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    const active = document.activeElement
+    if (!first) {
+      event.preventDefault()
+      card.value?.focus({ preventScroll: true })
+    } else if (event.shiftKey && (active === first || !card.value?.contains(active))) {
+      event.preventDefault()
+      last.focus({ preventScroll: true })
+    } else if (!event.shiftKey && (active === last || !card.value?.contains(active))) {
+      event.preventDefault()
+      first.focus({ preventScroll: true })
+    }
+    return
+  }
   event.preventDefault()
-  close(action === 'confirm')
+  close(false)
 }
 onMounted(() => window.addEventListener('keydown', onKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
+  setBackgroundInert(false)
+})
 </script>
 
 <style scoped>

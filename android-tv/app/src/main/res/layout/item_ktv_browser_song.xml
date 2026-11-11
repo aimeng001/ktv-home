@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:layout_marginHorizontal="2dp"
+    android:layout_marginVertical="1.5dp"
+    android:background="@drawable/bg_ktv_song_card_selector"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="8dp"
+    android:paddingVertical="2dp">
+
+    <!-- 歌手头像/姓氏正圆徽章：优先加载歌手头像，无头像或加载中降级为歌手姓氏（首字） -->
+    <FrameLayout
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:layout_marginEnd="8dp">
+
+        <!-- 歌手真实圆形头像 -->
+        <ImageView
+            android:id="@+id/imgBrowserSongAvatar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_ktv_browser_song_avatar_initial"
+            android:clipToOutline="true"
+            android:scaleType="centerCrop"
+            android:visibility="gone"
+            tools:src="@drawable/standby_background" />
+
+        <!-- 歌手姓氏/首字徽章（原版 #C012DB 紫红底色，展示歌手姓氏如“孙”、“林”、“B”） -->
+        <TextView
+            android:id="@+id/txtBrowserSongIndex"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_ktv_browser_song_avatar_initial"
+            android:gravity="center"
+            android:textColor="@android:color/white"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            tools:text="孙" />
+    </FrameLayout>
+
+    <!-- 兼容隐藏项：保留历史 ID 防御潜在反射 -->
+    <TextView
+        android:id="@+id/badgeLocal"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        tools:ignore="MissingDefaultResource" />
+
+    <!-- 歌曲信息区：独占主空间，歌名与歌手单行不折行 -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:gravity="center_vertical"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/txtBrowserSongTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="@android:color/white"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            tools:text="海阔天空" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/txtBrowserSongArtist"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:textColor="#A8B2C4"
+                android:textSize="11sp"
+                tools:text="Beyond" />
+
+            <TextView
+                android:id="@+id/txtBrowserSongQuality"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/standby_chip"
+                android:paddingHorizontal="3dp"
+                android:paddingVertical="1dp"
+                android:textColor="@color/gold"
+                android:textSize="10sp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/txtBrowserSongVocal"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/standby_chip"
+                android:paddingHorizontal="3dp"
+                android:paddingVertical="1dp"
+                android:text="原伴唱"
+                android:textColor="@color/ktv_vocal_green"
+                android:textSize="10sp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/txtBrowserSongMatch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="@color/ktv_focus_blue"
+            android:textSize="10sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- 操作按钮区：默认 GONE 留白，获得焦点时展开极简微图标 -->
+    <LinearLayout
+        android:id="@+id/panelBrowserSongActions"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <!-- 点歌按钮 -->
+        <Button
+            android:id="@+id/btnBrowserSongOrder"
+            style="?android:attr/buttonBarButtonStyle"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:background="@drawable/bg_ktv_song_action_icon"
+            android:drawableStart="@drawable/ic_queue"
+            android:drawablePadding="0dp"
+            android:focusable="false"
+            android:minWidth="0dp"
+            android:padding="3dp"
+            android:text=""
+            android:textColor="@android:color/white"
+            android:textSize="9sp"
+            android:textStyle="bold" />
+
+        <!-- 置顶插播按钮 -->
+        <Button
+            android:id="@+id/btnBrowserSongOrderTop"
+            style="?android:attr/buttonBarButtonStyle"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:layout_marginStart="3dp"
+            android:background="@drawable/bg_ktv_song_action_icon"
+            android:drawableStart="@drawable/ic_queue_top"
+            android:drawablePadding="0dp"
+            android:focusable="false"
+            android:minWidth="0dp"
+            android:padding="3dp"
+            android:text=""
+            android:textColor="@android:color/white"
+            android:textSize="9sp" />
+
+        <!-- 收藏按钮 -->
+        <Button
+            android:id="@+id/btnBrowserSongFavorite"
+            style="?android:attr/buttonBarButtonStyle"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:layout_marginStart="3dp"
+            android:background="@drawable/bg_ktv_song_action_icon"
+            android:drawableStart="@drawable/ic_favorites"
+            android:drawablePadding="0dp"
+            android:focusable="false"
+            android:minWidth="0dp"
+            android:padding="3dp"
+            android:text=""
+            android:textColor="@android:color/white"
+            android:textSize="9sp" />
+    </LinearLayout>
+</LinearLayout>

@@ -109,7 +109,7 @@ class LibraryModePolicyTest {
     @Test
     void danglingSymbolicLinkCannotBypassRealPathResolution() throws Exception {
         Path library = Files.createDirectory(tempDir.resolve("library"));
-        Path link = Files.createSymbolicLink(library.resolve("dangling.mp4"),
+        Path link = SymlinkTestSupport.createSymbolicLinkOrSkip(library.resolve("dangling.mp4"),
                 tempDir.resolve("missing-target.mp4"));
         AppProperties props = properties(LibraryMode.MANAGED, tempDir.resolve("source"), library);
 
@@ -122,14 +122,14 @@ class LibraryModePolicyTest {
     void symlinkWithinLibraryResolvesToTargetAndExternalTargetIsRejected() throws Exception {
         Path library = Files.createDirectory(tempDir.resolve("library"));
         Path media = Files.write(library.resolve("song.mp4"), new byte[]{7, 8});
-        Path alias = Files.createSymbolicLink(library.resolve("alias.mp4"), media);
+        Path alias = SymlinkTestSupport.createSymbolicLinkOrSkip(library.resolve("alias.mp4"), media);
         AppProperties props = properties(LibraryMode.MANAGED, tempDir.resolve("source"), library);
 
         assertThat(LibraryModePolicy.requireReadablePathInsideActiveLibrary(props, alias))
                 .isEqualTo(media.toRealPath());
 
         Path external = Files.write(tempDir.resolve("outside.mp4"), new byte[]{9});
-        Path escape = Files.createSymbolicLink(library.resolve("escape.mp4"), external);
+        Path escape = SymlinkTestSupport.createSymbolicLinkOrSkip(library.resolve("escape.mp4"), external);
         assertThatThrownBy(() -> LibraryModePolicy.requireReadablePathInsideActiveLibrary(props, escape))
                 .isInstanceOf(ApiException.class)
                 .extracting(error -> ((ApiException) error).getCode())

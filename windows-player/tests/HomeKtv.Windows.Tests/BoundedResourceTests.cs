@@ -8,30 +8,41 @@ namespace HomeKtv.Windows.Tests;
 public sealed class BoundedResourceTests
 {
     [Fact]
-    public void Reliable_queue_rejects_new_items_at_the_hard_limit_and_keeps_order()
+    public void Reliable_outbox_rejects_new_items_at_the_hard_limit_and_keeps_order()
     {
-        var queue = new BoundedReliableMessageQueue();
-        for (var index = 0; index < BoundedReliableMessageQueue.MaxMessages; index++)
+        var outbox = new ReliablePlaybackOutbox();
+        for (var index = 0; index < ReliablePlaybackOutbox.MaxMessages; index++)
         {
-            Assert.True(queue.TryEnqueue($"m-{index}"));
+            var text = $"m-{index}";
+            Assert.Equal(
+                ReliableEnqueueResult.Enqueued,
+                outbox.Enqueue(new ReliableMessage($"m-{index}", text, 0)));
         }
 
-        Assert.False(queue.TryEnqueue("overflow"));
-        Assert.Equal("m-0", PeekAndDequeue(queue));
-        Assert.Equal(BoundedReliableMessageQueue.MaxMessages - 1, queue.Count);
+        Assert.Equal(
+            ReliableEnqueueResult.Rejected,
+            outbox.Enqueue(new ReliableMessage("overflow", "overflow", 0)));
+        Assert.True(outbox.TryDequeueMessage(out var first));
+        Assert.Equal("m-0", first!.Text);
+        Assert.Equal(ReliablePlaybackOutbox.MaxMessages - 1, outbox.Count);
     }
 
     [Fact]
-    public void Reliable_queue_reports_empty_reads_and_rejects_messages_over_the_utf8_limit()
+    public void Reliable_outbox_reports_empty_reads_and_rejects_messages_over_the_utf8_limit()
     {
-        var queue = new BoundedReliableMessageQueue();
+        var outbox = new ReliablePlaybackOutbox();
 
-        Assert.False(queue.TryPeek(out var peeked));
+        Assert.False(outbox.TryPeekMessage(out var peeked));
         Assert.Null(peeked);
-        Assert.False(queue.TryDequeue(out var dequeued));
+        Assert.False(outbox.TryDequeueMessage(out var dequeued));
         Assert.Null(dequeued);
-        Assert.False(queue.TryEnqueue(new string('x', Utf8ByteBudget.MaxMessageBytes + 1)));
-        Assert.Equal(0, queue.Count);
+        Assert.Equal(
+            ReliableEnqueueResult.Rejected,
+            outbox.Enqueue(new ReliableMessage(
+                "too-large",
+                new string('x', Utf8ByteBudget.MaxMessageBytes + 1),
+                0)));
+        Assert.Equal(0, outbox.Count);
     }
 
     [Fact]
@@ -171,14 +182,6 @@ public sealed class BoundedResourceTests
 
         Assert.Equal(0, cache.Count);
         Assert.False(cache.TryGetValue("kept", out _));
-    }
-
-    private static string PeekAndDequeue(BoundedReliableMessageQueue queue)
-    {
-        Assert.True(queue.TryPeek(out var peeked));
-        Assert.True(queue.TryDequeue(out var dequeued));
-        Assert.Equal(peeked, dequeued);
-        return dequeued!;
     }
 
     private sealed class ChunkedContent(byte[] bytes) : HttpContent

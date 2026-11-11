@@ -312,10 +312,20 @@ public sealed class PlaybackTerminalTests
             var receivedPositions = new ConcurrentQueue<long>();
             terminal.PositionChanged += receivedPositions.Enqueue;
             await SendTextAsync(serverSocket,
-                "{\"type\":\"progress\",\"payload\":{\"position_ms\":6250}}",
+                "{\"type\":\"progress\",\"payload\":{\"queue_id\":5,\"position_ms\":6250}}",
                 timeout.Token);
             await WaitForAsync(() => receivedPositions.Contains(6_250), timeout.Token);
             Assert.Equal(6_250, terminal.CurrentPositionMs);
+
+            await SendTextAsync(serverSocket,
+                "{\"type\":\"progress\",\"payload\":{\"queue_id\":4,\"position_ms\":92000}}",
+                timeout.Token);
+            await SendTextAsync(serverSocket,
+                "{\"type\":\"progress\",\"payload\":{\"queue_id\":5,\"position_ms\":7000}}",
+                timeout.Token);
+            await WaitForAsync(() => receivedPositions.Contains(7_000), timeout.Token);
+            Assert.DoesNotContain(92_000, receivedPositions);
+            Assert.Equal(7_000, terminal.CurrentPositionMs);
 
             await SendTextAsync(serverSocket,
                 "{\"type\":\"progress\",\"payload\":{\"position_ms\":-25}}",

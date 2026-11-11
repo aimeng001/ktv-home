@@ -9,6 +9,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -69,6 +72,63 @@ public class LibraryScanCoordinator {
     public LibraryScanService.ScanProgress startScan() {
         requestScan();
         return scanService.getScanProgress();
+    }
+
+    /** Submits one external scan and returns a truthful acceptance state. */
+    public ScanSubmission submitScan() {
+        if (!props.isExternalReadOnly()) {
+            return new ScanSubmission(false, "NOT_APPLICABLE", "IDLE",
+                    "EXTERNAL_READ_ONLY_REQUIRED", "当前服务模式不支持外部曲库扫描");
+        }
+        try {
+            Path root = LibraryModePolicy.activeLibraryRoot(props).toAbsolutePath().normalize();
+            if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS) || !Files.isReadable(root)) {
+                return new ScanSubmission(false, "ROOT_UNAVAILABLE", "IDLE",
+                        "LIBRARY_ROOT_UNAVAILABLE", "曲库根目录当前不可读取");
+            }
+            LibraryScanStateStore.Snapshot snapshot = stateStore.find().orElse(null);
+            if (rootMismatch(root, snapshot)) {
+                return new ScanSubmission(false, "NEEDS_REBIND", snapshot.state().name(),
+                        "LIBRARY_ROOT_IDENTITY_CHANGED", "曲库根目录身份已变化，需要管理员重新确认");
+            }
+            if (hasActiveScan()) {
+                return new ScanSubmission(true, "ALREADY_RUNNING", "RUNNING", null,
+                        "曲库扫描任务已在运行");
+            }
+            if (requestScan()) {
+                return new ScanSubmission(true, "ACCEPTED", "RUNNING", null,
+                        "服务端已接受曲库扫描请求");
+            }
+            if (hasActiveScan()) {
+                return new ScanSubmission(true, "ALREADY_RUNNING", "RUNNING", null,
+                        "曲库扫描任务已在运行");
+            }
+            LibraryScanStateStore.Snapshot latest = stateStore.find().orElse(null);
+            if (rootMismatch(root, latest)) {
+                return new ScanSubmission(false, "NEEDS_REBIND", latest.state().name(),
+                        "LIBRARY_ROOT_IDENTITY_CHANGED", "曲库扫描未受理，需要管理员核对曲库状态");
+            }
+            String error = latest == null ? null : latest.errorCode();
+            return new ScanSubmission(false, "REJECTED", latest == null ? "UNKNOWN" : latest.state().name(),
+                    error == null || error.isBlank() ? "SCAN_NOT_ACCEPTED" : error,
+                    "服务端未能受理曲库扫描请求");
+        } catch (RuntimeException failure) {
+            log.warn("曲库扫描请求状态无法确认：{}", failure.getClass().getSimpleName());
+            return new ScanSubmission(false, "UNAVAILABLE", "UNKNOWN",
+                    "SCAN_STATE_UNAVAILABLE", "服务端无法确认曲库扫描状态");
+        }
+    }
+
+    private boolean hasActiveScan() {
+        LibraryScanService.ScanProgress progress = scanService.getScanProgress();
+        return scheduled.get() || (progress != null && progress.running()) || stateStore.hasActiveLease();
+    }
+
+    private boolean rootMismatch(Path root, LibraryScanStateStore.Snapshot snapshot) {
+        if (snapshot == null) return false;
+        return !root.toString().equals(snapshot.configuredRoot())
+                || LibraryIdentity.compare(snapshot.rootIdentity(), LibraryIdentity.resolve(root))
+                == LibraryIdentity.IdentityState.MISMATCH;
     }
 
     /** Explicit administrator confirmation for a changed library root. */
@@ -158,4 +218,7 @@ public class LibraryScanCoordinator {
             return thread;
         });
     }
+
+    public record ScanSubmission(boolean accepted, String requestStatus, String scanState,
+                                 String errorCode, String message) {}
 }

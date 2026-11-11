@@ -235,9 +235,9 @@ public sealed class KtvWebSocketClientTests
             reliableOutboxPath: outboxPath,
             sendMessageAsync: SendSocketBytesAsync);
         client.PlayerAssignmentReceived += assignment => firstAssignment.TrySetResult(assignment);
-        client.ProgressReceived += position =>
+        client.ProgressReceived += progress =>
         {
-            if (position == 999) acknowledgementProcessed.TrySetResult();
+            if (progress.PositionMs == 999) acknowledgementProcessed.TrySetResult();
         };
 
         using var runCancellation = new CancellationTokenSource();
@@ -731,6 +731,7 @@ public sealed class KtvWebSocketClientTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var snapshotReceived = new TaskCompletionSource<(string EventType, QueueSnapshot Snapshot)>(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var progressUpdates = new ConcurrentQueue<PlaybackProgress>();
         var chunkReceived = new TaskCompletionSource<QueueSnapshot>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var partialChunkProcessed = new TaskCompletionSource(
@@ -738,12 +739,13 @@ public sealed class KtvWebSocketClientTests
         using var runCancellation = new CancellationTokenSource();
         Action<PlayerAssignment> assignmentHandler = assignment => assignmentReceived.TrySetResult(assignment);
         client.PlayerAssignmentReceived += assignmentHandler;
-        client.ProgressReceived += position =>
+        client.ProgressReceived += progress =>
         {
-            progressPositions.Enqueue(position);
-            if (position == 42) progressReceived.TrySetResult();
-            if (position == 43) partialChunkProcessed.TrySetResult();
-            if (position == 44) legacyAckProcessed.TrySetResult();
+            progressUpdates.Enqueue(progress);
+            progressPositions.Enqueue(progress.PositionMs);
+            if (progress.PositionMs == 42) progressReceived.TrySetResult();
+            if (progress.PositionMs == 43) partialChunkProcessed.TrySetResult();
+            if (progress.PositionMs == 44) legacyAckProcessed.TrySetResult();
         };
         client.SnapshotReceived += (eventType, snapshot, _) =>
         {
@@ -829,10 +831,11 @@ public sealed class KtvWebSocketClientTests
                 "{\"type\":\"progress\",\"payload\":{\"position_ms\":-9}}",
                 timeout.Token);
             await SendTextAsync(serverSocket,
-                "{\"type\":\"progress\",\"payload\":{\"position_ms\":42}}",
+                "{\"type\":\"progress\",\"payload\":{\"queue_id\":77,\"position_ms\":42}}",
                 timeout.Token);
             await progressReceived.Task.WaitAsync(timeout.Token);
             Assert.Equal(new long[] { 44, 0, 42 }, progressPositions.Take(3));
+            Assert.Equal(77, progressUpdates.Single(update => update.PositionMs == 42).QueueId);
 
             Assert.Equal(ReliableSendResult.Sent,
                 await client.SendPlayErrorAsync(42, null, "synthetic failure", cancellationToken: timeout.Token));
@@ -942,7 +945,7 @@ public sealed class KtvWebSocketClientTests
             if (Interlocked.Increment(ref connectionCount) == 1) firstConnection.TrySetResult();
             else secondConnection.TrySetResult();
         };
-        client.ProgressReceived += position => resumedProgress.TrySetResult(position);
+        client.ProgressReceived += progress => resumedProgress.TrySetResult(progress.PositionMs);
 
         using var runCancellation = new CancellationTokenSource();
         Assert.False(client.IsConnected);

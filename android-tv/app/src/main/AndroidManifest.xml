@@ -43,7 +43,7 @@
 
         <activity
             android:name=".ui.MainActivity"
-            android:exported="false"
+            android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden|navigation|uiMode"
             android:launchMode="singleTop"
             android:theme="@style/Theme.HomeKtvTv.MainActivity" />

@@ -270,7 +270,8 @@ final class LibraryIngestionWriter {
         // The catalog number is filename-derived metadata. Keep it in sync for
         // new, existing, and fingerprint-merged rows, including clearing a
         // stale number when a file is renamed without the commercial prefix.
-        if (!Objects.equals(song.getCatalogNumber(), filenameMeta.catalogNumber())) {
+        if (!song.isCatalogNumberLocked()
+                && !Objects.equals(song.getCatalogNumber(), filenameMeta.catalogNumber())) {
             song.setCatalogNumber(filenameMeta.catalogNumber());
         }
 
@@ -461,7 +462,8 @@ final class LibraryIngestionWriter {
         if (!song.isMetadataLocked("vocalForm") && !filenameMeta.vocalForm().isBlank()) {
             song.setVocalForm(filenameMeta.vocalForm());
         }
-        if (!Objects.equals(song.getCatalogNumber(), filenameMeta.catalogNumber())) {
+        if (!song.isCatalogNumberLocked()
+                && !Objects.equals(song.getCatalogNumber(), filenameMeta.catalogNumber())) {
             song.setCatalogNumber(filenameMeta.catalogNumber());
         }
         if (!titleLocked && !artistLocked) {
@@ -474,6 +476,9 @@ final class LibraryIngestionWriter {
     }
 
     private boolean structuredFilenameMetadataPreferred() {
+        if (settingService != null) {
+            return settingService.isFilenameMetadataPreferred(props.isStructuredFilenameMetadataPreferred());
+        }
         return props.isStructuredFilenameMetadataPreferred();
     }
 

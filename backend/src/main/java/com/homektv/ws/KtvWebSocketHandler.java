@@ -62,18 +62,30 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
      */
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+        boolean tvClient = isTv(session);
+        boolean tvWasOnline = tvClient && broadcaster.isTvOnline();
+        // Linearize the reconnect with the offline watcher before the session
+        // becomes visible to isTvOnline(). A running old timer then either
+        // finishes before this connection is accepted or observes its new epoch.
+        if (tvClient) {
+            tvOfflineWatcher.onTvConnected();
+        }
         broadcaster.register(session);
-        if (isTv(session)) {
+        if (tvClient) {
             ActivePlayerRegistry.Assignment assignment = playerRegistry.register(
                     session.getId(), playerHello(session));
-            tvOfflineWatcher.onTvConnected();
             sendRole(session, assignment);
             if (assignment.role() == ActivePlayerRegistry.Role.STANDBY) {
+                if (!tvWasOnline) broadcastObserverSnapshot();
                 return;
             }
         }
         // 连接/重连即推全量快照（详设§4.1）
-        broadcaster.sendTo(session, WsEvent.of(WsEvent.SYNC_FULL, snapshotService.snapshot()));
+        var snapshot = snapshotService.snapshot();
+        broadcaster.sendTo(session, WsEvent.of(WsEvent.SYNC_FULL, snapshot));
+        if (tvClient && !tvWasOnline) {
+            broadcaster.broadcastObservers(WsEvent.of(WsEvent.PLAYER_STATE, snapshot));
+        }
         log.debug("WS 连接建立: {}，当前在线 {}", session.getId(), broadcaster.sessionCount());
     }
 
@@ -217,10 +229,12 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
             broadcaster.sendTo(next.sessionId(),
                     WsEvent.of(WsEvent.SYNC_FULL, snapshotService.snapshot()));
             tvOfflineWatcher.onTvConnected();
+            broadcastObserverSnapshot();
             return;
         }
         if (playerRegistry.activeSessionId().isEmpty()) {
             tvOfflineWatcher.onTvDisconnected();
+            broadcastObserverSnapshot();
         }
     }
 
@@ -266,6 +280,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 promote(expiration.promotion().get());
             } else {
                 tvOfflineWatcher.onTvDisconnected();
+                broadcastObserverSnapshot();
             }
         });
         JsonNode generation = node.path("payload").path("generation");
@@ -280,6 +295,11 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         broadcaster.sendTo(next.sessionId(),
                 WsEvent.of(WsEvent.SYNC_FULL, snapshotService.snapshot()));
         tvOfflineWatcher.onTvConnected();
+        broadcastObserverSnapshot();
+    }
+
+    private void broadcastObserverSnapshot() {
+        broadcaster.broadcastObservers(WsEvent.of(WsEvent.PLAYER_STATE, snapshotService.snapshot()));
     }
 
     private java.util.Map<String, Object> assignmentPayload(

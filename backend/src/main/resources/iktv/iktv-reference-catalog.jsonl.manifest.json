@@ -1,0 +1,14 @@
+{
+  "format_version": 1,
+  "snapshot_version": "d32bdb5ffa8221e01c0a576d4771e763c00ea49577ef24ca57361648289fb7a8",
+  "source_database_sha256": "74dd3fee73c14dc986be2e770178e079500fbe16a855a1ed22150434454f959b",
+  "source_special_csv_sha256": "cf9ed808d6a4f97d01e6da261d0ef972825796b44228f703af9d0f172923b0fb",
+  "snapshot_sha256": "eaf7cf3d66b4030c9a7081b39fa6c96751dc5610f4908f4cf26eab474ad53e5f",
+  "reference_song_count": 254191,
+  "special_csv_row_count": 76893,
+  "matched_special_key_count": 76461,
+  "unmatched_special_key_count": 0,
+  "conflicting_special_tag_key_count": 61,
+  "reference_rows_withheld_special_tags": 124,
+  "duplicate_catalog_number_groups": 63
+}

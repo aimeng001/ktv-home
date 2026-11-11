@@ -6,13 +6,16 @@ interface ControllerCatalogActions {
     fun loadMoreSearch()
     fun loadRanking()
     fun loadNewSongs()
-    fun loadArtists(gender: String, initial: String, restorePage: Int)
+    fun loadArtists(gender: String, initial: String, restorePage: Int, region: String = "")
     fun loadArtistSongs(artistKey: String, restorePage: Int)
     fun loadLanguageSongs(language: String, restorePage: Int)
     fun loadTagSongs(tag: String, restorePage: Int)
     fun loadLanguages()
     fun loadTags()
     fun loadMoreCatalog()
+    fun loadKioskAllSongs()
+    fun loadMoreKioskAllSongs()
+    fun stopKioskAllSongs()
 }
 
 /** Optional lifecycle seam used by kiosk hosts to bound catalog polling. */

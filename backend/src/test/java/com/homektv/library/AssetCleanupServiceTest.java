@@ -15,6 +15,8 @@ import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -38,6 +40,7 @@ class AssetCleanupServiceTest {
         jdbc.execute("CREATE TABLE playlists(cover_path VARCHAR(500))");
         jdbc.execute("CREATE TABLE artist_profiles(avatar_path VARCHAR(500))");
         jdbc.execute("CREATE TABLE settings(key VARCHAR(100) PRIMARY KEY, value VARCHAR(1000))");
+        jdbc.execute("CREATE TABLE transaction_probe(id INT)");
 
         dataRoot = Files.createDirectories(tempDir.resolve("data"));
         AppProperties props = new AppProperties();
@@ -121,6 +124,20 @@ class AssetCleanupServiceTest {
     }
 
     @Test
+    void sweepInsideExistingTransactionFailsClosedWithoutCommittingCallerChanges() throws Exception {
+        Path orphan = writeOldAsset("covers/transactional-orphan.jpg");
+
+        transactions.executeWithoutResult(status -> {
+            jdbc.update("INSERT INTO transaction_probe(id) VALUES (1)");
+            assertThat(cleanup.sweepOrphans()).isZero();
+            status.setRollbackOnly();
+        });
+
+        assertThat(orphan).exists();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM transaction_probe", Integer.class)).isZero();
+    }
+
+    @Test
     void preservesReferencedArtistAvatarDuringSweep() throws Exception {
         Path avatar = writeAsset("artist-covers/referenced.jpg");
         Files.setLastModifiedTime(avatar, FileTime.from(Instant.now().minus(Duration.ofHours(2))));
@@ -130,10 +147,62 @@ class AssetCleanupServiceTest {
         assertThat(avatar).exists();
     }
 
+    @Test
+    void preservesEverySupportedReferenceTypeDuringSweep() throws Exception {
+        Path cover = writeOldAsset("covers/song.jpg");
+        Path lyric = writeOldAsset("lyrics/song.lrc");
+        Path playlistCover = writeOldAsset("playlist-covers/list.jpg");
+        Path artistAvatar = writeOldAsset("artist-covers/artist.jpg");
+        Path standbyLogo = writeOldAsset("standby/logo.png");
+        Path orphan = writeOldAsset("covers/orphan.jpg");
+        jdbc.update("INSERT INTO songs(cover_path,lyric_path) VALUES (?,?)", "covers/song.jpg", "lyrics/song.lrc");
+        jdbc.update("INSERT INTO playlists(cover_path) VALUES (?)", "playlist-covers/list.jpg");
+        jdbc.update("INSERT INTO artist_profiles(avatar_path) VALUES (?)", "artist-covers/artist.jpg");
+        jdbc.update("INSERT INTO settings(key,value) VALUES ('standby_logo_path',?)",
+                new ObjectMapper().writeValueAsString("standby/logo.png"));
+
+        assertThat(cleanup.sweepOrphans()).isEqualTo(1);
+        assertThat(cover).exists();
+        assertThat(lyric).exists();
+        assertThat(playlistCover).exists();
+        assertThat(artistAvatar).exists();
+        assertThat(standbyLogo).exists();
+        assertThat(orphan).doesNotExist();
+    }
+
+    @Test
+    void sweepsOrphansWhenDistinctAssetReferencesExceedTheOldLimit() throws Exception {
+        Path orphan = writeAsset("covers/orphan.jpg");
+        Path referenced = writeAsset("covers/referenced.jpg");
+        FileTime old = FileTime.from(Instant.now().minus(Duration.ofHours(2)));
+        Files.setLastModifiedTime(orphan, old);
+        Files.setLastModifiedTime(referenced, old);
+        jdbc.update("INSERT INTO songs(cover_path) VALUES (?)", "covers/referenced.jpg");
+
+        String sql = "INSERT INTO songs(cover_path) VALUES (?)";
+        for (int first = 0; first < 100_000; first += 1_000) {
+            List<Object[]> rows = new ArrayList<>(1_000);
+            for (int offset = 0; offset < 1_000; offset++) {
+                rows.add(new Object[]{"covers/reference-" + (first + offset) + ".jpg"});
+            }
+            jdbc.batchUpdate(sql, rows);
+        }
+
+        assertThat(cleanup.sweepOrphans()).isEqualTo(1);
+        assertThat(orphan).doesNotExist();
+        assertThat(referenced).exists();
+    }
+
     private Path writeAsset(String relativePath) throws Exception {
         Path file = dataRoot.resolve(relativePath);
         Files.createDirectories(file.getParent());
         Files.write(file, new byte[]{1, 2, 3});
+        return file;
+    }
+
+    private Path writeOldAsset(String relativePath) throws Exception {
+        Path file = writeAsset(relativePath);
+        Files.setLastModifiedTime(file, FileTime.from(Instant.now().minus(Duration.ofHours(2))));
         return file;
     }
 }

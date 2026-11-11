@@ -38,7 +38,7 @@ public class MusicSourceConfigService {
 
     public MusicSourceConfig getConfig() {
         List<String> values = jdbc.query("SELECT value::text FROM settings WHERE key = ?", (rs, i) -> rs.getString(1), KEY);
-        if (values.isEmpty()) return MusicSourceConfig.defaults();
+        if (values.isEmpty()) return MusicSourceConfig.defaults(this.dailyLimit);
         try {
             Map<String, Object> raw = mapper.readValue(values.getFirst(), new TypeReference<>() {});
             boolean enabled = Boolean.TRUE.equals(raw.get("enabled"));
@@ -49,9 +49,10 @@ public class MusicSourceConfigService {
             return validate(new MusicSourceConfig(enabled, providers,
                     number(raw.get("resultLimit"), 20), number(raw.get("timeoutSeconds"), 5),
                     number(raw.get("searchCacheHours"), 6), number(raw.get("concurrencyLimit"), 1),
-                    number(raw.get("requestIntervalMs"), 1500), decimal(raw.get("autoApplyThreshold"), 0.95)));
+                    number(raw.get("requestIntervalMs"), 1500), decimal(raw.get("autoApplyThreshold"), 0.95),
+                    number(raw.get("dailyLimit"), this.dailyLimit)));
         } catch (Exception ex) {
-            return MusicSourceConfig.defaults();
+            return MusicSourceConfig.defaults(this.dailyLimit);
         }
     }
 
@@ -63,7 +64,8 @@ public class MusicSourceConfigService {
                     "enabled", valid.enabled(), "providers", valid.providers().stream().map(Enum::name).toList(),
                     "resultLimit", valid.resultLimit(), "timeoutSeconds", valid.timeoutSeconds(),
                     "searchCacheHours", valid.searchCacheHours(), "concurrencyLimit", valid.concurrencyLimit(),
-                    "requestIntervalMs", valid.requestIntervalMs(), "autoApplyThreshold", valid.autoApplyThreshold()));
+                    "requestIntervalMs", valid.requestIntervalMs(), "autoApplyThreshold", valid.autoApplyThreshold(),
+                    "dailyLimit", valid.dailyLimit()));
             jdbc.update("INSERT INTO settings(key,value) VALUES (?,CAST(? AS jsonb)) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value", KEY, json);
             return valid;
         } catch (Exception ex) {
@@ -82,11 +84,25 @@ public class MusicSourceConfigService {
         out.put("concurrencyLimit", config.concurrencyLimit());
         out.put("requestIntervalMs", config.requestIntervalMs());
         out.put("autoApplyThreshold", config.autoApplyThreshold());
-        out.put("providerStatus", states());
+        out.put("dailyLimit", config.dailyLimit());
+        out.put("providerStatus", states(config.dailyLimit()));
         return out;
     }
 
     public List<Map<String, Object>> states() {
+        List<String> values = jdbc.query("SELECT value::text FROM settings WHERE key = ?", (rs, i) -> rs.getString(1), KEY);
+        if (!values.isEmpty()) {
+            try {
+                Map<String, Object> raw = mapper.readValue(values.getFirst(), new TypeReference<>() {});
+                if (raw.containsKey("dailyLimit")) {
+                    return states(number(raw.get("dailyLimit"), this.dailyLimit));
+                }
+            } catch (Exception ignored) {}
+        }
+        return states(this.dailyLimit);
+    }
+
+    public List<Map<String, Object>> states(int effectiveDailyLimit) {
         Map<String, Map<String, Object>> stored = new LinkedHashMap<>();
         jdbc.query("""
                 SELECT COALESCE(source.provider, rate.provider) AS provider,
@@ -114,7 +130,7 @@ public class MusicSourceConfigService {
             row.putIfAbsent("healthy", false); row.putIfAbsent("lastSuccessAt", null);
             row.putIfAbsent("lastErrorAt", null); row.putIfAbsent("lastError", null);
             row.putIfAbsent("nextRequestAt", null); row.putIfAbsent("cooldownUntil", null);
-            row.putIfAbsent("requestCount", 0); row.put("dailyLimit", dailyLimit);
+            row.putIfAbsent("requestCount", 0); row.put("dailyLimit", effectiveDailyLimit);
             out.add(row);
         }
         return out;
@@ -165,9 +181,12 @@ public class MusicSourceConfigService {
             throw new ApiException("MUSIC_SOURCE_CONFIG_INVALID", "同平台请求间隔必须在 500 到 30000 毫秒之间");
         if (config.autoApplyThreshold() < 0.5 || config.autoApplyThreshold() > 1)
             throw new ApiException("MUSIC_SOURCE_CONFIG_INVALID", "自动写入阈值必须在 0.5 到 1 之间");
+        if (config.dailyLimit() < 10 || config.dailyLimit() > 2000)
+            throw new ApiException("MUSIC_SOURCE_CONFIG_INVALID", "单平台每日请求上限必须在 10 到 2000 之间");
         Set<MusicProvider> providers = config.providers() == null ? Set.of() : Set.copyOf(config.providers());
         return new MusicSourceConfig(config.enabled(), providers, config.resultLimit(), config.timeoutSeconds(),
-                config.searchCacheHours(), config.concurrencyLimit(), config.requestIntervalMs(), config.autoApplyThreshold());
+                config.searchCacheHours(), config.concurrencyLimit(), config.requestIntervalMs(), config.autoApplyThreshold(),
+                config.dailyLimit());
     }
 
     private static int number(Object value, int fallback) { return value instanceof Number n ? n.intValue() : fallback; }

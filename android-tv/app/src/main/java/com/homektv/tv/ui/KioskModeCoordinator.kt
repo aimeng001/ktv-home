@@ -35,16 +35,20 @@ class HandlerIdleTimerScheduler(
 class KioskModeCoordinator(
     private val idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS,
     private val scheduler: IdleTimerScheduler? = null,
+    private val onIdleTimeout: (() -> Boolean)? = null,
 ) {
     private val _isKioskActive = MutableStateFlow(false)
     val isKioskActive: StateFlow<Boolean> = _isKioskActive
 
     private var isModalOpened = false
-    private var isPlayingMedia = true
+    // A missing queue snapshot is not proof that media is playing. Keep the
+    // ordering dashboard active until the real playback state says otherwise.
+    private var isPlayingMedia = false
+    private var isFullscreenPlaybackActive = false
 
     private val idleAction = Runnable {
-        if (!isModalOpened && _isKioskActive.value && isPlayingMedia) {
-            toggleKiosk(false)
+        if (!isModalOpened && !isFullscreenPlaybackActive && _isKioskActive.value && isPlayingMedia) {
+            if (onIdleTimeout?.invoke() != true) toggleKiosk(false)
         }
     }
 
@@ -68,8 +72,17 @@ class KioskModeCoordinator(
 
     fun resetIdleTimer() {
         scheduler?.cancel(idleAction)
-        if (_isKioskActive.value && !isModalOpened && isPlayingMedia) {
+        if (_isKioskActive.value && !isModalOpened && !isFullscreenPlaybackActive && isPlayingMedia) {
             scheduler?.postDelayed(idleTimeoutMs, idleAction)
+        }
+    }
+
+    fun setFullscreenPlaybackActive(active: Boolean) {
+        isFullscreenPlaybackActive = active
+        if (active) {
+            scheduler?.cancel(idleAction)
+        } else {
+            resetIdleTimer()
         }
     }
 

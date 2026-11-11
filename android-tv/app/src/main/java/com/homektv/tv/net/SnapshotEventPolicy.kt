@@ -8,6 +8,8 @@ internal object SnapshotEventPolicy {
     val COMPLETE_SNAPSHOT_TYPES: Set<String> = setOf(
         "sync_full",
         "queue_updated",
+        "order_song",
+        "top_song",
         "now_playing",
         "player_state",
         "playback_restarted",

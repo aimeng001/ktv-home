@@ -204,6 +204,33 @@ class FilenameParserTest {
     }
 
     @Test
+    void rejectsAmbiguousNineAndTenDigitPrefixesAndCalendarDatesAsCatalogNumbers() {
+        ParsedMeta nineDigit = FilenameParser.parse("123456789-周杰伦-晴天-国语-流行.mkv", EXISTING_ARTISTS);
+        ParsedMeta tenDigit = FilenameParser.parse("0012345678.周杰伦-晴天-国语-流行.mkv", EXISTING_ARTISTS);
+        ParsedMeta datePrefix = FilenameParser.parse("20240512-周杰伦-晴天-国语-流行.mkv", EXISTING_ARTISTS);
+        ParsedMeta elevenDigit = FilenameParser.parse("12345678901-周杰伦-晴天-国语-流行.mkv", EXISTING_ARTISTS);
+
+        assertThat(nineDigit.catalogNumber()).isEmpty();
+        assertThat(nineDigit.artist()).isEqualTo("周杰伦");
+        assertThat(nineDigit.title()).isEqualTo("晴天");
+        assertThat(tenDigit.catalogNumber()).isEmpty();
+        assertThat(tenDigit.artist()).isEqualTo("周杰伦");
+        assertThat(tenDigit.title()).isEqualTo("晴天");
+        assertThat(datePrefix.catalogNumber()).isEmpty();
+        assertThat(datePrefix.artist()).isEqualTo("周杰伦");
+        assertThat(datePrefix.title()).isEqualTo("晴天");
+        assertThat(elevenDigit.catalogNumber()).isEmpty();
+    }
+
+    @Test
+    void doesNotTreatShortNasTrackIndexAsCatalogNumber() {
+        ParsedMeta parsed = FilenameParser.parse("947.ASH-Tiktok Baby-国语-流行.mkv", EXISTING_ARTISTS);
+
+        assertThat(parsed.catalogNumber()).isEmpty();
+        assertThat(parsed.title()).contains("Tiktok Baby");
+    }
+
+    @Test
     void knownArtistIndexIgnoresNullAndBlankEntriesAndKeepsTheFirstDisplayName() {
         FilenameParser.ArtistIndex index = FilenameParser.prepareKnownArtists(
                 Arrays.asList(null, "   ", " A-Lin ", "a-lin"));

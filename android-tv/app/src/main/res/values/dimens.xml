@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <dimen name="ktv_queue_drawer_width">480dp</dimen>
+    <dimen name="ktv_ref_queue_drawer_width">388dp</dimen>
     <!-- Shared geometry scale: control < card < panel. -->
     <dimen name="ktv_spacing_xs">4dp</dimen>
     <dimen name="ktv_spacing_sm">8dp</dimen>

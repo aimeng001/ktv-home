@@ -1,0 +1,14 @@
+[run]
+branch = True
+source = scripts
+omit =
+    scripts/tests/*
+    scripts/*_test.py
+    */__pycache__/*
+
+[report]
+show_missing = True
+omit =
+    scripts/tests/*
+    scripts/*_test.py
+    */__pycache__/*

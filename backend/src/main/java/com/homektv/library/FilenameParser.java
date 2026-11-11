@@ -6,6 +6,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.time.DateTimeException;
+import java.time.LocalDate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -15,7 +17,7 @@ import java.util.regex.Pattern;
 public final class FilenameParser {
 
     private static final String DEFAULT_RULE = "artist_title";
-    private static final Pattern CATALOG_PREFIX = Pattern.compile("^\\s*(\\d{8})(?=\\s*[-._])");
+    private static final Pattern CATALOG_PREFIX = Pattern.compile("^\\s*([0-9]{8,10})\\s*[-._]\\s*");
 
     private static final Map<String, String> LANGUAGE_ALIASES = Map.ofEntries(
             Map.entry("国语", "国语"),
@@ -95,11 +97,28 @@ public final class FilenameParser {
     }
 
     static ParsedMeta parse(String filename, String rule, ArtistIndex artistIndex) {
-        String catalogNumber = catalogNumberOf(filename);
-        String parseFilename = catalogNumber.isBlank()
-                ? filename
-                : filename.replaceFirst("^\\s*\\d{8}\\s*[-._]\\s*", "");
+        Matcher catalogPrefix = CATALOG_PREFIX.matcher(filename == null ? "" : filename);
+        String catalogNumber = "";
+        String parseFilename = filename;
+        if (catalogPrefix.find()) {
+            String candidate = catalogPrefix.group(1);
+            if (isTrustedCatalogPrefix(candidate)) catalogNumber = candidate;
+            parseFilename = filename.substring(catalogPrefix.end());
+        }
         return parseWithoutCatalog(parseFilename, rule, artistIndex).withCatalogNumber(catalogNumber);
+    }
+
+    private static boolean isTrustedCatalogPrefix(String candidate) {
+        if (candidate.length() != 8) return false;
+        int year = Integer.parseInt(candidate.substring(0, 4));
+        if (year < 1900 || year > 2100) return true;
+        try {
+            LocalDate.of(year, Integer.parseInt(candidate.substring(4, 6)),
+                    Integer.parseInt(candidate.substring(6, 8)));
+            return false;
+        } catch (DateTimeException invalidDate) {
+            return true;
+        }
     }
 
     private static ParsedMeta parseWithoutCatalog(String filename, String rule, ArtistIndex artistIndex) {
@@ -133,12 +152,6 @@ public final class FilenameParser {
             return parseStandard(parts, suffix, artistIndex, base.trim());
         }
         return parseLegacy(parts, rule, artistIndex, base.trim());
-    }
-
-    private static String catalogNumberOf(String filename) {
-        if (filename == null) return "";
-        Matcher matcher = CATALOG_PREFIX.matcher(filename);
-        return matcher.find() ? matcher.group(1) : "";
     }
 
     private static String normalizeDashSeparators(String value) {

@@ -1,5 +1,6 @@
 package com.homektv.ws;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.queue.PlaybackService;
 import com.homektv.queue.PlaybackTransitionResult;
@@ -18,11 +19,16 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.verify;
@@ -63,6 +69,84 @@ class KtvWebSocketHandlerTest {
         verify(broadcaster, org.mockito.Mockito.times(2)).sendTo(eq(session), events.capture());
         assertThat(events.getAllValues()).extracting(WsEvent::type)
                 .containsExactly(WsEvent.PLAYER_ROLE, WsEvent.SYNC_FULL);
+    }
+
+    @Test
+    void existingControllerReceivesTvOnlineSnapshotWhenTvConnects() throws Exception {
+        ActivePlayerRegistry registry = new ActivePlayerRegistry();
+        WsBroadcaster liveBroadcaster = new WsBroadcaster(new ObjectMapper(), registry);
+        WebSocketSession controller = mock(WebSocketSession.class);
+        when(controller.getId()).thenReturn("controller-1");
+        when(controller.getAttributes()).thenReturn(Map.of("client_type", "controller"));
+        when(controller.isOpen()).thenReturn(true);
+        AtomicReference<String> delivered = new AtomicReference<>();
+        CountDownLatch received = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            delivered.set(((TextMessage) invocation.getArgument(0)).getPayload());
+            received.countDown();
+            return null;
+        }).when(controller).sendMessage(any(TextMessage.class));
+        liveBroadcaster.register(controller);
+
+        WebSocketSession tv = mock(WebSocketSession.class);
+        when(tv.getId()).thenReturn("tv-1");
+        when(tv.getAttributes()).thenReturn(Map.of("client_type", "tv"));
+        when(tv.isOpen()).thenReturn(true);
+        when(snapshotService.snapshot()).thenReturn(new com.homektv.web.dto.QueueSnapshot(
+                null, List.of(), "idle", 50, false, "accompaniment", true, 1));
+        KtvWebSocketHandler liveHandler = new KtvWebSocketHandler(
+                liveBroadcaster, snapshotService, playbackService, offlineWatcher,
+                registry, new ObjectMapper());
+
+        liveHandler.afterConnectionEstablished(tv);
+
+        assertThat(received.await(2, TimeUnit.SECONDS))
+                .as("an already-connected phone must hear that the TV is online")
+                .isTrue();
+        var event = new ObjectMapper().readTree(delivered.get());
+        assertThat(event.path("type").asText()).isEqualTo(WsEvent.PLAYER_STATE);
+        assertThat(event.path("payload").path("tvOnline").asBoolean()).isTrue();
+    }
+
+    @Test
+    void existingControllerReceivesTvOfflineSnapshotWhenLastTvDisconnects() throws Exception {
+        ActivePlayerRegistry registry = new ActivePlayerRegistry();
+        WsBroadcaster liveBroadcaster = new WsBroadcaster(new ObjectMapper(), registry);
+        WebSocketSession controller = mock(WebSocketSession.class);
+        when(controller.getId()).thenReturn("controller-1");
+        when(controller.getAttributes()).thenReturn(Map.of("client_type", "controller"));
+        when(controller.isOpen()).thenReturn(true);
+        List<Boolean> observedTvOnline = new CopyOnWriteArrayList<>();
+        CountDownLatch received = new CountDownLatch(2);
+        doAnswer(invocation -> {
+            JsonNode event = new ObjectMapper().readTree(
+                    ((TextMessage) invocation.getArgument(0)).getPayload());
+            if (WsEvent.PLAYER_STATE.equals(event.path("type").asText())) {
+                observedTvOnline.add(event.path("payload").path("tvOnline").asBoolean());
+                received.countDown();
+            }
+            return null;
+        }).when(controller).sendMessage(any(TextMessage.class));
+        liveBroadcaster.register(controller);
+
+        WebSocketSession tv = mock(WebSocketSession.class);
+        when(tv.getId()).thenReturn("tv-1");
+        when(tv.getAttributes()).thenReturn(Map.of("client_type", "tv"));
+        when(tv.isOpen()).thenReturn(true);
+        var online = new com.homektv.web.dto.QueueSnapshot(
+                null, List.of(), "idle", 50, false, "accompaniment", true, 1);
+        var offline = new com.homektv.web.dto.QueueSnapshot(
+                null, List.of(), "idle", 50, false, "accompaniment", false, 1);
+        when(snapshotService.snapshot()).thenReturn(online, offline);
+        KtvWebSocketHandler liveHandler = new KtvWebSocketHandler(
+                liveBroadcaster, snapshotService, playbackService, offlineWatcher,
+                registry, new ObjectMapper());
+
+        liveHandler.afterConnectionEstablished(tv);
+        liveHandler.afterConnectionClosed(tv, org.springframework.web.socket.CloseStatus.NORMAL);
+
+        assertThat(received.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(observedTvOnline).containsExactly(true, false);
     }
 
     @Test

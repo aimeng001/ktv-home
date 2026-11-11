@@ -30,6 +30,24 @@ class KtvKioskCatalogReloadContractTest {
         assertTrue(resetToSingers.contains("btnSingerAll.requestFocus()"))
     }
 
+    @Test
+    fun categoryRootCacheIsUsedOnlyWhileItsBackingDataStillExists() {
+        val source = controllerSource()
+        val tabSelection = source.substringAfter("private fun applyTabSelection(")
+            .substringBefore("private fun onKeywordInput(")
+        val rootSelection = source.substringAfter("private fun openCategoryRoot(")
+            .substringBefore("private fun onArtistSelected(")
+        val dataCheck = source.substringAfter("private fun hasCategoryRootData(")
+            .substringBefore("private fun loadCategories(")
+
+        assertTrue(tabSelection.contains("shouldLoadCategoryRoot(categoryMode)"))
+        assertTrue(rootSelection.contains("shouldLoadCategoryRoot(mode)"))
+        assertTrue(source.contains("controllerState.catalogLoading && lastRequestedCategoryMode == mode"))
+        assertTrue(dataCheck.contains("KioskCategoryMode.NEW -> controllerState.newSongs.isNotEmpty()"))
+        assertTrue(dataCheck.contains("KioskCategoryMode.LANGUAGES -> controllerState.languages.isNotEmpty()"))
+        assertTrue(dataCheck.contains("KioskCategoryMode.TAGS -> controllerState.tags.isNotEmpty()"))
+    }
+
     private fun controllerSource(): String = listOf(
         File("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt"),
         File("android-tv/app/src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt"),

@@ -7,6 +7,7 @@ enum class KtvKioskViewMode {
     CATEGORY_LIST,
     LANGUAGE_LIST,
     RANKING_LIST,
+    PLAYLISTS_LIST,
     FAVORITES_LIST,
     HISTORY_LIST,
     ORDERED_QUEUE_DRAWER,
@@ -15,26 +16,21 @@ enum class KtvKioskViewMode {
 class KtvDashboardPolicy {
     var currentMode: KtvKioskViewMode = KtvKioskViewMode.DASHBOARD
         private set
-    var lastActiveTile: KtvDashboardTile = KtvDashboardTile.PINYIN
+    var lastActiveTile: KtvDashboardTile = KtvDashboardTile.HOT_RANKING
         private set
 
     fun onTileClicked(tile: KtvDashboardTile) {
         val selectedTile = KtvDashboardTile.restoreDashboardFocus(tile)
         lastActiveTile = selectedTile
-        if (tile == KtvDashboardTile.RANKING || selectedTile == KtvDashboardTile.ORDERED_QUEUE) {
-            // Legacy rankings return home; the queue opens a drawer and is not a page route.
-            currentMode = KtvKioskViewMode.DASHBOARD
-            return
-        }
         currentMode = when (selectedTile) {
-            KtvDashboardTile.PINYIN -> KtvKioskViewMode.PINYIN_SEARCH
+            KtvDashboardTile.HOT_RANKING -> KtvKioskViewMode.RANKING_LIST
+            KtvDashboardTile.NEW_SONGS -> KtvKioskViewMode.PLAYLISTS_LIST
             KtvDashboardTile.SINGER -> KtvKioskViewMode.SINGER_CATALOG
-            KtvDashboardTile.CATEGORY -> KtvKioskViewMode.CATEGORY_LIST
+            KtvDashboardTile.SONG_NAME, KtvDashboardTile.LOCAL -> KtvKioskViewMode.PINYIN_SEARCH
+            KtvDashboardTile.TIKTOK -> KtvKioskViewMode.CATEGORY_LIST
+            KtvDashboardTile.THEME, KtvDashboardTile.OPERA -> KtvKioskViewMode.CATEGORY_LIST
             KtvDashboardTile.LANGUAGE -> KtvKioskViewMode.LANGUAGE_LIST
-            KtvDashboardTile.RANKING -> KtvKioskViewMode.DASHBOARD
             KtvDashboardTile.FAVORITES -> KtvKioskViewMode.FAVORITES_LIST
-            KtvDashboardTile.HISTORY -> KtvKioskViewMode.HISTORY_LIST
-            KtvDashboardTile.ORDERED_QUEUE -> KtvKioskViewMode.DASHBOARD
         }
     }
 

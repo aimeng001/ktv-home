@@ -1,121 +1,393 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/queueDrawerRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@android:color/transparent">
 
-    <!-- 右侧抽屉主体 -->
     <LinearLayout
         android:id="@+id/queueDrawerPanel"
-        android:layout_width="480dp"
+        android:layout_width="@dimen/ktv_ref_queue_drawer_width"
         android:layout_height="match_parent"
         android:layout_gravity="end"
-        android:background="@drawable/player_glass"
-        android:orientation="vertical"
-        android:padding="20dp">
+        android:background="@drawable/ktv_ref_v50_queue_drawer_bg"
+        android:orientation="vertical">
 
-        <!-- 顶部标题栏 -->
         <LinearLayout
+            android:id="@+id/drawerHeader"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="58dp"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:paddingStart="10dp"
+            android:paddingEnd="8dp">
 
-            <TextView
-                android:id="@+id/txtDrawerTitle"
+            <LinearLayout
+                android:id="@+id/drawerTabStrip"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:layout_weight="1"
-                android:text="@string/queue_drawer_title_initial"
-                android:textColor="@color/gold"
-                android:textSize="22sp"
-                android:textStyle="bold" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <Button
-                android:id="@+id/btnDrawerShuffle"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:background="@drawable/btn_keyboard_key"
-                android:textColor="@color/color_keyboard_key_text"
-                android:text="@string/queue_shuffle_action"
-                android:textSize="12sp"
-                android:focusable="true" />
+                <FrameLayout
+                    android:id="@+id/drawerTabDownloads"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_ktv_queue_tab"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:nextFocusLeft="@id/drawerTabHistory"
+                    android:nextFocusRight="@id/drawerTabQueue"
+                    android:nextFocusUp="@id/btnDrawerClose"
+                    android:nextFocusDown="@id/btnDownloadStartAll">
 
-            <Button
+                    <TextView
+                        android:id="@+id/txtDrawerTabDownloads"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="@string/queue_drawer_tab_downloads"
+                        android:textColor="@color/text"
+                        android:textSize="17sp" />
+
+                    <View
+                        android:id="@+id/lineDrawerTabDownloads"
+                        android:layout_width="24dp"
+                        android:layout_height="3dp"
+                        android:layout_gravity="bottom|center_horizontal"
+                        android:background="@color/ktv_drawer_tab_selected"
+                        android:visibility="gone" />
+                </FrameLayout>
+
+                <FrameLayout
+                    android:id="@+id/drawerTabQueue"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_ktv_queue_tab"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:nextFocusLeft="@id/drawerTabDownloads"
+                    android:nextFocusRight="@id/drawerTabHistory"
+                    android:nextFocusUp="@id/btnDrawerClose"
+                    android:nextFocusDown="@id/btnDrawerShuffle">
+
+                    <TextView
+                        android:id="@+id/txtDrawerTabQueue"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="@string/queue_drawer_tab_queue"
+                        android:textColor="@color/text"
+                        android:textSize="17sp" />
+
+                    <View
+                        android:id="@+id/lineDrawerTabQueue"
+                        android:layout_width="24dp"
+                        android:layout_height="3dp"
+                        android:layout_gravity="bottom|center_horizontal"
+                        android:background="@color/ktv_drawer_tab_selected"
+                        android:visibility="gone" />
+                </FrameLayout>
+
+                <FrameLayout
+                    android:id="@+id/drawerTabHistory"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_ktv_queue_tab"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:nextFocusLeft="@id/drawerTabQueue"
+                    android:nextFocusRight="@id/drawerTabDownloads"
+                    android:nextFocusUp="@id/btnDrawerClose"
+                    android:nextFocusDown="@id/rvHistoryDrawer">
+
+                    <TextView
+                        android:id="@+id/txtDrawerTabHistory"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="@string/queue_drawer_tab_history"
+                        android:textColor="@color/text"
+                        android:textSize="17sp" />
+
+                    <View
+                        android:id="@+id/lineDrawerTabHistory"
+                        android:layout_width="24dp"
+                        android:layout_height="3dp"
+                        android:layout_gravity="bottom|center_horizontal"
+                        android:background="@color/ktv_drawer_tab_selected"
+                        android:visibility="gone" />
+                </FrameLayout>
+            </LinearLayout>
+
+            <TextView
                 android:id="@+id/btnDrawerClose"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:layout_marginStart="8dp"
-                android:background="@drawable/btn_gold"
-                android:textColor="#111317"
-                android:text="@string/common_close"
-                android:textStyle="bold"
-                android:textSize="13sp"
-                android:focusable="true" />
+                android:layout_width="42dp"
+                android:layout_height="48dp"
+                android:background="@drawable/bg_ktv_queue_tab"
+                android:clickable="true"
+                android:contentDescription="@string/common_close"
+                android:focusable="true"
+                android:gravity="center"
+                android:nextFocusLeft="@id/drawerTabHistory"
+                android:nextFocusDown="@id/drawerTabQueue"
+                android:text="×"
+                android:textColor="@color/text"
+                android:textSize="32sp" />
         </LinearLayout>
 
-        <!-- 正在演唱卡片 -->
-        <LinearLayout
-            android:id="@+id/nowPlayingSection"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:background="@drawable/bg_queue_now_playing"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/queue_now_singing_label"
-                android:textColor="@color/gold"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/txtDrawerNowPlaying"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/playback_none"
-                android:textColor="@android:color/white"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:singleLine="true"
-                android:ellipsize="end" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:layout_marginBottom="8dp"
-            android:text="@string/queue_waiting_list_label"
-            android:textColor="@color/dim"
-            android:textSize="13sp" />
-
-        <!-- 待播歌曲列表 -->
         <FrameLayout
+            android:id="@+id/drawerPageContainer"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1">
 
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/drawerRecyclerView"
+            <LinearLayout
+                android:id="@+id/drawerQueuePage"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:contentDescription="@string/queue_ordered_list_label" />
+                android:orientation="vertical"
+                android:paddingStart="14dp"
+                android:paddingTop="10dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="10dp">
 
-            <TextView
-                android:id="@+id/txtDrawerEmpty"
+                <LinearLayout
+                    android:id="@+id/nowPlayingSection"
+                    android:layout_width="match_parent"
+                    android:layout_height="50dp"
+                    android:background="@drawable/bg_queue_now_playing"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="10dp">
+
+                    <LinearLayout
+                        android:id="@+id/playingEqualizer"
+                        android:layout_width="24dp"
+                        android:layout_height="26dp"
+                        android:contentDescription="@string/queue_now_playing_indicator"
+                        android:focusable="false"
+                        android:gravity="center"
+                        android:importantForAccessibility="no"
+                        android:orientation="horizontal" />
+
+                    <TextView
+                        android:id="@+id/txtDrawerNowPlaying"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:ellipsize="end"
+                        android:maxLines="2"
+                        android:text="@string/playback_none"
+                        android:textColor="@color/text"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/txtDrawerTitle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/queue_drawer_title_initial"
+                        android:textColor="@color/text"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <Button
+                        android:id="@+id/btnDrawerShuffle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="38dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:focusable="true"
+                        android:nextFocusLeft="@id/drawerTabQueue"
+                        android:nextFocusUp="@id/drawerTabQueue"
+                        android:text="@string/queue_shuffle_action"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:textSize="12sp" />
+
+                    <Button
+                        android:id="@+id/btnDrawerRetry"
+                        android:layout_width="wrap_content"
+                        android:layout_height="38dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:focusable="true"
+                        android:nextFocusLeft="@id/btnDrawerShuffle"
+                        android:nextFocusUp="@id/drawerTabQueue"
+                        android:text="@string/common_retry"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:textSize="12sp"
+                        android:visibility="gone" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/txtDrawerQueueStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textColor="@color/gold"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1">
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/drawerRecyclerView"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:contentDescription="@string/queue_ordered_list_label"
+                        android:nextFocusUp="@id/btnDrawerShuffle" />
+
+                    <TextView
+                        android:id="@+id/txtDrawerEmpty"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="@string/queue_empty_hint"
+                        android:textColor="@color/dim"
+                        android:textSize="15sp"
+                        android:visibility="gone" />
+                </FrameLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/drawerHistoryPage"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:gravity="center"
-                android:text="@string/queue_empty_hint"
-                android:textColor="@color/dim2"
-                android:textSize="15sp"
-                android:visibility="gone" />
+                android:orientation="vertical"
+                android:paddingStart="14dp"
+                android:paddingTop="10dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="10dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/txtHistoryStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="8dp"
+                    android:textColor="@color/gold"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+
+                <Button
+                    android:id="@+id/btnHistoryRetry"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_gravity="end"
+                    android:background="@drawable/btn_keyboard_key"
+                    android:focusable="true"
+                    android:text="@string/common_retry"
+                    android:textColor="@color/color_keyboard_key_text"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1">
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/rvHistoryDrawer"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:contentDescription="@string/queue_drawer_history_list"
+                        android:nextFocusUp="@id/drawerTabHistory" />
+
+                    <TextView
+                        android:id="@+id/txtHistoryEmpty"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="@string/queue_drawer_history_empty"
+                        android:textColor="@color/dim"
+                        android:textSize="16sp"
+                        android:visibility="gone" />
+                </FrameLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/drawerDownloadsPage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:paddingStart="14dp"
+                android:paddingTop="10dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="10dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/txtDownloadEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="@string/queue_drawer_downloads_empty"
+                    android:textColor="@color/dim"
+                    android:textSize="16sp" />
+
+                <LinearLayout
+                    android:id="@+id/downloadActions"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnDownloadStartAll"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_ktv_queue_download_action"
+                        android:enabled="false"
+                        android:focusable="true"
+                        android:text="@string/queue_drawer_download_start_all"
+                        android:textColor="@color/ktv_drawer_disabled"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/btnDownloadPauseAll"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_marginHorizontal="4dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_ktv_queue_download_action"
+                        android:enabled="false"
+                        android:focusable="true"
+                        android:text="@string/queue_drawer_download_pause_all"
+                        android:textColor="@color/ktv_drawer_disabled"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/btnDownloadDeleteAll"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_ktv_queue_download_action"
+                        android:enabled="false"
+                        android:focusable="true"
+                        android:text="@string/queue_drawer_download_delete_all"
+                        android:textColor="@color/ktv_drawer_disabled"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </LinearLayout>
         </FrameLayout>
     </LinearLayout>
 </FrameLayout>

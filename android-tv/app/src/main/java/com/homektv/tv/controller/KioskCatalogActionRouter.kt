@@ -10,6 +10,12 @@ class KioskCatalogActionRouter(
         actions.setQuery("")
     }
 
+    fun allSongs() = actions.loadKioskAllSongs()
+
+    fun moreAllSongs() = actions.loadMoreKioskAllSongs()
+
+    fun stopAllSongs() = actions.stopKioskAllSongs()
+
     fun artists() = actions.loadArtists(gender = "", initial = "", restorePage = 0)
 
     fun rankings() = actions.loadRanking()

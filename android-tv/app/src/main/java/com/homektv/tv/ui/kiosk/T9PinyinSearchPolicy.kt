@@ -5,6 +5,19 @@ package com.homektv.tv.ui.kiosk
  */
 object T9PinyinSearchPolicy {
 
+    const val SEARCH_DEBOUNCE_MS = 150L
+
+    /** Normalizes input while preserving the existing catalog's pinyin-search semantics. */
+    fun normalizeSearchKeyword(keyword: String): String = keyword.trim().uppercase()
+
+    fun isAcronymQuery(keyword: String): Boolean {
+        val normalized = normalizeSearchKeyword(keyword)
+        return normalized.isNotEmpty() && normalized.all { it in 'A'..'Z' }
+    }
+
+    fun remainingDebounceMs(elapsedSinceInputMs: Long): Long =
+        (SEARCH_DEBOUNCE_MS - elapsedSinceInputMs.coerceAtLeast(0L)).coerceAtLeast(0L)
+
     private val DIGIT_MAP = mapOf(
         '2' to "ABC",
         '3' to "DEF",

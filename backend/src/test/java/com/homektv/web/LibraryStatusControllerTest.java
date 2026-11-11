@@ -7,11 +7,26 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup;
 
 class LibraryStatusControllerTest {
+    @Test
+    void missingScanCoordinatorReportsNotAcceptedInsteadOfFakeTriggerSuccess() throws Exception {
+        SongRepository songs = mock(SongRepository.class);
+        MockMvc mvc = standaloneSetup(new LibraryStatusController(songs)).build();
+
+        mvc.perform(post("/api/library/scan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accepted").value(false))
+                .andExpect(jsonPath("$.requestStatus").value("UNAVAILABLE"))
+                .andExpect(jsonPath("$.errorCode").value("SCAN_COORDINATOR_UNAVAILABLE"))
+                .andExpect(jsonPath("$.scan").doesNotExist())
+                .andExpect(jsonPath("$.status").doesNotExist());
+    }
+
     @Test
     void exposesOnlyThePublicSongCountNeededByTv() throws Exception {
         SongRepository songs = mock(SongRepository.class);

@@ -399,6 +399,20 @@ class FullTestRunnerPlanTest(unittest.TestCase):
             self.assertIn(class_name, command_text)
         self.assertIn("-Dtest=", command_text)
 
+    def test_extended_local_excludes_new_testcontainers_class_and_all_scope_keeps_full_discovery(self):
+        local_tasks = build_task_specs(ROOT, profile="extended", backend_scope="local")
+        local_backend = next(task for task in local_tasks if task.name == "backend")
+        local_selector = next(
+            argument for argument in local_backend.commands[0].argv if argument.startswith("-Dtest=")
+        )
+        self.assertIn("!ApplicationSettingsTransactionIntegrationTest", local_selector)
+
+        all_tasks = build_task_specs(ROOT, profile="extended", backend_scope="all")
+        all_backend = next(task for task in all_tasks if task.name == "backend")
+        self.assertFalse(
+            any(argument.startswith("-Dtest=") for argument in all_backend.commands[0].argv)
+        )
+
     def test_default_plan_uses_core_backend_and_gradle_daemon(self):
         tasks = build_task_specs(ROOT, backend_scope="all")
         self.assertEqual(

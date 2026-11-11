@@ -57,6 +57,21 @@ class KtvKioskCatalogErrorLayoutContractTest {
         assertTrue(source.contains("initial = controllerState.artistInitial"))
     }
 
+    @Test
+    fun threeColumnSingerRootShowsRetryInsteadOfAFalseOnePageIndicator() {
+        val source = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+        val renderMethod = source.substringAfter("private fun renderThreeColumnBrowser")
+            .substringBefore("private fun isThreeColumnTab")
+
+        assertTrue(renderMethod.contains("val regionFilterUnconfirmed = state.catalogStatus.code == \"ARTIST_REGION_FILTER_UNCONFIRMED\""))
+        assertTrue(renderMethod.contains("!hasSingerRows && !state.catalogLoading &&"))
+        assertTrue(renderMethod.contains("(catalogError != null || regionFilterUnconfirmed)"))
+        assertTrue(renderMethod.contains("catalogError != null -> \"歌手列表加载失败，按确定重试\""))
+        assertTrue(renderMethod.contains("browser.txtBrowserEmptyState.setOnClickListener"))
+        assertTrue(renderMethod.contains("browser.txtBrowserEmptyState.isFocusable = retrySingerList"))
+        assertTrue(renderMethod.contains("browser.txtPageNumber.visibility = if (hasSingerRows) View.VISIBLE else View.GONE"))
+    }
+
     private fun parse(relativePath: String) =
         DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(locate(relativePath))
 

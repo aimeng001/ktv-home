@@ -2,16 +2,21 @@ package com.homektv.tv.ui
 
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import android.content.ContentValues
 import android.hardware.display.DisplayManager
 import android.media.ImageReader
 import android.os.SystemClock
+import android.provider.MediaStore
+import android.util.Log
 import android.view.Display
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
+import androidx.media3.ui.PlayerView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.homektv.tv.R
 import com.homektv.tv.databinding.ActivityMainBinding
 import com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
 import com.homektv.tv.net.AppConfig
@@ -47,6 +52,9 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+
+private val ActivityMainBinding.playerView: PlayerView
+    get() = requireNotNull(root.findViewById<PlayerView>(R.id.playerView))
 
 /** Runs a synthetic dual-track MV through the production Media3 engine and PiP/presentation views. */
 @RunWith(AndroidJUnit4::class)
@@ -253,27 +261,18 @@ class PlaybackSimulationInstrumentedTest {
             assertTrue("kiosk state collector should enter song-selection mode", awaitActivityCondition(scenario, 5_000L) {
                 privateField<KtvFocusController>(privateField(it, "kioskController"), "focusController").isKioskActive
             })
-            assertTrue("same PlayerView should move into the kiosk PiP anchor", awaitActivityCondition(scenario, 5_000L) { activity ->
+            assertTrue("the one PlayerView should remain hosted by the shared root container", awaitActivityCondition(scenario, 5_000L) { activity ->
                 val binding = privateField<ActivityMainBinding>(activity, "binding")
-                val overlay = privateField<ViewKtvKioskOverlayBinding>(activity, "kioskOverlayBinding")
-                binding.playerView.parent === overlay.pipVideoAnchor
+                binding.playerView.parent === binding.sharedPlayerContainer
             })
-            val pipVisible = awaitActivityCondition(scenario, 5_000L) {
-                privateField<ViewKtvKioskOverlayBinding>(it, "kioskOverlayBinding").pipVideoFrame.visibility == android.view.View.VISIBLE
+            val pipVisible = awaitActivityCondition(scenario, 5_000L) { activity ->
+                val binding = privateField<ActivityMainBinding>(activity, "binding")
+                binding.sharedPlayerContainer.isShown &&
+                    binding.playerView.visibility == android.view.View.VISIBLE &&
+                    binding.playerView.parent === binding.sharedPlayerContainer
             }
-            if (!pipVisible) {
-                val details = readActivity(scenario) { activity ->
-                    val overlay = privateField<ViewKtvKioskOverlayBinding>(activity, "kioskOverlayBinding")
-                    val kiosk = privateField<KtvKioskOverlayController>(activity, "kioskController")
-                    val stage = overlay.kioskContentStage
-                    "stage=${stage.width}x${stage.height} padding=${stage.paddingLeft},${stage.paddingRight},${stage.paddingTop},${stage.paddingBottom} " +
-                        "space=${privateField<Boolean>(kiosk, "pipSpaceAvailable")} root=${overlay.kioskRootOverlay.visibility} " +
-                        "frame=${overlay.pipVideoFrame.visibility} label=${overlay.txtPipLabel.text}"
-                }
-                assertTrue("PiP frame should become visible after kiosk layout measurement; $details", pipVisible)
-            }
+            assertTrue("the shared Dock player should remain visible as PiP over the kiosk", pipVisible)
             scenario.onActivity { activity ->
-                val overlay = privateField<ViewKtvKioskOverlayBinding>(activity, "kioskOverlayBinding")
                 assertSame("PiP must retain the same Media3 player", player, mainBinding.playerView.player)
                 assertEquals(
                     "accompaniment track should survive fullscreen/PiP reparenting",
@@ -287,6 +286,33 @@ class PlaybackSimulationInstrumentedTest {
             })
             assertTrue("position should remain attached to the same queue item", readActivity(scenario) {
                 privateField<ActivityMainBinding>(it, "binding").playerView.player?.currentMediaItem?.mediaId == "91001"
+            })
+
+            val positionBeforeOverlayRoundTrip = readActivity(scenario) { engine.currentPositionMs }
+            scenario.onActivity { kiosk.toggleKiosk(false) }
+            assertTrue("leaving the kiosk should keep the same root player host", awaitActivityCondition(scenario, 5_000L) { activity ->
+                val binding = privateField<ActivityMainBinding>(activity, "binding")
+                binding.playerView.parent === binding.sharedPlayerContainer
+            })
+            scenario.onActivity {
+                kiosk.updateSnapshot(firstSnapshot)
+                kiosk.toggleKiosk(true)
+            }
+            assertTrue("returning to song selection should keep the same root player host", awaitActivityCondition(scenario, 5_000L) { activity ->
+                val binding = privateField<ActivityMainBinding>(activity, "binding")
+                binding.playerView.parent === binding.sharedPlayerContainer
+            })
+            scenario.onActivity { activity ->
+                val playerView = privateField<ActivityMainBinding>(activity, "binding").playerView
+                val surface = playerView.videoSurfaceView as? android.view.SurfaceView
+                assertNotNull("the PiP must retain its configured Media3 SurfaceView", surface)
+                assertTrue("the reparented video surface must remain valid", surface!!.holder.surface.isValid)
+                assertSame("fullscreen/PiP round trip must keep the same player", player, playerView.player)
+                assertEquals("fullscreen/PiP round trip must keep the same media item", "91001", player.currentMediaItem?.mediaId)
+                assertEquals("fullscreen/PiP round trip must keep accompaniment selected", listOf(1), selectedAudioGroupIndexes(player))
+            }
+            assertTrue("fullscreen/PiP round trip must not restart playback", readActivity(scenario) {
+                engine.currentPositionMs + 250L >= positionBeforeOverlayRoundTrip
             })
 
             scenario.onActivity {
@@ -304,11 +330,14 @@ class PlaybackSimulationInstrumentedTest {
             scenario.onActivity { activity ->
                 val overlay = privateField<ViewKtvKioskOverlayBinding>(activity, "kioskOverlayBinding")
                 assertEquals(
-                    "小窗应同时显示暂停状态与当前真实歌曲信息",
+                    "PiP 状态描述应保留暂停状态与当前真实歌曲信息",
                     "已暂停  合成播放测试片段 · 本地仪器夹具",
                     overlay.txtPipLabel.text.toString(),
                 )
-                assertEquals(android.view.View.VISIBLE, overlay.pipVideoFrame.visibility)
+                val dock = privateField<KtvBottomDockController>(activity, "bottomDockController")
+                assertTrue("the shared Dock PiP should remain visible while paused", dock.videoContainer.isShown)
+                assertEquals(android.view.View.VISIBLE, mainBinding.playerView.visibility)
+                assertSame("paused PiP must still use the shared Media3 player", player, mainBinding.playerView.player)
             }
             capture("07_dashboard_paused_pip_synthetic.png")
 
@@ -332,6 +361,10 @@ class PlaybackSimulationInstrumentedTest {
                 privateField<ViewKtvKioskOverlayBinding>(activity, "kioskOverlayBinding").txtPipLabel.text.toString() ==
                     "缓冲中  合成播放测试片段 · 本地仪器夹具"
             })
+            assertTrue("buffering should leave the shared PiP visible", awaitActivityCondition(scenario, 3_000L) { activity ->
+                privateField<KtvBottomDockController>(activity, "bottomDockController").videoContainer.isShown &&
+                    privateField<ActivityMainBinding>(activity, "binding").playerView.visibility == android.view.View.VISIBLE
+            })
             mediaServer.releaseResponse(heldResponse)
 
             // The production kiosk intentionally exits after 15 seconds without user input.
@@ -344,15 +377,50 @@ class PlaybackSimulationInstrumentedTest {
                 privateField<KtvFocusController>(privateField(it, "kioskController"), "focusController").isKioskActive
             })
             assertTrue("buffering PiP should be visible while the user remains in song selection", awaitActivityCondition(scenario, 3_000L) {
-                privateField<ViewKtvKioskOverlayBinding>(it, "kioskOverlayBinding").pipVideoFrame.visibility == android.view.View.VISIBLE
+                privateField<KtvBottomDockController>(it, "bottomDockController").videoContainer.isShown &&
+                    privateField<ActivityMainBinding>(it, "binding").playerView.visibility == android.view.View.VISIBLE
             })
             scenario.onActivity { kiosk.presentationState.selectTab(KioskTab.PINYIN) }
-            assertTrue("full keyboard content should temporarily yield the PiP on a short stage", awaitActivityCondition(scenario, 3_000L) {
-                privateField<ViewKtvKioskOverlayBinding>(it, "kioskOverlayBinding").pipVideoFrame.visibility == android.view.View.GONE
-            })
+            val keyboardAndPipVisible = awaitActivityCondition(scenario, 3_000L) {
+                it.findViewById<android.view.View>(R.id.browserKeyboardContainer)?.isShown == true &&
+                    it.findViewById<android.view.View>(R.id.kioskKeyboard)?.isShown == true &&
+                    privateField<KtvBottomDockController>(it, "bottomDockController").videoContainer.isShown
+            }
+            val keyboardAndPipState = readActivity(scenario) { activity ->
+                val overlay = privateField<ViewKtvKioskOverlayBinding>(activity, "kioskOverlayBinding")
+                val dock = privateField<KtvBottomDockController>(activity, "bottomDockController")
+                val binding = privateField<ActivityMainBinding>(activity, "binding")
+                "legacyPinyinPanel=${overlay.panelPinyin.visibility}, browserKeyboardContainer=" +
+                    "${activity.findViewById<android.view.View>(R.id.browserKeyboardContainer)?.visibility}/shown=" +
+                    "${activity.findViewById<android.view.View>(R.id.browserKeyboardContainer)?.isShown}, " +
+                    "keyboard=${activity.findViewById<android.view.View>(R.id.kioskKeyboard)?.visibility}/shown=" +
+                    "${activity.findViewById<android.view.View>(R.id.kioskKeyboard)?.isShown}, kiosk=${overlay.kioskRootOverlay.visibility}, " +
+                    "dock=${dock.root.visibility}, videoContainer=${dock.videoContainer.visibility}/shown=${dock.videoContainer.isShown}, " +
+                    "player=${binding.playerView.visibility}, pipSpaceAvailable=${privateField<Boolean>(privateField(activity, "kioskController"), "pipSpaceAvailable")}"
+            }
+            assertTrue(
+                "commercial browser keyboard should render beside the shared Dock PiP; $keyboardAndPipState",
+                keyboardAndPipVisible,
+            )
+            scenario.onActivity { activity ->
+                val keyboard = requireNotNull(activity.findViewById<android.view.View>(R.id.browserKeyboardContainer))
+                val keyboardRect = android.graphics.Rect()
+                val pipRect = android.graphics.Rect()
+                assertTrue("search keyboard must occupy a visible viewport", keyboard.getGlobalVisibleRect(keyboardRect))
+                assertTrue(
+                    "playing PiP must remain visible beside the search keyboard",
+                    privateField<KtvBottomDockController>(activity, "bottomDockController").videoContainer.getGlobalVisibleRect(pipRect),
+                )
+                assertFalse(
+                    "search keyboard and PiP must not overlap on the 1920x1080 TV AVD: keyboard=$keyboardRect pip=$pipRect",
+                    android.graphics.Rect.intersects(keyboardRect, pipRect),
+                )
+            }
+            capture("07_search_keyboard_pip_synthetic.png")
             scenario.onActivity { kiosk.presentationState.selectTab(KioskTab.DASHBOARD) }
             assertTrue("PiP should return after the dashboard's two action rows fit", awaitActivityCondition(scenario, 3_000L) {
-                privateField<ViewKtvKioskOverlayBinding>(it, "kioskOverlayBinding").pipVideoFrame.visibility == android.view.View.VISIBLE
+                privateField<KtvBottomDockController>(it, "bottomDockController").videoContainer.isShown &&
+                    privateField<ActivityMainBinding>(it, "binding").playerView.visibility == android.view.View.VISIBLE
             })
             capture("07_dashboard_buffering_pip_synthetic.png")
 
@@ -662,6 +730,22 @@ class PlaybackSimulationInstrumentedTest {
             .apply { check(mkdirs() || isDirectory) }
         FileOutputStream(File(directory, fileName)).use { output ->
             check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
+        }
+        if (InstrumentationRegistry.getArguments().getString("evidenceExport") == "true") {
+            val relativeDirectory = "Pictures/HomeKtvPlaybackEvidence/$runId"
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(MediaStore.Images.Media.RELATIVE_PATH, relativeDirectory)
+            }
+            val uri = requireNotNull(context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)) {
+                "Unable to create AVD playback evidence item for $fileName"
+            }
+            context.contentResolver.openOutputStream(uri, "w").use { stream ->
+                checkNotNull(stream) { "Unable to open AVD playback evidence item for $fileName" }
+                    .let { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+            }
+            Log.i("KtvPlaybackEvidenceExport", "Saved screenshot to $relativeDirectory/$fileName")
         }
         bitmap.recycle()
     }

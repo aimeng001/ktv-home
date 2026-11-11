@@ -17,7 +17,12 @@ import org.springframework.web.client.RestClient;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
+import java.net.http.HttpConnectTimeoutException;
+import java.nio.channels.UnresolvedAddressException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -219,6 +224,10 @@ public class OpenAiCompatibleClient {
             } catch (ResponseTooLargeException e) {
                 throw new AiProviderException("AI_RESPONSE_TOO_LARGE",
                         "AI 服务响应超过 " + MAX_RESPONSE_BYTES + " 字节上限", e);
+            } catch (ResponseParseException e) {
+                throw new AiProviderException("AI_PROVIDER_RESPONSE_INVALID", "AI 服务返回了无效响应", e);
+            } catch (ResponseReadException e) {
+                throw new AiProviderException("AI_PROVIDER_RESPONSE_READ_FAILED", "读取 AI 服务响应失败", e);
             } catch (ProviderStatusException e) {
                 last = e;
                 int status = e.status;
@@ -228,6 +237,9 @@ public class OpenAiCompatibleClient {
                 }
                 sleep(attempt);
             } catch (RuntimeException e) {
+                if (!isPreSendConnectionFailure(e)) {
+                    throw new AiProviderException("AI_PROVIDER_UNAVAILABLE", "AI 服务连接失败或请求超时", e);
+                }
                 last = e;
                 if (attempt >= 3) break;
                 sleep(attempt);
@@ -273,6 +285,22 @@ public class OpenAiCompatibleClient {
             total += read;
         }
         return output.toByteArray();
+    }
+
+    private static boolean isPreSendConnectionFailure(Throwable failure) {
+        Throwable cause = failure;
+        for (int depth = 0; cause != null && depth < 16; depth++) {
+            if (cause instanceof ConnectException
+                    || cause instanceof NoRouteToHostException
+                    || cause instanceof UnknownHostException
+                    || cause instanceof HttpConnectTimeoutException
+                    || cause instanceof UnresolvedAddressException) {
+                return true;
+            }
+            if (cause.getCause() == cause) break;
+            cause = cause.getCause();
+        }
+        return false;
     }
 
     private static final class ResponseTooLargeException extends RuntimeException {

@@ -67,6 +67,24 @@ class KioskPipResponsivePolicyTest {
     }
 
     @Test
+    fun searchKeepsPipWhenKeyboardCanScrollWithinItsMinimumViewport() {
+        val requirement = KioskContentRequirementPolicy.pinyin(
+            keyboardNaturalHeightDp = 350,
+            resultsMinimumHeightDp = 184,
+            minimumScrollableViewportDp = 140,
+        )
+
+        val size = KioskPipResponsivePolicy.resolve(
+            availableWidthDp = 900,
+            availableHeightDp = 420,
+            minContentHeightDp = requirement.minimumHeightDp,
+        )
+
+        assertEquals(198, size.widthDp)
+        assertTrue(size.visible)
+    }
+
+    @Test
     fun pipVisibilityChangesAtTheExactFullContentBoundary() {
         val exactlyEnough = KioskPipResponsivePolicy.resolve(
             availableWidthDp = 592,

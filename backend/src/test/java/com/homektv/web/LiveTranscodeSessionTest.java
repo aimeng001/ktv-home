@@ -7,6 +7,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.homektv.library.ProcessOutputTail;
 import com.homektv.resource.ResourceBudget;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
@@ -139,6 +140,7 @@ class LiveTranscodeSessionTest {
     }
 
     @Test
+    @ResourceLock("logback:com.homektv.web.LiveTranscodeSession")
     void redactsAndUtf8BoundsTheCapturedDiagnosticTail() throws Exception {
         byte[] media = {1, 2, 3};
         String diagnosticPrefix = "discard-this-prefix-";

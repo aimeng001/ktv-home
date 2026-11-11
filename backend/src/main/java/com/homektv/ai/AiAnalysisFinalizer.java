@@ -24,12 +24,13 @@ public class AiAnalysisFinalizer {
     }
 
     @Transactional
-    public boolean finishProcessing(Long taskId, String resultJson, String fieldConfidence,
+    public boolean finishProcessing(Long taskId, int expectedAttempt, String resultJson, String fieldConfidence,
                                     String evidence, String modelRole, String model,
                                     AiSongClassification classification, boolean autoApplyCandidate,
                                     double identityThreshold, String reviewMessage) {
         AiAnalysisTask task = taskRepository.findByIdForUpdate(taskId).orElse(null);
-        if (task == null || !"processing".equals(task.getStatus())) return false;
+        if (task == null || !"processing".equals(task.getStatus())
+                || task.getAttemptCount() != expectedAttempt) return false;
 
         boolean applied = autoApplyCandidate && applyTarget(task, classification, identityThreshold);
         task.setResultJson(resultJson);

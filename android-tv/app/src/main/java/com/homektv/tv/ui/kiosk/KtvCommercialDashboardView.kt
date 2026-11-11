@@ -1,150 +1,216 @@
 package com.homektv.tv.ui.kiosk
 
-import android.content.Context
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.StateListDrawable
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
+import android.view.animation.AnimationUtils
 import android.view.LayoutInflater
+import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.ImageSwitcher
+import android.widget.TextView
+import androidx.core.content.ContextCompat
 import com.homektv.tv.R
-import com.homektv.tv.databinding.ViewKtvCommercialDashboardBinding
+import com.homektv.tv.databinding.ViewKtvBentoDashboardBinding
+import kotlin.math.roundToInt
 
-/**
- * 电视点歌首页磁贴视图组件（上排 4 项、下排 3 项；排行榜保留为兼容状态，不展示）。
- */
+/** Ten fixed reference-art tiles with explicit TV focus links. */
 class KtvCommercialDashboardView @JvmOverloads constructor(
-    context: Context,
+    context: android.content.Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0,
 ) : FrameLayout(context, attrs, defStyleAttr) {
+    val binding = ViewKtvBentoDashboardBinding.inflate(LayoutInflater.from(context), this, true)
 
-    val binding = ViewKtvCommercialDashboardBinding.inflate(LayoutInflater.from(context), this, true)
+    var onTileSelected: ((KtvDashboardTile) -> Unit)? = null
+    var lastFocusedTile: KtvDashboardTile = KtvDashboardTile.HOT_RANKING
 
-    var onTileClick: ((KtvDashboardTile) -> Unit)? = null
-    var lastFocusedTile: KtvDashboardTile = KtvDashboardTile.PINYIN
+    private data class TileContent(
+        val root: View,
+        val title: TextView,
+    )
+
+    private val tileContent = mapOf(
+        KtvDashboardTile.HOT_RANKING to TileContent(binding.tileHotRanking, binding.txtHotRankingTitle),
+        KtvDashboardTile.NEW_SONGS to TileContent(binding.tileNewSongs, binding.txtNewSongsTitle),
+        KtvDashboardTile.SINGER to TileContent(binding.tileSinger, binding.txtSingerTileTitle),
+        KtvDashboardTile.SONG_NAME to TileContent(binding.tileSongName, binding.txtSongNameTitle),
+        KtvDashboardTile.LANGUAGE to TileContent(binding.tileLanguage, binding.txtLanguageTitle),
+        KtvDashboardTile.THEME to TileContent(binding.tileTheme, binding.txtThemeTitle),
+        KtvDashboardTile.OPERA to TileContent(binding.tileOpera, binding.txtOperaTitle),
+        KtvDashboardTile.TIKTOK to TileContent(binding.tileTikTok, binding.txtTikTokTitle),
+        KtvDashboardTile.FAVORITES to TileContent(binding.tileFavorites, binding.txtFavoritesTitle),
+        KtvDashboardTile.LOCAL to TileContent(binding.tileLocal, binding.txtLocalTitle),
+    )
+    private val photoSwitchers = mutableMapOf<KtvDashboardTile, ImageSwitcher>()
+    private val photoPairs = listOf(
+        KtvDashboardPhotoPair(R.drawable.ktv_ref_v50_tile_singers_01, R.drawable.ktv_ref_v50_tile_songs_01),
+        KtvDashboardPhotoPair(R.drawable.ktv_ref_v50_tile_singers_02, R.drawable.ktv_ref_v50_tile_songs_02),
+        KtvDashboardPhotoPair(R.drawable.ktv_ref_v50_tile_singers_03, R.drawable.ktv_ref_v50_tile_songs_03),
+    )
+    private val photoHandler = Handler(Looper.getMainLooper())
+    private val photoCarousel = KtvDashboardPhotoCarousel(
+        postDelayed = { task, delay -> photoHandler.postDelayed(task, delay) },
+        removeCallbacks = photoHandler::removeCallbacks,
+        onIndexChanged = ::showPhotoPair,
+        itemCount = photoPairs.size,
+    )
 
     init {
-        initTiles()
-        configureTileFocusLinks()
+        clipChildren = false
+        clipToPadding = false
+        binding.dashboardRoot.clipChildren = false
+        binding.dashboardRoot.clipToPadding = false
+        initializeTiles()
     }
 
-    private fun configureTileFocusLinks() {
-        binding.tilePinyin.tileRoot.apply {
-            nextFocusRightId = R.id.tileSinger
-            nextFocusDownId = R.id.tileFavorites
-        }
-        binding.tileSinger.tileRoot.apply {
-            nextFocusLeftId = R.id.tilePinyin
-            nextFocusRightId = R.id.tileCategory
-            nextFocusDownId = R.id.tileFavorites
-        }
-        binding.tileCategory.tileRoot.apply {
-            nextFocusLeftId = R.id.tileSinger
-            nextFocusRightId = R.id.tileLanguage
-            nextFocusDownId = R.id.tileHistory
-        }
-        binding.tileLanguage.tileRoot.apply {
-            nextFocusLeftId = R.id.tileCategory
-            nextFocusDownId = R.id.tileQueue
-        }
-        binding.tileFavorites.tileRoot.apply {
-            nextFocusUpId = R.id.tilePinyin
-            nextFocusRightId = R.id.tileHistory
-            nextFocusDownId = R.id.btnPlayPause
-        }
-        binding.tileHistory.tileRoot.apply {
-            nextFocusLeftId = R.id.tileFavorites
-            nextFocusUpId = R.id.tileCategory
-            nextFocusRightId = R.id.tileQueue
-            nextFocusDownId = R.id.btnPlayPause
-        }
-        binding.tileQueue.tileRoot.apply {
-            nextFocusLeftId = R.id.tileHistory
-            nextFocusUpId = R.id.tileLanguage
-            nextFocusDownId = R.id.btnPlayPause
+    private fun initializeTiles() {
+        KtvDashboardTile.dashboardEntries.forEach { tile ->
+            val content = tileContent.getValue(tile)
+            content.title.text = tile.title
+            addTileArtwork(tile, content.root)
+            content.root.clipToOutline = true
+            content.root.background = createRoundedClipSurface()
+            content.root.foreground = createFocusOverlay()
+            content.root.contentDescription = "${tile.title}，${tile.subtitle}"
+            content.root.setOnFocusChangeListener { _, hasFocus ->
+                if (hasFocus) lastFocusedTile = tile
+            }
+            content.root.setOnClickListener {
+                lastFocusedTile = tile
+                onTileSelected?.invoke(tile)
+            }
         }
     }
 
-    private fun initTiles() {
-        // Search remains the compatibility key, but the visible action is ordinary song search.
-        binding.tilePinyin.imgTileIcon.setImageResource(KtvDashboardTile.PINYIN.iconRes)
-        binding.tilePinyin.txtTileTitle.text = KtvDashboardTile.PINYIN.title
-        binding.tilePinyin.txtTileSubtitle.text = KtvDashboardTile.PINYIN.subtitle
-        binding.tilePinyin.tileRoot.setOnClickListener {
-            lastFocusedTile = KtvDashboardTile.PINYIN
-            onTileClick?.invoke(KtvDashboardTile.PINYIN)
+    private fun addTileArtwork(tile: KtvDashboardTile, tileRoot: View) {
+        if (tile == KtvDashboardTile.SINGER || tile == KtvDashboardTile.SONG_NAME) {
+            val switcher = ImageSwitcher(context).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                )
+                isFocusable = false
+                isClickable = false
+                setAnimateFirstView(false)
+                setFactory {
+                    ImageView(context).apply {
+                        layoutParams = FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                        )
+                        scaleType = ImageView.ScaleType.FIT_XY
+                        contentDescription = null
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                        isClickable = false
+                        isFocusable = false
+                    }
+                }
+                inAnimation = AnimationUtils.loadAnimation(context, R.anim.ktv_photo_carousel_in)
+                outAnimation = AnimationUtils.loadAnimation(context, R.anim.ktv_photo_carousel_out)
+                setImageResource(if (tile == KtvDashboardTile.SINGER) {
+                    photoPairs.first().singerImageRes
+                } else {
+                    photoPairs.first().songImageRes
+                })
+            }
+            photoSwitchers[tile] = switcher
+            (tileRoot as FrameLayout).addView(switcher, 0)
+            return
         }
 
-        // 2. 歌手点歌
-        binding.tileSinger.imgTileIcon.setImageResource(KtvDashboardTile.SINGER.iconRes)
-        binding.tileSinger.txtTileTitle.text = KtvDashboardTile.SINGER.title
-        binding.tileSinger.txtTileSubtitle.text = KtvDashboardTile.SINGER.subtitle
-        binding.tileSinger.tileRoot.setOnClickListener {
-            lastFocusedTile = KtvDashboardTile.SINGER
-            onTileClick?.invoke(KtvDashboardTile.SINGER)
+        val artwork = ImageView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            )
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            contentDescription = null
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            isClickable = false
+            isFocusable = false
+            setImageResource(tile.artworkRes)
         }
-
-        // 3. 分类点歌
-        binding.tileCategory.imgTileIcon.setImageResource(KtvDashboardTile.CATEGORY.iconRes)
-        binding.tileCategory.txtTileTitle.text = KtvDashboardTile.CATEGORY.title
-        binding.tileCategory.txtTileSubtitle.text = KtvDashboardTile.CATEGORY.subtitle
-        binding.tileCategory.tileRoot.setOnClickListener {
-            lastFocusedTile = KtvDashboardTile.CATEGORY
-            onTileClick?.invoke(KtvDashboardTile.CATEGORY)
-        }
-
-        // 4. 语种点歌
-        binding.tileLanguage.imgTileIcon.setImageResource(KtvDashboardTile.LANGUAGE.iconRes)
-        binding.tileLanguage.txtTileTitle.text = KtvDashboardTile.LANGUAGE.title
-        binding.tileLanguage.txtTileSubtitle.text = KtvDashboardTile.LANGUAGE.subtitle
-        binding.tileLanguage.tileRoot.setOnClickListener {
-            lastFocusedTile = KtvDashboardTile.LANGUAGE
-            onTileClick?.invoke(KtvDashboardTile.LANGUAGE)
-        }
-
-        // 5. 我的收藏
-        binding.tileFavorites.imgTileIcon.setImageResource(KtvDashboardTile.FAVORITES.iconRes)
-        binding.tileFavorites.txtTileTitle.text = KtvDashboardTile.FAVORITES.title
-        binding.tileFavorites.txtTileSubtitle.text = KtvDashboardTile.FAVORITES.subtitle
-        binding.tileFavorites.tileRoot.setOnClickListener {
-            lastFocusedTile = KtvDashboardTile.FAVORITES
-            onTileClick?.invoke(KtvDashboardTile.FAVORITES)
-        }
-
-        // 6. 点唱历史
-        binding.tileHistory.imgTileIcon.setImageResource(KtvDashboardTile.HISTORY.iconRes)
-        binding.tileHistory.txtTileTitle.text = KtvDashboardTile.HISTORY.title
-        binding.tileHistory.txtTileSubtitle.text = KtvDashboardTile.HISTORY.subtitle
-        binding.tileHistory.tileRoot.setOnClickListener {
-            lastFocusedTile = KtvDashboardTile.HISTORY
-            onTileClick?.invoke(KtvDashboardTile.HISTORY)
-        }
-
-        // 7. 已点歌曲
-        binding.tileQueue.imgTileIcon.setImageResource(KtvDashboardTile.ORDERED_QUEUE.iconRes)
-        binding.tileQueue.txtTileTitle.text = KtvDashboardTile.ORDERED_QUEUE.title
-        binding.tileQueue.txtTileSubtitle.text = KtvDashboardTile.ORDERED_QUEUE.subtitle
-        binding.tileQueue.tileRoot.setOnClickListener {
-            lastFocusedTile = KtvDashboardTile.ORDERED_QUEUE
-            onTileClick?.invoke(KtvDashboardTile.ORDERED_QUEUE)
-        }
+        (tileRoot as FrameLayout).addView(artwork, 0)
     }
 
-    fun updateQueueCount(count: Int) {
-        binding.tileQueue.txtTileSubtitle.text = if (count > 0) "当前排队 $count 首歌曲" else "暂无排队歌曲"
+    private fun showPhotoPair(index: Int) {
+        val pair = photoPairs[index]
+        photoSwitchers[KtvDashboardTile.SINGER]?.setImageResource(pair.singerImageRes)
+        photoSwitchers[KtvDashboardTile.SONG_NAME]?.setImageResource(pair.songImageRes)
+    }
+
+    fun pausePhotoCarousel(reason: KtvDashboardPhotoCarousel.PauseReason) {
+        photoCarousel.pause(reason)
+    }
+
+    fun resumePhotoCarousel(reason: KtvDashboardPhotoCarousel.PauseReason) {
+        photoCarousel.resume(reason)
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        photoCarousel.setAttached(true)
+        photoCarousel.setVisible(isShown)
+    }
+
+    override fun onDetachedFromWindow() {
+        photoCarousel.setAttached(false)
+        super.onDetachedFromWindow()
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        photoCarousel.setVisible(isShown)
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        photoCarousel.setVisible(isShown)
+    }
+
+    private fun createRoundedClipSurface(): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        setColor(android.graphics.Color.TRANSPARENT)
+        setCornerRadius(resources.getDimension(R.dimen.ktv_theme_card_corner_radius))
+    }
+
+    private fun createFocusOverlay(): StateListDrawable {
+        val cornerRadius = resources.getDimension(R.dimen.ktv_theme_card_corner_radius)
+        val focusStroke = resources.getDimension(R.dimen.ktv_theme_focus_stroke_width).roundToInt().coerceAtLeast(2)
+        val focusColor = ContextCompat.getColor(context, R.color.ktv_focus_blue)
+
+        val focused = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(android.graphics.Color.TRANSPARENT)
+            setCornerRadius(cornerRadius)
+            setStroke(focusStroke, focusColor)
+        }
+
+        val normal = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(android.graphics.Color.TRANSPARENT)
+            setCornerRadius(cornerRadius)
+        }
+
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused), focused)
+            addState(intArrayOf(), normal)
+        }
     }
 
     fun requestDashboardFocus(): Boolean {
         val focusTile = KtvDashboardTile.restoreDashboardFocus(lastFocusedTile)
         lastFocusedTile = focusTile
-        val targetView = when (focusTile) {
-            KtvDashboardTile.PINYIN -> binding.tilePinyin.tileRoot
-            KtvDashboardTile.SINGER -> binding.tileSinger.tileRoot
-            KtvDashboardTile.CATEGORY -> binding.tileCategory.tileRoot
-            KtvDashboardTile.LANGUAGE -> binding.tileLanguage.tileRoot
-            KtvDashboardTile.RANKING -> binding.tilePinyin.tileRoot
-            KtvDashboardTile.FAVORITES -> binding.tileFavorites.tileRoot
-            KtvDashboardTile.HISTORY -> binding.tileHistory.tileRoot
-            KtvDashboardTile.ORDERED_QUEUE -> binding.tileQueue.tileRoot
-        }
-        return targetView.requestFocus()
+        return tileContent.getValue(focusTile).root.requestFocus()
     }
+
+    private data class KtvDashboardPhotoPair(
+        val singerImageRes: Int,
+        val songImageRes: Int,
+    )
 }

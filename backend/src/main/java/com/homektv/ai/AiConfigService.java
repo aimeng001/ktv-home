@@ -43,7 +43,8 @@ public class AiConfigService {
         return new ConfigResponse(config.enabled(), config.baseUrl(), config.bulkModel(), config.reasoningModel(),
                 config.timeoutSeconds(), config.identityThreshold(), config.classificationThreshold(), config.jsonMode(),
                 config.bulkConcurrency(), config.reasoningConcurrency(), config.apiKey() != null && !config.apiKey().isBlank(),
-                suffix(config.apiKey()), sourceMap(), capabilities, lastTestAt.isBlank() ? null : lastTestAt);
+                suffix(config.apiKey()), sourceMap(), capabilities, lastTestAt.isBlank() ? null : lastTestAt,
+                isAllowPrivateNetwork());
     }
 
     @Transactional(readOnly = true)
@@ -83,6 +84,7 @@ public class AiConfigService {
         put("json_mode", update.jsonMode() == null ? "AUTO" : update.jsonMode().toUpperCase());
         put("bulk_concurrency", update.bulkConcurrency());
         put("reasoning_concurrency", update.reasoningConcurrency());
+        if (update.allowPrivateNetwork() != null) put("allow_private_network", update.allowPrivateNetwork());
         if (Boolean.TRUE.equals(update.clearApiKey())) secrets.deleteById(SECRET_KEY);
         if (update.apiKey() != null && !update.apiKey().isBlank()) {
             SecretCryptoService.EncryptedValue encrypted = crypto.encrypt(SECRET_KEY, update.apiKey().trim());
@@ -114,7 +116,7 @@ public class AiConfigService {
 
     /** Validates the destination immediately before a request can carry the API key. */
     public void validateOutboundBaseUrl(String baseUrl) {
-        AiBaseUrlPolicy.requireSafe(baseUrl, properties.getAi().isAllowPrivateNetwork());
+        AiBaseUrlPolicy.requireSafe(baseUrl, isAllowPrivateNetwork());
     }
 
     /** Returns whether an AI request can be made without throwing a user-facing configuration error. */
@@ -136,7 +138,10 @@ public class AiConfigService {
         String baseUrl = value.baseUrl() == null ? "" : value.baseUrl().trim();
         if (Boolean.TRUE.equals(value.enabled()) && baseUrl.isBlank())
             throw new ApiException("INVALID_AI_CONFIG", "启用 AI 时必须填写 API Base URL");
-        if (!baseUrl.isBlank()) AiBaseUrlPolicy.normalizeAndValidate(baseUrl, properties.getAi().isAllowPrivateNetwork());
+        boolean allowPrivate = value.allowPrivateNetwork() != null
+                ? value.allowPrivateNetwork()
+                : isAllowPrivateNetwork();
+        if (!baseUrl.isBlank()) AiBaseUrlPolicy.normalizeAndValidate(baseUrl, allowPrivate);
         if (Boolean.TRUE.equals(value.enabled()) && bulkModel.isBlank())
             throw new ApiException("INVALID_AI_CONFIG", "批量模型 ID 不能为空且不能超过 200 个字符");
         if (bulkModel.length() > 200)
@@ -162,7 +167,7 @@ public class AiConfigService {
     private Map<String, String> sourceMap() {
         Map<String, String> result = new LinkedHashMap<>();
         for (String field : new String[]{"enabled", "base_url", "bulk_model", "reasoning_model", "timeout_seconds",
-                "identity_threshold", "classification_threshold", "json_mode", "bulk_concurrency", "reasoning_concurrency"}) {
+                "identity_threshold", "classification_threshold", "json_mode", "bulk_concurrency", "reasoning_concurrency", "allow_private_network"}) {
             result.put(field, settings.existsById(PREFIX + field) ? "DATABASE" : hasEnvironment(field) ? "ENVIRONMENT" : "DEFAULT");
         }
         result.put("api_key", secrets.existsById(SECRET_KEY) ? "DATABASE" :
@@ -181,6 +186,7 @@ public class AiConfigService {
             case "json_mode" -> "KTV_AI_JSON_MODE";
             case "bulk_concurrency" -> "KTV_AI_BULK_CONCURRENCY";
             case "reasoning_concurrency" -> "KTV_AI_REASONING_CONCURRENCY";
+            case "allow_private_network" -> "KTV_AI_ALLOW_PRIVATE_NETWORK";
             default -> "KTV_AI_ENABLED";
         };
         return System.getenv(name) != null;
@@ -221,6 +227,10 @@ public class AiConfigService {
 
     private String blank(String value) { return value == null ? "" : value.trim(); }
 
+    public boolean isAllowPrivateNetwork() {
+        return setting("allow_private_network", properties.getAi().isAllowPrivateNetwork(), Boolean.class);
+    }
+
     public enum JsonMode { AUTO, FORCE, PROMPT_ONLY }
     public record ResolvedConfig(boolean enabled, String baseUrl, String bulkModel, String reasoningModel,
                                  int timeoutSeconds, double identityThreshold, double classificationThreshold,
@@ -232,10 +242,28 @@ public class AiConfigService {
     public record ConfigUpdate(boolean enabled, String baseUrl, String apiKey, Boolean clearApiKey,
                                String bulkModel, String reasoningModel, int timeoutSeconds,
                                double identityThreshold, double classificationThreshold, String jsonMode,
-                               int bulkConcurrency, int reasoningConcurrency) { }
+                               int bulkConcurrency, int reasoningConcurrency, Boolean allowPrivateNetwork) {
+        public ConfigUpdate(boolean enabled, String baseUrl, String apiKey, Boolean clearApiKey,
+                            String bulkModel, String reasoningModel, int timeoutSeconds,
+                            double identityThreshold, double classificationThreshold, String jsonMode,
+                            int bulkConcurrency, int reasoningConcurrency) {
+            this(enabled, baseUrl, apiKey, clearApiKey, bulkModel, reasoningModel, timeoutSeconds,
+                    identityThreshold, classificationThreshold, jsonMode, bulkConcurrency, reasoningConcurrency, null);
+        }
+    }
     public record ConfigResponse(boolean enabled, String baseUrl, String bulkModel, String reasoningModel,
                                  int timeoutSeconds, double identityThreshold, double classificationThreshold,
                                  JsonMode jsonMode, int bulkConcurrency, int reasoningConcurrency,
                                  boolean apiKeyConfigured, String apiKeySuffix, Map<String, String> sources,
-                                 Map<String, Object> capabilities, String lastTestAt) { }
+                                 Map<String, Object> capabilities, String lastTestAt, Boolean allowPrivateNetwork) {
+        public ConfigResponse(boolean enabled, String baseUrl, String bulkModel, String reasoningModel,
+                              int timeoutSeconds, double identityThreshold, double classificationThreshold,
+                              JsonMode jsonMode, int bulkConcurrency, int reasoningConcurrency,
+                              boolean apiKeyConfigured, String apiKeySuffix, Map<String, String> sources,
+                              Map<String, Object> capabilities, String lastTestAt) {
+            this(enabled, baseUrl, bulkModel, reasoningModel, timeoutSeconds, identityThreshold,
+                    classificationThreshold, jsonMode, bulkConcurrency, reasoningConcurrency,
+                    apiKeyConfigured, apiKeySuffix, sources, capabilities, lastTestAt, false);
+        }
+    }
 }

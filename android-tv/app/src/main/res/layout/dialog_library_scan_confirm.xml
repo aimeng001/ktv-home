@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_library_scan_dialog"
+    android:padding="12dp">
+
+    <TextView
+        android:id="@+id/txtLibraryScanInfoIcon"
+        android:layout_width="54dp"
+        android:layout_height="54dp"
+        android:background="@drawable/bg_library_scan_info_icon"
+        android:gravity="center"
+        android:text="i"
+        android:textColor="#FFFFFFFF"
+        android:textSize="40sp"
+        android:textStyle="bold"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/txtLibraryScanTitle"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="13dp"
+        android:text="更新歌库"
+        android:textColor="#FF111111"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/txtLibraryScanInfoIcon"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/txtLibraryScanMessage"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="3dp"
+        android:text="即将扫描当前曲库，您确定要执行此操作吗？"
+        android:textColor="#FF363636"
+        android:textSize="14sp"
+        android:maxLines="2"
+        android:ellipsize="end"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/txtLibraryScanInfoIcon"
+        app:layout_constraintTop_toBottomOf="@id/txtLibraryScanTitle" />
+
+    <TextView
+        android:id="@android:id/button2"
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:background="@drawable/bg_library_scan_cancel"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:text="取消"
+        android:textColor="#FFFFFFFF"
+        android:textSize="13sp"
+        android:nextFocusLeft="@android:id/button1"
+        android:nextFocusRight="@android:id/button1"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toStartOf="@android:id/button1"
+        android:layout_marginEnd="10dp"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@android:id/button1"
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:background="@drawable/bg_library_scan_confirm"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:text="确定"
+        android:textColor="#FFFFFFFF"
+        android:textSize="13sp"
+        android:nextFocusLeft="@android:id/button2"
+        android:nextFocusRight="@android:id/button2"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="4dp" />
+</androidx.constraintlayout.widget.ConstraintLayout>

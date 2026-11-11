@@ -12,6 +12,9 @@ class KioskCatalogActionRouterTest {
 
         router.search("zjl")
         router.defaultSongs()
+        router.allSongs()
+        router.moreAllSongs()
+        router.stopAllSongs()
         router.artists()
         router.rankings()
         router.newSongs()
@@ -25,6 +28,9 @@ class KioskCatalogActionRouterTest {
             listOf(
                 "query:zjl",
                 "query:",
+                "all-songs",
+                "more-all-songs",
+                "stop-all-songs",
                 "artists",
                 "ranking",
                 "new-songs",
@@ -54,7 +60,7 @@ class KioskCatalogActionRouterTest {
             calls += "new-songs"
         }
 
-        override fun loadArtists(gender: String, initial: String, restorePage: Int) {
+        override fun loadArtists(gender: String, initial: String, restorePage: Int, region: String) {
             calls += "artists"
         }
 
@@ -75,5 +81,16 @@ class KioskCatalogActionRouterTest {
             calls += "tags"
         }
         override fun loadMoreCatalog() = Unit
+        override fun loadKioskAllSongs() {
+            calls += "all-songs"
+        }
+
+        override fun loadMoreKioskAllSongs() {
+            calls += "more-all-songs"
+        }
+
+        override fun stopKioskAllSongs() {
+            calls += "stop-all-songs"
+        }
     }
 }

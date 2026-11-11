@@ -35,7 +35,6 @@
  * favorite toggling, and song ordering.
  */
 import { computed, ref } from 'vue'
-import api from '../api/client'
 import { useFavoritesStore } from '../stores/favorites'
 import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'

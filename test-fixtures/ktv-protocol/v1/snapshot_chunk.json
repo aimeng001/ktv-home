@@ -23,7 +23,12 @@
           "playCount": 23,
           "artistAvatarUrl": "/api/artists/avatar?key=%E5%88%98%E8%8B%A5%E8%8B%B1",
           "playable": true,
-          "unavailableReason": null
+          "unavailableReason": null,
+          "titlePinyin": "",
+          "titleInitials": "",
+          "artistPinyin": "",
+          "artistInitials": "",
+          "resolution": null
         },
         "orderedByNick": "点歌用户"
       },
@@ -79,7 +84,12 @@
           "playCount": 4,
           "artistAvatarUrl": null,
           "playable": true,
-          "unavailableReason": null
+          "unavailableReason": null,
+          "titlePinyin": "",
+          "titleInitials": "",
+          "artistPinyin": "",
+          "artistInitials": "",
+          "resolution": null
         },
         "orderedBy": 21,
         "orderedByNick": "等待用户",

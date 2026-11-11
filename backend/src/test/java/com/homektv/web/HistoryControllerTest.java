@@ -164,6 +164,23 @@ class HistoryControllerTest {
     }
 
     @Test
+    void recentAnonymousRowsDoNotFailWhenNoRequesterIdsExist() {
+        when(historyRepository.findTop50ByPlayedAtGreaterThanEqualOrderByPlayedAtDesc(any()))
+                .thenReturn(List.of(history(305L, 11L, null)));
+        when(songRepository.findAllById(any())).thenReturn(List.of(song(11L, "晴天")));
+
+        assertThat(controller().recent(null, false))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.song().title()).isEqualTo("晴天");
+                    assertThat(item.playedByNick()).isEqualTo("家人");
+                    assertThat(item.mine()).isFalse();
+                });
+
+        verify(userRepository, never()).findAllById(any());
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void dtoConversionTreatsNullCollectionsAndNullSongsAsEmpty() throws Exception {
         Method converter = HistoryController.class.getDeclaredMethod("toDtos", Iterable.class);

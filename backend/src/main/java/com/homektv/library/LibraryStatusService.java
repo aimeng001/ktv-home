@@ -66,6 +66,10 @@ public class LibraryStatusService {
         String rootIdentityState = identityState(snapshot);
         boolean countsKnown = "READABLE".equals(currentRootState)
                 && "MATCH".equals(rootIdentityState);
+        boolean scanRequestSupported = LibraryModePolicy.isExternalReadOnly(props)
+                && "READABLE".equals(currentRootState)
+                && ("MATCH".equals(rootIdentityState)
+                    || ("UNKNOWN".equals(rootIdentityState) && needsBootstrapSafely()));
 
         return new PublicStatus(
                 totalSongs,
@@ -82,8 +86,17 @@ public class LibraryStatusService {
                 pendingFiles,
                 catalogRevision,
                 statusRevision,
+                scanRequestSupported,
                 snapshot == null ? null : snapshot.errorCode(),
                 snapshot == null ? null : snapshot.updatedAt());
+    }
+
+    private boolean needsBootstrapSafely() {
+        try {
+            return stateStore.needsBootstrap(props);
+        } catch (RuntimeException unavailable) {
+            return false;
+        }
     }
 
     private String identityState(LibraryScanStateStore.Snapshot snapshot) {
@@ -121,6 +134,7 @@ public class LibraryStatusService {
             long probePendingFiles,
             long catalogRevision,
             long statusRevision,
+            boolean scanRequestSupported,
             String errorCode,
             OffsetDateTime updatedAt) {
         public PublicStatus(long totalSongs, String libraryMode, String rootState,
@@ -131,7 +145,7 @@ public class LibraryStatusService {
                             OffsetDateTime updatedAt) {
             this(totalSongs, libraryMode, rootState, "UNKNOWN", true, scanState, phase,
                     discoveredFiles, indexedFiles, indexedSongs, readySongs,
-                    probePendingFiles, catalogRevision, statusRevision, errorCode, updatedAt);
+                    probePendingFiles, catalogRevision, statusRevision, false, errorCode, updatedAt);
         }
     }
 }

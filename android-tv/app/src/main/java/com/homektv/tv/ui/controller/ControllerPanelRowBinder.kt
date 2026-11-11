@@ -301,7 +301,6 @@ internal class ControllerPanelRowBinder(
         RecyclerView.LayoutParams.WRAP_CONTENT,
     )
 
-    private fun matchWrapParams() = LinearLayout.LayoutParams(-1, -2)
 
     private fun wrapParams() = LinearLayout.LayoutParams(-2, -2)
 

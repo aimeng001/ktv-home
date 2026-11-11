@@ -21,11 +21,17 @@ data class SongDto(
     val coverUrl: String? = null,      // 形如 /api/cover/{id}
     val playCount: Int = 0,
     val artistAvatarUrl: String? = null,
-    /** Optional eight-digit commercial catalog number parsed from the filename. */
+    /** Optional 8–10 digit commercial catalog number parsed from verified filename metadata. */
     val catalogNumber: String = "",
     /** Server-side readiness; old servers omit it and remain backward compatible. */
     val playable: Boolean = true,
     val unavailableReason: String? = null,
+    val titlePinyin: String = "",
+    val titleInitials: String = "",
+    val artistPinyin: String = "",
+    val artistInitials: String = "",
+    /** Resolution from an already probed video source, e.g. 1920x1080. */
+    val resolution: String? = null,
 )
 
 @Serializable
@@ -44,8 +50,18 @@ data class LibraryStatus(
     val probePendingFiles: Long = 0,
     val catalogRevision: Long = 0,
     val statusRevision: Long = 0,
+    /** The connected service has a real external-library scan path for this root. */
+    val scanRequestSupported: Boolean = false,
     val errorCode: String? = null,
     val updatedAt: String? = null,
+)
+
+@Serializable
+data class LibraryScanSubmission(
+    val accepted: Boolean = false,
+    val requestStatus: String = "UNKNOWN",
+    val scanState: String = "UNKNOWN",
+    val errorCode: String? = null,
 )
 
 @Serializable
@@ -141,6 +157,12 @@ data class QueueSnapshot(
     val playback: PlaybackDescriptor = PlaybackDescriptor(),
 )
 
+/** Playback position broadcast by the server, tied to the queue item that produced it. */
+data class PlaybackProgress(
+    val queueId: Long?,
+    val positionMs: Long,
+)
+
 @Serializable
 data class QueueSnapshotHeader(
     val playing: NowPlaying? = null,
@@ -222,7 +244,7 @@ data class SongDetail(
     val playCount: Int = 0,
     val files: List<FileSource> = emptyList(),
     val artistAvatarUrl: String? = null,
-    /** Optional eight-digit commercial catalog number parsed from the filename. */
+    /** Optional 8–10 digit commercial catalog number parsed from verified filename metadata. */
     val catalogNumber: String = "",
 )
 
@@ -255,6 +277,7 @@ data class ArtistItem(
     val songCount: Int = 0,
     val artistKind: String = "PERSON",
     val avatarUrl: String? = null,
+    val region: String? = null,
 )
 
 @Serializable
@@ -263,6 +286,8 @@ data class ArtistPage(
     val total: Long = 0,
     val page: Int = 0,
     val size: Int = 30,
+    val region: String? = null,
+    val regionDataAvailable: Boolean = false,
 )
 
 @Serializable

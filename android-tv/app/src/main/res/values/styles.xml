@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="Widget.HomeKtv.CommercialCard" parent="@android:style/Widget.TextView">
+        <item name="android:background">@drawable/bg_ktv_card_focused</item>
+        <item name="android:stateListAnimator">@animator/ktv_card_focus_scale</item>
+    </style>
+
     <style name="TextAppearance.HomeKtv.PageTitle" parent="@android:style/TextAppearance">
         <item name="android:fontFamily">sans-serif</item>
         <item name="android:textColor">@color/text</item>
@@ -35,4 +40,13 @@
         <item name="android:textSize">@dimen/ktv_text_tile_title</item>
     </style>
     <style name="TextAppearance.HomeKtv.TileSubtitle" parent="TextAppearance.HomeKtv.Secondary" />
+    <style name="KtvDashboardTileCaption" parent="TextAppearance.HomeKtv.TileTitle">
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold|italic</item>
+        <item name="android:shadowColor">#88000000</item>
+        <item name="android:shadowDx">0</item>
+        <item name="android:shadowDy">1</item>
+        <item name="android:shadowRadius">1</item>
+    </style>
 </resources>

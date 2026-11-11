@@ -16,6 +16,7 @@ data class RealtimeEnvelope(
     val event: String? = null,
     val snapshot: QueueSnapshot? = null,
     val roomHost: RoomHostStatus? = null,
+    val progress: PlaybackProgress? = null,
 )
 
 object PlaybackSnapshotBridge {
@@ -56,7 +57,22 @@ object PlaybackSnapshotBridge {
             val current = _events.value
             val base = if (current != null && current.epoch == epoch && current.serverHost == key) current
             else RealtimeEnvelope(key, epoch, connected = true)
-            publishLocked(base.copy(connected = true, event = event, snapshot = snapshot))
+            publishLocked(base.copy(connected = true, event = event, snapshot = snapshot, progress = null))
+        }
+    }
+
+    /** Projects live progress only onto the active snapshot for the same server session and queue item. */
+    fun publishProgress(serverHost: String?, epoch: Long, progress: PlaybackProgress) {
+        val key = serverHost.orEmpty()
+        synchronized(lock) {
+            val current = _events.value ?: return
+            if (current.serverHost != key || current.epoch != epoch || !current.connected) return
+            val playing = current.snapshot?.playing ?: return
+            if (progress.queueId != null && progress.queueId != playing.queueId) return
+            publishLocked(current.copy(
+                event = "progress",
+                progress = progress.copy(positionMs = progress.positionMs.coerceAtLeast(0L)),
+            ))
         }
     }
 
@@ -75,7 +91,7 @@ object PlaybackSnapshotBridge {
             val current = _events.value
             val base = if (current != null && current.epoch == epoch && current.serverHost == key) current
             else RealtimeEnvelope(key, epoch, connected = true)
-            publishLocked(base.copy(connected = true, event = "room_host_changed", roomHost = status))
+            publishLocked(base.copy(connected = true, event = "room_host_changed", roomHost = status, progress = null))
         }
     }
 
@@ -86,10 +102,6 @@ object PlaybackSnapshotBridge {
             activeEpochByServer[key] ?: (++nextEpoch).also { activeEpochByServer[key] = it }
         }
         publishRoomHost(key, epoch, status)
-    }
-
-    private fun publishEnvelope(envelope: RealtimeEnvelope) {
-        synchronized(lock) { publishLocked(envelope) }
     }
 
     private fun publishLocked(envelope: RealtimeEnvelope) {

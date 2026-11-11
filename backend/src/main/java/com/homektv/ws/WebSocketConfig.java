@@ -47,6 +47,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
         ServletServerContainerFactoryBean container = new ServletServerContainerFactoryBean();
         container.setMaxTextMessageBufferSize(KtvWebSocketHandler.MAX_MESSAGE_BYTES);
         container.setMaxBinaryMessageBufferSize(KtvWebSocketHandler.MAX_MESSAGE_BYTES);
+        container.setAsyncSendTimeout(10_000L);
         return container;
     }
 }

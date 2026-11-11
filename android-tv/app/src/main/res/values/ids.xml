@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="btnFullscreenPause" type="id" />
+    <item name="btnFullscreenVocal" type="id" />
+    <item name="btnFullscreenRestart" type="id" />
+    <item name="btnFullscreenNext" type="id" />
+    <item name="btnFullscreenVolumeDown" type="id" />
+    <item name="btnFullscreenVolumeUp" type="id" />
+    <item name="btnFullscreenMute" type="id" />
+    <item name="btnFullscreenKiosk" type="id" />
+    <item name="btnFullscreenQueue" type="id" />
+    <item name="btnFullscreenHome" type="id" />
+    <item name="fullscreenActionCircle" type="id" />
+    <item name="fullscreenActionLabel" type="id" />
+</resources>

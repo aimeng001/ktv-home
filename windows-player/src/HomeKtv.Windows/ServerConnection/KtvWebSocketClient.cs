@@ -80,7 +80,7 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
 
     public event Action<bool>? ConnectionChanged;
     public event Func<string, QueueSnapshot, CancellationToken, Task>? SnapshotReceived;
-    public event Action<long>? ProgressReceived;
+    public event Action<PlaybackProgress>? ProgressReceived;
     public event Action<Exception>? ConnectionError;
     public event Action<PlayerAssignment>? PlayerAssignmentReceived;
     public event Action<string, string>? ReliableMessageRejected;
@@ -317,9 +317,15 @@ public sealed class KtvWebSocketClient : IAsyncDisposable
         }
 
         if (message.Type == "progress" && message.Payload is { } progress
-            && progress.TryGetProperty("position_ms", out var position))
+            && progress.TryGetProperty("position_ms", out var position)
+            && position.TryGetInt64(out var positionMs))
         {
-            ProgressReceived?.Invoke(Math.Max(0, position.GetInt64()));
+            long? progressQueueId = null;
+            if (progress.TryGetProperty("queue_id", out var queueIdValue))
+            {
+                progressQueueId = queueIdValue.TryGetInt64(out var parsedQueueId) ? parsedQueueId : 0L;
+            }
+            ProgressReceived?.Invoke(new PlaybackProgress(progressQueueId, Math.Max(0, positionMs)));
         }
     }
 

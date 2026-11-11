@@ -1,113 +1,199 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/keyboardContentRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:clipToPadding="false"
-    android:fillViewport="false"
-    android:focusable="false"
-    android:focusableInTouchMode="false"
-    android:descendantFocusability="afterDescendants"
-    android:overScrollMode="ifContentScrolls">
+    android:background="@drawable/bg_ktv_keyboard_panel"
+    android:orientation="vertical"
+    android:padding="8dp">
 
-    <LinearLayout
-        android:id="@+id/keyboardContentRoot"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="12dp"
-        android:background="@drawable/player_glass">
-
-    <!-- 检索关键词预览与快捷清除栏 -->
+    <!-- 顶部搜索输入栏 -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="48dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:background="@drawable/bg_input"
-        android:paddingHorizontal="14dp">
+        android:paddingHorizontal="6dp">
 
-        <TextView
-            android:id="@+id/txtKeywordLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/keyboard_keyword_prefix"
-            android:textColor="@color/gold"
-            android:textSize="15sp"
-            android:textStyle="bold" />
+        <ImageView
+            android:id="@+id/imgSearchLens"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginEnd="6dp"
+            android:alpha="0.6"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_input_search" />
 
         <TextView
             android:id="@+id/txtKeywordDisplay"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:ellipsize="end"
             android:hint="@string/keyboard_search_help"
-            android:textColor="@android:color/white"
-            android:textColorHint="@color/dim2"
-            android:textSize="20sp"
-            android:textStyle="bold"
             android:singleLine="true"
-            android:ellipsize="end" />
+            android:textColor="#FFFFFF"
+            android:textColorHint="#8A909E"
+            android:textSize="13sp" />
 
-        <Button
+        <TextView
+            android:id="@+id/txtPendingZhuyin"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
+            android:singleLine="true"
+            android:textColor="#A8B7D4"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/txtKeywordLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:visibility="gone" />
+
+        <ImageView
             android:id="@+id/btnBackspace"
-            android:layout_width="68dp"
-            android:layout_height="38dp"
-            android:background="@drawable/btn_keyboard_key"
-            android:textColor="@color/color_keyboard_key_text"
-            android:text="@string/keyboard_backspace"
-            android:textSize="13sp"
-            android:focusable="true" />
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:background="@drawable/bg_ktv_input_action_btn"
+            android:src="@drawable/ic_search_delete"
+            android:scaleType="fitCenter"
+            android:padding="3dp"
+            android:focusable="true"
+            android:clickable="true"
+            android:contentDescription="退格" />
 
-        <Button
+        <ImageView
             android:id="@+id/btnClear"
-            android:layout_width="68dp"
-            android:layout_height="38dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/btn_keyboard_key"
-            android:textColor="@color/color_keyboard_key_text"
-            android:text="@string/keyboard_clear_action"
-            android:textSize="13sp"
-            android:focusable="true" />
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_ktv_input_action_btn"
+            android:src="@drawable/ic_search_clear"
+            android:scaleType="fitCenter"
+            android:padding="3dp"
+            android:focusable="true"
+            android:clickable="true"
+            android:contentDescription="清空" />
     </LinearLayout>
 
-    <!-- 字母按键网格：7 列布局，与搜索设计一致 -->
-    <GridLayout
-        android:id="@+id/keyboardGrid"
+    <!-- 细分割线：对标 IKTV 50.0.4 input_panel_cutline -->
+    <View
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:columnCount="6"
-        android:useDefaultMargins="false" />
+        android:layout_height="1dp"
+        android:layout_marginVertical="4dp"
+        android:background="#45B8B8B8" />
 
-    <!-- 底部功能切换栏 -->
+    <!-- 下方主区域：左侧 5 列按键 + 右侧竖排 5 模式切换栏 -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:orientation="horizontal">
 
-        <Button style="?android:attr/buttonBarButtonStyle"
-            android:id="@+id/btnToggleT9"
+        <!-- 左侧按键网格 -->
+        <ScrollView
+            android:id="@+id/keyboardGridScroll"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="match_parent"
             android:layout_weight="1"
-            android:background="@drawable/btn_keyboard_key"
-            android:textColor="@color/color_keyboard_key_text"
-            android:text="@string/keyboard_switch_full"
-            android:textSize="13sp"
-            android:focusable="true" />
+            android:clipToPadding="false"
+            android:fillViewport="true"
+            android:focusable="false"
+            android:overScrollMode="never">
 
-        <Button style="?android:attr/buttonBarButtonStyle"
-            android:id="@+id/btnSwitchIme"
-            android:layout_width="0dp"
-            android:layout_height="44dp"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/btn_keyboard_key"
-            android:textColor="@color/color_keyboard_key_text"
-            android:text="@string/keyboard_ime_action"
-            android:textSize="13sp"
-            android:focusable="true" />
+            <GridLayout
+                android:id="@+id/keyboardGrid"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:columnCount="5"
+                android:useDefaultMargins="false" />
+        </ScrollView>
+
+        <!-- 模式切换栏间距 -->
+        <View
+            android:layout_width="4dp"
+            android:layout_height="match_parent" />
+
+        <!-- 右侧竖排 5 模式切换栏：对标 IKTV 50.0.4 一体化贴边直栏 -->
+        <LinearLayout
+            android:id="@+id/imeModeSwitchContainer"
+            android:layout_width="48dp"
+            android:layout_height="match_parent"
+            android:orientation="vertical">
+
+            <Button
+                android:id="@+id/btnToggleT9"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_ktv_ime_mode_btn"
+                android:focusable="true"
+                android:minWidth="0dp"
+                android:padding="0dp"
+                android:text="ABC"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btnMode123"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_ktv_ime_mode_btn"
+                android:focusable="true"
+                android:minWidth="0dp"
+                android:padding="0dp"
+                android:text="123"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btnModeHandwrite"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_ktv_ime_mode_btn"
+                android:focusable="true"
+                android:visibility="visible"
+                android:minWidth="0dp"
+                android:padding="0dp"
+                android:text="手写"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnModeZhuyin"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_ktv_ime_mode_btn"
+                android:focusable="true"
+                android:visibility="visible"
+                android:minWidth="0dp"
+                android:padding="0dp"
+                android:text="注音"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnSwitchIme"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_ktv_ime_mode_btn"
+                android:focusable="true"
+                android:minWidth="0dp"
+                android:padding="0dp"
+                android:text="系统"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp" />
+        </LinearLayout>
     </LinearLayout>
-    </LinearLayout>
-</ScrollView>
+</LinearLayout>

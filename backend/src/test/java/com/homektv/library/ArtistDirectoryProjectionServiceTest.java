@@ -124,7 +124,7 @@ class ArtistDirectoryProjectionServiceTest {
                 "lee-hom", "王力宏", "W", "男歌手", 42L, true, "PERSON", "/data/artist/lee.webp"));
         var arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
         verify(jdbc).query(contains("LIMIT ? OFFSET ?"), any(RowMapper.class), arguments.capture());
-        assertThat(arguments.getValue()).containsExactly("女歌手", "女歌手", "", "", 100, 0);
+        assertThat(arguments.getValue()).containsExactly("女歌手", "女歌手", "", "", "", "", 100, 0);
     }
 
     @Test
@@ -141,7 +141,7 @@ class ArtistDirectoryProjectionServiceTest {
         assertThat(result.rows()).isEmpty();
         var arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
         verify(jdbc).query(contains("LIMIT ? OFFSET ?"), any(RowMapper.class), arguments.capture());
-        assertThat(arguments.getValue()).containsExactly("", "", "", "", 1, 2);
+        assertThat(arguments.getValue()).containsExactly("", "", "", "", "", "", 1, 2);
     }
 
     @Test
@@ -156,8 +156,8 @@ class ArtistDirectoryProjectionServiceTest {
         assertThat(service.initials(" 女歌手 ")).contains(List.of("A", "W"));
 
         var arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
-        verify(jdbc).query(contains("SELECT DISTINCT initial"), any(RowMapper.class), arguments.capture());
-        assertThat(arguments.getValue()).containsExactly("女歌手", "女歌手");
+        verify(jdbc).query(contains("SELECT DISTINCT directory.initial"), any(RowMapper.class), arguments.capture());
+        assertThat(arguments.getValue()).containsExactly("女歌手", "女歌手", "", "");
     }
 
     @Test

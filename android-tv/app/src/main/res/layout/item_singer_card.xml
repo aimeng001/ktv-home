@@ -12,11 +12,12 @@
     android:orientation="vertical"
     android:padding="10dp">
 
-    <!-- 头像容器：支持真图与首字符占位 -->
+    <!-- 头像容器：支持真图海报与首字符占位 -->
     <FrameLayout
-        android:layout_width="80dp"
-        android:layout_height="80dp"
-        android:background="@drawable/bg_avatar_circle">
+        android:layout_width="match_parent"
+        android:layout_height="130dp"
+        android:background="@drawable/bg_avatar_rect"
+        android:clipToOutline="true">
 
         <TextView
             android:id="@+id/txtSingerInitial"
@@ -24,7 +25,7 @@
             android:layout_height="match_parent"
             android:gravity="center"
             android:textColor="@color/gold"
-            android:textSize="32sp"
+            android:textSize="38sp"
             android:textStyle="bold" />
 
         <ImageView
@@ -41,23 +42,20 @@
         android:id="@+id/txtSingerName"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="8dp"
         android:gravity="center"
         android:maxLines="1"
         android:ellipsize="end"
         tools:text="歌手名称"
         android:textColor="@android:color/white"
-        android:textSize="15sp"
+        android:textSize="16sp"
         android:textStyle="bold" />
 
-    <!-- 歌曲收录数 -->
+    <!-- 歌曲收录数（保持 ID 供 Adapter 绑定，对标原版隐藏无意义统计） -->
     <TextView
         android:id="@+id/txtSingerSongCount"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="3dp"
-        android:gravity="center"
-        tools:text="0 首"
-        android:textColor="@color/dim"
-        android:textSize="12sp" />
+        android:visibility="gone"
+        tools:text="0 首" />
 </LinearLayout>

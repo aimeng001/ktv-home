@@ -2,23 +2,36 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="64dp"
-    android:background="@drawable/bg_input"
-    android:layout_marginBottom="8dp"
+    android:layout_height="50dp"
+    android:background="@drawable/bg_ktv_queue_history_row"
+    android:layout_marginBottom="4dp"
     android:gravity="center_vertical"
     android:orientation="horizontal"
     android:paddingHorizontal="14dp">
 
-    <!-- 序号 -->
-    <TextView
-        android:id="@+id/txtQueueIndex"
-        android:layout_width="28dp"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        tools:text="1"
-        android:textColor="@color/gold"
-        android:textSize="16sp"
-        android:textStyle="bold" />
+    <!-- 序号 / 在播频谱指示区：对标 IKTV 50.0.4 spectrum_view -->
+    <FrameLayout
+        android:layout_width="30dp"
+        android:layout_height="30dp">
+
+        <TextView
+            android:id="@+id/txtQueueIndex"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_ktv_queue_index"
+            android:gravity="center"
+            tools:text="1"
+            android:textColor="@android:color/white"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <com.homektv.tv.ui.KtvMiniSpectrumView
+            android:id="@+id/spectrumQueueRow"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_gravity="center"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <!-- 歌名与点歌人 -->
     <LinearLayout
@@ -45,7 +58,7 @@
             android:layout_marginTop="2dp"
             tools:text="歌手 · 点歌人"
             android:textColor="@color/dim"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:maxLines="1"
             android:ellipsize="end" />
     </LinearLayout>
@@ -53,23 +66,31 @@
     <!-- 置顶按键 -->
     <Button
         android:id="@+id/btnQueueTop"
-        android:layout_width="56dp"
-        android:layout_height="38dp"
-        android:background="@drawable/btn_keyboard_key"
-        android:textColor="@color/color_keyboard_key_text"
-        android:text="@string/queue_pin_action"
-        android:textSize="12sp"
+        style="?android:attr/buttonBarButtonStyle"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:background="@drawable/bg_ktv_song_action_icon"
+        android:drawableStart="@drawable/ic_queue_top"
+        android:drawablePadding="0dp"
+        android:padding="4dp"
+        android:minWidth="0dp"
+        android:text=""
+        android:contentDescription="@string/queue_pin_action"
         android:focusable="true" />
 
     <!-- 删除按键 -->
     <Button
         android:id="@+id/btnQueueDelete"
-        android:layout_width="56dp"
-        android:layout_height="38dp"
-        android:layout_marginStart="6dp"
-        android:background="@drawable/btn_keyboard_key"
-        android:textColor="@color/color_keyboard_key_text"
-        android:text="@string/queue_remove_action"
-        android:textSize="12sp"
+        style="?android:attr/buttonBarButtonStyle"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_marginStart="8dp"
+        android:background="@drawable/bg_ktv_song_action_icon"
+        android:drawableStart="@drawable/ic_delete"
+        android:drawablePadding="0dp"
+        android:padding="4dp"
+        android:minWidth="0dp"
+        android:text=""
+        android:contentDescription="@string/queue_remove_action"
         android:focusable="true" />
 </LinearLayout>

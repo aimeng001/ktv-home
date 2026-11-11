@@ -25,8 +25,10 @@ class KtvQrDialog(
 ) : Dialog(context) {
 
     var onDismissQr: (() -> Unit)? = null
+    var onRetryQr: (() -> Unit)? = null
 
     private lateinit var binding: DialogKtvQrBinding
+    private var retryableFailure = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,13 +57,16 @@ class KtvQrDialog(
             binding.qrDialogProgress.visibility = View.VISIBLE
         }
 
-        binding.btnQrClose.setOnClickListener { dismiss() }
+        binding.btnQrClose.setOnClickListener {
+            if (retryableFailure) onRetryQr?.invoke() ?: dismiss() else dismiss()
+        }
         binding.qrDialogRoot.setOnClickListener { dismiss() }
         binding.qrDialogPanel.setOnClickListener { /* 阻止冒泡 */ }
 
-        binding.btnQrClose.requestFocus()
-
-        setOnShowListener { coordinator?.setModalActive(true) }
+        setOnShowListener {
+            coordinator?.setModalActive(true)
+            binding.btnQrClose.post { binding.btnQrClose.requestRemoteFocus() }
+        }
         setOnDismissListener {
             coordinator?.setModalActive(false)
             onDismissQr?.invoke()
@@ -72,6 +77,26 @@ class KtvQrDialog(
         if (::binding.isInitialized) {
             binding.imgQrDialog.setImageBitmap(bitmap)
             binding.qrDialogProgress.visibility = View.GONE
+            binding.txtQrState.visibility = View.GONE
+            binding.btnQrClose.text = context.getString(R.string.common_close)
+            retryableFailure = false
         }
+    }
+
+    fun showLoadError(message: CharSequence, retryable: Boolean) {
+        if (!::binding.isInitialized) return
+        binding.qrDialogProgress.visibility = View.GONE
+        binding.txtQrState.text = message
+        binding.txtQrState.visibility = View.VISIBLE
+        binding.btnQrClose.text = if (retryable) "重试" else context.getString(R.string.common_close)
+        retryableFailure = retryable
+    }
+
+    fun showLoading() {
+        if (!::binding.isInitialized) return
+        binding.qrDialogProgress.visibility = View.VISIBLE
+        binding.txtQrState.visibility = View.GONE
+        binding.btnQrClose.text = context.getString(R.string.common_close)
+        retryableFailure = false
     }
 }

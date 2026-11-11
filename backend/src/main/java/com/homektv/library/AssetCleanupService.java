@@ -3,22 +3,34 @@ package com.homektv.library;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.util.Arrays;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 @Service
@@ -27,7 +39,7 @@ public class AssetCleanupService {
     private static final Duration ORPHAN_GRACE = Duration.ofHours(1);
     private static final List<String> APPLICATION_ASSET_DIRECTORIES = List.of(
             "covers", "lyrics", "artist-covers", "playlist-covers", "standby");
-    static final int MAX_REFERENCED_PATHS = 100_000;
+    static final int SWEEP_BATCH_SIZE = 256;
 
     private final JdbcTemplate jdbc;
     private final AssetWriter assetWriter;
@@ -71,34 +83,152 @@ public class AssetCleanupService {
     }
 
     public int sweepOrphans() {
-        final Set<String> referenced;
-        try {
-            referenced = referencedPaths();
-        } catch (RuntimeException failure) {
-            log.error("资产引用集合不完整，终止孤儿删除", failure);
-            return 0;
-        }
-        Instant cutoff = Instant.now().minus(ORPHAN_GRACE);
-        Path dataRoot = assetWriter.dataRootForCleanup();
         int[] deleted = {0};
+        try {
+            Integer result = jdbc.execute((ConnectionCallback<Integer>) connection ->
+                    sweepOrphansInTransaction(connection, deleted));
+            return result == null ? deleted[0] : result;
+        } catch (RuntimeException failure) {
+            log.error("资产引用快照或孤儿清理失败", failure);
+            return deleted[0];
+        }
+    }
 
-        for (String directory : APPLICATION_ASSET_DIRECTORIES) {
-            Path root = dataRoot.resolve(directory).normalize();
-            if (Files.isSymbolicLink(root) || !Files.isDirectory(root)) continue;
-            try (Stream<Path> paths = Files.walk(root)) {
-                paths.filter(path -> isOldRegularFile(path, cutoff))
-                        .forEach(path -> {
-                            String relative = dataRoot.relativize(path).toString().replace(path.getFileSystem().getSeparator(), "/");
-                            if (!referenced.contains(relative)) {
-                                assetWriter.deleteReadableCache(relative);
-                                deleted[0]++;
-                            }
-                        });
-            } catch (Exception failure) {
-                log.warn("应用资产孤儿扫描失败：{} - {}", root, failure.getMessage());
+    private int sweepOrphansInTransaction(Connection connection, int[] deleted) throws SQLException {
+        // This task owns its temp-table DDL and filesystem deletes; never run it inside a caller's transaction.
+        if (!connection.getAutoCommit()) {
+            throw new IllegalStateException("孤儿资产清理必须在独立事务中运行");
+        }
+        String temporaryTable = "ktv_asset_cleanup_refs_"
+                + UUID.randomUUID().toString().replace("-", "");
+        connection.setAutoCommit(false);
+        try {
+            createTemporaryReferenceSnapshot(connection, temporaryTable);
+            Instant cutoff = Instant.now().minus(ORPHAN_GRACE);
+            for (String directory : APPLICATION_ASSET_DIRECTORIES) {
+                sweepDirectory(connection, temporaryTable, assetWriter.dataRootForCleanup(), directory,
+                        cutoff, deleted);
+            }
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("DROP TABLE " + temporaryTable);
+            }
+            connection.commit();
+            return deleted[0];
+        } catch (SQLException | RuntimeException failure) {
+            try {
+                connection.rollback();
+            } catch (SQLException rollbackFailure) {
+                failure.addSuppressed(rollbackFailure);
+            }
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("DROP TABLE IF EXISTS " + temporaryTable);
+            } catch (SQLException cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
+        } finally {
+            try {
+                connection.setAutoCommit(true);
+            } catch (SQLException resetFailure) {
+                log.warn("资产清理结束后无法恢复数据库连接状态：{}", resetFailure.getMessage());
             }
         }
-        return deleted[0];
+    }
+
+    private void createTemporaryReferenceSnapshot(Connection connection, String temporaryTable)
+            throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TEMPORARY TABLE " + temporaryTable
+                    + " (path TEXT PRIMARY KEY) ON COMMIT DROP");
+            statement.executeUpdate("""
+                    INSERT INTO %s(path)
+                    SELECT DISTINCT asset_path
+                    FROM (
+                        SELECT cover_path AS asset_path FROM songs WHERE cover_path IS NOT NULL
+                        UNION ALL
+                        SELECT lyric_path FROM songs WHERE lyric_path IS NOT NULL
+                        UNION ALL
+                        SELECT cover_path FROM playlists WHERE cover_path IS NOT NULL
+                        UNION ALL
+                        SELECT avatar_path FROM artist_profiles WHERE avatar_path IS NOT NULL
+                    ) referenced_assets
+                    WHERE asset_path IS NOT NULL AND TRIM(asset_path) <> ''
+                    """.formatted(temporaryTable));
+        }
+
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT CAST(value AS TEXT) FROM settings
+                WHERE key = 'standby_logo_path'
+                """); ResultSet rows = statement.executeQuery()) {
+            while (rows.next()) {
+                final String path;
+                try {
+                    path = mapper.readValue(rows.getString(1), String.class);
+                } catch (Exception failure) {
+                    throw new IllegalStateException("待机 Logo 引用无法解析", failure);
+                }
+                if (path == null || path.isBlank()) continue;
+                try (PreparedStatement insert = connection.prepareStatement("""
+                        INSERT INTO %s(path)
+                        SELECT ? WHERE NOT EXISTS (
+                            SELECT 1 FROM %s WHERE path = ?
+                        )
+                        """.formatted(temporaryTable, temporaryTable))) {
+                    insert.setString(1, path);
+                    insert.setString(2, path);
+                    insert.executeUpdate();
+                }
+            }
+        }
+    }
+
+    private void sweepDirectory(Connection connection, String temporaryTable, Path dataRoot,
+                                String directory, Instant cutoff, int[] deleted) throws SQLException {
+        Path root = dataRoot.resolve(directory).normalize();
+        if (Files.isSymbolicLink(root) || !Files.isDirectory(root)) return;
+
+        try (Stream<Path> paths = Files.walk(root)) {
+            Iterator<Path> iterator = paths.iterator();
+            List<String> candidates = new ArrayList<>(SWEEP_BATCH_SIZE);
+            while (iterator.hasNext()) {
+                Path path = iterator.next();
+                if (!isOldRegularFile(path, cutoff)) continue;
+                candidates.add(dataRoot.relativize(path).toString()
+                        .replace(path.getFileSystem().getSeparator(), "/"));
+                if (candidates.size() == SWEEP_BATCH_SIZE) {
+                    deleted[0] += deleteUnreferencedBatch(connection, temporaryTable, candidates);
+                    candidates.clear();
+                }
+            }
+            if (!candidates.isEmpty()) {
+                deleted[0] += deleteUnreferencedBatch(connection, temporaryTable, candidates);
+            }
+        } catch (IOException | UncheckedIOException failure) {
+            log.warn("应用资产孤儿扫描失败：{} - {}", root, failure.getMessage());
+        }
+    }
+
+    private int deleteUnreferencedBatch(Connection connection, String temporaryTable,
+                                        List<String> candidates) throws SQLException {
+        String placeholders = String.join(",", Collections.nCopies(candidates.size(), "?"));
+        Set<String> referenced = new HashSet<>();
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT path FROM " + temporaryTable + " WHERE path IN (" + placeholders + ")")) {
+            for (int index = 0; index < candidates.size(); index++) {
+                statement.setString(index + 1, candidates.get(index));
+            }
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) referenced.add(rows.getString(1));
+            }
+        }
+
+        int deleted = 0;
+        for (String candidate : candidates) {
+            if (referenced.contains(candidate)) continue;
+            assetWriter.deleteReadableCache(candidate);
+            deleted++;
+        }
+        return deleted;
     }
 
     @Scheduled(fixedDelayString = "${home-ktv.asset-cleanup.interval-ms:3600000}")
@@ -113,45 +243,6 @@ public class AssetCleanupService {
         } catch (Exception failure) {
             return false;
         }
-    }
-
-    private Set<String> referencedPaths() {
-        Set<String> paths = new HashSet<>();
-        jdbc.query("""
-                SELECT cover_path FROM songs WHERE cover_path IS NOT NULL
-                UNION
-                SELECT lyric_path FROM songs WHERE lyric_path IS NOT NULL
-                UNION
-                SELECT cover_path FROM playlists WHERE cover_path IS NOT NULL
-                UNION
-                SELECT avatar_path FROM artist_profiles WHERE avatar_path IS NOT NULL
-                """, (org.springframework.jdbc.core.ResultSetExtractor<Void>) rs -> {
-                    while (rs.next()) addReference(paths, rs.getString(1));
-                    return null;
-                });
-        jdbc.query("""
-                SELECT CAST(value AS TEXT) FROM settings
-                WHERE key = 'standby_logo_path'
-                """, (org.springframework.jdbc.core.ResultSetExtractor<Void>) rs -> {
-                    while (rs.next()) {
-                        String value = rs.getString(1);
-                        try {
-                            addReference(paths, mapper.readValue(value, String.class));
-                        } catch (Exception failure) {
-                            throw new IllegalStateException("待机 Logo 引用无法解析", failure);
-                        }
-                    }
-                    return null;
-                });
-        return paths;
-    }
-
-    private void addReference(Set<String> paths, String value) {
-        if (value == null || value.isBlank() || paths.contains(value)) return;
-        if (paths.size() >= MAX_REFERENCED_PATHS) {
-            throw new IllegalStateException("资产引用数量超过安全上限");
-        }
-        paths.add(value);
     }
 
     private boolean isReferenced(String relativePath) {

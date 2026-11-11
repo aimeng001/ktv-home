@@ -103,6 +103,18 @@
     <string name="qr_dialog_image_description">点歌二维码</string>
     <string name="qr_dialog_close_help">💡 手机连接同 Wi-Fi 即可直接访问，按【确定】或【返回】关闭</string>
     <string name="queue_drawer_title_initial">已点歌曲 (0)</string>
+    <string name="queue_drawer_tab_downloads">下载</string>
+    <string name="queue_drawer_tab_queue">已点</string>
+    <string name="queue_drawer_tab_history">已唱</string>
+    <string name="queue_drawer_history_empty">没有已唱媒体</string>
+    <string name="queue_drawer_history_loading">正在加载演唱历史…</string>
+    <string name="queue_drawer_history_list">演唱历史列表</string>
+    <string name="queue_drawer_history_repeat_description">再次点歌：%1$s</string>
+    <string name="queue_drawer_downloads_empty">暂无下载任务</string>
+    <string name="queue_drawer_download_start_all">全部开始</string>
+    <string name="queue_drawer_download_pause_all">全部暂停</string>
+    <string name="queue_drawer_download_delete_all">全部删除</string>
+    <string name="queue_now_playing_indicator">当前播放状态</string>
     <string name="queue_shuffle_action">🔀 智能打散</string>
     <string name="queue_now_singing_label">正在演唱</string>
     <string name="queue_waiting_list_label">待播列表</string>
@@ -143,7 +155,7 @@
     <string name="qr_short_action">📱 扫码</string>
     <string name="queue_badge_initial">已点 0 首</string>
     <string name="keyboard_keyword_prefix">拼音首字母: </string>
-    <string name="keyboard_search_help">按右侧或下方字母搜索</string>
+    <string name="keyboard_search_help">请输入首字母搜索</string>
     <string name="keyboard_backspace">退格</string>
     <string name="keyboard_ime_action">系统输入法</string>
     <string name="kiosk_title">KTV 点歌台</string>

@@ -175,37 +175,64 @@ public class ArtistDirectoryProjectionService {
         refreshExecutor.shutdownNow();
     }
     public Optional<ProjectionPage> page(String gender, String initial, int page, int size) {
+        return page(gender, initial, "", page, size);
+    }
+
+    public Optional<ProjectionPage> page(String gender, String initial, String region, int page, int size) {
         if (!isReady()) return Optional.empty();
         int safePage = Math.max(0, page);
         int safeSize = Math.max(1, Math.min(size, 100));
         String safeGender = normalize(gender);
         String safeInitial = normalize(initial).toUpperCase(Locale.ROOT);
+        String safeRegion = normalize(region);
         if ("热门".equals(safeInitial)) safeInitial = "";
-        String where = "WHERE (? = '' OR gender = ?) AND (? = '' OR initial = ?)";
+        String where = "WHERE (? = '' OR directory.gender = ?) "
+                + "AND (? = '' OR directory.initial = ?) "
+                + "AND (? = '' OR COALESCE(reference_artist.region, '') = ?)";
         Long total = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM artist_directory_stats " + where,
-                Long.class, safeGender, safeGender, safeInitial, safeInitial);
+                "SELECT COUNT(*) FROM artist_directory_stats directory "
+                        + "LEFT JOIN active_iktv_artist_regions reference_artist "
+                        + "ON reference_artist.artist_key = directory.artist_key " + where,
+                Long.class, safeGender, safeGender, safeInitial, safeInitial, safeRegion, safeRegion);
         List<ArtistRow> rows = jdbc.query("""
-                SELECT artist_key, name, initial, gender, song_count, reviewed, artist_kind, avatar_path
-                FROM artist_directory_stats
-                """ + where + " ORDER BY song_count DESC, name ASC, artist_key ASC LIMIT ? OFFSET ?",
+                SELECT directory.artist_key, directory.name, directory.initial, directory.gender,
+                       directory.song_count, directory.reviewed, directory.artist_kind, directory.avatar_path,
+                       COALESCE(reference_artist.region, '') AS region
+                FROM artist_directory_stats directory
+                LEFT JOIN active_iktv_artist_regions reference_artist
+                  ON reference_artist.artist_key = directory.artist_key
+                """ + where + " ORDER BY directory.song_count DESC, directory.name ASC, directory.artist_key ASC LIMIT ? OFFSET ?",
                 (rs, index) -> new ArtistRow(
                         rs.getString("artist_key"), rs.getString("name"), rs.getString("initial"),
                         rs.getString("gender"), rs.getLong("song_count"), rs.getBoolean("reviewed"),
-                        rs.getString("artist_kind"), rs.getString("avatar_path")),
-                safeGender, safeGender, safeInitial, safeInitial, safeSize, safePage * safeSize);
+                        rs.getString("artist_kind"), rs.getString("avatar_path"), normalize(rs.getString("region"))),
+                safeGender, safeGender, safeInitial, safeInitial, safeRegion, safeRegion, safeSize, safePage * safeSize);
         return Optional.of(new ProjectionPage(rows, total == null ? 0L : total));
     }
 
     public Optional<List<String>> initials(String gender) {
+        return initials(gender, "");
+    }
+
+    public Optional<List<String>> initials(String gender, String region) {
         if (!isReady()) return Optional.empty();
         String safeGender = normalize(gender);
+        String safeRegion = normalize(region);
         return Optional.of(jdbc.query("""
-                SELECT DISTINCT initial
-                FROM artist_directory_stats
-                WHERE ? = '' OR gender = ?
-                ORDER BY initial
-                """, (rs, index) -> rs.getString(1), safeGender, safeGender));
+                SELECT DISTINCT directory.initial
+                FROM artist_directory_stats directory
+                LEFT JOIN active_iktv_artist_regions reference_artist
+                  ON reference_artist.artist_key = directory.artist_key
+                WHERE (? = '' OR directory.gender = ?)
+                  AND (? = '' OR COALESCE(reference_artist.region, '') = ?)
+                ORDER BY directory.initial
+                """, (rs, index) -> rs.getString(1), safeGender, safeGender, safeRegion, safeRegion));
+    }
+
+    public boolean hasRegionReference() {
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+                SELECT EXISTS (SELECT 1 FROM iktv_artist_reference_snapshots WHERE status = 'ACTIVE')
+                """, Boolean.class));
     }
 
     private boolean isReady() {
@@ -222,7 +249,12 @@ public class ArtistDirectoryProjectionService {
     }
 
     public record ArtistRow(String artistKey, String name, String initial, String gender,
-                            long songCount, boolean reviewed, String artistKind, String avatarPath) {}
+                            long songCount, boolean reviewed, String artistKind, String avatarPath, String region) {
+        public ArtistRow(String artistKey, String name, String initial, String gender,
+                         long songCount, boolean reviewed, String artistKind, String avatarPath) {
+            this(artistKey, name, initial, gender, songCount, reviewed, artistKind, avatarPath, "");
+        }
+    }
 
     public record ProjectionPage(List<ArtistRow> rows, long total) {}
 }

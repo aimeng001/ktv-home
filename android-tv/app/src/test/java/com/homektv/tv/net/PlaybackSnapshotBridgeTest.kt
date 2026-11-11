@@ -98,4 +98,27 @@ class PlaybackSnapshotBridgeTest {
         assertEquals(5000L, state?.snapshot?.positionMs)
         assertEquals(12L, state?.roomHost?.hostUserId)
     }
+
+    @Test
+    fun progressBridgeUpdatesOnlyTheCurrentQueueWithoutAdvancingSnapshotRevision() {
+        val epoch = PlaybackSnapshotBridge.beginSession("nas-a:8080")
+        val snapshot = QueueSnapshot(
+            playing = NowPlaying(queueId = 22L),
+            positionMs = 1_000L,
+            stateRevision = 22L,
+        )
+        PlaybackSnapshotBridge.publish("nas-a:8080", epoch, "queue_updated", snapshot)
+
+        PlaybackSnapshotBridge.publishProgress("nas-a:8080", epoch, PlaybackProgress(21L, 92_000L))
+        assertEquals(1_000L, PlaybackSnapshotBridge.events.value?.snapshot?.positionMs)
+
+        PlaybackSnapshotBridge.publishProgress("nas-a:8080", epoch, PlaybackProgress(22L, 2_500L))
+        assertEquals(1_000L, PlaybackSnapshotBridge.events.value?.snapshot?.positionMs)
+        assertEquals(2_500L, PlaybackSnapshotBridge.events.value?.progress?.positionMs)
+        assertEquals(22L, PlaybackSnapshotBridge.events.value?.snapshot?.stateRevision)
+        assertEquals("progress", PlaybackSnapshotBridge.events.value?.event)
+
+        PlaybackSnapshotBridge.publishProgress("nas-a:8080", epoch - 1, PlaybackProgress(22L, 9_000L))
+        assertEquals(2_500L, PlaybackSnapshotBridge.events.value?.progress?.positionMs)
+    }
 }

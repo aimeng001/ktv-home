@@ -23,6 +23,12 @@ class ControllerListAdapter<T : Any>(
     private val mainThreadExecutor: Executor? = null,
 ) : RecyclerView.Adapter<ControllerListAdapter<T>.RowHolder>() {
 
+    private data class PendingSubmission<T : Any>(
+        val generation: Int,
+        val replacement: List<T>,
+        val commitCallback: Runnable?,
+    )
+
     constructor(
         itemId: (T) -> Long,
         createView: (ViewGroup) -> View,
@@ -41,6 +47,9 @@ class ControllerListAdapter<T : Any>(
     private val bgExecutor: Executor = backgroundExecutor ?: DEFAULT_BG_EXECUTOR
     private var maxScheduledGeneration = 0
     private var items: List<T> = emptyList()
+    /** At most one submitted diff is running and one newer list is retained. Main-thread owned. */
+    private var diffInFlight = false
+    private var pendingSubmission: PendingSubmission<T>? = null
 
     init {
         try {
@@ -59,11 +68,13 @@ class ControllerListAdapter<T : Any>(
         val previous = items
 
         if (replacement === previous) {
+            pendingSubmission = null
             commitCallback?.run()
             return
         }
 
         if (replacement.isEmpty()) {
+            pendingSubmission = null
             val count = previous.size
             items = emptyList()
             if (RemovalPolicy.shouldNotifyRemoval(count)) {
@@ -74,30 +85,74 @@ class ControllerListAdapter<T : Any>(
         }
 
         if (previous.isEmpty()) {
+            pendingSubmission = null
             items = replacement
             safeNotify { notifyItemRangeInserted(0, replacement.size) }
             commitCallback?.run()
             return
         }
 
-        bgExecutor.execute {
-            val diffResult = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
-                override fun getOldListSize(): Int = previous.size
-                override fun getNewListSize(): Int = replacement.size
-                override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
-                    itemId(previous[oldItemPosition]) == itemId(replacement[newItemPosition])
+        // New snapshots supersede queued snapshots; never enqueue one worker task per render.
+        pendingSubmission = PendingSubmission(generation, replacement, commitCallback)
+        startNextDiffIfIdle()
+    }
 
-                override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
-                    contentsSame(previous[oldItemPosition], replacement[newItemPosition])
-            })
+    private fun startNextDiffIfIdle() {
+        if (diffInFlight) return
+        val submission = pendingSubmission ?: return
+        pendingSubmission = null
 
-            runOnMainThread {
-                if (maxScheduledGeneration == generation) {
-                    items = replacement
-                    safeNotify { diffResult.dispatchUpdatesTo(this) }
-                    commitCallback?.run()
+        // Read the applied list when work starts. A stale in-flight diff is not applied, so the
+        // next diff must be based on the list RecyclerView currently displays.
+        val previous = items
+        if (previous.isEmpty()) {
+            items = submission.replacement
+            safeNotify { notifyItemRangeInserted(0, submission.replacement.size) }
+            submission.commitCallback?.run()
+            startNextDiffIfIdle()
+            return
+        }
+
+        diffInFlight = true
+        try {
+            bgExecutor.execute {
+                val diffResult = try {
+                    DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+                        override fun getOldListSize(): Int = previous.size
+                        override fun getNewListSize(): Int = submission.replacement.size
+                        override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
+                            itemId(previous[oldItemPosition]) == itemId(submission.replacement[newItemPosition])
+
+                        override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean =
+                            contentsSame(previous[oldItemPosition], submission.replacement[newItemPosition])
+                    })
+                } catch (failure: Throwable) {
+                    runOnMainThread {
+                        diffInFlight = false
+                        startNextDiffIfIdle()
+                    }
+                    throw failure
+                }
+
+                runOnMainThread {
+                    try {
+                        if (maxScheduledGeneration == submission.generation) {
+                            items = submission.replacement
+                            safeNotify { diffResult.dispatchUpdatesTo(this) }
+                            submission.commitCallback?.run()
+                        }
+                    } finally {
+                        diffInFlight = false
+                        startNextDiffIfIdle()
+                    }
                 }
             }
+        } catch (failure: Throwable) {
+            diffInFlight = false
+            if (pendingSubmission == null && maxScheduledGeneration == submission.generation) {
+                pendingSubmission = submission
+            }
+            throw failure
         }
     }
 

@@ -44,7 +44,7 @@ class KtvWarningRemediationContractTest {
         assertTrue(qrDialog.contains("FLAG_DIM_BEHIND"))
         assertTrue(qrDialog.contains("setDimAmount(170f / 255f)"))
         assertTrue(queueDialog.contains("FLAG_DIM_BEHIND"))
-        assertTrue(queueDialog.contains("setDimAmount(136f / 255f)"))
+        assertTrue(queueDialog.contains("setDimAmount(160f / 255f)"))
     }
 
     private fun elements(document: org.w3c.dom.Document): List<Element> {

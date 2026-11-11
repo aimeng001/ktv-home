@@ -94,6 +94,52 @@ describe('DialogHost mounted behavior', () => {
     expect(await result).toBe(false)
   })
 
+  it('keeps keyboard focus in the dialog and restores the background inert state', async () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    await mount()
+
+    const result = confirmDialog('删除这首歌曲？')
+    await flushUi()
+    const dialog = document.body.querySelector('[role="dialog"]')
+    const closeButton = document.body.querySelector('.dialog-close')
+    const confirmButton = document.body.querySelector('[data-dialog-confirm]')
+
+    expect(opener.inert).toBe(true)
+    closeButton.focus()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }))
+    expect(document.activeElement).toBe(confirmButton)
+
+    confirmButton.focus()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+    expect(document.activeElement).toBe(closeButton)
+
+    document.body.querySelector('.dialog-btn.secondary').click()
+    await flushUi()
+    expect(await result).toBe(false)
+    expect(opener.inert).toBe(false)
+    opener.remove()
+  })
+
+  it('does not confirm a destructive action when Enter is dispatched outside the dialog', async () => {
+    const outsideButton = document.createElement('button')
+    document.body.appendChild(outsideButton)
+    await mount()
+
+    const result = confirmDialog('确认删除？')
+    await flushUi()
+    outsideButton.focus()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await flushUi()
+
+    expect(useDialog().state.open).toBe(true)
+    document.body.querySelector('.dialog-btn.secondary').click()
+    await flushUi()
+    expect(await result).toBe(false)
+    outsideButton.remove()
+  })
+
   it('cancels confirmation from the secondary button or outside mask click', async () => {
     await mount()
     const first = confirmDialog('确认？')

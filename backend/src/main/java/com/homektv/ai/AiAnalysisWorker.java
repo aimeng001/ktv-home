@@ -12,6 +12,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import com.homektv.web.ApiException;
 
+import java.util.OptionalInt;
+
 /**
  * AI 分析任务工作器，异步执行歌曲 AI 分类分析。
  *
@@ -29,13 +31,15 @@ public class AiAnalysisWorker {
     private final AiConcurrencyLimiter concurrencyLimiter;
     private final MediaImportRecordRepository importRecordRepository;
     private final LocalClassificationService localClassificationService;
+    private final AiAnalysisTaskClaimService claimService;
 
     public AiAnalysisWorker(AiAnalysisTaskRepository taskRepository, AiAnalysisFinalizer finalizer,
                             SongRepository songRepository,
                             OpenAiCompatibleClient aiClient, ObjectMapper objectMapper, AiConfigService configService,
                             AiAutoApplyPolicy autoApplyPolicy,
                             AiConcurrencyLimiter concurrencyLimiter, MediaImportRecordRepository importRecordRepository,
-                            LocalClassificationService localClassificationService) {
+                            LocalClassificationService localClassificationService,
+                            AiAnalysisTaskClaimService claimService) {
         this.taskRepository = taskRepository;
         this.finalizer = finalizer;
         this.songRepository = songRepository;
@@ -46,6 +50,7 @@ public class AiAnalysisWorker {
         this.concurrencyLimiter = concurrencyLimiter;
         this.importRecordRepository = importRecordRepository;
         this.localClassificationService = localClassificationService;
+        this.claimService = claimService;
     }
 
     /**
@@ -58,7 +63,10 @@ public class AiAnalysisWorker {
      */
     @Async("aiBulkExecutor")
     public void analyze(Long taskId) {
-        if (taskId == null || taskRepository.claimPending(taskId) != 1) return;
+        if (taskId == null) return;
+        OptionalInt claimedAttempt = claimService.claim(taskId);
+        if (claimedAttempt.isEmpty()) return;
+        int executionAttempt = claimedAttempt.getAsInt();
         AiAnalysisTask task = taskRepository.findById(taskId).orElse(null);
         if (task == null || isPaused(taskId)) return;
         try {
@@ -119,13 +127,13 @@ public class AiAnalysisWorker {
             String evidence = objectMapper.writeValueAsString(result.evidence());
             boolean autoApplyCandidate = fallbackReason == null
                     && (importTarget || autoApplyPolicy.shouldAutoApply(result));
-            if (!finalizer.finishProcessing(taskId, resultJson, fieldConfidence, evidence,
+            if (!finalizer.finishProcessing(taskId, executionAttempt, resultJson, fieldConfidence, evidence,
                     task.getModelRole(), task.getModel(), result, autoApplyCandidate,
                     config == null ? 0 : config.identityThreshold(), fallbackReason)) return;
         } catch (Exception e) {
             String terminalStatus = e instanceof ApiException api && "AI_IDENTITY_CONFLICT".equals(api.getCode())
                     ? "review" : "failed";
-            taskRepository.finishProcessingError(taskId, terminalStatus, safeMessage(e));
+            taskRepository.finishProcessingError(taskId, executionAttempt, terminalStatus, safeMessage(e));
             return;
         }
     }

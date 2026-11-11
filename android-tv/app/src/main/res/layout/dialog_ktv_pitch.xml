@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/pitchDialogRoot"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/player_glass"
+    android:orientation="vertical"
+    android:padding="22dp">
+
+    <TextView
+        android:id="@+id/txtPitchTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="变调"
+        android:textColor="@color/gold"
+        android:textSize="24sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/txtPitchStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textColor="#D8DFEA"
+        android:textSize="16sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="76dp"
+        android:layout_marginTop="14dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/btnPitchDown"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:background="@drawable/ktv_fullscreen_focus_circle"
+            android:contentDescription="降调一个半音"
+            android:focusable="true"
+            android:nextFocusRight="@id/seekPitch"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ktv_ref_v50_dock_tone_down" />
+
+        <SeekBar
+            android:id="@+id/seekPitch"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:contentDescription="变调幅度，范围负五到正五个半音"
+            android:focusable="true"
+            android:max="10"
+            android:maxHeight="4dp"
+            android:minHeight="4dp"
+            android:nextFocusLeft="@id/btnPitchDown"
+            android:nextFocusRight="@id/btnPitchUp"
+            android:progress="5"
+            android:progressBackgroundTint="#50737373"
+            android:progressTint="#31c27c"
+            android:splitTrack="false"
+            android:thumbTint="#31c27c" />
+
+        <ImageButton
+            android:id="@+id/btnPitchUp"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:background="@drawable/ktv_fullscreen_focus_circle"
+            android:contentDescription="升调一个半音"
+            android:focusable="true"
+            android:nextFocusLeft="@id/seekPitch"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ktv_ref_v50_dock_tone_up" />
+
+        <TextView
+            android:id="@+id/txtPitchValue"
+            android:layout_width="56dp"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="0"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="降 5 调"
+            android:textColor="#D8DFEA"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="原调"
+            android:textColor="#D8DFEA"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="end"
+            android:text="升 5 调"
+            android:textColor="#D8DFEA"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end"
+        android:layout_marginTop="18dp"
+        android:gravity="end"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnPitchReset"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:background="@drawable/btn_gold"
+            android:focusable="true"
+            android:nextFocusRight="@id/btnPitchClose"
+            android:paddingHorizontal="22dp"
+            android:text="原调"
+            android:textColor="#111317"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnPitchClose"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginStart="12dp"
+            android:background="@drawable/btn_gold"
+            android:focusable="true"
+            android:paddingHorizontal="22dp"
+            android:text="关闭"
+            android:textColor="#111317"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+</LinearLayout>

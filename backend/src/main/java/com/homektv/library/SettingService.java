@@ -1,17 +1,24 @@
 package com.homektv.library;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homektv.config.AppProperties;
+import com.homektv.discovery.DiscoverySettingsChangedEvent;
 import com.homektv.domain.AudioLayout;
 import com.homektv.domain.Setting;
 import com.homektv.repo.SettingRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-import java.util.HashSet;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 系统设置读写（P2.6，详设§8 ADM-03）。settings 表 key→JSONB value。
@@ -22,6 +29,9 @@ public class SettingService {
     public static final String LIBRARY_WATCH_ENABLED = "library_watch_enabled";
     public static final String DELETE_SOURCE_AFTER_TRANSCODE = "delete_source_after_transcode";
     public static final String EXTERNAL_DEFAULT_AUDIO_LAYOUT = "external_default_audio_layout";
+    public static final String LIBRARY_FILENAME_METADATA_PREFERRED = "library_filename_metadata_preferred";
+    public static final String DISCOVERY_ENABLED = "discovery_enabled";
+    public static final String DISCOVERY_NAME = "discovery_name";
 
     public static final Map<String, Object> TRANSCODE_DEFAULTS = Map.of(
             "direct_copy_containers", List.of("mp4", "m4v", "mkv"),
@@ -43,6 +53,9 @@ public class SettingService {
             Map.entry("display_address", ""), Map.entry("standby_logo_path", ""),
             Map.entry(DELETE_SOURCE_AFTER_TRANSCODE, false),
             Map.entry(EXTERNAL_DEFAULT_AUDIO_LAYOUT, AudioLayout.NORMAL_STEREO.name()),
+            Map.entry(LIBRARY_FILENAME_METADATA_PREFERRED, false),
+            Map.entry(DISCOVERY_ENABLED, true),
+            Map.entry(DISCOVERY_NAME, "家庭KTV"),
             Map.entry("room_host_user_id", 0L),
             Map.entry("room_host_revision", 0L));
     private static final Set<String> TRANSCODE_KEYS = TRANSCODE_DEFAULTS.keySet();
@@ -60,7 +73,8 @@ public class SettingService {
             "standby_subtitle",
             "qr_address",
             "transcode_video_codec",
-            "transcode_audio_codec"
+            "transcode_audio_codec",
+            DISCOVERY_NAME
     );
     private static final Map<String, Set<String>> DIRECT_COPY_OPTIONS = Map.of(
             "direct_copy_containers", Set.of(
@@ -87,23 +101,101 @@ public class SettingService {
 
     private final SettingRepository repo;
     private final ObjectMapper mapper;
+    private final AppProperties props;
+    private final ApplicationEventPublisher eventPublisher;
+    private final AtomicReference<Map<String, Object>> memoryCache = new AtomicReference<>();
+    private final Object memoryCacheLock = new Object();
+    private long memoryCacheGeneration;
 
     public SettingService(SettingRepository repo, ObjectMapper mapper) {
-        this.repo = repo;
-        this.mapper = mapper;
+        this(repo, mapper, null, null);
     }
 
-    /** 读取全部设置为 map（value 反序列化为对象） */
-    @Transactional(readOnly = true)
-    public Map<String, Object> getAll() {
+    public SettingService(SettingRepository repo, ObjectMapper mapper, AppProperties props) {
+        this(repo, mapper, props, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public SettingService(SettingRepository repo, ObjectMapper mapper, AppProperties props,
+                          ApplicationEventPublisher eventPublisher) {
+        this.repo = repo;
+        this.mapper = mapper;
+        this.props = props;
+        this.eventPublisher = eventPublisher;
+    }
+
+    private Map<String, Object> computeAll() {
         Map<String, Object> out = new HashMap<>(TRANSCODE_DEFAULTS);
         out.putAll(GENERAL_DEFAULTS);
+        if (props != null) {
+            if (props.getDiscovery() != null) {
+                if (props.getDiscovery().getInstanceName() != null && !props.getDiscovery().getInstanceName().isBlank()) {
+                    out.put(DISCOVERY_NAME, props.getDiscovery().getInstanceName());
+                }
+                out.put(DISCOVERY_ENABLED, props.getDiscovery().isEnabled());
+            }
+            out.put(LIBRARY_FILENAME_METADATA_PREFERRED, props.isStructuredFilenameMetadataPreferred());
+        }
         for (Setting s : repo.findAll()) {
             if (!s.getKey().startsWith("ai.") && !s.getKey().startsWith("music_sources.")) {
                 out.put(s.getKey(), parse(s.getValue()));
             }
         }
         return out;
+    }
+
+    private Map<String, Object> getCachedOrCompute() {
+        while (true) {
+            Map<String, Object> cached = memoryCache.get();
+            if (cached != null) return cached;
+
+            long generation;
+            synchronized (memoryCacheLock) {
+                cached = memoryCache.get();
+                if (cached != null) return cached;
+                generation = memoryCacheGeneration;
+            }
+
+            Map<String, Object> computed = immutableSettings(computeAll());
+            synchronized (memoryCacheLock) {
+                if (generation != memoryCacheGeneration) continue;
+                cached = memoryCache.get();
+                if (cached != null) return cached;
+                memoryCache.set(computed);
+                return computed;
+            }
+        }
+    }
+
+    private void refreshCache() {
+        long generation;
+        synchronized (memoryCacheLock) {
+            generation = ++memoryCacheGeneration;
+            memoryCache.set(null);
+        }
+
+        Map<String, Object> computed = immutableSettings(computeAll());
+        synchronized (memoryCacheLock) {
+            if (generation == memoryCacheGeneration) memoryCache.set(computed);
+        }
+    }
+
+    private static Map<String, Object> immutableSettings(Map<String, Object> settings) {
+        return java.util.Collections.unmodifiableMap(new HashMap<>(settings));
+    }
+
+    private String defaultDiscoveryName() {
+        if (props != null && props.getDiscovery() != null) {
+            String name = props.getDiscovery().getInstanceName();
+            if (name != null && !name.isBlank()) return name;
+        }
+        return "家庭KTV";
+    }
+
+    /** 读取全部设置为 map（value 反序列化为对象） */
+    @Transactional(readOnly = true)
+    public Map<String, Object> getAll() {
+        return computeAll();
     }
 
     /** 读取可供前端编辑的公开设置，不返回内部状态 */
@@ -138,12 +230,27 @@ public class SettingService {
     }
 
     public boolean isLibraryWatchEnabled() {
-        return Boolean.TRUE.equals(getAll().get(LIBRARY_WATCH_ENABLED));
+        return Boolean.TRUE.equals(getCachedOrCompute().get(LIBRARY_WATCH_ENABLED));
+    }
+
+    public boolean isFilenameMetadataPreferred(boolean fallback) {
+        Object val = getCachedOrCompute().get(LIBRARY_FILENAME_METADATA_PREFERRED);
+        return val instanceof Boolean b ? b : fallback;
+    }
+
+    public boolean isDiscoveryEnabled(boolean fallback) {
+        Object val = getCachedOrCompute().get(DISCOVERY_ENABLED);
+        return val instanceof Boolean b ? b : fallback;
+    }
+
+    public String getDiscoveryName(String fallback) {
+        Object val = getCachedOrCompute().get(DISCOVERY_NAME);
+        return val instanceof String s && !s.isBlank() ? s : fallback;
     }
 
     /** Default used only when a new file is first indexed in EXTERNAL_READ_ONLY mode. */
     public AudioLayout externalDefaultAudioLayout() {
-        Object value = getAll().get(EXTERNAL_DEFAULT_AUDIO_LAYOUT);
+        Object value = getCachedOrCompute().get(EXTERNAL_DEFAULT_AUDIO_LAYOUT);
         try {
             return AudioLayout.valueOf(String.valueOf(value).trim().toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException e) {
@@ -159,18 +266,56 @@ public class SettingService {
             validateKeyValue(k, v);
             saveValidated(k, v);
         });
+        refreshCacheAfterCommit(false);
     }
 
     /** 写入用户可编辑设置（管理员 API 入口） */
     @Transactional
     public void putEditable(Map<String, Object> settings) {
         if (settings == null) return;
-        settings.forEach((k, v) -> {
+        boolean includesDiscoverySettings = settings.containsKey(DISCOVERY_ENABLED)
+                || settings.containsKey(DISCOVERY_NAME);
+        Map<String, Object> previous = includesDiscoverySettings ? computeAll() : Map.of();
+        boolean discoverySettingsChanged = false;
+        for (Map.Entry<String, Object> entry : settings.entrySet()) {
+            String k = entry.getKey();
+            Object v = entry.getValue();
             if (!EDITABLE_KEYS.contains(k)) {
                 throw new com.homektv.web.ApiException("SETTING_NOT_ALLOWED", "不允许修改设置：" + k);
             }
-            validateKeyValue(k, v);
-            saveValidated(k, v);
+            Object sanitized = v;
+            if (DISCOVERY_NAME.equals(k) && v instanceof String s && s.isBlank()) {
+                sanitized = defaultDiscoveryName();
+            }
+            validateKeyValue(k, sanitized);
+            if ((DISCOVERY_ENABLED.equals(k) || DISCOVERY_NAME.equals(k))
+                    && !Objects.equals(previous.get(k), sanitized)) {
+                discoverySettingsChanged = true;
+            }
+            saveValidated(k, sanitized);
+        }
+        refreshCacheAfterCommit(discoverySettingsChanged);
+    }
+
+    private void refreshCacheAfterCommit(boolean discoverySettingsChanged) {
+        Runnable refreshAndPublish = () -> {
+            refreshCache();
+            if (!discoverySettingsChanged || eventPublisher == null) return;
+            Map<String, Object> current = getCachedOrCompute();
+            Object nameValue = current.get(DISCOVERY_NAME);
+            eventPublisher.publishEvent(new DiscoverySettingsChangedEvent(
+                    Boolean.TRUE.equals(current.get(DISCOVERY_ENABLED)),
+                    nameValue instanceof String name ? name : defaultDiscoveryName()));
+        };
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            refreshAndPublish.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                refreshAndPublish.run();
+            }
         });
     }
 
@@ -182,6 +327,7 @@ public class SettingService {
         }
         validateKeyValue(key, value);
         saveValidated(key, value);
+        refreshCacheAfterCommit(false);
     }
 
     private void saveValidated(String key, Object value) {
@@ -199,9 +345,16 @@ public class SettingService {
         if (STRING_KEYS.contains(key)) {
             if (!(value instanceof String)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是字符串");
             if (((String) value).length() > 1000) throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 文本过长");
+            if (DISCOVERY_NAME.equals(key)) {
+                String name = (String) value;
+                if (name.length() > 32) {
+                    throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 长度不能超过 32 个字符");
+                }
+            }
         }
         if (Set.of(LIBRARY_WATCH_ENABLED, "standby_carousel", "anti_burn", "mini_qr", "transcode_audio_only",
-                "transcode_hardware_acceleration", "transcode_hardware_auto_configured", DELETE_SOURCE_AFTER_TRANSCODE).contains(key)) {
+                "transcode_hardware_acceleration", "transcode_hardware_auto_configured", DELETE_SOURCE_AFTER_TRANSCODE,
+                LIBRARY_FILENAME_METADATA_PREFERRED, DISCOVERY_ENABLED).contains(key)) {
             if (!(value instanceof Boolean)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是布尔值");
         }
         if (key.endsWith("_interval_sec")) {

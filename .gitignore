@@ -13,6 +13,7 @@ npm-debug.log*
 
 # ===== Android / TV APK =====
 android-tv/.gradle/
+**/.gradle/
 android-tv/.gradle-user-home/
 android-tv/.android-user-home/
 android-tv/build/
@@ -57,7 +58,7 @@ backend/src/main/resources/application-local.yml
 **/.env
 /.release-secrets/
 
-# ===== Local build caches =====
+# Local build caches
 /.maven-local/
 /.gradle-local/
 /.android-local/
@@ -67,6 +68,10 @@ backend/src/main/resources/application-local.yml
 **/.kotlin/
 .workbuddy/
 .pytest_cache/
+.codex-temp/
+.superpowers/
+**/.gradle-user-home*/
+HANDOVER_TO_CODEX.md
 
 # Local release archives
 /*.zip
@@ -91,3 +96,8 @@ backend/src/main/resources/application-local.yml
 # Local remediation plan artifacts
 /tasks/
 /scratch/
+/参考/
+/plans/
+/docs/superpowers/
+/artifacts/
+Dockerfile.ui-audit-*

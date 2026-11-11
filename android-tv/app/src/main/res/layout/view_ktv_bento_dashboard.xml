@@ -1,0 +1,351 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/dashboardRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:padding="6dp">
+
+    <!-- Column boundaries measured from the 1920x1080 reference image. -->
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/bentoColumnOneEnd"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        app:layout_constraintGuide_percent="0.189" />
+
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/bentoColumnTwoEnd"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        app:layout_constraintGuide_percent="0.500" />
+
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/bentoColumnThreeEnd"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        app:layout_constraintGuide_percent="0.688" />
+
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/bentoColFourMid"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        app:layout_constraintGuide_percent="0.844" />
+
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/bentoHalfHeight"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        app:layout_constraintGuide_percent="0.5" />
+
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/bentoOneThirdHeight"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        app:layout_constraintGuide_percent="0.3333" />
+
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/bentoTwoThirdHeight"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        app:layout_constraintGuide_percent="0.6667" />
+
+    <FrameLayout
+        android:id="@+id/tileHotRanking"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="2.5dp"
+        android:clickable="true"
+        android:contentDescription="热歌新歌，浏览热门与新歌"
+        android:focusable="true"
+        android:nextFocusLeft="@id/tileLocal"
+        android:nextFocusRight="@id/tileSinger"
+        android:nextFocusUp="@id/tabDashboard"
+        android:nextFocusDown="@id/tileTikTok"
+        android:stateListAnimator="@animator/ktv_card_focus_scale"
+        android:background="@drawable/bg_ktv_dashboard_card"
+        app:layout_constraintBottom_toTopOf="@id/bentoHalfHeight"
+        app:layout_constraintEnd_toStartOf="@id/bentoColumnOneEnd"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+        <TextView
+            android:id="@+id/txtHotRankingTitle"
+            style="@style/KtvDashboardTileCaption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="12dp"
+            android:gravity="center"
+            android:text="热歌新歌" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/tileTikTok"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="2.5dp"
+        android:clickable="true"
+        android:contentDescription="抖音神曲，按曲库标签筛选"
+        android:focusable="true"
+        android:nextFocusLeft="@id/tileLocal"
+        android:nextFocusRight="@id/tileSongName"
+        android:nextFocusUp="@id/tileHotRanking"
+        android:nextFocusDown="@id/btnDockVocal"
+        android:stateListAnimator="@animator/ktv_card_focus_scale"
+        android:background="@drawable/bg_ktv_dashboard_card"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/bentoColumnOneEnd"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/bentoHalfHeight">
+        <TextView
+            android:id="@+id/txtTikTokTitle"
+            style="@style/KtvDashboardTileCaption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="12dp"
+            android:gravity="center"
+            android:text="抖音神曲" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/tileSinger"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="2.5dp"
+        android:clickable="true"
+        android:contentDescription="歌手点歌，按歌手浏览曲库"
+        android:focusable="true"
+        android:nextFocusLeft="@id/tileHotRanking"
+        android:nextFocusRight="@id/tileOpera"
+        android:nextFocusUp="@id/tabDashboard"
+        android:nextFocusDown="@id/tileSongName"
+        android:stateListAnimator="@animator/ktv_card_focus_scale"
+        android:background="@drawable/bg_ktv_dashboard_card"
+        app:layout_constraintBottom_toTopOf="@id/bentoHalfHeight"
+        app:layout_constraintEnd_toStartOf="@id/bentoColumnTwoEnd"
+        app:layout_constraintStart_toEndOf="@id/bentoColumnOneEnd"
+        app:layout_constraintTop_toTopOf="parent">
+        <TextView
+            android:id="@+id/txtSingerTileTitle"
+            style="@style/KtvDashboardTileCaption"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|start"
+            android:layout_marginStart="16dp"
+            android:layout_marginBottom="12dp"
+            android:text="歌手点歌" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/tileSongName"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="2.5dp"
+        android:clickable="true"
+        android:contentDescription="歌名点歌，拼音与首字母搜索"
+        android:focusable="true"
+        android:nextFocusLeft="@id/tileTikTok"
+        android:nextFocusRight="@id/tileLanguage"
+        android:nextFocusUp="@id/tileSinger"
+        android:nextFocusDown="@id/btnDockVolDown"
+        android:stateListAnimator="@animator/ktv_card_focus_scale"
+        android:background="@drawable/bg_ktv_dashboard_card"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/bentoColumnTwoEnd"
+        app:layout_constraintStart_toEndOf="@id/bentoColumnOneEnd"
+        app:layout_constraintTop_toBottomOf="@id/bentoHalfHeight">
+        <TextView
+            android:id="@+id/txtSongNameTitle"
+            style="@style/KtvDashboardTileCaption"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|start"
+            android:layout_marginStart="16dp"
+            android:layout_marginBottom="12dp"
+            android:text="歌名点歌" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/tileOpera"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="2.5dp"
+        android:clickable="true"
+        android:contentDescription="综艺点歌，按曲库节目标签筛选"
+        android:focusable="true"
+        android:nextFocusLeft="@id/tileSinger"
+        android:nextFocusRight="@id/tileNewSongs"
+        android:nextFocusUp="@id/tabDashboard"
+        android:nextFocusDown="@id/tileLanguage"
+        android:stateListAnimator="@animator/ktv_card_focus_scale"
+        android:background="@drawable/bg_ktv_dashboard_card"
+        app:layout_constraintBottom_toTopOf="@id/bentoOneThirdHeight"
+        app:layout_constraintEnd_toStartOf="@id/bentoColumnThreeEnd"
+        app:layout_constraintStart_toEndOf="@id/bentoColumnTwoEnd"
+        app:layout_constraintTop_toTopOf="parent">
+        <TextView
+            android:id="@+id/txtOperaTitle"
+            style="@style/KtvDashboardTileCaption"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="10dp"
+            android:text="综艺点歌" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/tileLanguage"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="2.5dp"
+        android:clickable="true"
+        android:contentDescription="语种点歌，按曲库语种筛选"
+        android:focusable="true"
+        android:nextFocusLeft="@id/tileSongName"
+        android:nextFocusRight="@id/tileNewSongs"
+        android:nextFocusUp="@id/tileOpera"
+        android:nextFocusDown="@id/tileTheme"
+        android:stateListAnimator="@animator/ktv_card_focus_scale"
+        android:background="@drawable/bg_ktv_dashboard_card"
+        app:layout_constraintBottom_toTopOf="@id/bentoTwoThirdHeight"
+        app:layout_constraintEnd_toStartOf="@id/bentoColumnThreeEnd"
+        app:layout_constraintStart_toEndOf="@id/bentoColumnTwoEnd"
+        app:layout_constraintTop_toBottomOf="@id/bentoOneThirdHeight">
+        <TextView
+            android:id="@+id/txtLanguageTitle"
+            style="@style/KtvDashboardTileCaption"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="10dp"
+            android:text="语种点歌" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/tileTheme"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="2.5dp"
+        android:clickable="true"
+        android:contentDescription="主题点歌，按曲库标签筛选"
+        android:focusable="true"
+        android:nextFocusLeft="@id/tileSongName"
+        android:nextFocusRight="@id/tileFavorites"
+        android:nextFocusUp="@id/tileLanguage"
+        android:nextFocusDown="@id/video_container"
+        android:stateListAnimator="@animator/ktv_card_focus_scale"
+        android:background="@drawable/bg_ktv_dashboard_card"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/bentoColumnThreeEnd"
+        app:layout_constraintStart_toEndOf="@id/bentoColumnTwoEnd"
+        app:layout_constraintTop_toBottomOf="@id/bentoTwoThirdHeight">
+        <TextView
+            android:id="@+id/txtThemeTitle"
+            style="@style/KtvDashboardTileCaption"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="10dp"
+            android:text="主题点歌" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/tileNewSongs"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="2.5dp"
+        android:clickable="true"
+        android:contentDescription="精选专区，浏览 Home KTV 可用歌单"
+        android:focusable="true"
+        android:nextFocusLeft="@id/tileOpera"
+        android:nextFocusRight="@id/tileHotRanking"
+        android:nextFocusUp="@id/tabDashboard"
+        android:nextFocusDown="@id/btnDockToneUp"
+        android:stateListAnimator="@animator/ktv_card_focus_scale"
+        android:background="@drawable/bg_ktv_dashboard_card"
+        app:layout_constraintBottom_toTopOf="@id/bentoTwoThirdHeight"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/bentoColumnThreeEnd"
+        app:layout_constraintTop_toTopOf="parent">
+        <TextView
+            android:id="@+id/txtNewSongsTitle"
+            style="@style/KtvDashboardTileCaption"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|start"
+            android:layout_marginStart="16dp"
+            android:layout_marginBottom="12dp"
+            android:text="精选专区" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/tileFavorites"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="2.5dp"
+        android:clickable="true"
+        android:contentDescription="我的收藏，查看 Home KTV 收藏"
+        android:focusable="true"
+        android:nextFocusLeft="@id/tileTheme"
+        android:nextFocusRight="@id/tileLocal"
+        android:nextFocusUp="@id/tileNewSongs"
+        android:nextFocusDown="@id/btnDockToneDown"
+        android:stateListAnimator="@animator/ktv_card_focus_scale"
+        android:background="@drawable/bg_ktv_dashboard_card"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/bentoColFourMid"
+        app:layout_constraintStart_toEndOf="@id/bentoColumnThreeEnd"
+        app:layout_constraintTop_toBottomOf="@id/bentoTwoThirdHeight">
+        <TextView
+            android:id="@+id/txtFavoritesTitle"
+            style="@style/KtvDashboardTileCaption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="10dp"
+            android:gravity="center"
+            android:text="我的收藏" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/tileLocal"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="2.5dp"
+        android:clickable="true"
+        android:contentDescription="本地媒体，浏览 Home KTV 已索引曲目"
+        android:focusable="true"
+        android:nextFocusLeft="@id/tileFavorites"
+        android:nextFocusRight="@id/tileHotRanking"
+        android:nextFocusUp="@id/tileNewSongs"
+        android:nextFocusDown="@id/btnDockDownloads"
+        android:stateListAnimator="@animator/ktv_card_focus_scale"
+        android:background="@drawable/bg_ktv_dashboard_card"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/bentoColFourMid"
+        app:layout_constraintTop_toBottomOf="@id/bentoTwoThirdHeight">
+        <TextView
+            android:id="@+id/txtLocalTitle"
+            style="@style/KtvDashboardTileCaption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="10dp"
+            android:gravity="center"
+            android:text="本地媒体" />
+    </FrameLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

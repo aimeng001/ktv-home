@@ -19,6 +19,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -85,6 +87,27 @@ class TvOfflineWatcherTest {
     }
 
     @Test
+    void runningOfflineClearCannotClearQueueAfterReconnectCompletes() throws Exception {
+        watcher.onTvDisconnected();
+        broadcaster.pauseNextAvailabilityCheck();
+
+        Thread timerThread = scheduler.tasks.getFirst().runOnNewThread();
+        assertThat(broadcaster.availabilityCheckEntered.await(2, TimeUnit.SECONDS)).isTrue();
+
+        // The old task has already observed "offline". A successful reconnect
+        // completes while that task is paused inside the stale observation.
+        broadcaster.tvOnline = true;
+        watcher.onTvConnected();
+        broadcaster.releaseAvailabilityCheck.countDown();
+        timerThread.join(2_000L);
+
+        assertThat(timerThread.isAlive()).isFalse();
+        assertThat(playbackService.clearCalls).isZero();
+        assertThat(snapshotService.calls).isZero();
+        assertThat(broadcaster.playbackEvents).isEmpty();
+    }
+
+    @Test
     void doesNotBroadcastWhenTheOfflineQueueWasAlreadyEmpty() {
         playbackService.clearResult = false;
 
@@ -120,7 +143,10 @@ class TvOfflineWatcherTest {
     }
 
     private static final class TestBroadcaster extends WsBroadcaster {
-        private boolean tvOnline;
+        private volatile boolean tvOnline;
+        private volatile boolean pauseNextCheck;
+        private final CountDownLatch availabilityCheckEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseAvailabilityCheck = new CountDownLatch(1);
         private final List<WsEvent> playbackEvents = new ArrayList<>();
         private final List<WsEvent> events = new ArrayList<>();
 
@@ -130,7 +156,24 @@ class TvOfflineWatcherTest {
 
         @Override
         public boolean isTvOnline() {
-            return tvOnline;
+            boolean observed = tvOnline;
+            if (pauseNextCheck) {
+                pauseNextCheck = false;
+                availabilityCheckEntered.countDown();
+                try {
+                    if (!releaseAvailabilityCheck.await(2, TimeUnit.SECONDS)) {
+                        throw new AssertionError("Test did not release the paused availability check");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError("Availability check interrupted", e);
+                }
+            }
+            return observed;
+        }
+
+        private void pauseNextAvailabilityCheck() {
+            pauseNextCheck = true;
         }
 
         @Override
@@ -240,6 +283,7 @@ class TvOfflineWatcherTest {
         private final long delayMs;
         private boolean cancelled;
         private boolean done;
+        private boolean started;
 
         private ManualFuture(Runnable command, long delayMs) {
             this.command = command;
@@ -248,9 +292,16 @@ class TvOfflineWatcherTest {
 
         private void runNow() {
             if (!cancelled) {
+                started = true;
                 command.run();
                 done = true;
             }
+        }
+
+        private Thread runOnNewThread() {
+            Thread thread = new Thread(this::runNow, "manual-tv-offline-timer");
+            thread.start();
+            return thread;
         }
 
         @Override
@@ -265,7 +316,7 @@ class TvOfflineWatcherTest {
 
         @Override
         public boolean cancel(boolean mayInterruptIfRunning) {
-            cancelled = !done;
+            cancelled = !done && !started;
             return cancelled;
         }
 

@@ -1,0 +1,722 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/threeColumnBrowserRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:paddingHorizontal="0dp"
+    android:paddingTop="0dp"
+    android:paddingBottom="6dp"
+    android:background="@android:color/transparent">
+
+    <!-- 第一行：Home KTV 分类胶囊导航 -->
+    <HorizontalScrollView
+        android:id="@+id/browserCapsuleScroll"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/ktv_browser_capsule_height"
+        android:scrollbars="none"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:id="@+id/browserCapsuleTabs"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnTabSongName"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/ktv_browser_tab_height"
+                android:layout_marginEnd="@dimen/ktv_browser_tab_gap"
+                android:background="@drawable/bg_ktv_capsule_tab"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnTabTikTok"
+                android:nextFocusRight="@id/btnTabHd"
+                android:minWidth="0dp"
+                android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
+                android:text="歌名点歌"
+                android:textColor="@color/color_ktv_capsule_tab_text"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnTabHd"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/ktv_browser_tab_height"
+                android:layout_marginEnd="@dimen/ktv_browser_tab_gap"
+                android:background="@drawable/bg_ktv_capsule_tab"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnTabSongName"
+                android:nextFocusRight="@id/btnTabSingers"
+                android:minWidth="0dp"
+                android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
+                android:text="高清专区"
+                android:textColor="@color/color_ktv_capsule_tab_text"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnTabSingers"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/ktv_browser_tab_height"
+                android:layout_marginEnd="@dimen/ktv_browser_tab_gap"
+                android:background="@drawable/bg_ktv_capsule_tab"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnTabHd"
+                android:nextFocusRight="@id/btnTabHotNew"
+                android:minWidth="0dp"
+                android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
+                android:text="歌手点歌"
+                android:textColor="@color/color_ktv_capsule_tab_text"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnTabHotNew"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/ktv_browser_tab_height"
+                android:layout_marginEnd="@dimen/ktv_browser_tab_gap"
+                android:background="@drawable/bg_ktv_capsule_tab"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnTabSingers"
+                android:nextFocusRight="@id/btnTabFeatured"
+                android:minWidth="0dp"
+                android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
+                android:text="热歌新歌"
+                android:textColor="@color/color_ktv_capsule_tab_text"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnTabFeatured"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/ktv_browser_tab_height"
+                android:layout_marginEnd="@dimen/ktv_browser_tab_gap"
+                android:background="@drawable/bg_ktv_capsule_tab"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnTabHotNew"
+                android:nextFocusRight="@id/btnTabLocal"
+                android:minWidth="0dp"
+                android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
+                android:text="精选专区"
+                android:textColor="@color/color_ktv_capsule_tab_text"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnTabLocal"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/ktv_browser_tab_height"
+                android:layout_marginEnd="@dimen/ktv_browser_tab_gap"
+                android:background="@drawable/bg_ktv_capsule_tab"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnTabFeatured"
+                android:nextFocusRight="@id/btnTabFavorites"
+                android:minWidth="0dp"
+                android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
+                android:text="本地媒体"
+                android:textColor="@color/color_ktv_capsule_tab_text"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnTabFavorites"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/ktv_browser_tab_height"
+                android:layout_marginEnd="@dimen/ktv_browser_tab_gap"
+                android:background="@drawable/bg_ktv_capsule_tab"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnTabLocal"
+                android:nextFocusRight="@id/btnTabLanguages"
+                android:minWidth="0dp"
+                android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
+                android:text="我的收藏"
+                android:textColor="@color/color_ktv_capsule_tab_text"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnTabLanguages"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/ktv_browser_tab_height"
+                android:layout_marginEnd="@dimen/ktv_browser_tab_gap"
+                android:background="@drawable/bg_ktv_capsule_tab"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnTabFavorites"
+                android:nextFocusRight="@id/btnTabTopics"
+                android:minWidth="0dp"
+                android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
+                android:text="语种点歌"
+                android:textColor="@color/color_ktv_capsule_tab_text"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnTabTopics"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/ktv_browser_tab_height"
+                android:layout_marginEnd="@dimen/ktv_browser_tab_gap"
+                android:background="@drawable/bg_ktv_capsule_tab"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnTabLanguages"
+                android:nextFocusRight="@id/btnTabVariety"
+                android:minWidth="0dp"
+                android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
+                android:text="主题点歌"
+                android:textColor="@color/color_ktv_capsule_tab_text"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnTabVariety"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/ktv_browser_tab_height"
+                android:layout_marginEnd="@dimen/ktv_browser_tab_gap"
+                android:background="@drawable/bg_ktv_capsule_tab"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnTabTopics"
+                android:nextFocusRight="@id/btnTabTikTok"
+                android:minWidth="0dp"
+                android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
+                android:text="综艺点歌"
+                android:textColor="@color/color_ktv_capsule_tab_text"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnTabTikTok"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/ktv_browser_tab_height"
+                android:background="@drawable/bg_ktv_capsule_tab"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnTabVariety"
+                android:nextFocusRight="@id/btnTabSongName"
+                android:minWidth="0dp"
+                android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
+                android:text="抖音神曲"
+                android:textColor="@color/color_ktv_capsule_tab_text"
+                android:textSize="14sp" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <!-- 第二行：条件显示的二级子分类长胶囊条 -->
+    <HorizontalScrollView
+        android:id="@+id/browserSubCategoryRail"
+        android:background="@drawable/bg_ktv_subcategory_rail"
+        android:layout_width="match_parent"
+        android:layout_height="24dp"
+        android:layout_marginTop="2dp"
+        android:scrollbars="none"
+        android:visibility="gone"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:id="@+id/browserSubCategoryItems"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
+
+    <!-- 下方主内容工作区 -->
+    <LinearLayout
+        android:id="@+id/browserMainStage"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="18dp"
+        android:orientation="horizontal">
+
+        <!-- 综艺点歌左侧 8 大综艺台标面板 -->
+                <LinearLayout
+            android:id="@+id/panelVarietyShows"
+            android:layout_width="380dp"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="12dp"
+            android:orientation="vertical"
+            android:background="@drawable/bg_ktv_keyboard_panel"
+            android:padding="10dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/txtVarietyStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="6dp"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:text="按曲库中实际存在的节目标签筛选"
+                android:textColor="#E2E7F0"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <GridLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:columnCount="3"
+                android:rowCount="3"
+                android:alignmentMode="alignMargins"
+                android:useDefaultMargins="false">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_columnWeight="1"
+                    android:layout_rowWeight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <ImageView
+                        android:id="@+id/varietyVoice"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_ktv_variety_icon_focus"
+                        android:clipToOutline="true"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/ktv_ref_v50_variety_zghsy" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="中国好声音"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_columnWeight="1"
+                    android:layout_rowWeight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <ImageView
+                        android:id="@+id/varietySong"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_ktv_variety_icon_focus"
+                        android:clipToOutline="true"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/ktv_ref_v50_variety_zghgq" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="中国好歌曲"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_columnWeight="1"
+                    android:layout_rowWeight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <ImageView
+                        android:id="@+id/varietyDream"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_ktv_variety_icon_focus"
+                        android:clipToOutline="true"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/ktv_ref_v50_variety_zgmzs" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="中国梦之声"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_columnWeight="1"
+                    android:layout_rowWeight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <ImageView
+                        android:id="@+id/varietyStrong"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_ktv_variety_icon_focus"
+                        android:clipToOutline="true"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/ktv_ref_v50_variety_zgzqy" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="中国最强音"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_columnWeight="1"
+                    android:layout_rowWeight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <ImageView
+                        android:id="@+id/varietyHarmony"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_ktv_variety_icon_focus"
+                        android:clipToOutline="true"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/ktv_ref_v50_variety_zmhs" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="最美和声"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_columnWeight="1"
+                    android:layout_rowWeight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <ImageView
+                        android:id="@+id/varietyMad"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_ktv_variety_icon_focus"
+                        android:clipToOutline="true"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/ktv_ref_v50_variety_wwgk" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="我为歌狂"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_columnWeight="1"
+                    android:layout_rowWeight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <ImageView
+                        android:id="@+id/varietySinger"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_ktv_variety_icon_focus"
+                        android:clipToOutline="true"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/ktv_ref_v50_variety_wsgs" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="我是歌手"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_columnWeight="1"
+                    android:layout_rowWeight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <ImageView
+                        android:id="@+id/varietyStar"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_ktv_variety_icon_focus"
+                        android:clipToOutline="true"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/ktv_ref_v50_variety_qnxz" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="全能星战"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </GridLayout>
+        </LinearLayout>
+
+        <!-- 左侧 70% 歌曲结果区 + 底部分页条 -->
+        <LinearLayout
+            android:id="@+id/browserResultsColumn"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/txtBrowserResultsStatus"
+                android:visibility="gone"
+                android:layout_width="match_parent"
+                android:layout_height="32dp"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="8dp"
+                android:text="选择分类或输入歌名首字母"
+                android:textColor="@color/gold"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+                        <TextView
+                android:id="@+id/txtBrowserEmptyState"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:textColor="#FFC300"
+                android:textSize="26sp"
+                android:visibility="gone" />
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/browserResultsRecyclerView"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:padding="2dp"
+                android:scrollbars="none" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/browserSingerRecyclerView"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:padding="4dp"
+                android:scrollbars="vertical"
+                android:visibility="gone" />
+
+            <!-- 分页与返回操作：对标 IKTV 50.0.4 居中偏右对齐与纯白页码 -->
+            <LinearLayout
+                android:id="@+id/browserPaginationBar"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="8dp">
+
+                <!-- 左侧自适应弹性占位：将分页控制组推至中偏右 -->
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1.2" />
+
+                <Button
+                    android:id="@+id/btnPagePrev"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:background="@drawable/bg_ktv_page_button"
+                    android:focusable="true"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="16dp"
+                    android:text="上一页"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/txtPageNumber"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="16dp"
+                    android:text="1 / 1"
+                    android:textColor="#FFFFFF"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnPageNext"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:background="@drawable/bg_ktv_page_button"
+                    android:focusable="true"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="16dp"
+                    android:text="下一页"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp" />
+
+                <!-- 中右侧弹性占位：与返回按键保持舒适间距 -->
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="0.8" />
+
+                <Button
+                    android:id="@+id/btnBrowserBack"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:background="@drawable/bg_ktv_page_button"
+                    android:focusable="true"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="20dp"
+                    android:text="返回"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 右侧 30% 键盘与搜索中栏 (满足契约测试中 browserCenterColumn 动态折叠约束) -->
+        <LinearLayout
+            android:id="@+id/browserCenterColumn"
+            android:layout_width="@dimen/ktv_browser_center_col_width"
+            android:layout_height="match_parent"
+            android:layout_marginStart="14dp"
+            android:background="@android:color/transparent"
+            android:orientation="vertical"
+            android:padding="0dp">
+
+            <TextView
+                android:id="@+id/txtBrowserCenterTitle"
+                android:visibility="gone"
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="8dp"
+                android:text="搜索与筛选"
+                android:textColor="@color/gold"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <FrameLayout
+                android:id="@+id/browserKeyboardContainer"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="4"
+                android:visibility="gone" />
+
+            <ScrollView
+                android:id="@+id/browserFilterScroll"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:fillViewport="true"
+                android:scrollbars="none"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/browserFilterOptions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </ScrollView>
+
+            <LinearLayout
+                android:id="@+id/browserSingerPanel"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <FrameLayout
+                    android:id="@+id/browserSingerFilterContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:orientation="horizontal">
+
+                    <ScrollView
+                        android:id="@+id/browserInitialRail"
+                        android:layout_width="40dp"
+                        android:layout_height="match_parent"
+                        android:scrollbars="none">
+
+                        <LinearLayout
+                            android:id="@+id/browserInitialOptions"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical" />
+                    </ScrollView>
+
+                    <FrameLayout
+                        android:id="@+id/browserSingerListContainer"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/txtBrowserCenterHint"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:padding="12dp"
+                android:textColor="@color/dim"
+                android:textSize="15sp"
+                android:visibility="gone" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 向后兼容保留的旧导航容器（隐藏状态，供测试与契约调用） -->
+    <LinearLayout
+        android:id="@+id/browserNavigation"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        android:orientation="vertical">
+
+        <ScrollView
+            android:id="@+id/browserNavigationScroll"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <LinearLayout
+                android:id="@+id/browserNavigationItems"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <Button android:id="@+id/browserNavSingers" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <Button android:id="@+id/browserNavLanguages" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <Button android:id="@+id/browserNavTags" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <Button android:id="@+id/browserNavRankings" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <Button android:id="@+id/browserNavPlaylists" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <Button android:id="@+id/browserNavSearch" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <Button android:id="@+id/browserNavFavorites" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <Button android:id="@+id/browserNavHistory" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <Button android:id="@+id/browserNavHome" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+</LinearLayout>

@@ -28,8 +28,8 @@ public class Song {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** Optional fixed-width catalog number parsed from an 8-digit filename prefix. */
-    @Column(name = "catalog_number", length = 8)
+    /** Optional 8–10 digit catalog number parsed from a verified filename prefix. */
+    @Column(name = "catalog_number", length = 10)
     private String catalogNumber = "";
 
     /** 歌曲标题。 / Song title. */
@@ -178,7 +178,7 @@ public class Song {
     public String getCatalogNumber() { return catalogNumber == null ? "" : catalogNumber; }
     public void setCatalogNumber(String catalogNumber) {
         String value = catalogNumber == null ? "" : catalogNumber.trim();
-        this.catalogNumber = value.matches("\\d{8}") ? value : "";
+        this.catalogNumber = value.matches("[0-9]{8,10}") ? value : "";
     }
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
@@ -206,6 +206,9 @@ public class Song {
     public void setNeedsAiOptimization(boolean needsAiOptimization) { this.needsAiOptimization = needsAiOptimization; }
     public boolean isMetadataLocked(String field) {
         return java.util.Arrays.stream(metadataLocks == null ? new String[0] : metadataLocks).anyMatch(field::equals);
+    }
+    public boolean isCatalogNumberLocked() {
+        return isMetadataLocked("catalogNumber") || isMetadataLocked("catalog_number");
     }
     public void lockMetadata(String field) {
         java.util.LinkedHashSet<String> locks = new java.util.LinkedHashSet<>(java.util.Arrays.asList(metadataLocks == null ? new String[0] : metadataLocks));

@@ -2,7 +2,9 @@ package com.homektv.web;
 
 import com.homektv.config.AppProperties;
 import com.homektv.domain.Song;
+import com.homektv.domain.SongFile;
 import com.homektv.library.AssetWriter;
+import com.homektv.library.MediaClassifier;
 import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.library.SongSearchService;
 import com.homektv.repo.SongFileRepository;
@@ -17,8 +19,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * 歌曲搜索/详情/资源 API（P1.6/P1.7，详设§11.1）。
@@ -56,25 +63,67 @@ public class SongController {
     }
 
     /**
-     * 综合搜索（P1.6）：keyword 支持中文/全拼/首字母。
+     * 综合搜索（P1.6）：keyword/acronym 均支持中文/全拼/首字母，acronym 为电视端简拼查询别名。
      *
      * Combined search (P1.6): keyword supports Chinese characters, full pinyin, or initials.
      * @param keyword 搜索关键词 / search keyword
+     * @param acronym 电视端简拼关键词 / TV kiosk acronym query
      * @param type    媒体类型过滤（可选）/ media type filter (optional)
      * @param page    分页页码 / page number
      * @return 匹配的歌曲列表 / list of matching songs
      */
     @GetMapping("/songs")
     public List<SongDto> search(@RequestParam(defaultValue = "") String keyword,
+                                @RequestParam(defaultValue = "") String acronym,
                                 @RequestParam(defaultValue = "") String type,
                                 @RequestParam(defaultValue = "0") int page) {
-        List<Song> songs = searchService.search(keyword, type, page);
-        if (availabilityPolicy == null || songs.isEmpty()) return songs.stream().map(SongDto::from).toList();
+        String searchTerm = acronym.isBlank() ? keyword : acronym;
+        List<Song> songs = searchService.search(searchTerm, type, page);
+        if (songs.isEmpty()) return List.of();
+        Map<Long, String> resolutions = storedVideoResolutions(songs);
+        if (availabilityPolicy == null) {
+            return songs.stream()
+                    .map(song -> SongDto.from(song, true, null, resolutions.get(song.getId())))
+                    .toList();
+        }
         java.util.Set<Long> playableIds = availabilityPolicy.playableSongIds(songs);
         return songs.stream()
                 .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
-                        playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY))
+                        playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY,
+                        resolutions.get(song.getId())))
                 .toList();
+    }
+
+    /** Reads resolution only for the current search page; this never opens media files. */
+    private Map<Long, String> storedVideoResolutions(List<Song> songs) {
+        if (fileRepo == null || songs == null || songs.isEmpty()) return Map.of();
+        Set<Long> songIds = new LinkedHashSet<>();
+        songs.stream()
+                .filter(Objects::nonNull)
+                .map(Song::getId)
+                .filter(Objects::nonNull)
+                .forEach(songIds::add);
+        if (songIds.isEmpty()) return Map.of();
+
+        List<SongFile> files = fileRepo.findBySongIdInAndValidTrueOrderByPriorityDesc(songIds);
+        if (files == null || files.isEmpty()) return Map.of();
+
+        Map<Long, String> resolutions = new LinkedHashMap<>();
+        for (SongFile file : files) {
+            if (!SongAvailabilityPolicy.isReadyMediaFile(file)) continue;
+            String mediaType = file.getMediaType();
+            if (!MediaClassifier.MV.equalsIgnoreCase(mediaType)
+                    && !MediaClassifier.KTV_VIDEO.equalsIgnoreCase(mediaType)) continue;
+            String resolution = file.getResolution();
+            if (resolution == null || resolution.isBlank()) continue;
+            resolutions.putIfAbsent(file.getSongId(), resolution.trim());
+        }
+        return resolutions;
+    }
+
+    /** Keeps existing in-process callers source compatible with the original keyword endpoint. */
+    public List<SongDto> search(String keyword, String type, int page) {
+        return search(keyword, "", type, page);
     }
 
     /**

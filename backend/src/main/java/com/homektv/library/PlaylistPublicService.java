@@ -29,7 +29,6 @@ import java.util.Set;
 
 @Service
 public class PlaylistPublicService {
-    private static final int MAX_PLAYLIST_SONGS = 100;
     private static final Set<String> SKIPPABLE_ORDER_ERRORS = Set.of(
             "SONG_IN_QUEUE",
             "FILE_MISSING",

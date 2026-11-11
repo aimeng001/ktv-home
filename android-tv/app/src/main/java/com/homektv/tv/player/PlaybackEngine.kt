@@ -12,14 +12,18 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.ChannelMixingAudioProcessor
+import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.PlayerMessage
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioCapabilities
 import androidx.media3.exoplayer.audio.AudioSink
@@ -34,6 +38,10 @@ import com.homektv.tv.net.closeResources
 import com.homektv.tv.net.PlaybackErrorContext
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 data class PlaybackRecoveryRequest(
     val queueId: Long?,
@@ -41,6 +49,121 @@ data class PlaybackRecoveryRequest(
     val positionMs: Long,
     val playWhenReady: Boolean,
 )
+
+enum class VocalMode(val wireValue: String) {
+    ORIGINAL("original"),
+    ACCOMPANIMENT("accompaniment");
+
+    companion object {
+        fun fromWire(value: String?): VocalMode =
+            if (value.equals(ORIGINAL.wireValue, ignoreCase = true)) ORIGINAL else ACCOMPANIMENT
+    }
+}
+
+internal class VocalModeState(initialMode: VocalMode = VocalMode.ACCOMPANIMENT) {
+    private val mutableState = MutableStateFlow(initialMode)
+    val state: StateFlow<VocalMode> = mutableState.asStateFlow()
+
+    fun update(mode: VocalMode) {
+        mutableState.value = mode
+    }
+
+    fun update(wireValue: String?) {
+        update(VocalMode.fromWire(wireValue))
+    }
+}
+
+internal sealed interface VocalSelectionAction {
+    data class SelectTrack(val index: Int) : VocalSelectionAction
+    data class MapChannels(val mode: PcmChannelMode) : VocalSelectionAction
+    data object Passthrough : VocalSelectionAction
+    data object NoSelection : VocalSelectionAction
+}
+
+internal interface VocalSelectionSink {
+    fun selectTrack(index: Int)
+    fun mapChannels(mode: PcmChannelMode)
+}
+
+internal fun applyVocalSelectionAction(action: VocalSelectionAction, sink: VocalSelectionSink) {
+    when (action) {
+        is VocalSelectionAction.SelectTrack -> sink.selectTrack(action.index)
+        is VocalSelectionAction.MapChannels -> sink.mapChannels(action.mode)
+        VocalSelectionAction.Passthrough,
+        VocalSelectionAction.NoSelection -> sink.mapChannels(PcmChannelMode.STEREO)
+    }
+}
+
+internal fun resolveVocalSelectionAction(
+    mode: VocalMode,
+    audioLayout: AudioLayout,
+    audioTrackCount: Int,
+    legacyAccompanimentIndex: Int?,
+): VocalSelectionAction = when (AudioPlaybackRoute.forLayout(audioLayout.layout, audioTrackCount)) {
+    AudioPlaybackRoute.PASSTHROUGH -> VocalSelectionAction.Passthrough
+    AudioPlaybackRoute.PCM_CHANNEL_MAPPING -> VocalSelectionAction.MapChannels(
+        if (mode == VocalMode.ORIGINAL) {
+            PcmChannelMode.STEREO
+        } else {
+            PcmChannelMapper.modeFor(
+                vocalMode = mode.wireValue,
+                originalChannel = audioLayout.originalChannel,
+                accompanimentChannel = audioLayout.accompanimentChannel,
+            )
+        },
+    )
+    AudioPlaybackRoute.TRACK_SELECTION -> resolveAudioTrackIndex(
+        audioLayout = audioLayout,
+        vocalMode = mode.wireValue,
+        audioTrackCount = audioTrackCount,
+        legacyAccompanimentIndex = legacyAccompanimentIndex,
+    )?.let(VocalSelectionAction::SelectTrack) ?: VocalSelectionAction.NoSelection
+}
+
+internal fun channelMixingModeForPlayback(
+    mode: VocalMode,
+    audioLayout: AudioLayout,
+    audioTrackCount: Int,
+): PcmChannelMode = if (
+    AudioPlaybackRoute.forLayout(audioLayout.layout, audioTrackCount) ==
+    AudioPlaybackRoute.PCM_CHANNEL_MAPPING
+) {
+    PcmChannelMapper.modeFor(
+        vocalMode = mode.wireValue,
+        originalChannel = audioLayout.originalChannel,
+        accompanimentChannel = audioLayout.accompanimentChannel,
+    )
+} else {
+    PcmChannelMode.STEREO
+}
+
+@OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun channelMixingMatrix(mode: PcmChannelMode): ChannelMixingMatrix = when (mode) {
+    PcmChannelMode.STEREO -> ChannelMixingMatrix(
+        2,
+        2,
+        floatArrayOf(1f, 0f, 0f, 1f),
+    )
+    PcmChannelMode.LEFT_MONO -> ChannelMixingMatrix(
+        2,
+        2,
+        floatArrayOf(1f, 1f, 0f, 0f),
+    )
+    PcmChannelMode.RIGHT_MONO -> ChannelMixingMatrix(
+        2,
+        2,
+        floatArrayOf(0f, 0f, 1f, 1f),
+    )
+}
+
+@OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun identityChannelMixingMatrix(channelCount: Int): ChannelMixingMatrix {
+    require(channelCount > 0)
+    val coefficients = FloatArray(channelCount * channelCount) { index ->
+        if (index / channelCount == index % channelCount) 1f else 0f
+    }
+    return ChannelMixingMatrix(channelCount, channelCount, coefficients)
+}
 
 /**
  * ExoPlayer 流式播放引擎（P1.28，详设§6/§9.2）。
@@ -96,6 +219,8 @@ class PlaybackEngine(
 
     /** 当前正在播放的 fileId，用于避免同一首重复 setMediaItem 打断播放。 */
     private var currentFileId: Long? = null
+    private var currentPitchSemitones: Int = 0
+    val pitchSemitones: Int get() = currentPitchSemitones
     /** 与当前媒体一起捕获的 queueId，避免迟到错误使用后来切歌后的队列状态。 */
     private var currentQueueId: Long? = null
     /** 只有同一队列中的同一文件才允许复用已加载的媒体。 */
@@ -107,7 +232,9 @@ class PlaybackEngine(
     private val retryState = PlaybackRetryState()
     /** Callback identity is committed only after the requested media reaches READY. */
     private val identityGate = PlaybackIdentityGate()
-    private var requestedVocalMode: String = "original"
+    private var requestedVocalMode: VocalMode = VocalMode.ACCOMPANIMENT
+    private val vocalModeState = VocalModeState()
+    val vocalMode: StateFlow<VocalMode> = vocalModeState.state
     private var requestedAccompanimentIndex: Int? = null
     private var requestedAudioTrackCount: Int = 1
     private var requestedAudioLayout: AudioLayout = AudioLayout.normalStereo()
@@ -118,10 +245,20 @@ class PlaybackEngine(
     private val videoWatchdog = VideoPlaybackWatchdog()
     private var videoGeneration: Long = 0L
     private var appliedSelectionFileId: Long? = null
-    private var appliedSelectionMode: String? = null
+    private var appliedSelectionMode: VocalMode? = null
     private var appliedSelectionGroup: androidx.media3.common.TrackGroup? = null
     private var appliedSelectionTrack: Int? = null
-    private val channelAudioProcessor = KtvChannelAudioProcessor()
+    private val channelAudioProcessor = ChannelMixingAudioProcessor().apply {
+        for (channelCount in 1..8) {
+            putChannelMixingMatrix(identityChannelMixingMatrix(channelCount))
+        }
+        // Keep 2-channel processing active for a stream that starts in original mode. The
+        // requested identity/accompaniment matrix is installed before audio is allowed to run.
+        putChannelMixingMatrix(channelMixingMatrix(PcmChannelMode.LEFT_MONO))
+    }
+    private val channelMixingMessageTarget = PlayerMessage.Target { _, payload ->
+        (payload as? ChannelMixingMatrix)?.let(channelAudioProcessor::putChannelMixingMatrix)
+    }
 
     private var activeEngineType: PlaybackEngineType = PlaybackEngineType.PRIMARY_MEDIA3
     private var attachedPlayerView: PlayerView? = null
@@ -215,7 +352,8 @@ class PlaybackEngine(
         .retryOnConnectionFailure(true)
         .build()
 
-    private val player: ExoPlayer by lazy { buildPlayer() }
+    private val playerDelegate = lazy { buildPlayer() }
+    private val player: ExoPlayer by playerDelegate
 
     private fun buildPlayer(): ExoPlayer {
         val dataSourceFactory: DataSource.Factory =
@@ -280,7 +418,9 @@ class PlaybackEngine(
                 // Restricting this sink to PCM prevents encoded passthrough from bypassing the
                 // channel processor. DUAL_TRACK still uses the same decoded audio TrackSelection.
                 .setAudioCapabilities(AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES)
-                .setEnableFloatOutput(enableFloatOutput)
+                // ChannelMixingAudioProcessor accepts decoded 16-bit PCM; encoded passthrough is
+                // already disabled by the custom audio capabilities below.
+                .setEnableFloatOutput(false)
                 .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                 .setAudioProcessors(arrayOf<AudioProcessor>(channelAudioProcessor))
                 .build()
@@ -359,6 +499,30 @@ class PlaybackEngine(
         }
     }
 
+    /** Queue matrix replacement on Media3's playback thread; no sink reconfiguration is needed. */
+    private fun setChannelMixingMode(mode: PcmChannelMode) {
+        val matrix = channelMixingMatrix(mode)
+        if (playerDelegate.isInitialized()) {
+            player.createMessage(channelMixingMessageTarget)
+                .setPayload(matrix)
+                .send()
+        } else {
+            channelAudioProcessor.putChannelMixingMatrix(matrix)
+        }
+    }
+
+    private fun primeChannelMixingForPlayback() {
+        // Install the requested matrix while playback is paused so an ORIGINAL request never
+        // briefly starts with the accompaniment channel before tracks become ready.
+        setChannelMixingMode(
+            channelMixingModeForPlayback(
+                mode = requestedVocalMode,
+                audioLayout = requestedAudioLayout,
+                audioTrackCount = requestedAudioTrackCount,
+            ),
+        )
+    }
+
     /**
      * 播放指定文件源。若已在同一队列播放同一文件则不打断（只确保处于播放态）。
      * @param fileId song_files.id
@@ -375,6 +539,7 @@ class PlaybackEngine(
         videoCodec: String? = null,
         songDurationMs: Long = 0L,
     ) {
+        val continuesSameQueueItem = currentFileId == fileId && currentQueueId == queueId
         currentSongDurationMs = songDurationMs
         currentHasVideoDeclared = hasVideoDeclared
         currentFormat = format
@@ -415,6 +580,7 @@ class PlaybackEngine(
             player.playWhenReady = playWhenReady
             return
         }
+        if (!continuesSameQueueItem) resetPitchForMediaChange()
         cancelRetry()
         Log.d(TAG, "play fileId=$fileId url=$streamUrl")
         transientRetryCount = 0
@@ -444,6 +610,7 @@ class PlaybackEngine(
         // Load the replacement silently; the caller applies the latest server state before
         // allowing playback to start. This prevents a stale playing snapshot from winning.
         player.playWhenReady = false
+        primeChannelMixingForPlayback()
         player.setMediaItem(
             MediaItem.Builder()
                 .setMediaId(fileId.toString())
@@ -464,6 +631,7 @@ class PlaybackEngine(
         initialPositionMs: Long,
         followedByMedia3DecoderFailure: Boolean = false,
     ) {
+        resetPitchForMediaChange()
         activeEngineType = PlaybackEngineType.FALLBACK_FFMPEG
         fallbackFollowedMedia3DecoderFailure = followedByMedia3DecoderFailure
         cancelRetry()
@@ -498,7 +666,7 @@ class PlaybackEngine(
             initialPositionMs = initialPositionMs,
             requestToken = fallbackPlaybackToken,
             playWhenReady = playWhenReady,
-            mode = requestedVocalMode,
+            mode = requestedVocalMode.wireValue,
             accompanimentIndex = requestedAccompanimentIndex,
             audioTrackCount = requestedAudioTrackCount,
             audioLayout = requestedAudioLayout,
@@ -608,6 +776,7 @@ class PlaybackEngine(
      * 使下次同 fileId 也会重新装载。
      */
     fun stop() {
+        resetPitchForMediaChange()
         cancelRetry()
         retryState.beginReplacement()
         fallbackPlaybackToken += 1L
@@ -669,6 +838,103 @@ class PlaybackEngine(
         }
     }
 
+    /** Apply a semitone offset to the active Media3 player without replacing media or seeking. */
+    fun setPitchSemitones(semitones: Int): PlaybackPitchResult {
+        val target = PlaybackPitchPolicy.clamp(semitones)
+        if (activeEngineType != PlaybackEngineType.PRIMARY_MEDIA3) {
+            return PlaybackPitchResult(
+                status = PlaybackPitchStatus.UNSUPPORTED_ENGINE,
+                semitones = currentPitchSemitones,
+                pitch = 1f,
+            )
+        }
+        if (currentFileId == null) {
+            return PlaybackPitchResult(
+                status = PlaybackPitchStatus.NO_MEDIA,
+                semitones = currentPitchSemitones,
+                pitch = 1f,
+            )
+        }
+
+        val activePlayer = player
+        if (activePlayer.currentMediaItem == null) {
+            return PlaybackPitchResult(
+                status = PlaybackPitchStatus.NO_MEDIA,
+                semitones = currentPitchSemitones,
+                pitch = activePlayer.playbackParameters.pitch,
+            )
+        }
+        if (activePlayer.playbackState != Player.STATE_READY) {
+            return PlaybackPitchResult(
+                status = PlaybackPitchStatus.NOT_READY,
+                semitones = currentPitchSemitones,
+                pitch = activePlayer.playbackParameters.pitch,
+            )
+        }
+
+        val previous = activePlayer.playbackParameters
+        val requested = PlaybackPitchPolicy.parametersFor(previous, target)
+        val positionBefore = activePlayer.currentPosition
+        return try {
+            activePlayer.playbackParameters = requested
+            val applied = activePlayer.playbackParameters
+            if (abs(applied.speed - previous.speed) > PITCH_PARAMETER_EPSILON ||
+                abs(applied.pitch - requested.pitch) > PITCH_PARAMETER_EPSILON
+            ) {
+                activePlayer.playbackParameters = previous
+                PlaybackPitchResult(
+                    status = PlaybackPitchStatus.PARAMETER_REJECTED,
+                    semitones = currentPitchSemitones,
+                    pitch = activePlayer.playbackParameters.pitch,
+                    positionBeforeMs = positionBefore,
+                    positionAfterMs = activePlayer.currentPosition,
+                )
+            } else {
+                currentPitchSemitones = target
+                val positionAfter = activePlayer.currentPosition
+                Log.i(
+                    TAG,
+                    "pitch applied semitones=$target speed=${applied.speed} pitch=${applied.pitch} " +
+                        "positionBeforeMs=$positionBefore positionAfterMs=$positionAfter",
+                )
+                PlaybackPitchResult(
+                    status = PlaybackPitchStatus.APPLIED,
+                    semitones = target,
+                    pitch = applied.pitch,
+                    positionBeforeMs = positionBefore,
+                    positionAfterMs = positionAfter,
+                )
+            }
+        } catch (error: IllegalStateException) {
+            Log.w(TAG, "pitch update rejected semitones=$target", error)
+            PlaybackPitchResult(
+                status = PlaybackPitchStatus.PARAMETER_REJECTED,
+                semitones = currentPitchSemitones,
+                pitch = activePlayer.playbackParameters.pitch,
+                positionBeforeMs = positionBefore,
+                positionAfterMs = activePlayer.currentPosition,
+            )
+        }
+    }
+
+    private fun resetPitchForMediaChange() {
+        if (!playerDelegate.isInitialized()) {
+            currentPitchSemitones = 0
+            return
+        }
+        val current = player.playbackParameters
+        if (abs(current.pitch - 1f) <= PITCH_PARAMETER_EPSILON) {
+            currentPitchSemitones = 0
+            return
+        }
+        player.playbackParameters = PlaybackParameters(current.speed, 1f)
+        if (abs(player.playbackParameters.pitch - 1f) <= PITCH_PARAMETER_EPSILON) {
+            currentPitchSemitones = 0
+        } else {
+            Log.w(TAG, "could not reset pitch for media change; pitch=${player.playbackParameters.pitch}")
+        }
+    }
+
     /** 在当前音频轨组内切换原唱/伴唱，避免重新加载媒体。 */
     fun setVocalMode(
         mode: String,
@@ -676,7 +942,8 @@ class PlaybackEngine(
         audioTrackCount: Int,
         audioLayout: AudioLayout = AudioLayout.normalStereo(),
     ) {
-        requestedVocalMode = mode
+        requestedVocalMode = VocalMode.fromWire(mode)
+        vocalModeState.update(requestedVocalMode)
         requestedAccompanimentIndex = accompanimentIndex
         requestedAudioTrackCount = audioTrackCount
         requestedAudioLayout = audioLayout
@@ -684,46 +951,38 @@ class PlaybackEngine(
         if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
             val trackIdx = resolveAudioTrackIndex(
                 audioLayout = requestedAudioLayout,
-                vocalMode = requestedVocalMode,
+                vocalMode = requestedVocalMode.wireValue,
                 audioTrackCount = requestedAudioTrackCount,
                 legacyAccompanimentIndex = requestedAccompanimentIndex,
             )
-            fallbackPlayer.setVocalSelection(mode, trackIdx, audioLayout)
+            fallbackPlayer.setVocalSelection(requestedVocalMode.wireValue, trackIdx, audioLayout)
         } else {
             applyVocalSelection()
         }
     }
 
     private fun applyVocalSelection() {
-        when (AudioPlaybackRoute.forLayout(requestedAudioLayout.layout, requestedAudioTrackCount)) {
-            AudioPlaybackRoute.PASSTHROUGH -> {
-                channelAudioProcessor.setMode(PcmChannelMode.STEREO)
-                return
-            }
-            AudioPlaybackRoute.PCM_CHANNEL_MAPPING -> {
-                // This changes only the next PCM buffer's channel mapping. It never touches the
-                // MediaItem, prepare state, or currentPosition.
-                channelAudioProcessor.setMode(
-                    PcmChannelMapper.modeFor(
-                        requestedVocalMode,
-                        requestedAudioLayout.originalChannel,
-                        requestedAudioLayout.accompanimentChannel,
-                    ),
-                )
-                return
-            }
-            AudioPlaybackRoute.TRACK_SELECTION -> {
-                channelAudioProcessor.setMode(PcmChannelMode.STEREO)
-                if (awaitingTracks) return
-            }
-        }
-        val index = resolveAudioTrackIndex(
+        val action = resolveVocalSelectionAction(
+            mode = requestedVocalMode,
             audioLayout = requestedAudioLayout,
-            vocalMode = requestedVocalMode,
             audioTrackCount = requestedAudioTrackCount,
             legacyAccompanimentIndex = requestedAccompanimentIndex,
         )
-        if (index == null || index < 0) return
+        if (action is VocalSelectionAction.SelectTrack && awaitingTracks) {
+            setChannelMixingMode(PcmChannelMode.STEREO)
+            return
+        }
+
+        applyVocalSelectionAction(
+            action,
+            object : VocalSelectionSink {
+                override fun selectTrack(index: Int) = applyAudioTrackSelection(index)
+                override fun mapChannels(mode: PcmChannelMode) = setChannelMixingMode(mode)
+            },
+        )
+    }
+
+    private fun applyAudioTrackSelection(index: Int) {
         val audioGroups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
         if (audioGroups.isEmpty()) return
         var remaining = index
@@ -756,7 +1015,7 @@ class PlaybackEngine(
         appliedSelectionGroup = group
         appliedSelectionTrack = localIndex
         val elapsed = SystemClock.elapsedRealtime() - vocalRequestAt
-        Log.d(TAG, "vocal mode=$requestedVocalMode track=$index groupTrack=$localIndex groups=${audioGroups.map { it.length }} applied in ${elapsed}ms")
+        Log.d(TAG, "vocal mode=${requestedVocalMode.wireValue} track=$index groupTrack=$localIndex groups=${audioGroups.map { it.length }} applied in ${elapsed}ms")
     }
 
     var currentSongDurationMs: Long = 0L
@@ -1074,6 +1333,7 @@ class PlaybackEngine(
 
     companion object {
         private const val TAG = "PlaybackEngine"
+        private const val PITCH_PARAMETER_EPSILON = 0.0001f
         private const val PROGRESS_INTERVAL_MS = 100L
         private const val MAX_TRANSIENT_RETRIES = 2
         private const val RETRY_DELAY_MS = 750L

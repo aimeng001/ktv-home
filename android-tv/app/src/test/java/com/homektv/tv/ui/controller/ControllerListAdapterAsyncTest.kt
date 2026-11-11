@@ -9,8 +9,10 @@ import com.homektv.tv.net.SongDto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.ArrayDeque
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -95,10 +97,10 @@ class ControllerListAdapterAsyncTest {
     }
 
     @Test
-    fun adapterAsyncDiffComputationExecutesOnConfiguredExecutorAndNotifiesCallback() {
-        val bgExecutor = Executors.newSingleThreadExecutor()
+    fun rapidSubmissionsKeepOnlyBoundedDiffWorkAndCommitTheLatestList() {
+        val bgExecutor = QueuedExecutor()
         val syncExecutor = Executor { it.run() }
-
+        val callbackCounts = IntArray(500)
         val adapter = ControllerListAdapter<Long>(
             itemId = { it },
             createView = { _, _ -> error("Not used") },
@@ -107,27 +109,115 @@ class ControllerListAdapterAsyncTest {
             mainThreadExecutor = syncExecutor,
         )
 
-        val latch1 = CountDownLatch(1)
-        adapter.submitList((1L..50L).toList()) {
-            latch1.countDown()
+        adapter.submitList(listOf(1L, 2L))
+        repeat(callbackCounts.size) { index ->
+            adapter.submitList(listOf(1L, index.toLong() + 1000L)) {
+                callbackCounts[index]++
+            }
+            assertTrue(
+                "A burst must not enqueue one Diff task per list submission",
+                bgExecutor.queuedTaskCount <= 1,
+            )
         }
 
-        val completed1 = latch1.await(2, TimeUnit.SECONDS)
-        assertTrue("Initial submit should complete", completed1)
-        assertEquals(50, adapter.itemCount)
-
-        // Now submit an updated list that modifies middle items to test diff calculation
-        val latch2 = CountDownLatch(1)
-        val updatedList = (1L..25L).toList() + listOf(999L) + (27L..50L).toList()
-        adapter.submitList(updatedList) {
-            latch2.countDown()
+        while (bgExecutor.queuedTaskCount > 0) {
+            bgExecutor.runNext()
         }
 
-        val completed2 = latch2.await(2, TimeUnit.SECONDS)
-        assertTrue("Diff calculation should complete in background and trigger callback", completed2)
-        assertEquals(50, adapter.itemCount)
-        assertEquals(999L, adapter.getItemId(25))
-        bgExecutor.shutdown()
+        assertEquals(listOf(1L, 1499L), adapter.currentList)
+        assertEquals(1, callbackCounts.last())
+        assertTrue(callbackCounts.dropLast(1).all { it == 0 })
+    }
+
+    @Test
+    fun emptySubmissionSupersedesQueuedDiffWithoutRestoringStaleRows() {
+        val bgExecutor = QueuedExecutor()
+        val syncExecutor = Executor { it.run() }
+        var staleCallbackCount = 0
+        val adapter = ControllerListAdapter<Long>(
+            itemId = { it },
+            createView = { _, _ -> error("Not used") },
+            bindView = { _, _, _ -> },
+            backgroundExecutor = bgExecutor,
+            mainThreadExecutor = syncExecutor,
+        )
+
+        adapter.submitList(listOf(1L, 2L))
+        adapter.submitList(listOf(1L, 3L)) { staleCallbackCount++ }
+        adapter.submitList(emptyList())
+        while (bgExecutor.queuedTaskCount > 0) {
+            bgExecutor.runNext()
+        }
+
+        assertTrue(adapter.currentList.isEmpty())
+        assertEquals(0, staleCallbackCount)
+    }
+
+    @Test
+    fun adapterAsyncDiffComputationExecutesOnConfiguredExecutorAndNotifiesCallback() {
+        val bgExecutor = Executors.newSingleThreadExecutor()
+        withExecutorShutdown(bgExecutor) {
+            val syncExecutor = Executor { it.run() }
+
+            val adapter = ControllerListAdapter<Long>(
+                itemId = { it },
+                createView = { _, _ -> error("Not used") },
+                bindView = { _, _, _ -> },
+                backgroundExecutor = bgExecutor,
+                mainThreadExecutor = syncExecutor,
+            )
+
+            val latch1 = CountDownLatch(1)
+            adapter.submitList((1L..50L).toList()) {
+                latch1.countDown()
+            }
+
+            val completed1 = latch1.await(2, TimeUnit.SECONDS)
+            assertTrue("Initial submit should complete", completed1)
+            assertEquals(50, adapter.itemCount)
+
+            // Now submit an updated list that modifies middle items to test diff calculation
+            val latch2 = CountDownLatch(1)
+            val updatedList = (1L..25L).toList() + listOf(999L) + (27L..50L).toList()
+            adapter.submitList(updatedList) {
+                latch2.countDown()
+            }
+
+            val completed2 = latch2.await(2, TimeUnit.SECONDS)
+            assertTrue("Diff calculation should complete in background and trigger callback", completed2)
+            assertEquals(50, adapter.itemCount)
+            assertEquals(999L, adapter.getItemId(25))
+        }
+    }
+
+    @Test
+    fun executorCleanupRunsWhenAsyncTestBodyFails() {
+        val executor = Executors.newSingleThreadExecutor()
+        val workerStarted = CountDownLatch(1)
+        executor.execute {
+            workerStarted.countDown()
+            try {
+                CountDownLatch(1).await()
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+        var caughtExpectedFailure = false
+        try {
+            assertTrue("Test worker should start before the failure path", workerStarted.await(2, TimeUnit.SECONDS))
+            withExecutorShutdown(executor) {
+                throw IllegalStateException("expected test failure")
+            }
+        } catch (failure: IllegalStateException) {
+            assertEquals("expected test failure", failure.message)
+            caughtExpectedFailure = true
+        } finally {
+            executor.shutdownNow()
+        }
+
+        assertTrue(caughtExpectedFailure)
+        assertTrue(executor.isShutdown)
+        assertTrue("Test executor worker should terminate", executor.awaitTermination(2, TimeUnit.SECONDS))
     }
 
     @Test
@@ -135,5 +225,33 @@ class ControllerListAdapterAsyncTest {
         org.junit.Assert.assertFalse(ControllerListRemovalPolicy.shouldNotifyRemoval(0))
         org.junit.Assert.assertFalse(ControllerListRemovalPolicy.shouldNotifyRemoval(-1))
         org.junit.Assert.assertTrue(ControllerListRemovalPolicy.shouldNotifyRemoval(5))
+    }
+
+    private class QueuedExecutor : Executor {
+        private val tasks = ArrayDeque<Runnable>()
+
+        val queuedTaskCount: Int
+            get() = tasks.size
+
+        override fun execute(command: Runnable) {
+            tasks.addLast(command)
+        }
+
+        fun runNext() {
+            tasks.removeFirst().run()
+        }
+    }
+
+    private inline fun <T> withExecutorShutdown(executor: ExecutorService, block: () -> T): T {
+        try {
+            return block()
+        } finally {
+            executor.shutdownNow()
+            try {
+                executor.awaitTermination(2, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
     }
 }

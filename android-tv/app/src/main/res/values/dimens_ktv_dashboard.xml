@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="ktv_dashboard_bottom_dock_height">104dp</dimen>
+    <dimen name="ktv_dashboard_pip_width">185dp</dimen>
+    <dimen name="ktv_dashboard_pip_height">104dp</dimen>
+    <dimen name="ktv_dashboard_large_tile_width">320dp</dimen>
+    <dimen name="ktv_dashboard_large_tile_height">180dp</dimen>
+    <dimen name="ktv_theme_card_corner_radius">12dp</dimen>
+    <dimen name="ktv_theme_focus_stroke_width">2.5dp</dimen>
+    <dimen name="ktv_dock_video_frame_corner_radius">8dp</dimen>
+    <dimen name="ktv_dock_video_frame_stroke_width">1.5dp</dimen>
+    <dimen name="ktv_bento_minimum_row_height">92dp</dimen>
+    <dimen name="ktv_browser_nav_rail_width">200dp</dimen>
+    <dimen name="ktv_browser_center_col_width">240dp</dimen>
+    <dimen name="ktv_browser_capsule_height">28dp</dimen>
+    <dimen name="ktv_browser_tab_height">28dp</dimen>
+    <dimen name="ktv_browser_tab_gap">3dp</dimen>
+    <dimen name="ktv_browser_tab_horizontal_padding">6dp</dimen>
+</resources>

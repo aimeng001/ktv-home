@@ -553,6 +553,8 @@ python scripts/full_test_runner.py --profile core --coverage
 
 `core` 是默认档，覆盖扫描只读、播放/队列/转码音频、安全与跨端协议；后端保留迁移/事务、扫描、队列和 WebSocket 的 PostgreSQL 烟测。`extended` 保留各端独有的低风险边界、完整测试套件及构建检查。旧名称 `fast` / `full` 分别映射到 `core` / `extended`。`--backend local` 明确跳过后端 Testcontainers；Docker 环境下的核心档默认包含上述少量集成烟测。执行器为每个模块保留独立日志并报告总耗时；Android 默认复用 Gradle daemon，CI 或需要隔离时可加 `--no-daemon`。
 
+本机 Docker Desktop ↔ Android Emulator/AVD 联调的准备、静默启动、ADB、版本核对与旧版本清理步骤，见[本机 Docker Desktop 与 Android 模拟器联调指南](docs/testing/local-docker-desktop-avd-guide.md)。
+
 大型曲库与检索基准测试（需 Docker 环境与足够内存，默认不进入日常测试套件）：
 
 ```bash

@@ -1,5 +1,7 @@
 package com.homektv.tv.ui
 
+import android.view.View
+
 /**
  * 返回键层级动作枚举。
  */
@@ -10,6 +12,27 @@ enum class BackAction {
     EXIT_KIOSK,
     EXIT_APP,
 }
+
+/** Restores the selected browser route only when its render pass dropped browser focus. */
+internal object KtvBrowserFocusRestorationPolicy {
+    fun shouldRestoreRouteFocus(
+        browserVisible: Boolean,
+        selectedRouteStillCurrent: Boolean,
+        routeActivationPending: Boolean,
+        browserHadFocusBeforeRender: Boolean,
+        browserHasFocus: Boolean,
+        anotherVisibleActionHasFocus: Boolean,
+        noVisibleViewHasFocus: Boolean = false,
+    ): Boolean = browserVisible &&
+        selectedRouteStillCurrent &&
+        !anotherVisibleActionHasFocus &&
+        (routeActivationPending ||
+            (browserHadFocusBeforeRender && !browserHasFocus) ||
+            noVisibleViewHasFocus)
+}
+
+internal fun View.requestRemoteFocus(): Boolean =
+    if (isInTouchMode) requestFocusFromTouch() else requestFocus()
 
 /**
  * 电视端遥控器 DPAD 焦点与返回键层级路由控制器。

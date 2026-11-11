@@ -37,6 +37,7 @@ public class TvOfflineWatcher {
     private final SnapshotService snapshotService;
     private final ScheduledExecutorService scheduler;
     private ScheduledFuture<?> pending;
+    private long offlineEpoch;
 
     @Autowired
     public TvOfflineWatcher(WsBroadcaster broadcaster, PlaybackService playbackService,
@@ -64,6 +65,9 @@ public class TvOfflineWatcher {
     /** TV 会话建立：取消待执行的离线清理。
      *  TV session established: cancel any pending offline clear. */
     public synchronized void onTvConnected() {
+        // A callback can arrive while the scheduled Runnable is already running;
+        // invalidate every task created for the previous offline interval.
+        offlineEpoch++;
         if (pending != null) {
             pending.cancel(false);
             pending = null;
@@ -75,22 +79,35 @@ public class TvOfflineWatcher {
      *  TV session disconnected: if no other TV session is online,
      *  schedule queue clear after 10 seconds. */
     public synchronized void onTvDisconnected() {
+        long scheduledEpoch = ++offlineEpoch;
         if (broadcaster.isTvOnline()) {
             return; // 还有其他 TV 会话在线
         }
         if (pending != null) {
             pending.cancel(false);
         }
-        pending = scheduler.schedule(this::clearIfStillOffline,
+        pending = scheduler.schedule(() -> clearIfStillOffline(scheduledEpoch),
                 OFFLINE_CLEAR_DELAY_MS, TimeUnit.MILLISECONDS);
         log.info("TV 离线，{}ms 后若无重连将清空播放队列", OFFLINE_CLEAR_DELAY_MS);
     }
 
-    private void clearIfStillOffline() {
+    private void clearIfStillOffline(long scheduledEpoch) {
         if (broadcaster.isTvOnline()) {
             return;
         }
-        boolean cleared = playbackService.clearOnTvOffline();
+        boolean cleared;
+        synchronized (this) {
+            // The initial online check is intentionally repeated while holding
+            // the same monitor used by connect/disconnect notifications. The
+            // epoch rejects a Runnable that observed offline before reconnect.
+            if (scheduledEpoch != offlineEpoch || broadcaster.isTvOnline()) {
+                return;
+            }
+            cleared = playbackService.clearOnTvOffline();
+            if (scheduledEpoch == offlineEpoch) {
+                pending = null;
+            }
+        }
         if (cleared) {
             log.info("TV 离线超时，已清空播放队列");
             broadcaster.broadcastPlayback(WsEvent.of(WsEvent.QUEUE_UPDATED, snapshotService.snapshot()));

@@ -4,6 +4,7 @@ import com.homektv.library.LibraryStatusService;
 import com.homektv.repo.SongRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -16,6 +17,22 @@ import java.util.LinkedHashMap;
 public class LibraryStatusController {
     private final SongRepository songs;
     private LibraryStatusService statusService;
+    private com.homektv.library.LibraryScanCoordinator scanCoordinator;
+
+    @Autowired(required = false)
+    void setScanCoordinator(com.homektv.library.LibraryScanCoordinator scanCoordinator) {
+        this.scanCoordinator = scanCoordinator;
+    }
+
+    @PostMapping("/scan")
+    public com.homektv.library.LibraryScanCoordinator.ScanSubmission scan() {
+        if (scanCoordinator == null) {
+            return new com.homektv.library.LibraryScanCoordinator.ScanSubmission(
+                    false, "UNAVAILABLE", "UNKNOWN", "SCAN_COORDINATOR_UNAVAILABLE",
+                    "服务端扫描协调器不可用，未能受理请求");
+        }
+        return scanCoordinator.submitScan();
+    }
 
     public LibraryStatusController(SongRepository songs) {
         this.songs = songs;
@@ -46,6 +63,7 @@ public class LibraryStatusController {
         response.put("catalogRevision", value.catalogRevision());
         response.put("statusRevision", value.statusRevision());
         response.put("errorCode", value.errorCode());
+        response.put("scanRequestSupported", scanCoordinator != null && value.scanRequestSupported());
         response.put("updatedAt", value.updatedAt());
         return response;
     }

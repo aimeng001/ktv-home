@@ -1903,7 +1903,7 @@ class IncrementalLibraryScanTest {
     @MethodSource("filenameRepairLockedOptionalMetadataCases")
     void unchangedFilenameRepairRespectsOptionalMetadataLocks(
             String lockedField, String expectedLanguage, String expectedCategory,
-            String expectedVocalForm, boolean expectedAiReview) throws Exception {
+            String expectedVocalForm, String expectedCatalogNumber, boolean expectedAiReview) throws Exception {
         byte[] sourceBytes = {7, 1, 1};
         Path file = Files.write(sourceDir.resolve(
                 "00123456-张庭 钟丽缇 王祖蓝-爱上幼儿园-合唱-国语-流行.mkv"), sourceBytes);
@@ -1914,6 +1914,9 @@ class IncrementalLibraryScanTest {
         song.setLanguage("未知".equals(expectedLanguage) ? "未知" : "粤语");
         song.setTags(new String[]{"旧分类"});
         song.setVocalForm("独唱");
+        if ("catalogNumber".equals(lockedField) || "catalog_number".equals(lockedField)) {
+            song.setCatalogNumber("87654321");
+        }
         song.setMediaType(MediaClassifier.KTV_VIDEO);
         song.setDurationMs(180_000);
         song.setFingerprint("legacy-unrecognized-711");
@@ -1934,7 +1937,7 @@ class IncrementalLibraryScanTest {
         assertThat(song.getLanguage()).isEqualTo(expectedLanguage);
         assertThat(song.getTags()).containsExactly(expectedCategory);
         assertThat(song.getVocalForm()).isEqualTo(expectedVocalForm);
-        assertThat(song.getCatalogNumber()).isEqualTo("00123456");
+        assertThat(song.getCatalogNumber()).isEqualTo(expectedCatalogNumber);
         assertThat(song.getStatus()).isEqualTo("ok");
         assertThat(song.isNeedsAiOptimization()).isEqualTo(expectedAiReview);
         assertThat(Files.readAllBytes(file)).containsExactly(sourceBytes);
@@ -1943,9 +1946,11 @@ class IncrementalLibraryScanTest {
 
     private static Stream<Arguments> filenameRepairLockedOptionalMetadataCases() {
         return Stream.of(
-                Arguments.of("tags", "国语", "旧分类", "合唱", false),
-                Arguments.of("vocalForm", "国语", "流行", "独唱", false),
-                Arguments.of("language", "未知", "流行", "合唱", true));
+                Arguments.of("tags", "国语", "旧分类", "合唱", "00123456", false),
+                Arguments.of("vocalForm", "国语", "流行", "独唱", "00123456", false),
+                Arguments.of("language", "未知", "流行", "合唱", "00123456", true),
+                Arguments.of("catalogNumber", "国语", "流行", "合唱", "87654321", false),
+                Arguments.of("catalog_number", "国语", "流行", "合唱", "87654321", false));
     }
 
     @Test
@@ -3304,7 +3309,7 @@ class IncrementalLibraryScanTest {
         Path outsideDirectory = Files.createDirectory(tempDir.resolve("outside-real-path"));
         Path outsideMedia = Files.write(outsideDirectory.resolve("outside.mkv"), new byte[]{7, 8, 9});
         Path linkedDirectory = sourceDir.resolve("linked-outside");
-        Files.createSymbolicLink(linkedDirectory, outsideDirectory);
+        SymlinkTestSupport.createSymbolicLinkOrSkip(linkedDirectory, outsideDirectory);
         BasicFileAttributes rootAttributes = Files.readAttributes(sourceDir, BasicFileAttributes.class);
         BasicFileAttributes linkedAttributes = Files.readAttributes(outsideDirectory, BasicFileAttributes.class);
         Path normalizedRoot = sourceDir.toAbsolutePath().normalize();
@@ -3339,7 +3344,8 @@ class IncrementalLibraryScanTest {
     void externalScanSkipsMediaSymlinkWithoutReadingItsTarget() throws Exception {
         byte[] protectedBytes = {6, 2, 6, 4};
         Path protectedTarget = Files.write(tempDir.resolve("protected-media-target.mkv"), protectedBytes);
-        Path mediaLink = Files.createSymbolicLink(sourceDir.resolve("linked-media.mkv"), protectedTarget);
+        Path mediaLink = SymlinkTestSupport.createSymbolicLinkOrSkip(
+                sourceDir.resolve("linked-media.mkv"), protectedTarget);
 
         LibraryScanService.ScanResult result = scanService.scanAll();
 
@@ -3356,6 +3362,7 @@ class IncrementalLibraryScanTest {
 
     @Test
     void externalScanRejectsMediaReplacedBySymlinkBetweenVisitChecks() throws Exception {
+        SymlinkTestSupport.requireSymbolicLinkSupport(tempDir);
         byte[] protectedBytes = {8, 6, 7};
         Path mediaFile = Files.write(sourceDir.resolve("周杰伦-扫描时替换链接-国语-流行.mkv"),
                 new byte[]{1, 2, 3});
@@ -3373,7 +3380,7 @@ class IncrementalLibraryScanTest {
                 }
                 if (mediaLinkChecks.incrementAndGet() == 1) {
                     Files.delete(mediaFile);
-                    Files.createSymbolicLink(mediaFile, protectedTarget);
+                    SymlinkTestSupport.createSymbolicLinkOrSkip(mediaFile, protectedTarget);
                     return false;
                 }
                 return true;
@@ -3406,6 +3413,7 @@ class IncrementalLibraryScanTest {
 
     @Test
     void pendingFileReplacedBySymlinkBeforeWorkerProbeIsRejected() throws Exception {
+        SymlinkTestSupport.requireSymbolicLinkSupport(tempDir);
         Path mediaFile = Files.write(sourceDir.resolve("周杰伦-探测前替换为链接-国语-流行.mkv"),
                 new byte[]{1, 2, 3});
         byte[] protectedBytes = {9, 8, 7};
@@ -3430,7 +3438,7 @@ class IncrementalLibraryScanTest {
                                 LinkOption.NOFOLLOW_LINKS).isRegularFile();
                         if (replacedAfterAdmission.compareAndSet(false, true)) {
                             Files.delete(mediaFile);
-                            Files.createSymbolicLink(mediaFile, outsideTarget);
+                            SymlinkTestSupport.createSymbolicLinkOrSkip(mediaFile, outsideTarget);
                         }
                         return wasRegular;
                     });
@@ -3926,6 +3934,36 @@ class IncrementalLibraryScanTest {
     }
 
     @Test
+    void structuredFilenamePreferenceReadsFromSettingServiceWhenConfigured() throws Exception {
+        props.setStructuredFilenameMetadataPreferred(false);
+        SettingService mockSettingService = org.mockito.Mockito.mock(SettingService.class);
+        when(mockSettingService.isFilenameMetadataPreferred(false)).thenReturn(true);
+
+        LibraryScanService customScan = new LibraryScanService(props, ffprobe, tagReader, songRepository,
+                songFileRepository, new AssetWriter(props), mockSettingService, null, seenPathStore,
+                new SongProjectionService(songRepository, songFileRepository),
+                new MediaProbeStage(ffprobe, new ResourceBudget(2, 1, 4, () -> false)));
+        try {
+            Path file = Files.write(sourceDir.resolve("韩红-望-国语-流行.mp3"), new byte[]{1, 2, 3});
+            TagInfo tag = new TagInfo();
+            tag.setTitle("容器测试歌名");
+            tag.setArtist("容器测试歌手");
+            tag.setLanguage("英语");
+            when(tagReader.read(file.toFile())).thenReturn(tag);
+
+            LibraryScanService.ScanResult result = customScan.scanAll();
+
+            assertThat(result.added()).isEqualTo(1);
+            Song song = songsById.values().stream().findFirst().orElseThrow();
+            assertThat(song.getTitle()).isEqualTo("望");
+            assertThat(song.getArtist()).isEqualTo("韩红");
+            assertThat(song.getLanguage()).isEqualTo("国语");
+        } finally {
+            customScan.shutdown();
+        }
+    }
+
+    @Test
     void structuredFilenamePreferenceFallsBackToContainerLanguageForTwoFieldNames() throws Exception {
         props.setStructuredFilenameMetadataPreferred(true);
         Path file = Files.write(sourceDir.resolve("草蜢-两段标题.mp3"), new byte[]{1, 2, 3});
@@ -3967,6 +4005,22 @@ class IncrementalLibraryScanTest {
         assertThat(song.getTitleInit()).isEqualTo("M");
         assertThat(song.getArtist()).isEqualTo("探测歌手");
         assertThat(song.getMetadataProvenance()).isEqualTo("manual-title-provenance");
+    }
+
+    @Test
+    void reprobeDoesNotOverwriteManuallyLockedCatalogNumber() throws Exception {
+        Path file = Files.write(sourceDir.resolve("00123456-草蜢-旧标题-国语-流行.mp3"), new byte[]{1});
+        scanService.scanAll();
+        Song song = songsById.values().stream().findFirst().orElseThrow();
+        assertThat(song.getCatalogNumber()).isEqualTo("00123456");
+        song.setCatalogNumber("8765432101");
+        song.lockMetadata("catalogNumber");
+        Files.write(file, new byte[]{1, 2});
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        assertThat(result.updated()).isEqualTo(1);
+        assertThat(song.getCatalogNumber()).isEqualTo("8765432101");
     }
 
     @Test

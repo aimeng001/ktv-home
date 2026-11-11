@@ -108,7 +108,7 @@ class ControllerActivity : AppCompatActivity() {
         requestedOrientation = when {
             isTelevision || !hasTouchscreen -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             resources.configuration.smallestScreenWidthDp < 600 ->
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }

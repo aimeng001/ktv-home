@@ -3017,6 +3017,7 @@ class MediaImportServiceTest {
 
     @Test
     void failedTranscodeCleanupPreservesAFileReplacingTheSymlinkDuringRecheck() throws Exception {
+        SymlinkTestSupport.requireSymbolicLinkSupport(targetDir);
         Path protectedOutput = Files.writeString(targetDir.resolve("race-protected.mp4"), "protected bytes");
         MediaImportRecord record = pendingRecord(141L, "歌手 - 清理重检竞争.mpg");
         Path output = targetDir.resolve("歌手 - 清理重检竞争.mkv");
@@ -3041,7 +3042,7 @@ class MediaImportServiceTest {
                 checks[0]++;
                 if (checks[0] == 1) {
                     Files.deleteIfExists(normalizedGenerated);
-                    Files.createSymbolicLink(normalizedGenerated, protectedOutput.getFileName());
+                    SymlinkTestSupport.createSymbolicLinkOrSkip(normalizedGenerated, protectedOutput.getFileName());
                     return false;
                 }
                 if (checks[0] == 2) {

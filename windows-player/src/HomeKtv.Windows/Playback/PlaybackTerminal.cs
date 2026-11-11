@@ -60,10 +60,17 @@ public sealed class PlaybackTerminal : IAsyncDisposable
                 $"Reliable playback report rejected: {reason}"));
             _ = FenceOutputAsync();
         };
-        socket.ProgressReceived += position =>
+        socket.ProgressReceived += progress =>
         {
-            CurrentPositionMs = position;
-            PositionChanged?.Invoke(position);
+            var currentQueueId = CurrentSnapshot?.Playing?.QueueId;
+            if (CurrentSnapshot?.Playing is null
+                || (progress.QueueId is not null && progress.QueueId != currentQueueId))
+            {
+                return;
+            }
+
+            CurrentPositionMs = progress.PositionMs;
+            PositionChanged?.Invoke(progress.PositionMs);
         };
         socket.SnapshotReceived += ApplySnapshotFromSocketAsync;
         output.PlaybackFinished += fileId => _ = ReportFinishedAsync(fileId);

@@ -89,11 +89,11 @@ public class SongReparseService {
                 song.setArtistPy(PinyinUtil.fullPinyin(effectiveArtist));
                 song.setArtistInit(PinyinUtil.initials(effectiveArtist));
             }
-            // Reparse is authoritative for filename-derived metadata.  A file
-            // that no longer has the commercial prefix must clear the old
-            // number; retaining it would make a rename look like the old
-            // catalogue identity on every subsequent export/search.
-            song.setCatalogNumber(preview.catalogNumber());
+            // Filename-derived catalog metadata follows the same explicit lock
+            // contract as other editable song fields.
+            if (!song.isCatalogNumberLocked()) {
+                song.setCatalogNumber(preview.catalogNumber());
+            }
             String fingerprint = MediaClassifier.fingerprint(effectiveArtist, effectiveTitle, song.getDurationMs());
             songRepository.findByFingerprint(fingerprint).filter(other -> !other.getId().equals(song.getId()))
                     .ifPresent(other -> { throw new ApiException("FINGERPRINT_CONFLICT", "重解析结果与歌曲 #" + other.getId() + " 重复"); });

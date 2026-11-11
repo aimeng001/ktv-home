@@ -43,6 +43,30 @@ class LibraryApiTest {
         )
     }
 
+    @Test
+    fun scanRequestDecodesExplicitAcceptanceWithoutInferringItFromHttpSuccess() = runBlocking {
+        val transport = ScanStubTransport(
+            KtvApiResult.Success(
+                """{"accepted":false,"requestStatus":"NEEDS_REBIND","scanState":"IDLE","errorCode":"LIBRARY_ROOT_IDENTITY_CHANGED","scan":{"running":false}}""",
+            ),
+        )
+
+        val result = LibraryApi(transport).requestScan()
+
+        assertEquals("/library/scan", transport.lastPostPath)
+        assertEquals(
+            KtvApiResult.Success(
+                LibraryScanSubmission(
+                    accepted = false,
+                    requestStatus = "NEEDS_REBIND",
+                    scanState = "IDLE",
+                    errorCode = "LIBRARY_ROOT_IDENTITY_CHANGED",
+                ),
+            ),
+            result,
+        )
+    }
+
     private class StubTransport(private val response: KtvApiResult<String>) : KtvTransport {
         override suspend fun get(path: String): KtvApiResult<String> {
             assertEquals("/library/status", path)
@@ -53,5 +77,16 @@ class LibraryApiTest {
             error("LibraryApi.status does not use POST")
 
         override suspend fun delete(path: String) = error("LibraryApi.status does not use DELETE")
+    }
+
+    private class ScanStubTransport(private val response: KtvApiResult<String>) : KtvTransport {
+        var lastPostPath: String? = null
+
+        override suspend fun get(path: String) = error("unexpected GET $path")
+        override suspend fun post(path: String, body: kotlinx.serialization.json.JsonObject): KtvApiResult<String> {
+            lastPostPath = path
+            return response
+        }
+        override suspend fun delete(path: String) = error("unexpected DELETE $path")
     }
 }

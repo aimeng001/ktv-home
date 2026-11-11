@@ -36,21 +36,37 @@ public class ProviderRequestRateLimiter {
     private final Clock clock;
     private final long minIntervalMs;
     private final int dailyLimit;
+    private final MusicSourceConfigService configService;
 
     @org.springframework.beans.factory.annotation.Autowired
     public ProviderRequestRateLimiter(
             JdbcTemplate jdbc,
             @Value("${app.music-provider-rate-limit.min-interval-ms:5000}") long configuredIntervalMs,
-            @Value("${app.music-provider-rate-limit.daily-limit:300}") int configuredDailyLimit) {
+            @Value("${app.music-provider-rate-limit.daily-limit:300}") int configuredDailyLimit,
+            MusicSourceConfigService configService) {
         this(jdbc, Clock.systemUTC(), Math.max(MIN_SAFE_INTERVAL_MS, configuredIntervalMs),
-                Math.max(1, configuredDailyLimit));
+                Math.max(1, configuredDailyLimit), configService);
+    }
+
+    public ProviderRequestRateLimiter(
+            JdbcTemplate jdbc,
+            long configuredIntervalMs,
+            int configuredDailyLimit) {
+        this(jdbc, Clock.systemUTC(), Math.max(MIN_SAFE_INTERVAL_MS, configuredIntervalMs),
+                Math.max(1, configuredDailyLimit), null);
     }
 
     ProviderRequestRateLimiter(JdbcTemplate jdbc, Clock clock, long configuredIntervalMs, int configuredDailyLimit) {
+        this(jdbc, clock, configuredIntervalMs, configuredDailyLimit, null);
+    }
+
+    ProviderRequestRateLimiter(JdbcTemplate jdbc, Clock clock, long configuredIntervalMs, int configuredDailyLimit,
+                               MusicSourceConfigService configService) {
         this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.minIntervalMs = Math.max(MIN_SAFE_INTERVAL_MS, configuredIntervalMs);
         this.dailyLimit = Math.max(1, configuredDailyLimit);
+        this.configService = configService;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -66,7 +82,8 @@ public class ProviderRequestRateLimiter {
                 state.lastHttpStatus = null;
                 state.lastError = null;
             }
-            if (state.requestCount >= dailyLimit) {
+            int effectiveLimit = configService != null ? configService.getConfig().dailyLimit() : dailyLimit;
+            if (state.requestCount >= effectiveLimit) {
                 throw new ProviderRateLimitedException(provider, today.plusDays(1)
                         .atStartOfDay(ZoneOffset.UTC).toInstant());
             }

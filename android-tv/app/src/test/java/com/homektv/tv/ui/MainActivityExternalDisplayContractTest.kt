@@ -14,7 +14,9 @@ class MainActivityExternalDisplayContractTest {
         assertTrue(source.contains("presentationController?.stop()"))
         assertTrue(source.contains("attachedExternalPlayerView?.let { engine?.detach(it) }"))
         assertTrue(source.contains("engine?.attach(externalPlayerView)"))
-        assertTrue(source.contains("engine?.attach(binding.playerView)"))
+        assertTrue(source.contains("engine?.attach(bottomDockController.playerView)"))
+        assertTrue(source.contains("bottomDockController.setExternalDisplayActive(true)"))
+        assertTrue(source.contains("bottomDockController.setExternalDisplayActive(false)"))
     }
 
     private fun locate(name: String): File {

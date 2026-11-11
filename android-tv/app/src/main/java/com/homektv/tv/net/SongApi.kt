@@ -16,6 +16,12 @@ class SongApi(
                 "&type=${encodeQueryComponent(type.trim())}&page=${page.coerceIn(0, MAX_PAGE)}",
         )
 
+    suspend fun searchAcronym(acronym: String, type: String = "", page: Int = 0): KtvApiResult<List<SongDto>> =
+        getList(
+            "/songs?acronym=${encodeQueryComponent(acronym.trim().uppercase())}" +
+                "&type=${encodeQueryComponent(type.trim())}&page=${page.coerceIn(0, MAX_PAGE)}",
+        )
+
     suspend fun songDetail(songId: Long): KtvApiResult<SongDetail> =
         getDecoded("/songs/${songId.coerceAtLeast(1)}", SongDetail.serializer())
 
@@ -29,18 +35,25 @@ class SongApi(
         size: Int = 30,
         gender: String = "",
         initial: String = "",
-    ): KtvApiResult<ArtistPage> = getDecoded(
-        "/browse/artists/page?gender=${encodeQueryComponent(gender.trim())}" +
-            "&initial=${encodeQueryComponent(initial.trim())}" +
-            "&page=${page.coerceIn(0, MAX_PAGE)}&size=${size.coerceIn(1, 100)}",
-        ArtistPage.serializer(),
-    )
+        region: String = "",
+    ): KtvApiResult<ArtistPage> {
+        val query = buildList {
+            add("gender" to gender.trim())
+            add("initial" to initial.trim())
+            if (region.isNotBlank()) add("region" to region.trim())
+            add("page" to page.coerceIn(0, MAX_PAGE).toString())
+            add("size" to size.coerceIn(1, 100).toString())
+        }.joinToString("&") { (key, value) -> "$key=${encodeQueryComponent(value)}" }
+        return getDecoded("/browse/artists/page?$query", ArtistPage.serializer())
+    }
 
-    suspend fun artistInitials(gender: String = ""): KtvApiResult<List<String>> =
-        getDecoded(
-            "/browse/artists/initials?gender=${encodeQueryComponent(gender.trim())}",
-            ListSerializer(String.serializer()),
-        )
+    suspend fun artistInitials(gender: String = "", region: String = ""): KtvApiResult<List<String>> {
+        val query = buildList {
+            add("gender" to gender.trim())
+            if (region.isNotBlank()) add("region" to region.trim())
+        }.joinToString("&") { (key, value) -> "$key=${encodeQueryComponent(value)}" }
+        return getDecoded("/browse/artists/initials?$query", ListSerializer(String.serializer()))
+    }
 
     suspend fun languages(): KtvApiResult<List<NamedCount>> =
         getDecoded("/browse/languages", ListSerializer(NamedCount.serializer()))

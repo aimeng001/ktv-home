@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ktv_bg_main">#14171D</color>
+    <color name="ktv_card_surface">#20252E</color>
+    <color name="ktv_focus_blue">#3182FB</color>
+    <color name="ktv_focus_blue_glow">#663182FB</color>
+    <color name="ktv_drawer_mask_bg">#99000000</color>
+    <color name="ktv_vocal_green">#10B981</color>
+    <color name="ktv_badge_orange">#F59E0B</color>
+</resources>

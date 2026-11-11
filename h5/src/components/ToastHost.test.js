@@ -18,10 +18,20 @@ describe('ToastHost', () => {
   it('shows the current global toast and automatically dismisses it', async () => {
     vi.useFakeTimers()
     await mount()
+    const announcer = root.querySelector('[role="status"]')
+    expect(announcer).not.toBeNull()
+    expect(announcer.textContent).toBe('')
+    expect(announcer.getAttribute('aria-live')).toBe('polite')
+    expect(announcer.getAttribute('aria-atomic')).toBe('true')
+
     useToast().toast('已加入队列', 250)
     await nextTick()
 
-    expect(root.querySelector('.proto-toast').textContent).toBe('已加入队列')
+    const toast = root.querySelector('.proto-toast')
+    expect(toast.textContent).toBe('已加入队列')
+    expect(toast.getAttribute('aria-hidden')).toBe('true')
+    expect(root.querySelector('[role="status"]')).toBe(announcer)
+    expect(announcer.textContent).toBe('已加入队列')
     await vi.advanceTimersByTimeAsync(249)
     await nextTick()
     expect(root.querySelector('.proto-toast')).not.toBeNull()
@@ -29,6 +39,8 @@ describe('ToastHost', () => {
     await vi.runAllTimersAsync()
     await nextTick()
     expect(root.querySelector('.proto-toast')).toBeNull()
+    expect(root.querySelector('[role="status"]')).toBe(announcer)
+    expect(announcer.textContent).toBe('')
   })
 
   it('replaces the message and resets its dismissal timer', async () => {
@@ -44,6 +56,8 @@ describe('ToastHost', () => {
     await nextTick()
 
     expect(root.querySelector('.proto-toast').textContent).toBe('新消息')
+    expect(root.querySelectorAll('[role="status"]')).toHaveLength(1)
+    expect(root.querySelector('[role="status"]').textContent).toBe('新消息')
     await vi.advanceTimersByTimeAsync(20)
     await vi.runAllTimersAsync()
     await nextTick()

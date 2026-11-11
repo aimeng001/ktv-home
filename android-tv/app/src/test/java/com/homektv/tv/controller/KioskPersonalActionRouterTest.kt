@@ -1,5 +1,7 @@
 package com.homektv.tv.controller
 
+import com.homektv.tv.net.SongDto
+
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -11,6 +13,7 @@ class KioskPersonalActionRouterTest {
         val router = KioskPersonalActionRouter(fake)
 
         router.favorites()
+        router.toggleFavorite(SongDto(id = 9L))
         router.playlists()
         router.playlistDetail(4L)
         router.orderPlaylist(4L)
@@ -20,6 +23,7 @@ class KioskPersonalActionRouterTest {
         assertEquals(
             listOf(
                 "favorites",
+                "favorite-toggle:9",
                 "playlists",
                 "playlist-detail:4",
                 "playlist-order:4",
@@ -35,6 +39,10 @@ class KioskPersonalActionRouterTest {
 
         override fun loadFavorites() {
             calls += "favorites"
+        }
+
+        override fun toggleFavorite(song: SongDto) {
+            calls += "favorite-toggle:${song.id}"
         }
 
         override fun loadPlaylists() {

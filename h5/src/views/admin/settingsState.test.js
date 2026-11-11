@@ -152,4 +152,38 @@ describe('admin settings state', () => {
     await expect(runSettingsAction(() => Promise.resolve({ saved: true })))
       .resolves.toEqual({ ok: true, value: { saved: true } })
   })
+
+  it('includes filename metadata preferred and discovery settings in editable general keys', () => {
+    const dirtyForm = {
+      library_filename_metadata_preferred: true,
+      discovery_enabled: true,
+      discovery_name: '客厅包厢',
+      standby_logo_path: 'should_strip'
+    }
+    const payload = editableSettingsPayload(dirtyForm)
+    expect(payload).toEqual({
+      library_filename_metadata_preferred: true,
+      discovery_enabled: true,
+      discovery_name: '客厅包厢'
+    })
+  })
+
+  it('canonicalizes discovery name and enabled boolean', () => {
+    expect(canonicalizeSettings({
+      discovery_name: '  主卧KTV  ',
+      discovery_enabled: 1,
+      library_filename_metadata_preferred: 0
+    })).toEqual({
+      discovery_name: '主卧KTV',
+      discovery_enabled: true,
+      library_filename_metadata_preferred: false
+    })
+  })
+
+  it('normalizes blank discovery name in editable settings payload', () => {
+    const payload = editableSettingsPayload({
+      discovery_name: '   '
+    })
+    expect(payload.discovery_name).toBe('家庭KTV')
+  })
 })

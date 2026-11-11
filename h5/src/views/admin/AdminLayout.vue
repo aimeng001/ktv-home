@@ -136,9 +136,9 @@ function formatBytes(bytes) {
 .admin-shell { --admin-blue:#2563eb; --admin-border:#e2e8f0; --admin-muted:#64748b; display:flex; min-height:100vh; background:#f5f7fa; color:#172033; }
 .side { width:220px; flex:none; background:#fff; border-right:1px solid var(--admin-border); }
 .brand { height:76px; padding:18px 20px; border-bottom:1px solid var(--admin-border); display:flex; flex-direction:column; justify-content:center; }
-.brand strong { font-size:18px; line-height:1; }.brand span { margin-top:7px; color:#94a3b8; font-size:11px; }
+.brand strong { font-size:18px; line-height:1; }.brand span { margin-top:7px; color:var(--admin-muted); font-size:11px; }
 .logout { align-self:flex-start; margin-top:9px; padding:0; border:0; background:transparent; color:#64748b; font-size:11px; cursor:pointer; }.logout:hover { color:#1d4ed8; }
-nav { padding:16px 12px; }.nav-label { padding:0 10px 8px; font-size:11px; color:#94a3b8; }
+nav { padding:16px 12px; }.nav-label { padding:0 10px 8px; font-size:11px; color:var(--admin-muted); }
 .mi { display:flex; align-items:center; gap:10px; min-height:42px; padding:0 12px; margin-bottom:4px; border-radius:6px; color:#475569; font-size:13px; border:1px solid transparent; }
 .mi span { width:18px; text-align:center; font-size:16px; color:#64748b; }.mi:hover { background:#f8fafc; color:#172033; }
 .mi.on { color:var(--admin-blue); background:#eff6ff; border-color:#bfdbfe; font-weight:600; box-shadow:inset 3px 0 0 var(--admin-blue); }.mi.on span { color:var(--admin-blue); }

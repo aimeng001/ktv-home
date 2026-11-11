@@ -18,9 +18,21 @@ class KioskContentRequirementPolicyTest {
         )
 
         assertEquals(350, qwerty.preferredHeightDp)
-        assertEquals(140, qwerty.minimumScrollableViewportDp)
+        assertEquals(140, qwerty.minimumHeightDp)
         assertEquals(374, t9.preferredHeightDp)
-        assertEquals(148, t9.minimumScrollableViewportDp)
+        assertEquals(148, t9.minimumHeightDp)
+    }
+
+    @Test
+    fun pinyinMinimumHeightPreservesResultsAndScrollableKeyboardWhileAllowingPip() {
+        val requirement = KioskContentRequirementPolicy.pinyin(
+            keyboardNaturalHeightDp = 350,
+            resultsMinimumHeightDp = 184,
+            minimumScrollableViewportDp = 140,
+        )
+
+        assertEquals(350, requirement.preferredHeightDp)
+        assertEquals(184, requirement.minimumHeightDp)
     }
 
     @Test
@@ -31,20 +43,20 @@ class KioskContentRequirementPolicyTest {
             minimumScrollableViewportDp = 168,
         )
 
-        assertEquals(204, requirement.preferredHeightDp)
-        assertEquals(168, requirement.minimumScrollableViewportDp)
+        assertEquals(280, requirement.preferredHeightDp)
+        assertEquals(280, requirement.minimumHeightDp)
     }
 
     @Test
     fun statusOnlyPageStillKeepsItsVisibleErrorOrEmptyAction() {
         val requirement = KioskContentRequirementPolicy.listPage(
             chromeHeightDp = 146,
-            firstItemRowHeightDp = 0,
-            minimumScrollableViewportDp = 120,
+            firstItemRowHeightDp = 74,
+            minimumScrollableViewportDp = 74,
         )
 
-        assertEquals(146, requirement.preferredHeightDp)
-        assertEquals(120, requirement.minimumScrollableViewportDp)
+        assertEquals(220, requirement.preferredHeightDp)
+        assertEquals(220, requirement.minimumHeightDp)
     }
 
     @Test
@@ -56,6 +68,6 @@ class KioskContentRequirementPolicyTest {
         )
 
         assertEquals(182, requirement.preferredHeightDp)
-        assertEquals(80, requirement.minimumScrollableViewportDp)
+        assertEquals(182, requirement.minimumHeightDp)
     }
 }

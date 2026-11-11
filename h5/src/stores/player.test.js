@@ -88,8 +88,50 @@ describe('usePlayerStore', () => {
 
   it('progress 更新播放位置', () => {
     const p = usePlayerStore()
+    p.handleEvent('sync_full', snapshot)
     p.handleEvent('progress', { position_ms: 42000 })
     expect(p.positionMs).toBe(42000)
+  })
+
+  it('ignores a delayed progress event from the previous queue item', () => {
+    const p = usePlayerStore()
+    p.handleEvent('sync_full', {
+      ...snapshot,
+      playing: { ...snapshot.playing, queueId: 22 },
+      positionMs: 1000,
+      stateRevision: 22
+    })
+
+    p.handleEvent('progress', { queue_id: 21, position_ms: 92000 })
+
+    expect(p.nowPlaying.queueId).toBe(22)
+    expect(p.stateRevision).toBe(22)
+    expect(p.positionMs).toBe(1000)
+  })
+
+  it('accepts progress for the active queue and preserves legacy events without queue identity', () => {
+    const p = usePlayerStore()
+    p.handleEvent('sync_full', {
+      ...snapshot,
+      playing: { ...snapshot.playing, queueId: 22 },
+      positionMs: 1000
+    })
+
+    p.handleEvent('progress', { queue_id: 22, position_ms: 2500 })
+    expect(p.positionMs).toBe(2500)
+
+    p.handleEvent('progress', { position_ms: 3000 })
+    expect(p.positionMs).toBe(3000)
+  })
+
+  it('does not apply a late unscoped progress event after the queue becomes idle', () => {
+    const p = usePlayerStore()
+    p.handleEvent('sync_full', { ...snapshot, playing: null, positionMs: 0 })
+
+    p.handleEvent('progress', { position_ms: 92000 })
+
+    expect(p.nowPlaying).toBeNull()
+    expect(p.positionMs).toBe(0)
   })
 
   it('playback_seeked 使用服务端快照位置', () => {

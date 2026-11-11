@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homektv.config.AppProperties;
 import com.homektv.domain.Setting;
 import com.homektv.repo.SettingRepository;
 import com.homektv.web.ApiException;
@@ -192,5 +193,72 @@ class SettingServiceSecurityTest {
         when(repo.findAll()).thenReturn(List.of(stored));
 
         assertThat(service.transcodePolicy().directCopyContainers()).containsExactly("mkv");
+    }
+
+    @Test
+    void editableKeys_includeDiscoveryAndStructuredFilenamePreference() {
+        assertThat(SettingService.EDITABLE_KEYS).contains(
+                "library_filename_metadata_preferred",
+                "discovery_enabled",
+                "discovery_name"
+        );
+    }
+
+    @Test
+    void discoveryName_validatesTypeAndLength() {
+        assertThatThrownBy(() -> service.putEditable(Map.of("discovery_name", 123)))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_TYPE");
+
+        assertThatThrownBy(() -> service.putEditable(Map.of("discovery_name", "x".repeat(33))))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_RANGE");
+    }
+
+    @Test
+    void discoveryName_normalizesBlankToDefault() {
+        service.putEditable(Map.of("discovery_name", "   "));
+        assertThat(service.getDiscoveryName("fallback")).isEqualTo("家庭KTV");
+    }
+
+    @Test
+    void appProperties_providesDefaultOverridesWhenDatabaseEmpty() {
+        AppProperties props = new AppProperties();
+        props.getDiscovery().setInstanceName("客厅点歌机");
+        props.getDiscovery().setEnabled(false);
+        props.setStructuredFilenameMetadataPreferred(true);
+
+        when(repo.findAll()).thenReturn(List.of());
+        SettingService customService = new SettingService(repo, new ObjectMapper(), props);
+
+        assertThat(customService.getDiscoveryName("fallback")).isEqualTo("客厅点歌机");
+        assertThat(customService.isDiscoveryEnabled(true)).isFalse();
+        assertThat(customService.isFilenameMetadataPreferred(false)).isTrue();
+    }
+
+    @Test
+    void settings_readPathUsesInMemoryCacheToPreventDatabaseFlooding() {
+        when(repo.findAll()).thenReturn(List.of());
+        SettingService cachedService = new SettingService(repo, new ObjectMapper());
+
+        for (int i = 0; i < 10; i++) {
+            cachedService.isFilenameMetadataPreferred(false);
+            cachedService.getDiscoveryName("default");
+            cachedService.isDiscoveryEnabled(true);
+        }
+
+        // repo.findAll() should be called at most once (for initial cache population), NOT 30 times
+        verify(repo, atMostOnce()).findAll();
+    }
+
+    @Test
+    void discoveryAndStructuredFilename_requireBooleanType() {
+        assertThatThrownBy(() -> service.putEditable(Map.of("discovery_enabled", "true")))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_TYPE");
+
+        assertThatThrownBy(() -> service.putEditable(Map.of("library_filename_metadata_preferred", "true")))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SETTING_INVALID_TYPE");
     }
 }

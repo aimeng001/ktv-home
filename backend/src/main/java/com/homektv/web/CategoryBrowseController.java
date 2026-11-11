@@ -28,14 +28,16 @@ public class CategoryBrowseController {
     public CategoryBrowseService.ArtistPage artistPage(
             @RequestParam(required = false) String gender,
             @RequestParam(required = false) String initial,
+            @RequestParam(required = false) String region,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "30") int size) {
-        return service.artistsPage(gender, initial, page, size);
+        return service.artistsPage(gender, initial, region, page, size);
     }
 
     @GetMapping("/artists/initials")
-    public List<String> artistInitials(@RequestParam(required = false) String gender) {
-        return service.artistInitials(gender);
+    public List<String> artistInitials(@RequestParam(required = false) String gender,
+                                      @RequestParam(required = false) String region) {
+        return service.artistInitials(gender, region);
     }
 
     @GetMapping("/languages")

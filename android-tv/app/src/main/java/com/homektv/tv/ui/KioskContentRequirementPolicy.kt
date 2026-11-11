@@ -3,7 +3,7 @@ package com.homektv.tv.ui
 /** Measured content budgets used to keep PiP from reducing the active panel's usable height. */
 internal data class KioskContentHeightRequirement(
     val preferredHeightDp: Int,
-    val minimumScrollableViewportDp: Int,
+    val minimumHeightDp: Int,
 )
 
 internal object KioskContentRequirementPolicy {
@@ -13,17 +13,21 @@ internal object KioskContentRequirementPolicy {
         minimumScrollableViewportDp: Int,
     ): KioskContentHeightRequirement = requirement(
         preferredHeightDp = maxOf(keyboardNaturalHeightDp, resultsMinimumHeightDp),
-        minimumScrollableViewportDp = minimumScrollableViewportDp,
+        minimumHeightDp = maxOf(resultsMinimumHeightDp, minimumScrollableViewportDp),
     )
 
     fun listPage(
         chromeHeightDp: Int,
         firstItemRowHeightDp: Int,
         minimumScrollableViewportDp: Int,
-    ): KioskContentHeightRequirement = requirement(
-        preferredHeightDp = chromeHeightDp.coerceAtLeast(0) + firstItemRowHeightDp.coerceAtLeast(0),
-        minimumScrollableViewportDp = minimumScrollableViewportDp,
-    )
+    ): KioskContentHeightRequirement {
+        val minimumContentHeight = chromeHeightDp.coerceAtLeast(0) +
+            maxOf(firstItemRowHeightDp.coerceAtLeast(0), minimumScrollableViewportDp.coerceAtLeast(1))
+        return requirement(
+            preferredHeightDp = minimumContentHeight,
+            minimumHeightDp = minimumContentHeight,
+        )
+    }
 
     fun dashboard(
         topRowHeightDp: Int,
@@ -32,17 +36,18 @@ internal object KioskContentRequirementPolicy {
     ): KioskContentHeightRequirement {
         val top = topRowHeightDp.coerceAtLeast(0)
         val bottom = bottomRowHeightDp.coerceAtLeast(0)
-        return requirement(
-            preferredHeightDp = top + bottom + interRowAndOuterSpacingDp.coerceAtLeast(0),
-            minimumScrollableViewportDp = maxOf(top, bottom),
-        )
+        val height = top + bottom + interRowAndOuterSpacingDp.coerceAtLeast(0)
+        return requirement(preferredHeightDp = height, minimumHeightDp = height)
     }
 
     private fun requirement(
         preferredHeightDp: Int,
-        minimumScrollableViewportDp: Int,
-    ) = KioskContentHeightRequirement(
-        preferredHeightDp = maxOf(preferredHeightDp, minimumScrollableViewportDp, 1),
-        minimumScrollableViewportDp = minimumScrollableViewportDp.coerceAtLeast(1),
-    )
+        minimumHeightDp: Int,
+    ): KioskContentHeightRequirement {
+        val preferredHeight = preferredHeightDp.coerceAtLeast(1)
+        return KioskContentHeightRequirement(
+            preferredHeightDp = preferredHeight,
+            minimumHeightDp = minimumHeightDp.coerceAtLeast(1).coerceAtMost(preferredHeight),
+        )
+    }
 }

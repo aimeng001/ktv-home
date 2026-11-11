@@ -12,6 +12,9 @@ class KioskCategoryLoadPolicy {
 
     fun shouldLoad(mode: KioskCategoryMode): Boolean = mode !in loadedModes
 
+    fun shouldLoad(mode: KioskCategoryMode, cachedDataAvailable: Boolean): Boolean =
+        !cachedDataAvailable || shouldLoad(mode)
+
     fun markLoaded(mode: KioskCategoryMode) {
         loadedModes += mode
     }

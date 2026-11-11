@@ -138,6 +138,7 @@ class ComposeConfigurationContractTests(unittest.TestCase):
             env=_compose_environment(),
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
             timeout=45,
         )
@@ -185,6 +186,12 @@ class ComposeConfigurationContractTests(unittest.TestCase):
         app = services["ktv"]
 
         self.assertEqual("EXTERNAL_READ_ONLY", app["environment"]["KTV_LIBRARY_MODE"])
+        self.assertEqual("true", app["environment"]["KTV_LIBRARY_FILENAME_METADATA_PREFERRED"])
+        self.assertEqual("家庭KTV", app["environment"]["KTV_DISCOVERY_NAME"])
+        self.assertEqual("true", app["environment"]["KTV_DISCOVERY_ENABLED"])
+        self.assertEqual("false", app["environment"]["KTV_AI_ALLOW_PRIVATE_NETWORK"])
+        self.assertEqual("300", str(app["environment"]["KTV_MUSIC_PROVIDER_DAILY_LIMIT"]))
+        self.assertIn("-Xmx2048m", app["environment"]["JAVA_TOOL_OPTIONS"])
         self.assertEqual(
             services["db"]["environment"]["POSTGRES_PASSWORD"],
             app["environment"]["SPRING_DATASOURCE_PASSWORD"],
@@ -199,6 +206,20 @@ class ComposeConfigurationContractTests(unittest.TestCase):
                    for token in ("transcode-cache", "transcoding-cache", "variant-cache"))
         ]
         self.assertEqual([], media_cache_mounts)
+
+    def test_env_example_documents_all_core_docker_settings(self) -> None:
+        content = (ROOT / ".env.example").read_text(encoding="utf-8")
+        expected_keys = (
+            "KTV_LIBRARY_FILENAME_METADATA_PREFERRED",
+            "KTV_DISCOVERY_NAME",
+            "KTV_DISCOVERY_ENABLED",
+            "KTV_AI_ALLOW_PRIVATE_NETWORK",
+            "KTV_MUSIC_PROVIDER_DAILY_LIMIT",
+            "JAVA_TOOL_OPTIONS",
+        )
+        for key in expected_keys:
+            with self.subTest(key=key):
+                self.assertIn(key, content, f".env.example must document {key}")
 
     def test_ci_compose_keeps_the_external_source_read_only(self) -> None:
         result = self._config(("docker-compose.ci.yml",))

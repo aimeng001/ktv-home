@@ -6,37 +6,72 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * WebSocket 会话注册与事件广播（P1.14，详设§4.1/§4.2）。
- * 线程安全：会话存于 ConcurrentHashMap，发送时对单会话加锁（WebSocketSession 非并发安全）。
+ * 线程安全：会话存于 ConcurrentHashMap；每个会话通过有界 FIFO 串行发送。
+ * 活动播放器使用独立的有界发送池，避免观察者连接拖住播放控制。
  *
  * WebSocket session registration and event broadcasting (P1.14, detailed design §4.1/§4.2).
- * Thread-safe: sessions stored in ConcurrentHashMap, with per-session locking during send
- * (WebSocketSession is not concurrency-safe).
+ * Thread-safe: sessions are stored in a ConcurrentHashMap and each connection has a bounded,
+ * ordered outbound queue. The active player has a separate bounded sender pool so observers
+ * cannot delay playback controls.
  */
 @Component
 public class WsBroadcaster {
 
     private static final Logger log = LoggerFactory.getLogger(WsBroadcaster.class);
+    private static final long DEFAULT_SEND_TIMEOUT_MILLIS = 10_000L;
+    private static final ScheduledThreadPoolExecutor SEND_TIMEOUTS = createSendTimeoutScheduler();
+    private static final ThreadPoolExecutor ACTIVE_PLAYER_SENDERS = createSenderPool(
+            2, 64, "ktv-ws-player-sender-");
+    private static final ThreadPoolExecutor OBSERVER_SENDERS = createSenderPool(
+            16, 256, "ktv-ws-observer-sender-");
 
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
+    private final Map<String, SessionOutboundQueue> outboundQueues = new ConcurrentHashMap<>();
     private final ObjectMapper mapper;
     private final ActivePlayerRegistry playerRegistry;
     private final ApplicationEventPublisher eventPublisher;
+    private final long outboundSendTimeoutMillis;
 
     @Autowired
     public WsBroadcaster(ObjectMapper mapper, ActivePlayerRegistry playerRegistry,
                          ApplicationEventPublisher eventPublisher) {
+        this(mapper, playerRegistry, eventPublisher, DEFAULT_SEND_TIMEOUT_MILLIS);
+    }
+
+    WsBroadcaster(ObjectMapper mapper, ActivePlayerRegistry playerRegistry,
+                  ApplicationEventPublisher eventPublisher, long outboundSendTimeoutMillis) {
+        if (outboundSendTimeoutMillis < 1) {
+            throw new IllegalArgumentException("outbound send timeout must be positive");
+        }
         this.mapper = mapper;
         this.playerRegistry = playerRegistry;
         this.eventPublisher = eventPublisher;
+        this.outboundSendTimeoutMillis = outboundSendTimeoutMillis;
     }
 
     /** Test/backward-compatible constructor without an application event bus. */
@@ -59,7 +94,11 @@ public class WsBroadcaster {
      * @param session 要注册的 WebSocket 会话 / the WebSocket session to register
      */
     public void register(WebSocketSession session) {
-        sessions.put(session.getId(), session);
+        WebSocketSession outboundSession = session instanceof ConcurrentWebSocketSessionDecorator
+                ? session
+                : new ConcurrentWebSocketSessionDecorator(session, 10_000, WsProtocolLimits.MAX_MESSAGE_BYTES);
+        WebSocketSession previous = sessions.put(session.getId(), outboundSession);
+        if (previous != null && previous != outboundSession) closeOutboundQueue(session.getId());
         Object type = session.getAttributes().get("client_type");
         if (type != null) sessionTypes.put(session.getId(), type.toString());
     }
@@ -73,6 +112,7 @@ public class WsBroadcaster {
      */
     public String unregister(WebSocketSession session) {
         sessions.remove(session.getId());
+        closeOutboundQueue(session.getId());
         return sessionTypes.remove(session.getId());
     }
 
@@ -113,19 +153,17 @@ public class WsBroadcaster {
      * @param event 要发送的事件 / the event to send
      */
     public void sendTo(WebSocketSession session, WsEvent event) {
-        sendEvent(session, event);
+        WebSocketSession outboundSession = sessions.get(session.getId());
+        if (outboundSession != null) sendPrepared(outboundSession, prepareOutbound(event));
     }
 
     /** Removes and closes a fenced player session so the client can reconnect cleanly. */
     public String disconnect(String sessionId) {
         WebSocketSession session = sessions.remove(sessionId);
         String type = sessionTypes.remove(sessionId);
+        closeOutboundQueue(sessionId);
         if (session != null && session.isOpen()) {
-            try {
-                session.close(org.springframework.web.socket.CloseStatus.POLICY_VIOLATION);
-            } catch (IOException ignored) {
-                // The session is already unusable and has been removed locally.
-            }
+            closeSessionAsync(session, CloseStatus.POLICY_VIOLATION);
         }
         return type;
     }
@@ -134,7 +172,7 @@ public class WsBroadcaster {
     public void sendTo(String sessionId, WsEvent event) {
         WebSocketSession session = sessions.get(sessionId);
         if (session != null) {
-            sendTo(session, event);
+            sendPrepared(session, prepareOutbound(event));
         }
     }
 
@@ -145,8 +183,19 @@ public class WsBroadcaster {
      * @param event 要广播的事件 / the event to broadcast
      */
     public void broadcast(WsEvent event) {
+        OutboundBatch batch = prepareOutbound(event);
         for (WebSocketSession s : sessions.values()) {
-            sendEvent(s, event);
+            sendPrepared(s, batch);
+        }
+    }
+
+    /** Broadcasts a complete state snapshot to browser and native observers, never to TV players. */
+    public void broadcastObservers(WsEvent event) {
+        OutboundBatch batch = prepareOutbound(event);
+        for (WebSocketSession session : sessions.values()) {
+            if (!"tv".equals(sessionTypes.get(session.getId()))) {
+                sendPrepared(session, batch);
+            }
         }
     }
 
@@ -157,36 +206,29 @@ public class WsBroadcaster {
      */
     public void broadcastPlayback(WsEvent event) {
         String activeSessionId = playerRegistry.activeSessionId().orElse(null);
+        OutboundBatch batch = prepareOutbound(event);
         for (WebSocketSession session : sessions.values()) {
             String type = sessionTypes.get(session.getId());
             if (!"tv".equals(type) || session.getId().equals(activeSessionId)) {
-                sendEvent(session, event);
+                sendPrepared(session, batch);
             }
         }
     }
 
-    private void sendEvent(WebSocketSession session, WsEvent event) {
+    private OutboundBatch prepareOutbound(WsEvent event) {
         if (event != null && event.payload() instanceof com.homektv.web.dto.QueueSnapshot snapshot) {
-            sendSnapshot(session, event.type(), snapshot);
-            return;
+            return prepareSnapshot(event.type(), snapshot);
         }
         String json = serializeWithinBudget(event);
-        if (json == null) {
-            log.warn("拒绝超出 WebSocket 大小上限的事件: session={}, type={}",
-                    session.getId(), event == null ? null : event.type());
-            disconnect(session.getId());
-            return;
-        }
-        send(session, json);
+        return json == null ? null : OutboundBatch.of(json);
     }
 
-    private void sendSnapshot(WebSocketSession session, String eventType,
-                              com.homektv.web.dto.QueueSnapshot snapshot) {
+    private OutboundBatch prepareSnapshot(String eventType, com.homektv.web.dto.QueueSnapshot snapshot) {
         String legacy = serializeWithinBudget(WsEvent.of(eventType, snapshot));
-        if (legacy != null) {
-            send(session, legacy);
-            return;
-        }
+        if (legacy != null) return OutboundBatch.of(legacy);
+
+        List<String> frames = new ArrayList<>();
+        long[] byteCount = {0L};
         try {
             QueueSnapshotChunker.stream(eventType, snapshot, mapper, chunk -> {
                 String json = serializeWithinBudget(WsEvent.of(WsEvent.SNAPSHOT_CHUNK, chunk));
@@ -194,26 +236,205 @@ public class WsBroadcaster {
                     throw new QueueChunkTooLargeException(chunk.index(),
                             "队列快照分片超过 WebSocket 大小上限");
                 }
-                send(session, json);
+                frames.add(json);
+                byteCount[0] += json.getBytes(StandardCharsets.UTF_8).length;
             });
+            return new OutboundBatch(frames, byteCount[0]);
         } catch (QueueChunkTooLargeException exception) {
-            log.warn("拒绝无法安全同步的队列快照: session={}, chunk={}",
-                    session.getId(), exception.getChunkIndex());
-            disconnect(session.getId());
+            log.warn("拒绝无法安全同步的队列快照: chunk={}", exception.getChunkIndex());
+            return null;
         }
     }
 
-    private void send(WebSocketSession session, String json) {
-        if (json == null || !session.isOpen()) return;
-        try {
-            synchronized (session) {
-                session.sendMessage(new TextMessage(json));
+    private void sendPrepared(WebSocketSession session, OutboundBatch batch) {
+        if (session == null || sessions.get(session.getId()) != session || !session.isOpen()) return;
+        if (batch == null) {
+            log.warn("拒绝无效或超出 WebSocket 大小上限的事件: session={}", session.getId());
+            removeFailedSession(session, new IOException("outbound event exceeds the websocket budget"));
+            return;
+        }
+
+        SessionOutboundQueue queue = outboundQueues.computeIfAbsent(session.getId(),
+                ignored -> new SessionOutboundQueue(session));
+        if (!queue.enqueue(batch)) {
+            log.warn("WebSocket 会话发送队列超限，关闭慢会话: session={}, frames={}, bytes={}",
+                    session.getId(), batch.frameCount(), batch.byteCount());
+            removeFailedSession(session, new IOException("outbound websocket queue limit exceeded"));
+        }
+    }
+
+    private void removeFailedSession(WebSocketSession session, Exception cause) {
+        String sessionId = session.getId();
+        if (!sessions.remove(sessionId, session)) return;
+        String clientType = sessionTypes.remove(sessionId);
+        closeOutboundQueue(sessionId);
+        log.debug("发送失败，移除会话 {}: {}", sessionId, cause.getMessage());
+        ActivePlayerRegistry.Unregistration removal = playerRegistry.unregisterPlayer(sessionId);
+        eventPublisher.publishEvent(new WsSessionDisconnectedEvent(sessionId, clientType, removal));
+        closeSessionAsync(session, CloseStatus.POLICY_VIOLATION);
+    }
+
+    private void closeOutboundQueue(String sessionId) {
+        SessionOutboundQueue queue = outboundQueues.remove(sessionId);
+        if (queue != null) queue.close();
+    }
+
+    private static void closeSessionAsync(WebSocketSession session, CloseStatus status) {
+        Thread.startVirtualThread(() -> {
+            try {
+                if (session.isOpen()) session.close(status);
+            } catch (IOException | IllegalStateException ignored) {
+                // The session is already unusable or concurrently closing.
             }
-        } catch (IOException e) {
-            log.debug("发送失败，移除会话 {}: {}", session.getId(), e.getMessage());
-            String clientType = unregister(session);
-            ActivePlayerRegistry.Unregistration removal = playerRegistry.unregisterPlayer(session.getId());
-            eventPublisher.publishEvent(new WsSessionDisconnectedEvent(session.getId(), clientType, removal));
+        });
+    }
+
+    private static ScheduledThreadPoolExecutor createSendTimeoutScheduler() {
+        ThreadFactory factory = task -> {
+            Thread thread = new Thread(task, "ktv-ws-send-timeouts");
+            thread.setDaemon(true);
+            return thread;
+        };
+        ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(1, factory);
+        scheduler.setRemoveOnCancelPolicy(true);
+        scheduler.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+        return scheduler;
+    }
+
+    private static ThreadPoolExecutor createSenderPool(int workerCount, int queuedSessions, String threadPrefix) {
+        AtomicInteger threadNumber = new AtomicInteger();
+        ThreadFactory factory = task -> {
+            Thread thread = new Thread(task, threadPrefix + threadNumber.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
+        return new ThreadPoolExecutor(workerCount, workerCount, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(queuedSessions), factory, new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    private ThreadPoolExecutor senderPoolFor(WebSocketSession session) {
+        String sessionId = session.getId();
+        boolean activePlayer = "tv".equals(sessionTypes.get(sessionId))
+                && playerRegistry.activeSessionId().filter(sessionId::equals).isPresent();
+        return activePlayer ? ACTIVE_PLAYER_SENDERS : OBSERVER_SENDERS;
+    }
+
+    private boolean isCurrentSession(WebSocketSession session) {
+        return sessions.get(session.getId()) == session;
+    }
+
+    private record OutboundBatch(List<String> frames, long byteCount) {
+        private OutboundBatch {
+            frames = List.copyOf(frames);
+        }
+
+        private static OutboundBatch of(String json) {
+            return new OutboundBatch(List.of(json), json.getBytes(StandardCharsets.UTF_8).length);
+        }
+
+        private int frameCount() {
+            return frames.size();
+        }
+    }
+
+    /** One serial virtual sender and a bounded FIFO per WebSocket session. */
+    private final class SessionOutboundQueue {
+        private static final int MAX_PENDING_FRAMES = 128;
+        private static final long MAX_PENDING_BYTES = WsProtocolLimits.MAX_SNAPSHOT_BYTES;
+
+        private final WebSocketSession session;
+        private final Deque<OutboundBatch> pending = new ArrayDeque<>();
+        private int pendingFrames;
+        private long pendingBytes;
+        private boolean draining;
+        private boolean closed;
+
+        private SessionOutboundQueue(WebSocketSession session) {
+            this.session = session;
+        }
+
+        private boolean enqueue(OutboundBatch batch) {
+            boolean startWorker = false;
+            synchronized (this) {
+                if (closed || batch.frameCount() > MAX_PENDING_FRAMES
+                        || pendingFrames > MAX_PENDING_FRAMES - batch.frameCount()
+                        || pendingBytes > MAX_PENDING_BYTES - batch.byteCount()) {
+                    return false;
+                }
+                pending.addLast(batch);
+                pendingFrames += batch.frameCount();
+                pendingBytes += batch.byteCount();
+                if (!draining) {
+                    draining = true;
+                    startWorker = true;
+                }
+            }
+            if (startWorker) {
+                try {
+                    senderPoolFor(session).execute(this::drain);
+                } catch (RejectedExecutionException rejected) {
+                    removeFailedSession(session, rejected);
+                }
+            }
+            return true;
+        }
+
+        private void drain() {
+            while (true) {
+                OutboundBatch batch;
+                synchronized (this) {
+                    if (closed) {
+                        clearPending();
+                        draining = false;
+                        return;
+                    }
+                    batch = pending.pollFirst();
+                    if (batch == null) {
+                        draining = false;
+                        return;
+                    }
+                    pendingFrames -= batch.frameCount();
+                    pendingBytes -= batch.byteCount();
+                }
+
+                try {
+                    for (String frame : batch.frames()) {
+                        if (!isCurrentSession(session) || !session.isOpen()) return;
+                        sendFrame(frame);
+                    }
+                } catch (Exception exception) {
+                    removeFailedSession(session, exception);
+                    return;
+                }
+            }
+        }
+
+        private void sendFrame(String frame) throws Exception {
+            if (!isCurrentSession(session) || !session.isOpen()) return;
+            ScheduledFuture<?> timeout = SEND_TIMEOUTS.schedule(
+                    () -> removeFailedSession(session,
+                            new TimeoutException("websocket send exceeded "
+                                    + outboundSendTimeoutMillis + " ms")),
+                    outboundSendTimeoutMillis, TimeUnit.MILLISECONDS);
+            try {
+                synchronized (session) {
+                    if (!isCurrentSession(session) || !session.isOpen()) return;
+                    session.sendMessage(new TextMessage(frame));
+                }
+            } finally {
+                timeout.cancel(false);
+            }
+        }
+
+        private synchronized void close() {
+            closed = true;
+            clearPending();
+        }
+
+        private void clearPending() {
+            pending.clear();
+            pendingFrames = 0;
+            pendingBytes = 0L;
         }
     }
 

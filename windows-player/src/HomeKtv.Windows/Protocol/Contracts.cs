@@ -62,6 +62,8 @@ public sealed record QueueSnapshot(
     [property: JsonPropertyName("stateRevision")] long StateRevision = 0,
     [property: JsonPropertyName("playback")] PlaybackDescriptor? Playback = null);
 
+public sealed record PlaybackProgress(long? QueueId, long PositionMs);
+
 public sealed record QueueSnapshotHeader(
     [property: JsonPropertyName("playing")] NowPlaying? Playing,
     [property: JsonPropertyName("state")] string State,

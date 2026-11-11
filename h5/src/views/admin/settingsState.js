@@ -1,5 +1,8 @@
 export const EDITABLE_GENERAL_KEYS = [
   'library_watch_enabled',
+  'library_filename_metadata_preferred',
+  'discovery_enabled',
+  'discovery_name',
   'display_address',
   'external_default_audio_layout',
   'delete_source_after_transcode',
@@ -26,7 +29,11 @@ export function editableSettingsPayload(settings = {}) {
   const payload = {}
   for (const key of EDITABLE_GENERAL_KEYS) {
     if (Object.prototype.hasOwnProperty.call(settings, key)) {
-      payload[key] = settings[key]
+      let val = settings[key]
+      if (key === 'discovery_name' && typeof val === 'string' && !val.trim()) {
+        val = '家庭KTV'
+      }
+      payload[key] = val
     }
   }
   return payload
@@ -101,12 +108,23 @@ export function describeSaveFailures(failures = []) {
 
 export function canonicalizeSettings(settings = {}) {
   const result = { ...settings }
-  if (!String(result.display_address ?? '').trim()) {
-    result.display_address = result.qr_address ?? ''
+  if (result.qr_address !== undefined) {
+    if (!String(result.display_address ?? '').trim()) {
+      result.display_address = result.qr_address ?? ''
+    }
+    delete result.qr_address
   }
-  delete result.qr_address
   if (Object.prototype.hasOwnProperty.call(result, 'standby_song_ids')) {
     result.standby_song_ids = normalizeStandbySongIds(result.standby_song_ids)
+  }
+  if (result.discovery_name !== undefined) {
+    result.discovery_name = String(result.discovery_name ?? '').trim() || '家庭KTV'
+  }
+  if (result.discovery_enabled !== undefined) {
+    result.discovery_enabled = Boolean(result.discovery_enabled)
+  }
+  if (result.library_filename_metadata_preferred !== undefined) {
+    result.library_filename_metadata_preferred = Boolean(result.library_filename_metadata_preferred)
   }
   return result
 }

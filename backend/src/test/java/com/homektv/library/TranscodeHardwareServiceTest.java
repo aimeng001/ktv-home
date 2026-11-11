@@ -3,6 +3,7 @@ package com.homektv.library;
 import com.homektv.web.ApiException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.MockedStatic;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,7 +25,8 @@ class TranscodeHardwareServiceTest {
         Files.writeString(sys.resolve("vendor"), "0x8086\n");
         TranscodeHardwareService service = workingService(dri, temp.resolve("sys"));
 
-        TranscodeHardwareService.HardwareStatus status = service.detect();
+        TranscodeHardwareService.HardwareStatus status;
+        status = service.detect();
 
         assertThat(status.available()).isTrue();
         assertThat(status.vendor()).isEqualTo("Intel VAAPI");
@@ -65,7 +67,18 @@ class TranscodeHardwareServiceTest {
             @Override boolean run(List<String> command) { return command.contains("h264_rkmpp") || command.contains("hevc_rkmpp"); }
         };
 
-        TranscodeHardwareService.HardwareStatus status = service.detect();
+        TranscodeHardwareService.HardwareStatus status;
+        try (MockedStatic<Files> fileSystem = org.mockito.Mockito.mockStatic(
+                Files.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+            // Model the permissions of a readable/writable device node independently
+            // of the host ACL on this synthetic regular file.
+            fileSystem.when(() -> Files.isReadable(mpp)).thenReturn(true);
+            fileSystem.when(() -> Files.isWritable(mpp)).thenReturn(true);
+            status = service.detect();
+            // One invocation is captured by stubbing and one is made by detect().
+            fileSystem.verify(() -> Files.isReadable(mpp), org.mockito.Mockito.times(2));
+            fileSystem.verify(() -> Files.isWritable(mpp), org.mockito.Mockito.times(2));
+        }
 
         assertThat(status.available())
                 .as("status=%s; mpp exists/readable/writable=%s/%s/%s", status,

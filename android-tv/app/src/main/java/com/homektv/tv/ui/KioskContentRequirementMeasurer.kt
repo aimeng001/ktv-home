@@ -44,30 +44,14 @@ internal class KioskContentRequirementMeasurer(context: Context) {
         if (view.width <= 0 || view.height <= 0) return null
 
         val dashboard = view.binding
-        val rows = listOf(
-            listOf(
-                dashboard.tilePinyin.tileRoot,
-                dashboard.tileSinger.tileRoot,
-                dashboard.tileCategory.tileRoot,
-                dashboard.tileLanguage.tileRoot,
-            ),
-            listOf(
-                dashboard.tileFavorites.tileRoot,
-                dashboard.tileHistory.tileRoot,
-                dashboard.tileQueue.tileRoot,
-            ),
-        )
-        val minimumTileHeightPx = resources.getDimensionPixelSize(R.dimen.kiosk_dashboard_tile_min_height)
-        val rowHeightsPx = rows.map { tiles ->
-            tiles.maxOf { tile -> minimumTileHeightPx + verticalMarginsPx(tile) }
-        }
         val root = dashboard.dashboardRoot
-        val rowViews = listOf(dashboard.dashboardTopRow, dashboard.dashboardBottomRow)
-        val spacingPx = root.paddingTop + root.paddingBottom + rowViews.sumOf(::verticalMarginsPx)
+        val minimumGridRowDp = ceil(resources.getDimension(R.dimen.ktv_bento_minimum_row_height) / resources.displayMetrics.density)
+            .toInt()
+        val outerAndTileSpacingDp = pxToDpCeil(root.paddingTop + root.paddingBottom) + 16
         return KioskContentRequirementPolicy.dashboard(
-            topRowHeightDp = pxToDpCeil(rowHeightsPx[0]),
-            bottomRowHeightDp = pxToDpCeil(rowHeightsPx[1]),
-            interRowAndOuterSpacingDp = pxToDpCeil(spacingPx),
+            topRowHeightDp = minimumGridRowDp * 2,
+            bottomRowHeightDp = minimumGridRowDp,
+            interRowAndOuterSpacingDp = outerAndTileSpacingDp,
         )
     }
 
@@ -94,10 +78,15 @@ internal class KioskContentRequirementMeasurer(context: Context) {
                 dpToPxCeil(MINIMUM_LIST_VIEWPORT_DP),
             )
         }
+        val itemAreaHeightDp = pxToDpCeil(itemAreaHeightPx)
         return KioskContentRequirementPolicy.listPage(
             chromeHeightDp = pxToDpCeil(chromeHeightPx),
-            firstItemRowHeightDp = pxToDpCeil(itemAreaHeightPx),
-            minimumScrollableViewportDp = MINIMUM_LIST_VIEWPORT_DP,
+            firstItemRowHeightDp = itemAreaHeightDp,
+            minimumScrollableViewportDp = if (visibleStatusPanel != null) {
+                itemAreaHeightDp
+            } else {
+                MINIMUM_LIST_VIEWPORT_DP
+            },
         )
     }
 

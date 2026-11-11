@@ -1,17 +1,22 @@
 package com.homektv.tv.ui
 
 import android.Manifest
+import android.app.Dialog
 import android.animation.ObjectAnimator
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.Window
 import android.util.Log
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.KeyEvent
@@ -42,11 +47,13 @@ import com.homektv.tv.session.DeviceSessionChangePolicy
 import com.homektv.tv.session.DeviceSessionFingerprint
 import com.homektv.tv.ui.controller.ControllerFragment
 import com.homektv.tv.ui.kiosk.KtvDashboardBackground
+import com.homektv.tv.ui.kiosk.KtvDashboardPhotoCarousel
 import com.homektv.tv.R
 import com.homektv.tv.databinding.ActivityMainBinding
 import com.homektv.tv.databinding.ViewAudioOverlayBinding
 import com.homektv.tv.databinding.ViewRemoteMenuBinding
 import com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
+import com.homektv.tv.databinding.ViewKtvBottomDockBinding
 import com.homektv.tv.net.AppConfig
 import com.homektv.tv.net.AudioLayout
 import com.homektv.tv.net.KtvSocket
@@ -58,6 +65,7 @@ import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.SnapshotRevisionPolicy
 import com.homektv.tv.net.StandbyContent
 import com.homektv.tv.player.PlaybackEngine
+import com.homektv.tv.player.PlaybackPitchStatus
 import com.homektv.tv.player.EffectPlayer
 import com.homektv.tv.player.LrcParser
 import com.homektv.tv.player.LyricLine
@@ -74,12 +82,14 @@ import com.homektv.tv.player.PlaybackLoadProjection
 import com.homektv.tv.player.LiveTranscodeStreamUrl
 import com.homektv.tv.player.PlaybackSeekGate
 import com.homektv.tv.player.supportsVocalSwitch
+import com.homektv.tv.player.VocalMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collect
 import java.io.File
 
 /**
@@ -100,8 +110,11 @@ import java.io.File
 class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     private lateinit var binding: ActivityMainBinding
+    private lateinit var bottomDockController: KtvBottomDockController
+    private lateinit var fullscreenPlaybackPanel: KtvFullscreenPlaybackPanel
     private var audioOverlayBinding: ViewAudioOverlayBinding? = null
     private var remoteMenuBinding: ViewRemoteMenuBinding? = null
+    private var remoteMenuBasePadding = intArrayOf(0, 0, 0, 0)
     private lateinit var config: AppConfig
     private lateinit var mediaApi: MediaApi
     private var socket: KtvSocket? = null
@@ -145,16 +158,25 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var audioTrackCount: Int = 1
     private var lyricLines: List<LyricLine> = emptyList()
     private var lastLyricIndex = -1
-    private var lastProgressReportMs = Long.MIN_VALUE
+    private val progressReportGate = ProgressReportGate()
     private val clock = android.os.Handler(android.os.Looper.getMainLooper())
     private val clockTick = object : Runnable {
         override fun run() {
-            if (::binding.isInitialized) binding.txtClock.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+            if (::binding.isInitialized) {
+                val now = Date()
+                binding.txtClock.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
+                binding.txtHeaderDate.text = SimpleDateFormat("yyyy/MM/dd", Locale.CHINA).format(now)
+                binding.txtHeaderWeekday.text = SimpleDateFormat("EEEE", Locale.CHINA).format(now)
+            }
             clock.postDelayed(this, 30_000L)
         }
     }
     private val menuHide = Runnable { remoteMenuBinding?.root?.visibility = View.GONE }
     private val progressHide = Runnable { hidePlaybackProgress() }
+    private val marqueeNotificationController = KtvMarqueeNotificationController()
+    private var activeMarqueeNotification: KtvMarqueeNotificationController.Notification? = null
+    private var baselineMarqueeText = ""
+    private val marqueeNotificationDismiss = Runnable { dismissMarqueeNotification() }
     private var recommendations: List<com.homektv.tv.net.SongDto> = emptyList()
     private var recommendationOffset = 0
     private val recommendationCovers = RecommendationCoverCache<android.graphics.Bitmap>(
@@ -209,12 +231,22 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private lateinit var kioskController: KtvKioskOverlayController
     private var kioskOverlayBinding: ViewKtvKioskOverlayBinding? = null
     private var kioskWindowInsets = intArrayOf(0, 0, 0, 0)
+    private var fullscreenKioskActive = false
     private var audioMiniQrVisibility: Int? = null
     private var audioMiniQrLabelVisibility: Int? = null
     private var cachedKioskQrBitmap: android.graphics.Bitmap? = null
+    private var capabilityDrawer: KtvCapabilityDrawerDialog? = null
+    private var pitchDialog: KtvPitchDialog? = null
+    private var queueOverlayDismiss: (() -> Unit)? = null
+    private var topBarQrDialog: KtvQrDialog? = null
+    private val activeModalDialogs = mutableListOf<Dialog>()
+    private var qrLoadJob: Job? = null
+    private var libraryScanRequestInFlight = false
+    private val tvSettingsStore by lazy { KtvTvSettingsStore(applicationContext) }
     private val kioskCoordinator = KioskModeCoordinator(
         idleTimeoutMs = KioskModeCoordinator.DEFAULT_IDLE_TIMEOUT_MS,
         scheduler = HandlerIdleTimerScheduler(),
+        onIdleTimeout = ::onKioskIdleTimeout,
     )
     private val focusController = KtvFocusController()
     private val kioskViewModel: ControllerViewModel by lazy {
@@ -233,12 +265,16 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             .bind(binding.kioskOverlayStub.inflate())
             .also { kioskOverlayBinding = it }
         overlayBinding.kioskRootOverlay.setPadding(
-            kioskWindowInsets[0], kioskWindowInsets[1], kioskWindowInsets[2], kioskWindowInsets[3],
+            kioskWindowInsets[0],
+            kioskWindowInsets[1],
+            kioskWindowInsets[2],
+            kioskWindowInsets[3],
         )
         kioskController = KtvKioskOverlayController(
             activity = this,
             binding = binding,
             kioskOverlayBinding = overlayBinding,
+            bottomDockController = bottomDockController,
             coordinator = kioskCoordinator,
             focusController = focusController,
             effectPlayer = effectPlayer,
@@ -250,11 +286,40 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             onNext = { sendControl("next") },
             onRestart = { sendControl("restart") },
             onToggleVocal = { toggleVocal() },
+            shouldExitOnBack = { tvSettingsStore.snapshot().exitOnBackEnabled },
+            globalSearchEnabled = { tvSettingsStore.snapshot().globalSearchEnabled },
         )
         cachedQueueSnapshot?.let(kioskController::updateSnapshot)
         cachedKioskQrBitmap?.let(kioskController::setCachedQrBitmap)
         artistAvatarUrl?.let { artistAvatars[it] }?.let(overlayBinding.kioskBottomBar::setArtistAvatar)
         return kioskController
+    }
+
+    private fun createBottomDockController(): KtvBottomDockController {
+        val dockBinding = ViewKtvBottomDockBinding.bind(binding.root.findViewById(R.id.ktv_bottom_dock))
+        return KtvBottomDockController(
+            binding = dockBinding,
+            playerContainer = binding.sharedPlayerContainer,
+            playerView = binding.playerView,
+            txtNowPlaying = binding.txtDockNowPlaying,
+            imgQr = binding.imgDockQr,
+            actions = KtvBottomDockController.Actions(
+                onHome = ::showHomePage,
+                onQueue = ::showQueueOverlay,
+                onHistory = ::openHistoryTab,
+                onCheer = { onEffect("cheer") },
+                onToggleVocal = ::toggleVocal,
+                onTogglePlayback = ::togglePlayback,
+                onRestart = { sendControl("restart") },
+                onNext = { sendControl("next") },
+                onMixer = ::showMixerPanel,
+                onQrCode = ::showQrCode,
+                onDownloads = ::showDownloadsDrawer,
+                onPitchDown = { onPitchStep(-1) },
+                onPitchUp = { onPitchStep(1) },
+            ),
+            onFullscreenChanged = ::onDockFullscreenChanged,
+        )
     }
 
     private var sessionFingerprint: DeviceSessionFingerprint? = null
@@ -291,9 +356,59 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         binding = ActivityMainBinding.inflate(layoutInflater)
+        bottomDockController = createBottomDockController()
+        // SurfaceView layer ordering is a construction-time window policy. Configure it
+        // before attaching the Activity content so PlayerView reparenting keeps one stable layer.
+        (bottomDockController.playerView.videoSurfaceView as? android.view.SurfaceView)
+            ?.setZOrderMediaOverlay(true)
+        bottomDockController.render(
+            BottomDockUiModel(
+                queueCount = 0,
+                isPlaying = false,
+                vocalMode = currentVocalMode,
+                vocalSwitchEnabled = false,
+                videoVisible = false,
+                nowPlayingLabel = "等待点歌",
+                queueCountKnown = false,
+                queueSnapshotFresh = false,
+            ),
+        )
         setContentView(binding.root)
+        fullscreenPlaybackPanel = KtvFullscreenPlaybackPanel(
+            activity = this,
+            root = binding.ktvOverlay,
+            onAction = { action ->
+                when (action) {
+                    FullscreenPlaybackAction.PAUSE_PLAY -> togglePlayback()
+                    FullscreenPlaybackAction.VOCAL -> toggleVocal()
+                    FullscreenPlaybackAction.RESTART -> sendControl("restart")
+                    FullscreenPlaybackAction.NEXT -> sendControl("next")
+                    FullscreenPlaybackAction.VOLUME_DOWN -> changeVolume(-10)
+                    FullscreenPlaybackAction.VOLUME_UP -> changeVolume(10)
+                    FullscreenPlaybackAction.MUTE -> sendControl("mute", "{\"muted\":${!currentMuted}}")
+                    FullscreenPlaybackAction.KIOSK -> openKioskFromFullscreen()
+                    FullscreenPlaybackAction.QUEUE -> {
+                        fullscreenPlaybackPanel.suspendAutoHide()
+                        showQueueOverlay { fullscreenPlaybackPanel.resumeAutoHide() }
+                    }
+                    FullscreenPlaybackAction.HOME -> showHomePage()
+                }
+            },
+            onSeekBy = { positionMs -> sendControl("seek", "{\"position_ms\":$positionMs}") },
+            onFocusReturn = bottomDockController::focusVideo,
+            requestExitFullscreen = bottomDockController::exitFullscreen,
+        )
+        KtvDashboardBackground.applyTo(binding.root)
         KtvDashboardBackground.applyTo(binding.standbyPanel)
         KtvDashboardBackground.applyTo(binding.queueOverlay)
+        val queueOverlayBasePadding = intArrayOf(
+            binding.queueOverlay.paddingLeft,
+            binding.queueOverlay.paddingTop,
+            binding.queueOverlay.paddingRight,
+            binding.queueOverlay.paddingBottom + resources.getDimensionPixelSize(
+                R.dimen.ktv_dashboard_bottom_dock_height,
+            ),
+        )
 
         // 沉浸式与系统导航条防护：全屏 MV 画面保持无黑边满屏，仅浮层面板避让手势条与挖孔
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -304,10 +419,23 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             )
             kioskWindowInsets = intArrayOf(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             kioskOverlayBinding?.kioskRootOverlay?.setPadding(
-                systemBars.left, systemBars.top, systemBars.right, systemBars.bottom,
+                systemBars.left,
+                systemBars.top,
+                systemBars.right,
+                systemBars.bottom,
             )
-            remoteMenuBinding?.root?.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
-            binding.queueOverlay.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            remoteMenuBinding?.root?.setPadding(
+                remoteMenuBasePadding[0] + systemBars.left,
+                remoteMenuBasePadding[1] + systemBars.top,
+                remoteMenuBasePadding[2] + systemBars.right,
+                remoteMenuBasePadding[3] + systemBars.bottom,
+            )
+            binding.queueOverlay.setPadding(
+                queueOverlayBasePadding[0] + systemBars.left,
+                queueOverlayBasePadding[1] + systemBars.top,
+                queueOverlayBasePadding[2] + systemBars.right,
+                queueOverlayBasePadding[3] + systemBars.bottom,
+            )
             insets
         }
 
@@ -390,9 +518,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             context = this,
             onProgress = { pos, queueId ->
                 // UI 以高频本地时钟平滑刷新，服务端进度仍保持 1s 上报频率。
-                if (lastProgressReportMs == Long.MIN_VALUE || pos - lastProgressReportMs >= 1_000L) {
-                    lastProgressReportMs = pos
+                val elapsedRealtimeMs = android.os.SystemClock.elapsedRealtime()
+                if (progressReportGate.shouldReport(queueId, elapsedRealtimeMs)) {
                     socket?.sendProgress(pos, queueId)
+                    progressReportGate.markReported(queueId, elapsedRealtimeMs)
                 }
                 runOnUiThread { updateProgress(pos) }
             },
@@ -418,37 +547,50 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 }
             },
         ).also {
-            it.attach(binding.playerView)
+            it.attach(bottomDockController.playerView)
             // 遥控音量键在此 ROM 上直达系统媒体会话：监听系统音量变化上行同步服务端
             it.onExternalVolumeChange = { percent ->
                 if (percent != currentVolume) sendControl("set_volume", "{\"volume\":$percent}")
             }
         }
+        engine?.let { playbackEngine ->
+            lifecycleScope.launch {
+                playbackEngine.vocalMode.collect { mode ->
+                    currentVocalMode = mode.wireValue
+                    cachedQueueSnapshot?.let { snapshot ->
+                        if (!snapshot.vocalMode.equals(mode.wireValue, ignoreCase = true)) {
+                            val updated = snapshot.copy(vocalMode = mode.wireValue)
+                            cachedQueueSnapshot = updated
+                            renderBottomDock(updated)
+                        }
+                    }
+                }
+            }
+        }
         presentationController = KtvPresentationController(this) { externalPlayerView ->
             if (externalPlayerView == null) {
                 externalDisplayActive = false
+                bottomDockController.setExternalDisplayActive(false)
                 if (::kioskController.isInitialized) kioskController.updateExternalDisplay(false)
                 attachedExternalPlayerView?.let { engine?.detach(it) }
                 attachedExternalPlayerView = null
-                engine?.detach(binding.playerView)
-                engine?.attach(binding.playerView)
-                if (hasCurrentSong && currentPlaybackState != "idle") {
-                    binding.playerView.visibility = View.VISIBLE
-                }
+                engine?.detach(bottomDockController.playerView)
+                engine?.attach(bottomDockController.playerView)
+                cachedQueueSnapshot?.let(::renderBottomDock)
             } else {
                 externalDisplayActive = true
+                bottomDockController.setExternalDisplayActive(true)
+                if (bottomDockController.isFullscreen) bottomDockController.exitFullscreen()
                 if (::kioskController.isInitialized) kioskController.updateExternalDisplay(true)
                 attachedExternalPlayerView
                     ?.takeUnless { it === externalPlayerView }
                     ?.let { engine?.detach(it) }
-                engine?.detach(binding.playerView)
+                engine?.detach(bottomDockController.playerView)
                 engine?.attach(externalPlayerView)
                 attachedExternalPlayerView = externalPlayerView
-                if (hasCurrentSong && currentPlaybackState != "idle") {
-                    // Keep the main screen available for the point-song UI while the
-                    // external Presentation owns the video surface.
-                    binding.playerView.visibility = View.INVISIBLE
-                }
+                // Recompute from the authoritative media type as well as display state;
+                // audio-only tracks must never reveal a video surface on disconnect.
+                cachedQueueSnapshot?.let(::renderBottomDock)
             }
         }.also { it.start() }
         effectPlayer = EffectPlayer()
@@ -471,7 +613,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             binding.root.post {
                 if (!isFinishing && !isDestroyed) {
                     binding.standbyPanel.visibility = View.GONE
-                    ensureKioskController().toggleKiosk(true)
+                    ensureKioskController().apply {
+                        selectTab(KioskTab.DASHBOARD)
+                        toggleKiosk(true)
+                    }
                 }
             }
         }
@@ -522,6 +667,16 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        if (::fullscreenPlaybackPanel.isInitialized) fullscreenPlaybackPanel.onStart()
+    }
+
+    override fun onStop() {
+        if (::fullscreenPlaybackPanel.isInitialized) fullscreenPlaybackPanel.onStop()
+        super.onStop()
+    }
+
     private fun checkSessionRestart() {
         val previous = sessionFingerprint ?: return
         val currentConfig = AppConfig(this)
@@ -570,8 +725,15 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     override fun onDestroy() {
+        pitchDialog?.dismiss()
+        pitchDialog = null
         standbyMotionAnimators.forEach(ObjectAnimator::cancel)
         standbyMotionAnimators.clear()
+        clock.removeCallbacks(marqueeNotificationDismiss)
+        if (::binding.isInitialized) {
+            binding.txtMarquee.removeCallbacks(marqueeNotificationDismiss)
+            binding.txtMarquee.animate().cancel()
+        }
         invalidatePlaybackLoad()
         socket?.close()
         presentationController?.stop()
@@ -588,7 +750,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             binding.standbyPanel.removeCallbacks(standbySettingsTicker)
         }
         socket = null
-        if (::binding.isInitialized) engine?.detach(binding.playerView)
+        if (::binding.isInitialized && ::bottomDockController.isInitialized) {
+            if (::fullscreenPlaybackPanel.isInitialized) fullscreenPlaybackPanel.destroy()
+            engine?.detach(bottomDockController.playerView)
+            bottomDockController.destroy()
+        }
         engine?.release()
         engine = null
         if (::mediaApi.isInitialized) mediaApi.close()
@@ -606,15 +772,57 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         super.onDestroy()
     }
 
-    /** 顶层 BACK 双击退出：此 ROM 会在 Activity 退到后台 1s 内强杀进程，单击防误触。 */
-    private var lastBackAt = 0L
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (::kioskController.isInitialized && kioskController.dispatchKeyEvent(event)) {
+        if (consumeActiveModalDialogBack(event)) return true
+        if (remoteMenuBinding?.root?.visibility == View.VISIBLE) {
+            if (event.action == KeyEvent.ACTION_DOWN) resetMenuTimer()
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                if (event.action == KeyEvent.ACTION_UP) {
+                    remoteMenuBinding?.root?.visibility = View.GONE
+                    backExitGate.reset()
+                    bottomDockController.focusMixer()
+                }
+                return true
+            }
+            return super.dispatchKeyEvent(event)
+        }
+        if (binding.queueOverlay.visibility == View.VISIBLE && event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP) {
+                closeQueueOverlay()
+                backExitGate.reset()
+            }
             return true
         }
-        if (event.action == KeyEvent.ACTION_DOWN && binding.playerView.visibility == View.VISIBLE) {
-            showPlaybackProgress()
+        // 原/伴唱选择栏：BACK 收起；可见期间方向键/确认键交给焦点系统（移动选择、点击生效）
+        if (binding.vocalPanel.visibility == View.VISIBLE) {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                if (event.action == KeyEvent.ACTION_UP) {
+                    hideVocalPanel()
+                    backExitGate.reset()
+                }
+                return true
+            }
+            if (event.action == KeyEvent.ACTION_DOWN) resetVocalTimer()
+            return super.dispatchKeyEvent(event)
+        }
+        if (::fullscreenPlaybackPanel.isInitialized && fullscreenPlaybackPanel.handleKeyEvent(event)) {
+            return true
+        }
+        if (bottomDockController.isFullscreen && event.action == KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_VOLUME_UP -> { changeVolume(10); return true }
+                KeyEvent.KEYCODE_VOLUME_DOWN -> { changeVolume(-10); return true }
+                KeyEvent.KEYCODE_VOLUME_MUTE, KeyEvent.KEYCODE_MUTE -> {
+                    sendControl("mute", "{\"muted\":${!currentMuted}}")
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { togglePlayback(); return true }
+                KeyEvent.KEYCODE_MEDIA_NEXT -> { sendControl("next"); return true }
+            }
+        }
+        if (::kioskController.isInitialized && kioskController.dispatchKeyEvent(event)) {
+            return true
         }
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_MENU) {
             if (::kioskController.isInitialized && focusController.shouldInterceptMenu()) {
@@ -633,35 +841,6 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         }
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) {
             backExitGate.reset()
-        }
-        if (remoteMenuBinding?.root?.visibility == View.VISIBLE) {
-            if (event.action == KeyEvent.ACTION_DOWN) resetMenuTimer()
-            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-                if (event.action == KeyEvent.ACTION_UP) {
-                    remoteMenuBinding?.root?.visibility = View.GONE
-                    backExitGate.reset()
-                }
-                return true
-            }
-        }
-        if (binding.queueOverlay.visibility == View.VISIBLE && event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (event.action == KeyEvent.ACTION_UP) {
-                binding.queueOverlay.visibility = View.GONE
-                backExitGate.reset()
-            }
-            return true
-        }
-        // 原/伴唱选择栏：BACK 收起；可见期间方向键/确认键交给焦点系统（移动选择、点击生效）
-        if (binding.vocalPanel.visibility == View.VISIBLE) {
-            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-                if (event.action == KeyEvent.ACTION_UP) {
-                    hideVocalPanel()
-                    backExitGate.reset()
-                }
-                return true
-            }
-            if (event.action == KeyEvent.ACTION_DOWN) resetVocalTimer()
-            return super.dispatchKeyEvent(event)
         }
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
@@ -683,7 +862,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                     // 确认键：呼出点歌台（MV 转入画中画），若无点歌能力则回退弹出原唱/伴唱选择栏
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                         if (modeCapabilities.canOpenKiosk) {
-                            ensureKioskController().toggleKiosk(true)
+                            ensureKioskController().apply {
+                        selectTab(KioskTab.DASHBOARD)
+                        toggleKiosk(true)
+                    }
                             return true
                         }
                         showVocalPanel()
@@ -714,6 +896,12 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             }
         }
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (modeCapabilities.canOpenKiosk && !tvSettingsStore.snapshot().exitOnBackEnabled &&
+                activeModalDialogs.none { it.isShowing } && !bottomDockController.isFullscreen
+            ) {
+                backExitGate.reset()
+                return true
+            }
             if (event.action == KeyEvent.ACTION_UP) {
                 val decision = backExitGate.onBack(android.os.SystemClock.elapsedRealtime(), isAtTopLevel = true)
                 when (decision) {
@@ -776,13 +964,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.vocalPanel.postDelayed(vocalHide, 6_000L)
     }
 
-    /** 当前生效模式金色高亮，另一个白色。 */
+    /** 当前生效模式金色高亮；获得焦点时由颜色状态表切换为深色文字以保证对比度。 */
     private fun updateVocalPanelSelection() {
-        val gold = resources.getColor(R.color.gold, null)
-        val white = resources.getColor(android.R.color.white, null)
         val original = currentVocalMode == "original"
-        binding.btnVocalOriginal.setTextColor(if (original) gold else white)
-        binding.btnVocalAccompaniment.setTextColor(if (original) white else gold)
+        binding.btnVocalOriginal.isSelected = original
+        binding.btnVocalAccompaniment.isSelected = !original
     }
 
     private fun ensureAudioOverlayBinding(): ViewAudioOverlayBinding {
@@ -800,7 +986,18 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         remoteMenuBinding?.let { return it }
         val menu = ViewRemoteMenuBinding.bind(binding.remoteMenuStub.inflate())
         remoteMenuBinding = menu
-        menu.root.setPadding(kioskWindowInsets[0], kioskWindowInsets[1], kioskWindowInsets[2], kioskWindowInsets[3])
+        remoteMenuBasePadding = intArrayOf(
+            menu.root.paddingLeft,
+            menu.root.paddingTop,
+            menu.root.paddingRight,
+            menu.root.paddingBottom,
+        )
+        menu.root.setPadding(
+            remoteMenuBasePadding[0] + kioskWindowInsets[0],
+            remoteMenuBasePadding[1] + kioskWindowInsets[1],
+            remoteMenuBasePadding[2] + kioskWindowInsets[2],
+            remoteMenuBasePadding[3] + kioskWindowInsets[3],
+        )
         setupRemoteMenu(menu)
         return menu
     }
@@ -844,7 +1041,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun setupPersistentOverlayActions() {
-        binding.queueClose.setOnClickListener { binding.queueOverlay.visibility = View.GONE }
+        binding.queueClose.setOnClickListener { closeQueueOverlay() }
         binding.btnVocalOriginal.setOnClickListener {
             sendControl("set_vocal", "{\"mode\":\"original\"}")
             hideVocalPanel()
@@ -857,6 +1054,418 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.queueNow.setOnLongClickListener {
             if (hasCurrentSong) confirmControl("切掉当前歌曲", "确定切换到下一首吗？", "next")
             true
+        }
+
+        // 顶栏 5 大快捷图标事件
+        binding.btnTopSystem.setOnClickListener { showSystemInfoDialog() }
+        binding.btnTopMobileQr.setOnClickListener { showQrCode() }
+        binding.btnTopSettings.setOnClickListener { showKtvSettingsDialog() }
+        binding.btnTopSearch.visibility = View.VISIBLE
+        binding.btnTopSearch.contentDescription = "全局搜索"
+        binding.btnTopSearch.setOnClickListener {
+            if (modeCapabilities.canOpenKiosk) {
+                ensureKioskController().openGlobalSearch(binding.btnTopSearch)
+            } else {
+                showInformationalDialog(
+                    title = "全局搜索暂不可用",
+                    message = "当前设备工作模式不包含电视点歌台。请在 Home KTV 服务设置中切换到支持点歌的模式。",
+                    returnFocus = binding.btnTopSearch,
+                )
+            }
+        }
+        binding.btnTopLibraryScan.contentDescription = "请求服务端扫描曲库"
+        binding.btnTopLibraryScan.setOnClickListener { showLibraryScanConfirmDialog() }
+    }
+
+    private fun showKtvSettingsDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_ktv_settings, null)
+        val metrics = KtvSettingsLayoutPolicy.forScreenHeight(resources.displayMetrics.heightPixels)
+        val settingsBackdrop = dialogView.findViewById<View>(R.id.settingsStageBackdrop)
+        KtvDashboardBackground.applyTo(settingsBackdrop)
+        val settingsGrid = dialogView.findViewById<View>(R.id.settingsGrid)
+        settingsGrid.translationY = metrics.translationYPx.toFloat()
+        settingsGrid.setPadding(metrics.horizontalInsetPx, 0, metrics.horizontalInsetPx, 0)
+        dialogView.findViewById<View>(R.id.settingsColumnGap).apply {
+            layoutParams = layoutParams.apply { width = metrics.columnGapPx }
+        }
+        val returnFocus = binding.btnTopSettings
+        val dialog = Dialog(this).apply {
+            requestWindowFeature(Window.FEATURE_NO_TITLE)
+            setContentView(dialogView)
+            setCancelable(true)
+        }
+        dialog.setOnDismissListener {
+            untrackModalDialog(dialog)
+            if (::kioskController.isInitialized) {
+                kioskController.resumeDashboardPhotoCarousel(
+                    KtvDashboardPhotoCarousel.PauseReason.SETTINGS_DIALOG,
+                )
+            }
+            restoreFocus(returnFocus)
+        }
+        val entries = settingsEntries()
+        lateinit var rows: Map<String, KtvSettingsRowView>
+        rows = KtvSettingsRowFactory(this).populate(
+            leftColumn = dialogView.findViewById(R.id.settingColumnLeft),
+            rightColumn = dialogView.findViewById(R.id.settingColumnRight),
+            entries = entries,
+        ) { entry ->
+            val row = rows[entry.key] ?: return@populate
+            when (entry.action) {
+                KtvSettingsAction.OPEN_LIBRARY_SCAN -> showLibraryScanConfirmDialog(row)
+                KtvSettingsAction.OPEN_MEDIA_FEEDBACK -> showMediaFeedbackDialog(row)
+                KtvSettingsAction.TOGGLE_LOCAL_PREFERENCE -> {
+                    if (!entry.enabled) {
+                        showInformationalDialog(entry.title, entry.description, row)
+                        return@populate
+                    }
+                    if (!tvSettingsStore.set(entry.key, entry.checked)) {
+                        onToast("设置保存失败")
+                        return@populate
+                    }
+                    row.bind(settingsEntries().first { it.key == entry.key })
+                    if (entry.key == KtvTvSettingsStore.KEY_AUTO_FULLSCREEN) {
+                        kioskCoordinator.resetIdleTimer()
+                    }
+                    if (entry.key == KtvTvSettingsStore.KEY_GLOBAL_SEARCH && ::kioskController.isInitialized) {
+                        kioskController.refreshGlobalSearchPreference()
+                    }
+                }
+                KtvSettingsAction.EXPLAIN -> {
+                    if (entry.key == "download_server") {
+                        showDownloadServerDialog(entry.title, entry.description, row)
+                    } else {
+                        showInformationalDialog(entry.title, entry.description, row)
+                    }
+                }
+            }
+        }
+        trackModalDialog(dialog)
+        if (::kioskController.isInitialized) {
+            kioskController.pauseDashboardPhotoCarousel(
+                KtvDashboardPhotoCarousel.PauseReason.SETTINGS_DIALOG,
+            )
+        }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            setGravity(Gravity.CENTER)
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0f)
+        }
+        rows["download_path"]?.let { firstRow ->
+            firstRow.post { firstRow.requestRemoteFocus() }
+        }
+    }
+
+    private fun settingsEntries(): List<KtvSettingsEntry> = tvSettingsStore.snapshot().let { settings ->
+        KtvSettingsCatalog.entries(
+            autoFullscreenEnabled = settings.autoFullscreenEnabled,
+            globalSearchEnabled = settings.globalSearchEnabled,
+            exitOnBackEnabled = settings.exitOnBackEnabled,
+            canOpenKiosk = modeCapabilities.canOpenKiosk,
+            startupSyncEnabled = settings.startupSyncEnabled,
+        )
+    }
+
+    private fun showSystemInfoDialog() {
+        val server = config.serverHost?.takeIf { it.isNotBlank() } ?: "未配置"
+        val mode = config.effectiveMode().name
+        val serviceStatus = if (::kioskController.isInitialized) {
+            kioskController.serviceStatusSummary()
+        } else {
+            "点歌控制器尚未初始化"
+        }
+        val info = "Home KTV 系统状态\n\n" +
+                "服务器地址: " + server + "\n" +
+                "服务状态: " + serviceStatus + "\n" +
+                "设备工作模式: " + mode + "\n" +
+                "客户端版本: " + BuildConfig.VERSION_NAME + "\n" +
+                "播放器: AndroidX Media3\n" +
+                "播放控制长连接: " + (if (playerConnected) "已连接" else "未连接")
+        val dialog = AlertDialog.Builder(this, R.style.Theme_HomeKtvTv_UpdateDialog)
+            .setTitle("系统信息")
+            .setMessage(info)
+            .setNeutralButton("服务与设备") { _, _ -> launchServiceAndDeviceSettings() }
+            .setPositiveButton("确定", null)
+            .create()
+        dialog.setOnDismissListener {
+            untrackModalDialog(dialog)
+            restoreFocus(binding.btnTopSystem)
+        }
+        trackModalDialog(dialog)
+        dialog.show()
+        val confirmButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        val serviceAndDeviceButton = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
+        confirmButton.nextFocusLeftId = serviceAndDeviceButton.id
+        serviceAndDeviceButton.nextFocusRightId = confirmButton.id
+        confirmButton.post {
+            confirmButton.requestRemoteFocus()
+        }
+    }
+
+    private fun launchServiceAndDeviceSettings() {
+        settingsLauncher.launch(Intent(this, SetupActivity::class.java).apply {
+            putExtra(SetupActivity.EXTRA_FORCE_SETUP, true)
+            putExtra(SetupActivity.EXTRA_RETURN_TO_CALLER, true)
+        })
+    }
+
+    private fun showInformationalDialog(title: String, message: String, returnFocus: View) {
+        val dialog = AlertDialog.Builder(this, R.style.Theme_HomeKtvTv_UpdateDialog)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("确定", null)
+            .create()
+        dialog.setOnDismissListener {
+            untrackModalDialog(dialog)
+            restoreFocus(returnFocus)
+        }
+        trackModalDialog(dialog)
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.let { button ->
+            button.post { button.requestRemoteFocus() }
+        }
+    }
+
+    private fun showDownloadServerDialog(title: String, message: String, returnFocus: View) {
+        var navigateToSystemInfo = false
+        val dialog = AlertDialog.Builder(this, R.style.Theme_HomeKtvTv_UpdateDialog)
+            .setTitle(title)
+            .setMessage(message)
+            .setNeutralButton("查看系统信息") { _, _ ->
+                navigateToSystemInfo = true
+            }
+            .setPositiveButton("确定", null)
+            .create()
+        dialog.setOnDismissListener {
+            untrackModalDialog(dialog)
+            if (navigateToSystemInfo) {
+                showSystemInfoDialog()
+            } else {
+                restoreFocus(returnFocus)
+            }
+        }
+        trackModalDialog(dialog)
+        dialog.show()
+        val confirmButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        val systemInfoButton = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
+        if (confirmButton != null && systemInfoButton != null) {
+            confirmButton.nextFocusLeftId = systemInfoButton.id
+            systemInfoButton.nextFocusRightId = confirmButton.id
+        }
+        confirmButton?.post {
+            confirmButton.requestRemoteFocus()
+        }
+    }
+
+    private fun showLibraryScanConfirmDialog(returnFocus: View = binding.btnTopLibraryScan) {
+        val content = layoutInflater.inflate(R.layout.dialog_library_scan_confirm, null)
+        val dialog = Dialog(this).apply {
+            requestWindowFeature(Window.FEATURE_NO_TITLE)
+            setContentView(content)
+            setCancelable(true)
+            setCanceledOnTouchOutside(true)
+        }
+        dialog.setOnDismissListener {
+            untrackModalDialog(dialog)
+            restoreFocus(returnFocus)
+        }
+        trackModalDialog(dialog)
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(dp(350), dp(195))
+            setGravity(Gravity.CENTER)
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.58f)
+        }
+        val cancel = content.findViewById<View>(android.R.id.button2)
+        val confirm = content.findViewById<View>(android.R.id.button1)
+        var submitted = false
+        cancel.setOnClickListener { dialog.dismiss() }
+        confirm.setOnClickListener {
+            if (submitted || libraryScanRequestInFlight) return@setOnClickListener
+            submitted = true
+            cancel.isEnabled = false
+            confirm.isEnabled = false
+            dialog.dismiss()
+            triggerLibraryScan()
+        }
+        cancel.post { cancel.requestRemoteFocus() }
+    }
+
+    private fun showMediaFeedbackDialog(returnFocus: View) {
+        val content = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        val input = android.widget.EditText(this).apply {
+            hint = "输入媒体名称或关键词"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            filters = arrayOf(android.text.InputFilter.LengthFilter(100))
+            setSingleLine(true)
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+        }
+        val status = android.widget.TextView(this).apply {
+            setTextColor(Color.rgb(230, 83, 102))
+            textSize = 12f
+            visibility = View.GONE
+        }
+        content.addView(input, android.widget.LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(48),
+        ))
+        content.addView(status, android.widget.LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
+        val dialog = AlertDialog.Builder(this, R.style.Theme_HomeKtvTv_UpdateDialog)
+            .setTitle("媒体反馈")
+            .setView(content)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("提交", null)
+            .create()
+        dialog.setOnDismissListener {
+            untrackModalDialog(dialog)
+            restoreFocus(returnFocus)
+        }
+        trackModalDialog(dialog)
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val keyword = input.text.toString().trim()
+            if (keyword.isBlank()) {
+                status.text = "请输入媒体名称"
+                status.visibility = View.VISIBLE
+                input.requestRemoteFocus()
+                return@setOnClickListener
+            }
+            val submitButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            submitButton.isEnabled = false
+            status.text = "正在提交"
+            status.visibility = View.VISIBLE
+            lifecycleScope.launch(Dispatchers.IO) {
+                val transport = com.homektv.tv.net.KtvHttpTransport(config)
+                val result = try {
+                    com.homektv.tv.net.WishApi(transport, config.userToken).add(keyword)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                } finally {
+                    transport.close()
+                }
+                withContext(Dispatchers.Main) {
+                    when (result) {
+                        is com.homektv.tv.net.KtvApiResult.Success -> {
+                            onToast("已提交点歌心愿")
+                            dialog.dismiss()
+                        }
+                        is com.homektv.tv.net.KtvApiResult.Failure -> {
+                            status.text = result.error.message.ifBlank { "提交失败，请重试" }
+                            submitButton.isEnabled = true
+                        }
+                        null -> {
+                            status.text = "连接服务失败，请检查网络后重试"
+                            submitButton.isEnabled = true
+                        }
+                    }
+                }
+            }
+        }
+        input.post { input.requestRemoteFocus() }
+    }
+
+    private fun restoreFocus(target: View) {
+        target.post {
+            if (target.isAttachedToWindow && target.isShown) target.requestRemoteFocus()
+        }
+    }
+
+    private fun trackModalDialog(dialog: Dialog) {
+        activeModalDialogs.remove(dialog)
+        activeModalDialogs.add(dialog)
+        kioskCoordinator.setModalActive(true)
+    }
+
+    private fun untrackModalDialog(dialog: Dialog) {
+        activeModalDialogs.remove(dialog)
+        kioskCoordinator.setModalActive(activeModalDialogs.any { it.isShowing })
+    }
+
+    private fun consumeActiveModalDialogBack(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_BACK) return false
+        val activeDialog = activeModalDialogs.lastOrNull { it.isShowing } ?: return false
+        if (event.action == KeyEvent.ACTION_UP) activeDialog.dismiss()
+        return true
+    }
+
+    private fun triggerLibraryScan() {
+        if (libraryScanRequestInFlight) return
+        libraryScanRequestInFlight = true
+        onToast("正在请求服务端扫描曲库…")
+        lifecycleScope.launch(Dispatchers.IO) {
+            val transport = com.homektv.tv.net.KtvHttpTransport(config)
+            try {
+                when (val result = com.homektv.tv.net.LibraryApi(transport).requestScan()) {
+                    is com.homektv.tv.net.KtvApiResult.Success -> runOnUiThread {
+                        onToast(LibraryScanFeedbackPolicy.messageFor(result.value))
+                    }
+                    is com.homektv.tv.net.KtvApiResult.Failure -> runOnUiThread {
+                        onToast(LibraryScanFeedbackPolicy.failureMessage(result.error.message))
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                runOnUiThread { onToast(LibraryScanFeedbackPolicy.connectionFailureMessage) }
+            } finally {
+                transport.close()
+                runOnUiThread { libraryScanRequestInFlight = false }
+            }
+        }
+    }
+
+    private fun maybeStartConfiguredStartupScan() {
+        if (startupScanAttemptedInProcess) return
+        startupScanAttemptedInProcess = true
+        if (!tvSettingsStore.snapshot().startupSyncEnabled || !modeCapabilities.canOpenKiosk) return
+        if (libraryScanRequestInFlight) return
+        libraryScanRequestInFlight = true
+        lifecycleScope.launch(Dispatchers.IO) {
+            val transport = com.homektv.tv.net.KtvHttpTransport(config)
+            var feedback: String? = null
+            try {
+                val api = com.homektv.tv.net.LibraryApi(transport)
+                val status = when (val result = api.status()) {
+                    is com.homektv.tv.net.KtvApiResult.Success -> result.value
+                    is com.homektv.tv.net.KtvApiResult.Failure -> null
+                }
+                if (StartupScanPolicy.shouldRequest(
+                        enabled = true,
+                        canOpenKiosk = modeCapabilities.canOpenKiosk,
+                        connected = playerConnected,
+                        status = status,
+                    )
+                ) {
+                    feedback = when (val result = api.requestScan()) {
+                        is com.homektv.tv.net.KtvApiResult.Success -> LibraryScanFeedbackPolicy.messageFor(result.value)
+                        is com.homektv.tv.net.KtvApiResult.Failure ->
+                            LibraryScanFeedbackPolicy.failureMessage(result.error.message)
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                feedback = LibraryScanFeedbackPolicy.connectionFailureMessage
+            } finally {
+                transport.close()
+                withContext(Dispatchers.Main) {
+                    libraryScanRequestInFlight = false
+                    feedback?.let { if (!isFinishing && !isDestroyed) onToast(it) }
+                }
+            }
         }
     }
 
@@ -905,7 +1514,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun applyVideoScaleMode(mode: String) {
-        binding.playerView.resizeMode = when (mode) {
+        bottomDockController.playerView.resizeMode = when (mode) {
             "fit" -> AspectRatioFrameLayout.RESIZE_MODE_FIT
             "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
             else -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -923,7 +1532,12 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     /** 原唱 ↔ 伴唱切换（遥控菜单按钮与方向下键共用）。 */
     private fun toggleVocal() {
-        val nextMode = VocalTogglePolicy.toggleMode(currentVocalMode)
+        val nextMode = VocalTogglePolicy()
+            .getNextVocalMode(VocalMode.fromWire(currentVocalMode))
+            .wireValue
+        currentVocalMode = nextMode
+        engine?.setVocalMode(nextMode, accompanimentTrackIndex, audioTrackCount, currentAudioLayout)
+        cachedQueueSnapshot?.copy(vocalMode = nextMode)?.let(::renderBottomDock)
         showVocalOsd(nextMode)
         sendControl("set_vocal", "{\"mode\":\"$nextMode\"}")
     }
@@ -933,12 +1547,258 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         sendControl("set_volume", "{\"volume\":$volume}")
     }
 
-    private fun showQueueOverlay() {
+    private fun showQueueOverlay(onDismiss: (() -> Unit)? = null) {
         remoteMenuBinding?.root?.visibility = View.GONE
+        if (modeCapabilities.canOpenKiosk) {
+            binding.queueOverlay.visibility = View.GONE
+            ensureKioskController().openQueueDrawer(onDismiss)
+            return
+        }
+        queueOverlayDismiss = onDismiss
         cachedQueueSnapshot?.let { renderQueue(it) }
         binding.queueOverlay.visibility = View.VISIBLE
+        binding.queueOverlay.bringToFront()
         val target = binding.queueList.getChildAt(0) ?: binding.queueClose
         target.requestFocus()
+    }
+
+    private fun closeQueueOverlay() {
+        if (binding.queueOverlay.visibility == View.VISIBLE) {
+            binding.queueOverlay.visibility = View.GONE
+            queueOverlayDismiss?.invoke()
+            queueOverlayDismiss = null
+        }
+    }
+
+    private fun openKioskFromFullscreen() {
+        if (!modeCapabilities.canOpenKiosk) {
+            showCapabilityDrawer(
+                title = "点歌台",
+                status = "当前设备模式未启用电视端点歌台",
+                description = "可使用 Home KTV 手机点歌入口。当前播放器和全屏 MV 会继续运行。",
+            )
+            return
+        }
+        if (bottomDockController.isFullscreen) bottomDockController.exitFullscreen()
+        ensureKioskController().apply {
+            selectTab(KioskTab.PINYIN)
+            toggleKiosk(true)
+        }
+    }
+
+    private fun showHomePage() {
+        if (bottomDockController.isFullscreen) bottomDockController.exitFullscreen()
+        binding.queueOverlay.visibility = View.GONE
+        queueOverlayDismiss = null
+        binding.ktvOverlay.visibility = View.GONE
+        audioOverlayBinding?.root?.visibility = View.GONE
+        binding.pageContainer.visibility = View.VISIBLE
+        if (modeCapabilities.canOpenKiosk) {
+            binding.standbyPanel.visibility = View.GONE
+            ensureKioskController().apply {
+                selectTab(KioskTab.DASHBOARD)
+                toggleKiosk(true)
+            }
+        } else {
+            if (::kioskController.isInitialized) kioskController.toggleKiosk(false)
+            binding.standbyPanel.visibility = View.VISIBLE
+        }
+        if (!modeCapabilities.canOpenKiosk) bottomDockController.focusHome()
+    }
+
+    private fun openHistoryTab() {
+        if (!modeCapabilities.canOpenKiosk) {
+            onToast("当前设备模式不支持电视历史页面")
+            return
+        }
+        ensureKioskController().apply {
+            selectTab(KioskTab.HISTORY)
+            toggleKiosk(true)
+        }
+    }
+
+    private fun showMixerPanel() {
+        val menu = ensureRemoteMenuBinding()
+        menu.root.visibility = View.VISIBLE
+        menu.root.bringToFront()
+        menu.remotePlay.requestFocus()
+        resetMenuTimer()
+    }
+
+    private fun showQrCode() {
+        val returnFocus = currentFocus ?: binding.btnTopMobileQr
+        val dialog = KtvQrDialog(
+            context = this,
+            portalUrl = KtvQrPolicy.formatPortalUrl(config.serverHost),
+            qrBitmap = cachedKioskQrBitmap,
+            coordinator = kioskCoordinator.takeIf { kioskCoordinator.isKioskActive.value },
+        )
+        dialog.onDismissQr = {
+            if (topBarQrDialog === dialog) topBarQrDialog = null
+            untrackModalDialog(dialog)
+            restoreFocus(returnFocus)
+        }
+        dialog.onRetryQr = {
+            dialog.showLoading()
+            loadQr()
+        }
+        topBarQrDialog = dialog
+        trackModalDialog(dialog)
+        dialog.show()
+        if (cachedKioskQrBitmap == null) {
+            if (config.serverHost.isNullOrBlank()) {
+                dialog.showLoadError("尚未配置 Home KTV 服务地址，请先完成服务连接设置。", retryable = false)
+            } else {
+                dialog.showLoading()
+                loadQr()
+            }
+        }
+    }
+
+    private fun showDownloadsDrawer() {
+        if (modeCapabilities.canOpenKiosk) {
+            ensureKioskController().openQueueDrawer(initialTab = KtvQueueDrawerTab.DOWNLOADS)
+            return
+        }
+        showCapabilityDrawer(
+            title = "下载管理",
+            status = "Home KTV 没有歌曲下载任务",
+            description = "当前应用没有歌曲下载服务或下载任务 API。歌曲由只读 NAS 曲库提供，不能在此下载或保存媒体。客户端 APK 更新属于应用更新，不是歌曲下载。",
+        )
+    }
+
+    private fun onPitchStep(delta: Int) {
+        val returnFocus = currentFocus ?: if (delta < 0) {
+            binding.root.findViewById(R.id.btnDockToneDown)
+        } else {
+            binding.root.findViewById(R.id.btnDockToneUp)
+        }
+        val activeEngine = engine
+        if (activeEngine == null) {
+            showPitchUnavailable(PlaybackPitchStatus.NO_MEDIA)
+            return
+        }
+        val result = activeEngine.setPitchSemitones(activeEngine.pitchSemitones + delta)
+        if (!result.applied) {
+            showPitchUnavailable(result.status)
+            return
+        }
+        showPitchDialog(returnFocus, activeEngine, result.semitones)
+    }
+
+    private fun showPitchDialog(
+        returnFocus: View,
+        activeEngine: PlaybackEngine,
+        initialSemitones: Int,
+    ) {
+        pitchDialog?.takeIf { it.isShowing }?.dismiss()
+        val dialog = KtvPitchDialog(
+            context = this,
+            initialSemitones = initialSemitones,
+            setPitch = activeEngine::setPitchSemitones,
+        )
+        pitchDialog = dialog
+        dialog.setOnDismissListener {
+            if (pitchDialog === dialog) pitchDialog = null
+            untrackModalDialog(dialog)
+            restoreFocus(returnFocus)
+        }
+        trackModalDialog(dialog)
+        dialog.show()
+    }
+
+    private fun showPitchUnavailable(status: PlaybackPitchStatus) {
+        val state = when (status) {
+            PlaybackPitchStatus.APPLIED -> "当前调值已应用"
+            PlaybackPitchStatus.NO_MEDIA -> "未在播放"
+            PlaybackPitchStatus.NOT_READY -> "播放器尚未就绪"
+            PlaybackPitchStatus.UNSUPPORTED_ENGINE -> "当前播放线路不支持变调"
+            PlaybackPitchStatus.PARAMETER_REJECTED -> "播放器未接受此调值"
+        }
+        showCapabilityDrawer(
+            title = "音调",
+            status = state,
+            description = if (status == PlaybackPitchStatus.PARAMETER_REJECTED) "调值保持不变。" else "",
+        )
+    }
+
+    private fun showCapabilityDrawer(title: String, status: String, description: String) {
+        capabilityDrawer?.dismiss()
+        val returnFocus = currentFocus
+        val dialog = KtvCapabilityDrawerDialog(
+            context = this,
+            title = title,
+            status = status,
+            description = description,
+            coordinator = kioskCoordinator.takeIf { kioskCoordinator.isKioskActive.value },
+        )
+        capabilityDrawer = dialog
+        dialog.onDismissDrawer = {
+            if (capabilityDrawer === dialog) capabilityDrawer = null
+            untrackModalDialog(dialog)
+            if (returnFocus?.isAttachedToWindow == true) returnFocus.requestRemoteFocus()
+        }
+        trackModalDialog(dialog)
+        dialog.show()
+    }
+
+    private fun onDockFullscreenChanged(fullscreen: Boolean) {
+        if (!::binding.isInitialized) return
+        kioskCoordinator.setFullscreenPlaybackActive(fullscreen)
+        if (fullscreen) {
+            fullscreenKioskActive = kioskCoordinator.isKioskActive.value
+            binding.headerBar.visibility = View.GONE
+            binding.pageContainer.visibility = View.GONE
+            bottomDockController.root.visibility = View.GONE
+            binding.queueOverlay.visibility = View.GONE
+            queueOverlayDismiss = null
+            binding.vocalPanel.visibility = View.GONE
+            remoteMenuBinding?.root?.visibility = View.GONE
+            kioskOverlayBinding?.kioskRootOverlay?.visibility = View.GONE
+            binding.playerInfoPanel.visibility = View.GONE
+            binding.nextPanel.visibility = View.GONE
+            binding.playProgress.visibility = View.GONE
+            binding.txtElapsed.visibility = View.GONE
+            binding.txtVocalMode.visibility = View.GONE
+            binding.txtDuration.visibility = View.GONE
+            binding.ktvOverlay.visibility = View.VISIBLE
+            binding.sharedPlayerContainer.bringToFront()
+            binding.ktvOverlay.bringToFront()
+            fullscreenPlaybackPanel.setFullscreen(true)
+            renderFullscreenPlaybackPanel()
+        } else {
+            fullscreenPlaybackPanel.setFullscreen(false)
+            hidePlaybackProgress()
+            binding.ktvOverlay.visibility = View.GONE
+            binding.headerBar.visibility = View.VISIBLE
+            binding.pageContainer.visibility = View.VISIBLE
+            bottomDockController.root.visibility = View.VISIBLE
+            if (fullscreenKioskActive && kioskCoordinator.isKioskActive.value) {
+                kioskOverlayBinding?.kioskRootOverlay?.visibility = View.VISIBLE
+            }
+            fullscreenKioskActive = false
+        }
+    }
+
+    private fun onKioskIdleTimeout(): Boolean {
+        if (!::binding.isInitialized || !::bottomDockController.isInitialized) return false
+        if (!modeCapabilities.canOpenKiosk || !kioskCoordinator.isKioskActive.value) return false
+        val shouldEnterFullscreen = KioskIdleTimeoutPolicy.shouldEnterFullscreen(
+            autoFullscreenEnabled = tvSettingsStore.snapshot().autoFullscreenEnabled,
+            hasVisibleVideo = bottomDockController.isVideoVisible,
+            externalDisplayActive = bottomDockController.externalDisplayActive,
+            isPlaying = currentPlaybackState == "playing",
+            hasActiveModal = kioskCoordinator.isIdleTimeoutSuspended() ||
+                activeModalDialogs.any { it.isShowing } ||
+                binding.vocalPanel.visibility == View.VISIBLE ||
+                binding.queueOverlay.visibility == View.VISIBLE ||
+                remoteMenuBinding?.root?.visibility == View.VISIBLE,
+        )
+        if (shouldEnterFullscreen) bottomDockController.enterFullscreen()
+
+        // A timeout without an eligible fullscreen transition is handled by keeping the
+        // ordering dashboard visible; deactivating Kiosk here leaves TV mode on an empty page.
+        return true
     }
 
     private fun confirmControl(title: String, message: String, action: String, params: String = "{}") {
@@ -951,7 +1811,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun sendControl(action: String, params: String = "{}") {
-        showPlaybackProgress()
+        if (bottomDockController.isFullscreen) fullscreenPlaybackPanel.resumeAutoHide()
+        else showPlaybackProgress()
         lifecycleScope.launch { if (!mediaApi.control(action, params)) onToast("操作失败") }
     }
 
@@ -962,6 +1823,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         if (!connected) lastSnapshotRevision = 0L
         playerConnectionStatus = PlayerConnectionStatusPolicy.onConnectionChanged(connected, playerRoleActive)
         renderPlayerConnectionStatus()
+        if (!connected) cachedQueueSnapshot?.let { renderBottomDock(it, queueSnapshotFresh = false) }
+        if (connected) maybeStartConfiguredStartupScan()
         if (connected && ::updateManager.isInitialized) updateManager.checkForUpdate(lifecycleScope)
     }
 
@@ -979,6 +1842,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun renderPlayerConnectionStatus() {
+        binding.txtStatus.visibility = View.GONE
         binding.txtStatus.setText(
             when (playerConnectionStatus) {
                 PlayerConnectionStatus.CONNECTING -> R.string.status_connecting
@@ -999,6 +1863,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         if (!SnapshotRevisionPolicy.accepts(lastSnapshotRevision, snapshot.stateRevision)) return
         if (snapshot.stateRevision > lastSnapshotRevision) {
             lastSnapshotRevision = snapshot.stateRevision
+        }
+        if (marqueeNotificationController.enqueueSnapshotChange(event, cachedQueueSnapshot, snapshot) > 0) {
+            showNextMarqueeNotification()
         }
         // Metadata/cover requests below may suspend for several seconds. Always publish the
         // newest complete server state before starting or continuing that asynchronous work.
@@ -1025,9 +1892,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         audioOverlayBinding?.txtAudioLyricCurrent?.updatePlayback(engine?.currentPositionMs ?: 0L, lyricsPlaying)
         hasCurrentSong = snapshot.playing != null
         cachedQueueSnapshot = snapshot
+        renderFullscreenPlaybackPanel(snapshot.positionMs)
         if (binding.queueOverlay.visibility == View.VISIBLE) {
             renderQueue(snapshot)
         }
+        binding.txtPhones.visibility = View.GONE
         binding.txtPhones.text =
             getString(R.string.status_phones, snapshot.connectedPhones.toInt())
         binding.txtWaitingStat.text = getString(
@@ -1036,8 +1905,85 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         )
         binding.txtWaitingStat.visibility = View.VISIBLE
         binding.txtPlayedStat.visibility = View.GONE
+        renderBottomDock(snapshot)
         applyPlayback(snapshot)
         if (event == VOCAL_CHANGED_EVENT) refreshVocalTrackMapping(snapshot)
+    }
+
+    private fun renderBottomDock(snapshot: QueueSnapshot, queueSnapshotFresh: Boolean = true) {
+        val song = snapshot.playing?.song
+        val isVideo = song != null && !song.mediaType.equals("AUDIO", ignoreCase = true)
+        val queueCount = StandbyStatsPolicy.waitingCount(snapshot)
+        val trackCount = if (snapshot.audioLayout.layout.equals("DUAL_TRACK", ignoreCase = true)) {
+            maxOf(audioTrackCount, 2)
+        } else {
+            audioTrackCount
+        }
+        val nowPlayingLabel = song?.let { current ->
+            listOfNotNull(current.title, current.artist?.takeIf(String::isNotBlank)).joinToString(" · ")
+        } ?: "等待点歌"
+        baselineMarqueeText = when {
+            song != null -> "正在播放：$nowPlayingLabel"
+            queueCount > 0 -> "待播歌曲 $queueCount 首 · 手机扫码或使用遥控器点歌"
+            else -> "手机扫码点歌 · 欢迎使用 Home KTV"
+        }
+        if (activeMarqueeNotification == null) binding.txtMarquee.text = baselineMarqueeText
+        bottomDockController.render(
+            BottomDockUiModel(
+                queueCount = queueCount,
+                isPlaying = snapshot.state == "playing",
+                vocalMode = snapshot.vocalMode,
+                vocalSwitchEnabled = supportsVocalSwitch(snapshot.audioLayout, trackCount),
+                videoVisible = isVideo && snapshot.state != "idle" && !externalDisplayActive,
+                nowPlayingLabel = nowPlayingLabel,
+                queueCountKnown = true,
+                queueSnapshotFresh = queueSnapshotFresh,
+            ),
+        )
+    }
+
+    private fun showNextMarqueeNotification() {
+        if (activeMarqueeNotification != null || !::binding.isInitialized) return
+        val notification = marqueeNotificationController.pollNext() ?: return
+        activeMarqueeNotification = notification
+        val marquee = binding.txtMarquee
+        marquee.removeCallbacks(marqueeNotificationDismiss)
+        marquee.animate().cancel()
+        marquee.text = notification.text
+        marquee.alpha = 0f
+        marquee.translationY = dp(4).toFloat()
+        marquee.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(MARQUEE_FADE_IN_MS)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .withEndAction {
+                if (activeMarqueeNotification === notification) {
+                    marquee.postDelayed(marqueeNotificationDismiss, MARQUEE_VISIBLE_MS)
+                }
+            }
+            .start()
+    }
+
+    private fun dismissMarqueeNotification() {
+        val notification = activeMarqueeNotification ?: return
+        if (!::binding.isInitialized) return
+        val marquee = binding.txtMarquee
+        marquee.animate().cancel()
+        marquee.animate()
+            .alpha(0f)
+            .translationY(-dp(4).toFloat())
+            .setDuration(MARQUEE_FADE_OUT_MS)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .withEndAction {
+                if (activeMarqueeNotification !== notification) return@withEndAction
+                activeMarqueeNotification = null
+                marquee.text = baselineMarqueeText
+                marquee.alpha = 1f
+                marquee.translationY = 0f
+                showNextMarqueeNotification()
+            }
+            .start()
     }
 
     private fun renderQueue(snapshot: QueueSnapshot) {
@@ -1359,25 +2305,39 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     // ---- 待机页二维码（P1.30） ----
 
-    /** 异步拉 /api/qr 加载进待机页占位框；失败保留占位文字（用户仍可读明文地址）。 */
+    /** 拉取服务端按当前请求地址生成的 H5 二维码，并同步到 PiP 和待机页。 */
     private fun loadQr() {
-        lifecycleScope.launch {
-            val bytes = mediaApi.fetchQr(QR_SIZE_PX)
-            val bmp = bytes?.let {
-                withContext(Dispatchers.Default) {
-                    ArtworkDecoder.decode(it, ArtworkProfile.QR)
+        if (qrLoadJob?.isActive == true) return
+        qrLoadJob = lifecycleScope.launch {
+            try {
+                val bytes = mediaApi.fetchQr(QR_SIZE_PX)
+                val bmp = bytes?.let {
+                    withContext(Dispatchers.Default) {
+                        ArtworkDecoder.decode(it, ArtworkProfile.QR)
+                    }
                 }
-            }
-            if (bmp != null) {
-                cachedKioskQrBitmap = bmp
-                binding.imgQr.setImageBitmap(bmp)
-                binding.imgMiniQr.setImageBitmap(bmp)
-                audioOverlayBinding?.imgAudioMiniQr?.setImageBitmap(bmp)
-                binding.imgQr.visibility = View.VISIBLE
-                binding.txtQrPlaceholder.visibility = View.GONE
-                if (::kioskController.isInitialized) {
-                    kioskController.setCachedQrBitmap(bmp)
+                if (bmp != null) {
+                    cachedKioskQrBitmap = bmp
+                    bottomDockController.setQrBitmap(bmp)
+                    binding.imgQr.setImageBitmap(bmp)
+                    binding.imgMiniQr.setImageBitmap(bmp)
+                    audioOverlayBinding?.imgAudioMiniQr?.setImageBitmap(bmp)
+                    binding.imgQr.visibility = View.VISIBLE
+                    binding.txtQrPlaceholder.visibility = View.GONE
+                    topBarQrDialog?.updateQrBitmap(bmp)
+                    if (::kioskController.isInitialized) {
+                        kioskController.setCachedQrBitmap(bmp)
+                    }
+                } else {
+                    topBarQrDialog?.showLoadError("二维码暂不可用，请检查 Home KTV 服务连接后重试。", retryable = true)
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                Log.w("MainActivity", "QR loading failed", e)
+                topBarQrDialog?.showLoadError("二维码加载失败，请检查 Home KTV 服务连接后重试。", retryable = true)
+            } finally {
+                qrLoadJob = null
             }
         }
     }
@@ -1422,7 +2382,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         recommendations = content.songs.sortedByDescending { it.coverUrl != null }
         renderStandbyRecommendations()
         val logoUrl = content.logoUrl?.trim()?.takeIf { it.isNotEmpty() }
-        if (logoUrl == null) {
+        val showStandbyBrand = KtvHeaderBrandVisibilityPolicy.shouldShowStandbyBrand(modeCapabilities.canOpenKiosk)
+        if (!showStandbyBrand) {
+            binding.imgStandbyLogo.visibility = View.GONE
+            binding.txtBrandName.visibility = View.GONE
+        } else if (logoUrl == null) {
             binding.imgStandbyLogo.setImageResource(R.drawable.home_ktv_logo)
             binding.imgStandbyLogo.visibility = View.VISIBLE
             binding.txtBrandName.visibility = View.VISIBLE
@@ -1537,24 +2501,29 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun showPlayer(audioMode: Boolean = false) {
-        binding.standbyPanel.removeCallbacks(standbyTicker)
-        binding.playerView.visibility = if (externalDisplayActive) View.INVISIBLE else View.VISIBLE
-        binding.standbyPanel.visibility = View.GONE
-        binding.ktvOverlay.visibility = if (audioMode) View.GONE else View.VISIBLE
+        if (audioMode) {
+            if (bottomDockController.isFullscreen) bottomDockController.exitFullscreen()
+            bottomDockController.setVideoVisible(false)
+        } else {
+            bottomDockController.setVideoVisible(hasCurrentSong && !externalDisplayActive)
+        }
+        binding.ktvOverlay.visibility = if (bottomDockController.isFullscreen && !audioMode) View.VISIBLE else View.GONE
         if (audioMode) {
             ensureAudioOverlayBinding().root.visibility = View.VISIBLE
         } else {
             audioOverlayBinding?.root?.visibility = View.GONE
         }
-        showPlaybackProgress()
+        if (bottomDockController.isFullscreen && !audioMode) renderFullscreenPlaybackPanel()
     }
 
     private fun showStandby() {
         binding.standbyPanel.removeCallbacks(standbyTicker)
-        binding.playerView.visibility = View.GONE
+        if (bottomDockController.isFullscreen) bottomDockController.exitFullscreen()
+        bottomDockController.setVideoVisible(false)
         binding.ktvOverlay.visibility = View.GONE
         audioOverlayBinding?.root?.visibility = View.GONE
         hidePlaybackProgress()
+        binding.pageContainer.visibility = View.VISIBLE
         if (modeCapabilities.canOpenKiosk) {
             binding.standbyPanel.visibility = View.GONE
             ensureKioskController().toggleKiosk(true)
@@ -1565,19 +2534,16 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun showPlaybackProgress() {
-        if (!::binding.isInitialized ||
-            (binding.playerView.visibility != View.VISIBLE && !externalDisplayActive)
-        ) return
+        if (!::binding.isInitialized || !bottomDockController.isFullscreen) return
         binding.playerInfoPanel.visibility = View.VISIBLE
         binding.playProgress.visibility = View.VISIBLE
         audioOverlayBinding?.audioProgress?.visibility = View.VISIBLE
         binding.txtElapsed.visibility = View.VISIBLE
         binding.txtVocalMode.visibility = View.VISIBLE
         binding.txtDuration.visibility = View.VISIBLE
-        if (lyricLines.isEmpty()) {
-            binding.txtLyricPrevious.visibility = View.VISIBLE
-            binding.txtLyricCurrent.visibility = View.VISIBLE
-        }
+        val showLyrics = lyricLines.isNotEmpty()
+        binding.txtLyricPrevious.visibility = if (showLyrics) View.VISIBLE else View.GONE
+        binding.txtLyricCurrent.visibility = if (showLyrics) View.VISIBLE else View.GONE
         clock.removeCallbacks(progressHide)
         clock.postDelayed(progressHide, PROGRESS_HIDE_DELAY_MS)
     }
@@ -1617,15 +2583,20 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.nextPanel.visibility = if (next?.song != null) View.VISIBLE else View.GONE
         binding.txtNextSong.text = next?.song?.let { "${it.title} · ${next.orderedByNick ?: ""}" } ?: ""
         audioUi?.txtAudioNext?.text = next?.song?.let { "接下来  ${it.title} · ${it.artist}" } ?: ""
-        // lyric timeline is delivered separately in the next lyric task; use the title as a temporary fallback.
+        // Lyric text is supplied independently; do not synthesize it from the song title.
         if (lyricLines.isEmpty()) {
-            binding.txtLyricCurrent.text = song.title
+            // KTV video subtitles are commonly burned into the MV. Duplicating the song title
+            // in the lyric band obscures those subtitles when no external lyric file exists.
+            binding.txtLyricCurrent.text = ""
             binding.txtLyricPrevious.setLine(null, 0L)
+            binding.txtLyricPrevious.visibility = View.GONE
+            binding.txtLyricCurrent.visibility = View.GONE
         }
         binding.txtVocalMode.text = if (supportsVocalSwitch(snapshot.audioLayout, audioTrackCount)) {
             if (snapshot.vocalMode == "original") "原唱中" else "伴唱中"
         } else ""
         binding.txtDuration.text = formatMs(song.durationMs.toLong())
+        renderFullscreenPlaybackPanel(snapshot.positionMs)
     }
 
     /** Loads the cached server avatar without blocking playback or allowing stale songs to win. */
@@ -1684,6 +2655,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             audioUi.txtAudioDuration.text = formatMs(duration)
         }
         binding.txtElapsed.text = formatMs(positionMs)
+        renderFullscreenPlaybackPanel(positionMs)
         if (lyricLines.isNotEmpty()) {
             binding.txtLyricPrevious.visibility = View.VISIBLE
             binding.txtLyricCurrent.visibility = View.VISIBLE
@@ -1713,6 +2685,27 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         }
     }
 
+    private fun renderFullscreenPlaybackPanel(fallbackPositionMs: Long? = null) {
+        if (!::fullscreenPlaybackPanel.isInitialized) return
+        val snapshot = cachedQueueSnapshot
+        val song = snapshot?.playing?.song
+        val loadedCurrent = snapshot?.playing?.queueId == loadedQueueId
+        val position = if (loadedCurrent) engine?.currentPositionMs ?: fallbackPositionMs ?: snapshot?.positionMs ?: 0L
+            else fallbackPositionMs ?: snapshot?.positionMs ?: 0L
+        val duration = (engine?.durationMs?.takeIf { loadedCurrent && it > 0L })
+            ?: song?.durationMs?.toLong()?.takeIf { it > 0L }
+            ?: 0L
+        fullscreenPlaybackPanel.updatePlayback(
+            title = song?.title,
+            position = position,
+            duration = duration,
+            isPlaying = currentPlaybackState == "playing",
+            currentVocalMode = currentVocalMode,
+            isMuted = currentMuted,
+            canSeek = loadedCurrent && currentFileId != null,
+        )
+    }
+
     private fun formatMs(ms: Long): String {
         val seconds = TimeUnit.MILLISECONDS.toSeconds(ms.coerceAtLeast(0))
         return "%02d:%02d".format(seconds / 60, seconds % 60)
@@ -1725,8 +2718,13 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     companion object {
+        @Volatile
+        private var startupScanAttemptedInProcess = false
         /** 二维码请求边长（服务端在 [120,1080] 内钳制）；待机占位框 220dp，取 540 兼顾高密度电视清晰度。 */
         private const val QR_SIZE_PX = 540
+        private const val MARQUEE_VISIBLE_MS = 5_000L
+        private const val MARQUEE_FADE_IN_MS = 240L
+        private const val MARQUEE_FADE_OUT_MS = 260L
         private const val PROGRESS_HIDE_DELAY_MS = 5_000L
         private const val VOCAL_CHANGED_EVENT = "vocal_changed"
     }

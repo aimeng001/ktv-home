@@ -27,6 +27,23 @@ class KtvArtistCatalogContractTest {
     }
 
     @Test
+    fun artistPageDecodesAppliedRegionAndReferenceAvailability() = runBlocking {
+        val transport = CatalogRecordingTransport(
+            KtvApiResult.Success(
+                """{"items":[{"artistKey":"zhangxueyou","name":"张学友","region":"港台"}],"total":1,"page":0,"size":30,"region":"港台","regionDataAvailable":true}""",
+            ),
+        )
+
+        val result = SongApi(transport).browseArtistsPage(page = 0, region = "港台")
+
+        assertTrue(result is KtvApiResult.Success)
+        val page = (result as KtvApiResult.Success).value
+        assertEquals("港台", page.region)
+        assertTrue(page.regionDataAvailable)
+        assertEquals("港台", page.items.single().region)
+    }
+
+    @Test
     fun artistSongBrowseUsesStableArtistKeyInsteadOfDisplayNameOnly() = runBlocking {
         val transport = CatalogRecordingTransport(
             KtvApiResult.Success("""{"items":[{"id":7,"title":"晴天","artist":"周杰伦"}],"total":1,"page":1,"size":50}"""),

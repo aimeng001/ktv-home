@@ -19,16 +19,24 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Orientation="Horizontal">
-            <TextBlock VerticalAlignment="Center" Margin="0,0,8,0">Server</TextBlock>
-            <TextBox x:Name="ServerAddressText" Width="330" Margin="0,0,8,0"
-                     ToolTip="例如 192.168.1.10:8080" />
-            <TextBlock VerticalAlignment="Center" Margin="0,0,8,0">密钥</TextBlock>
-            <PasswordBox x:Name="PlayerCredentialText" Width="150" Margin="0,0,8,0"
-                         ToolTip="服务端启用 KTV_PLAYER_CREDENTIAL 时填写" />
-            <Button Content="发现" Width="72" Margin="0,0,8,0" Click="Discover_Click" />
-            <Button Content="连接" Width="72" Click="Connect_Click" />
-        </StackPanel>
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="72" />
+                <ColumnDefinition Width="72" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0">Server</TextBlock>
+            <TextBox x:Name="ServerAddressText" Grid.Column="1" MinWidth="160" MaxWidth="330"
+                     Margin="0,0,8,0" ToolTip="例如 192.168.1.10:8080" />
+            <TextBlock Grid.Column="2" VerticalAlignment="Center" Margin="0,0,8,0">密钥</TextBlock>
+            <PasswordBox x:Name="PlayerCredentialText" Grid.Column="3" MinWidth="90" MaxWidth="150"
+                         Margin="0,0,8,0" ToolTip="服务端启用 KTV_PLAYER_CREDENTIAL 时填写" />
+            <Button Grid.Column="4" Content="发现" Width="72" Margin="0,0,8,0" Click="Discover_Click" />
+            <Button Grid.Column="5" Content="连接" Width="72" Click="Connect_Click" />
+        </Grid>
 
         <StackPanel Grid.Row="1" Margin="0,12,0,0" Orientation="Horizontal">
             <TextBlock VerticalAlignment="Center" Margin="0,0,8,0" Text="电视输出" />

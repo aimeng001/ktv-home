@@ -135,4 +135,80 @@ class KtvKioskSongAdapterTest {
         assertTrue(KtvKioskSongAdapter.QueueProjectionPolicy.shouldNotifyChange(1))
         assertTrue(KtvKioskSongAdapter.QueueProjectionPolicy.shouldNotifyChange(50))
     }
+
+    @Test
+    fun songListItemUsesHomeQueueIconAndHasNoPhysicalDeleteButton() {
+        val workingDirectory = java.io.File(System.getProperty("user.dir").orEmpty())
+        val layoutFile = sequenceOf(
+            workingDirectory.resolve("src/main/res/layout/item_ktv_browser_song.xml"),
+            workingDirectory.resolve("app/src/main/res/layout/item_ktv_browser_song.xml"),
+            workingDirectory.resolve("android-tv/app/src/main/res/layout/item_ktv_browser_song.xml"),
+        ).firstOrNull(java.io.File::isFile) ?: error("Cannot locate item_ktv_browser_song.xml")
+
+        val content = layoutFile.readText()
+        assertFalse("点歌台普通歌曲列表项严禁包含物理删除按钮以捍卫 NAS 只读红线", content.contains("btnBrowserSongDelete") || content.contains("ic_delete"))
+        assertTrue("点歌台歌曲列表项必须使用 Home KTV 队列图标", content.contains("@drawable/ic_queue"))
+        assertFalse("歌曲操作图标不得直接引用 IKTV 切图", content.contains("ktv_ref_"))
+    }
+
+    @Test
+    fun compactSongCardKeepsLongTextBoundedAndActionsAccessible() {
+        val workingDirectory = java.io.File(System.getProperty("user.dir").orEmpty())
+        val layoutFile = sequenceOf(
+            workingDirectory.resolve("src/main/res/layout/item_ktv_browser_song.xml"),
+            workingDirectory.resolve("app/src/main/res/layout/item_ktv_browser_song.xml"),
+            workingDirectory.resolve("android-tv/app/src/main/res/layout/item_ktv_browser_song.xml"),
+        ).firstOrNull(java.io.File::isFile) ?: error("Cannot locate item_ktv_browser_song.xml")
+        val layout = layoutFile.readText()
+        val adapter = sequenceOf(
+            workingDirectory.resolve("src/main/java/com/homektv/tv/ui/KtvKioskBrowserSongAdapter.kt"),
+            workingDirectory.resolve("app/src/main/java/com/homektv/tv/ui/KtvKioskBrowserSongAdapter.kt"),
+            workingDirectory.resolve("android-tv/app/src/main/java/com/homektv/tv/ui/KtvKioskBrowserSongAdapter.kt"),
+        ).firstOrNull(java.io.File::isFile)?.readText() ?: error("Cannot locate KtvKioskBrowserSongAdapter.kt")
+
+        assertTrue(layout.contains("android:id=\"@+id/txtBrowserSongTitle\""))
+        assertTrue(layout.contains("android:id=\"@+id/txtBrowserSongMatch\""))
+        assertTrue(layout.contains("android:ellipsize=\"end\""))
+        assertTrue(layout.contains("android:maxLines=\"1\""))
+        assertTrue(adapter.contains("binding.root.contentDescription = \"${'$'}{song.title}，${'$'}{song.artist}\""))
+        assertTrue(adapter.contains("binding.btnBrowserSongOrder.contentDescription ="))
+        assertTrue(adapter.contains("binding.btnBrowserSongOrderTop.contentDescription ="))
+        assertTrue(adapter.contains("binding.btnBrowserSongFavorite.contentDescription ="))
+    }
+
+    @Test
+    fun browserSongCardAndKeyboardMatchIktvReferenceStandards() {
+        val workingDirectory = java.io.File(System.getProperty("user.dir").orEmpty())
+        val layoutFile = sequenceOf(
+            workingDirectory.resolve("src/main/res/layout/item_ktv_browser_song.xml"),
+            workingDirectory.resolve("app/src/main/res/layout/item_ktv_browser_song.xml"),
+            workingDirectory.resolve("android-tv/app/src/main/res/layout/item_ktv_browser_song.xml"),
+        ).firstOrNull(java.io.File::isFile) ?: error("Cannot locate item_ktv_browser_song.xml")
+        val layout = layoutFile.readText()
+
+        val keyboardFile = sequenceOf(
+            workingDirectory.resolve("src/main/res/layout/view_ktv_keyboard.xml"),
+            workingDirectory.resolve("app/src/main/res/layout/view_ktv_keyboard.xml"),
+            workingDirectory.resolve("android-tv/app/src/main/res/layout/view_ktv_keyboard.xml"),
+        ).firstOrNull(java.io.File::isFile) ?: error("Cannot locate view_ktv_keyboard.xml")
+        val keyboard = keyboardFile.readText()
+
+        val adapterFile = sequenceOf(
+            workingDirectory.resolve("src/main/java/com/homektv/tv/ui/KtvKioskBrowserSongAdapter.kt"),
+            workingDirectory.resolve("app/src/main/java/com/homektv/tv/ui/KtvKioskBrowserSongAdapter.kt"),
+            workingDirectory.resolve("android-tv/app/src/main/java/com/homektv/tv/ui/KtvKioskBrowserSongAdapter.kt"),
+        ).firstOrNull(java.io.File::isFile) ?: error("Cannot locate KtvKioskBrowserSongAdapter.kt")
+        val adapter = adapterFile.readText()
+
+        // 验证歌曲卡片高度设为 48dp 以保证 3 列 x 5 行满幅容纳
+        assertTrue("歌曲卡片高度应为 48dp", layout.contains("android:layout_height=\"48dp\""))
+        // 验证头像与紫红姓氏徽章组件
+        assertTrue("卡片包含头像控件", layout.contains("android:id=\"@+id/imgBrowserSongAvatar\""))
+        assertTrue("卡片包含姓氏/首字控件", layout.contains("android:id=\"@+id/txtBrowserSongIndex\""))
+        assertTrue("卡片徽章背景使用原版紫红", layout.contains("@drawable/bg_ktv_browser_song_avatar_initial"))
+        // 验证搜索框图标使用原版 ic_input_search
+        assertTrue("键盘搜索框使用原版细线镂空图标", keyboard.contains("@drawable/ic_input_search"))
+        // 验证适配器调用了 ArtistInitialResolver 提取姓氏
+        assertTrue("适配器使用 ArtistInitialResolver 提取歌手姓氏", adapter.contains("ArtistInitialResolver.resolve"))
+    }
 }

@@ -31,4 +31,13 @@ class KioskCategoryLoadPolicyTest {
         // A failed request does not call markLoaded, so retry remains possible.
         assertTrue(policy.shouldLoad(KioskCategoryMode.TAGS))
     }
+
+    @Test
+    fun clearedCatalogStateMakesPreviouslyLoadedModeEligibleForReload() {
+        val policy = KioskCategoryLoadPolicy()
+        policy.markLoaded(KioskCategoryMode.TAGS)
+
+        assertFalse(policy.shouldLoad(KioskCategoryMode.TAGS, cachedDataAvailable = true))
+        assertTrue(policy.shouldLoad(KioskCategoryMode.TAGS, cachedDataAvailable = false))
+    }
 }

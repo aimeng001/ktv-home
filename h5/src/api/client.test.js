@@ -362,4 +362,17 @@ describe('api client admin authentication', () => {
 
     expect(fetchMock.mock.calls[0][1].headers['Content-Type']).toBe('application/json')
   })
+
+  it('calls adminDiagnostics and adminMemoryDiagnostics with admin token', async () => {
+    localStorage.setItem('home-ktv.admin.token', 'diag-token')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ok: true }))
+
+    await api.adminDiagnostics()
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/diagnostics')
+    expect(fetchMock.mock.calls[0][1].headers['X-Admin-Token']).toBe('diag-token')
+
+    await api.adminMemoryDiagnostics()
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/diagnostics/memory')
+    expect(fetchMock.mock.calls[1][1].headers['X-Admin-Token']).toBe('diag-token')
+  })
 })

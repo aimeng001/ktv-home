@@ -23,6 +23,16 @@ class KtvApiContractTest {
     }
 
     @Test
+    fun acronymSearchUsesTheAcronymQueryParameter() = runBlocking {
+        val transport = RecordingTransport(getResponse = KtvApiResult.Success("[]"))
+
+        val result = SongApi(transport).searchAcronym("HKTK", page = 1)
+
+        assertTrue(result is KtvApiResult.Success)
+        assertEquals("/songs?acronym=HKTK&type=&page=1", transport.lastGet)
+    }
+
+    @Test
     fun controlRequestUsesUserTokenAndSnakeCaseParams() = runBlocking {
         val transport = RecordingTransport(
             postResponse = KtvApiResult.Success("{\"state\":\"idle\"}"),
@@ -56,6 +66,31 @@ class KtvApiContractTest {
         assertTrue(result is KtvApiResult.Success)
         assertEquals(
             "/browse/artists/page?gender=%E5%A5%B3%E6%AD%8C%E6%89%8B&initial=Z&page=2&size=30",
+            transport.lastGet,
+        )
+    }
+
+    @Test
+    fun artistBrowseAddsRegionOnlyWhenARegionIsSelected() = runBlocking {
+        val transport = RecordingTransport(
+            getResponse = KtvApiResult.Success(
+                "{\"items\":[],\"total\":0,\"page\":0,\"size\":30,\"region\":\"港台\",\"regionDataAvailable\":true}",
+            ),
+        )
+
+        SongApi(transport).browseArtistsPage(page = 0, size = 30, region = "港台")
+
+        assertEquals("/browse/artists/page?gender=&initial=&region=%E6%B8%AF%E5%8F%B0&page=0&size=30", transport.lastGet)
+    }
+
+    @Test
+    fun artistInitialsAddsRegionOnlyWhenARegionIsSelected() = runBlocking {
+        val transport = RecordingTransport(getResponse = KtvApiResult.Success("[\"A\",\"Z\"]"))
+
+        SongApi(transport).artistInitials(gender = "女歌手", region = "国外")
+
+        assertEquals(
+            "/browse/artists/initials?gender=%E5%A5%B3%E6%AD%8C%E6%89%8B&region=%E5%9B%BD%E5%A4%96",
             transport.lastGet,
         )
     }

@@ -1,6 +1,10 @@
 package com.homektv.tv.ui
 
 import com.homektv.tv.net.AudioLayout
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -12,6 +16,7 @@ class KioskPresentationStateTest {
     fun initialTab_isPinyin() {
         val state = KioskPresentationState()
         assertEquals(KioskTab.PINYIN, state.currentTab.value)
+        assertEquals(KioskCommercialRoute.SONG_NAME, state.commercialRoute.value)
     }
 
     @Test
@@ -21,19 +26,54 @@ class KioskPresentationStateTest {
         assertEquals(KioskTab.SINGERS, state.currentTab.value)
 
         state.selectTab(KioskTab.RANKINGS)
-        assertEquals(KioskTab.DASHBOARD, state.currentTab.value)
+        assertEquals(KioskTab.RANKINGS, state.currentTab.value)
 
         state.selectTab(KioskTab.PLAYLISTS)
-        assertEquals(KioskTab.DASHBOARD, state.currentTab.value)
+        assertEquals(KioskTab.PLAYLISTS, state.currentTab.value)
 
         state.selectTab(KioskTab.CATEGORIES)
         assertEquals(KioskTab.CATEGORIES, state.currentTab.value)
     }
 
     @Test
-    fun constructorRestoresHiddenLegacyTabsToDashboard() {
-        assertEquals(KioskTab.DASHBOARD, KioskPresentationState(KioskTab.RANKINGS).currentTab.value)
-        assertEquals(KioskTab.DASHBOARD, KioskPresentationState(KioskTab.PLAYLISTS).currentTab.value)
+    fun selectTabPublishesTheMatchingCommercialRouteWithTheTabChange() = runBlocking {
+        val state = KioskPresentationState(KioskTab.RANKINGS)
+        val observedSelections = mutableListOf<Pair<KioskTab, KioskCommercialRoute?>>()
+        val collector = launch(Dispatchers.Unconfined) {
+            state.currentTab.collect { tab ->
+                observedSelections += tab to state.commercialRoute.value
+            }
+        }
+
+        state.selectTab(KioskTab.PLAYLISTS)
+        collector.cancel()
+
+        assertEquals(
+            listOf(
+                KioskTab.RANKINGS to KioskCommercialRoute.HOT_NEW,
+                KioskTab.PLAYLISTS to KioskCommercialRoute.FEATURED,
+            ),
+            observedSelections,
+        )
+    }
+
+    @Test
+    fun commercialRouteKeepsIdentitySeparateFromItsSharedDataTab() {
+        val state = KioskPresentationState()
+        state.selectTab(KioskTab.CATEGORIES)
+        state.selectCommercialRoute(KioskCommercialRoute.TIKTOK)
+
+        assertEquals(KioskTab.CATEGORIES, state.currentTab.value)
+        assertEquals(KioskCommercialRoute.TIKTOK, state.commercialRoute.value)
+
+        state.selectTab(KioskTab.DASHBOARD)
+        assertEquals(null, state.commercialRoute.value)
+    }
+
+    @Test
+    fun constructorRetainsExplicitTabs() {
+        assertEquals(KioskTab.RANKINGS, KioskPresentationState(KioskTab.RANKINGS).currentTab.value)
+        assertEquals(KioskTab.PLAYLISTS, KioskPresentationState(KioskTab.PLAYLISTS).currentTab.value)
     }
 
     @Test

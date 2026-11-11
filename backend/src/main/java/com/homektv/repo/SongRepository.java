@@ -47,6 +47,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
         String getName();
         String getInitial();
         String getGender();
+        String getRegion();
         Long getSongCount();
         String getArtistKind();
         String getAvatarPath();
@@ -210,6 +211,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                    CASE WHEN COALESCE(a.artist_init, '') = '' THEN '#'
                         ELSE upper(left(a.artist_init, 1)) END AS "initial",
                    COALESCE(NULLIF(p.gender, '未知'), '未知') AS "gender",
+                   COALESCE(reference_artist.region, '') AS "region",
                    a.song_count AS "songCount",
                    COALESCE(p.artist_kind,
                             CASE WHEN a.name IN ('群星', '多人', 'Various Artists') THEN 'VARIOUS'
@@ -218,7 +220,9 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                    p.avatar_path AS "avatarPath"
             FROM aggregates a
             LEFT JOIN artist_profiles p ON p.artist_key = a.artist_key
+            LEFT JOIN active_iktv_artist_regions reference_artist ON reference_artist.artist_key = a.artist_key
             WHERE (:gender = '' OR COALESCE(NULLIF(p.gender, '未知'), '未知') = :gender)
+              AND (:region = '' OR COALESCE(reference_artist.region, '') = :region)
               AND (
                     :initial = ''
                     OR (:initial = '#' AND COALESCE(a.artist_init, '') = '')
@@ -252,7 +256,9 @@ public interface SongRepository extends JpaRepository<Song, Long> {
             SELECT COUNT(*)
             FROM aggregates a
             LEFT JOIN artist_profiles p ON p.artist_key = a.artist_key
+            LEFT JOIN active_iktv_artist_regions reference_artist ON reference_artist.artist_key = a.artist_key
             WHERE (:gender = '' OR COALESCE(NULLIF(p.gender, '未知'), '未知') = :gender)
+              AND (:region = '' OR COALESCE(reference_artist.region, '') = :region)
               AND (
                     :initial = ''
                     OR (:initial = '#' AND COALESCE(a.artist_init, '') = '')
@@ -262,7 +268,13 @@ public interface SongRepository extends JpaRepository<Song, Long> {
     Page<PublicArtistDirectoryProjection> pagePublicArtistDirectory(@Param("status") String status,
                                                                      @Param("gender") String gender,
                                                                      @Param("initial") String initial,
+                                                                     @Param("region") String region,
                                                                      Pageable pageable);
+
+    default Page<PublicArtistDirectoryProjection> pagePublicArtistDirectory(
+            String status, String gender, String initial, Pageable pageable) {
+        return pagePublicArtistDirectory(status, gender, initial, "", pageable);
+    }
 
     @Query(value = """
             WITH credits AS (
@@ -290,11 +302,22 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                  ELSE upper(left(a.artist_init, 1)) END AS "initial"
             FROM aggregates a
             LEFT JOIN artist_profiles p ON p.artist_key = a.artist_key
+            LEFT JOIN active_iktv_artist_regions reference_artist ON reference_artist.artist_key = a.artist_key
             WHERE (:gender = '' OR COALESCE(NULLIF(p.gender, '未知'), '未知') = :gender)
+              AND (:region = '' OR COALESCE(reference_artist.region, '') = :region)
             ORDER BY "initial"
             """, nativeQuery = true)
     List<ArtistInitialProjection> findPublicArtistInitials(@Param("status") String status,
-                                                            @Param("gender") String gender);
+                                                            @Param("gender") String gender,
+                                                            @Param("region") String region);
+
+    default List<ArtistInitialProjection> findPublicArtistInitials(String status, String gender) {
+        return findPublicArtistInitials(status, gender, "");
+    }
+
+    @Query(value = "SELECT EXISTS (SELECT 1 FROM iktv_artist_reference_snapshots WHERE status = 'ACTIVE')",
+            nativeQuery = true)
+    boolean hasActiveIktvArtistRegionReference();
 
     @Query(value = """
             WITH credits AS (
@@ -342,11 +365,20 @@ public interface SongRepository extends JpaRepository<Song, Long> {
     @Query(value = """
             SELECT category.tag AS name, COUNT(DISTINCT s.id) AS songCount
             FROM songs s
-            CROSS JOIN LATERAL unnest(
-                COALESCE(s.tags, ARRAY[]::text[])
-                || COALESCE(s.ai_genres, ARRAY[]::text[])
-                || COALESCE(s.ai_themes, ARRAY[]::text[])
-            ) AS category(tag)
+            CROSS JOIN LATERAL (
+                SELECT unnest(COALESCE(s.tags, ARRAY[]::text[])) AS tag
+                UNION ALL
+                SELECT unnest(COALESCE(s.ai_genres, ARRAY[]::text[])) AS tag
+                UNION ALL
+                SELECT unnest(COALESCE(s.ai_themes, ARRAY[]::text[])) AS tag
+                UNION ALL
+                SELECT reference_category.category AS tag
+                  FROM iktv_song_categories reference_category
+                  JOIN iktv_reference_snapshots reference_snapshot
+                    ON reference_snapshot.snapshot_version = reference_category.snapshot_version
+                   AND reference_snapshot.status = 'ACTIVE'
+                 WHERE reference_category.song_id = s.id
+            ) AS category
             WHERE s.status = 'ok'
               AND category.tag IS NOT NULL
               AND category.tag <> ''
@@ -384,7 +416,15 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               AND (:tag = ''
                    OR EXISTS (SELECT 1 FROM unnest(s.tags) value WHERE LOWER(value) = LOWER(:tag))
                    OR EXISTS (SELECT 1 FROM unnest(s.ai_genres) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag)))
+                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag))
+                   OR EXISTS (
+                       SELECT 1 FROM iktv_song_categories reference_category
+                       JOIN iktv_reference_snapshots reference_snapshot
+                         ON reference_snapshot.snapshot_version = reference_category.snapshot_version
+                        AND reference_snapshot.status = 'ACTIVE'
+                       WHERE reference_category.song_id = s.id
+                         AND LOWER(reference_category.category) = LOWER(:tag)
+                   ))
             """,
             countQuery = """
             SELECT COUNT(*) FROM songs s
@@ -414,7 +454,15 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               AND (:tag = ''
                    OR EXISTS (SELECT 1 FROM unnest(s.tags) value WHERE LOWER(value) = LOWER(:tag))
                    OR EXISTS (SELECT 1 FROM unnest(s.ai_genres) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag)))
+                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag))
+                   OR EXISTS (
+                       SELECT 1 FROM iktv_song_categories reference_category
+                       JOIN iktv_reference_snapshots reference_snapshot
+                         ON reference_snapshot.snapshot_version = reference_category.snapshot_version
+                        AND reference_snapshot.status = 'ACTIVE'
+                       WHERE reference_category.song_id = s.id
+                         AND LOWER(reference_category.category) = LOWER(:tag)
+                   ))
             """,
             nativeQuery = true)
     Page<Song> browseCategorySongs(@Param("artist") String artist,
@@ -459,7 +507,15 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               AND (:tag = ''
                    OR EXISTS (SELECT 1 FROM unnest(s.tags) value WHERE LOWER(value) = LOWER(:tag))
                    OR EXISTS (SELECT 1 FROM unnest(s.ai_genres) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag)))
+                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag))
+                   OR EXISTS (
+                       SELECT 1 FROM iktv_song_categories reference_category
+                       JOIN iktv_reference_snapshots reference_snapshot
+                         ON reference_snapshot.snapshot_version = reference_category.snapshot_version
+                        AND reference_snapshot.status = 'ACTIVE'
+                       WHERE reference_category.song_id = s.id
+                         AND LOWER(reference_category.category) = LOWER(:tag)
+                   ))
             """,
             countQuery = """
             SELECT COUNT(*) FROM songs s
@@ -495,7 +551,15 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               AND (:tag = ''
                    OR EXISTS (SELECT 1 FROM unnest(s.tags) value WHERE LOWER(value) = LOWER(:tag))
                    OR EXISTS (SELECT 1 FROM unnest(s.ai_genres) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag)))
+                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag))
+                   OR EXISTS (
+                       SELECT 1 FROM iktv_song_categories reference_category
+                       JOIN iktv_reference_snapshots reference_snapshot
+                         ON reference_snapshot.snapshot_version = reference_category.snapshot_version
+                        AND reference_snapshot.status = 'ACTIVE'
+                       WHERE reference_category.song_id = s.id
+                         AND LOWER(reference_category.category) = LOWER(:tag)
+                   ))
             """,
             nativeQuery = true)
     Page<Song> browseCategorySongsByArtistKey(@Param("artistKey") String artistKey,

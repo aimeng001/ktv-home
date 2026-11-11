@@ -40,7 +40,19 @@ class KtvSocketProtocolTest {
         val malformed = Json.parseToJsonElement("{\"position_ms\":{},\"text\":[]}")
 
         assertEquals(0L, parseProgressPosition(malformed))
+        assertEquals(null, parsePlaybackProgress(malformed).queueId)
+        assertEquals(0L, parsePlaybackProgress(malformed).positionMs)
         assertEquals("", parseTextPayload(malformed, "text"))
         assertEquals("", parseTextPayload(null, "text"))
+    }
+
+    @Test
+    fun progressParserPreservesQueueIdentityAndKeepsLegacyMissingIdentityExplicit() {
+        val current = Json.parseToJsonElement("{\"queue_id\":22,\"position_ms\":2500}")
+        assertEquals(22L, parsePlaybackProgress(current).queueId)
+        assertEquals(2_500L, parsePlaybackProgress(current).positionMs)
+
+        val legacy = Json.parseToJsonElement("{\"position_ms\":3000}")
+        assertEquals(null, parsePlaybackProgress(legacy).queueId)
     }
 }

@@ -10,7 +10,7 @@ enum class KioskBackAction {
 
 object KioskLifecyclePolicy {
     fun shouldAutoLaunchKioskOnStart(deviceMode: DeviceMode, canOpenKiosk: Boolean): Boolean =
-        deviceMode == DeviceMode.COMBINED && canOpenKiosk
+        canOpenKiosk
 
     fun shouldOpenKioskOnKey(keyCode: Int, isKioskActive: Boolean): Boolean {
         if (isKioskActive) return false

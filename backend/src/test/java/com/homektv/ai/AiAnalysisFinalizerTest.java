@@ -60,6 +60,32 @@ class AiAnalysisFinalizerTest {
     }
 
     @Test
+    void staleClaimCannotFinalizeOrApplyAfterTaskWasReclaimed() {
+        AiAnalysisTask task = task("IMPORT_RECORD");
+        task.setAttemptCount(2);
+        AiAnalysisTaskRepository tasks = mock(AiAnalysisTaskRepository.class);
+        MediaImportRecordRepository imports = mock(MediaImportRecordRepository.class);
+        MediaImportRecord record = new MediaImportRecord();
+        record.setParsedTitle("原文件标题");
+        record.setParsedArtist("原文件歌手");
+        AiAnalysisFinalizer finalizer = new AiAnalysisFinalizer(tasks, imports, mock(AiClassificationApplier.class));
+        when(tasks.findByIdForUpdate(TASK_ID)).thenReturn(Optional.of(task));
+        when(imports.findById(IMPORT_ID)).thenReturn(Optional.of(record));
+
+        boolean finalized = finalizer.finishProcessing(TASK_ID, 1,
+                "{\"old\":true}", "{}", "{}", "BULK", "old-model",
+                classification("旧歌名", "旧歌手", 0.99, 0.99, "迟到响应"),
+                true, 0.8, null);
+
+        assertThat(finalized).isFalse();
+        assertThat(task.getResultJson()).isNull();
+        assertThat(task.getStatus()).isEqualTo("processing");
+        assertThat(record.getParsedTitle()).isEqualTo("原文件标题");
+        assertThat(record.getParsedArtist()).isEqualTo("原文件歌手");
+        verify(imports, never()).findById(any());
+    }
+
+    @Test
     void processingResultWithoutAutoApplyIsSavedForReview() {
         AiAnalysisTask task = task("IMPORT_RECORD");
         AiAnalysisTaskRepository tasks = mock(AiAnalysisTaskRepository.class);
@@ -187,7 +213,7 @@ class AiAnalysisFinalizerTest {
 
     private static boolean finish(AiAnalysisFinalizer finalizer, AiSongClassification classification,
                                   boolean autoApply, double threshold, String reviewMessage) {
-        return finalizer.finishProcessing(TASK_ID, "{\"result\":true}", "{\"title\":0.99}",
+        return finalizer.finishProcessing(TASK_ID, 0, "{\"result\":true}", "{\"title\":0.99}",
                 "{\"source\":\"model\"}", "BULK", "local-test-model", classification,
                 autoApply, threshold, reviewMessage);
     }

@@ -22,14 +22,14 @@ internal data class BackgroundSourceCropWindow(
     val bottom: Int,
 )
 
-/** Selected blue-stage artwork shared by full-screen app surfaces; graphite is the safe fallback. */
+/** Home KTV blue-stage surface shared across full-screen app content. */
 internal object KtvDashboardBackground {
     private const val PORTRAIT_CROP_MAX_ASPECT = 0.8f
 
     @Volatile
     private var cachedArtwork: Bitmap? = null
 
-    val referenceStops = listOf(
+    val fallbackStops = listOf(
         DashboardGradientStop(0.000f, "#222226"),
         DashboardGradientStop(0.085f, "#1E1F24"),
         DashboardGradientStop(0.213f, "#191B1D"),
@@ -41,7 +41,7 @@ internal object KtvDashboardBackground {
 
     fun applyTo(view: View) {
         val artwork = loadArtwork(view)
-        view.background = artwork?.let(::DashboardArtworkDrawable) ?: ReferenceGraphiteDrawable()
+        view.background = artwork?.let(::DashboardArtworkDrawable) ?: FallbackGraphiteDrawable()
     }
 
     fun isUsingSelectedArtwork(view: View): Boolean = view.background is DashboardArtworkDrawable
@@ -51,7 +51,7 @@ internal object KtvDashboardBackground {
         return synchronized(this) {
             cachedArtwork ?: BitmapFactory.decodeResource(
                 view.resources,
-                R.drawable.ktv_dashboard_background_blue_stage,
+                R.drawable.ktv_dashboard_background_iktv50,
             )?.also { cachedArtwork = it }
         }
     }
@@ -80,9 +80,6 @@ internal object KtvDashboardBackground {
 
     private class DashboardArtworkDrawable(private val bitmap: Bitmap) : Drawable() {
         private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
-        private val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(SCRIM_ALPHA, 0, 0, 0)
-        }
         private val source = Rect()
         private val destination = Rect()
 
@@ -96,34 +93,28 @@ internal object KtvDashboardBackground {
         override fun draw(canvas: Canvas) {
             if (bounds.isEmpty || source.isEmpty) return
             canvas.drawBitmap(bitmap, source, destination, bitmapPaint)
-            canvas.drawRect(destination, scrimPaint)
         }
 
         override fun setAlpha(alpha: Int) {
             val boundedAlpha = alpha.coerceIn(0, 255)
             bitmapPaint.alpha = boundedAlpha
-            scrimPaint.alpha = SCRIM_ALPHA * boundedAlpha / 255
             invalidateSelf()
         }
 
         override fun setColorFilter(colorFilter: ColorFilter?) {
             bitmapPaint.colorFilter = colorFilter
-            scrimPaint.colorFilter = colorFilter
             invalidateSelf()
         }
 
         @Deprecated("Deprecated in Android, retained for Drawable compatibility")
         override fun getOpacity(): Int = PixelFormat.OPAQUE
 
-        private companion object {
-            const val SCRIM_ALPHA = 72
-        }
     }
 
-    private class ReferenceGraphiteDrawable : Drawable() {
+    private class FallbackGraphiteDrawable : Drawable() {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val colors = referenceStops.map { Color.parseColor(it.colorHex) }.toIntArray()
-        private val positions = referenceStops.map { it.position }.toFloatArray()
+        private val colors = fallbackStops.map { Color.parseColor(it.colorHex) }.toIntArray()
+        private val positions = fallbackStops.map { it.position }.toFloatArray()
 
         override fun onBoundsChange(bounds: Rect) {
             super.onBoundsChange(bounds)

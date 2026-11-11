@@ -16,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -87,6 +88,106 @@ class AiConfigServiceTest {
     }
 
     @Test
+    void allowPrivateNetwork_canBeDynamicallyConfiguredAndPermitsLocalIp() {
+        AppProperties properties = new AppProperties();
+        properties.getAi().setAllowPrivateNetwork(false);
+        SettingRepository settings = mock(SettingRepository.class);
+        AiConfigService service = service(properties, settings, mock(AppSecretRepository.class), mock(SecretCryptoService.class));
+
+        assertThatThrownBy(() -> service.update(new AiConfigService.ConfigUpdate(
+                true, "http://127.0.0.1:11434/v1", null, false, "local-model", null, 10,
+                0.97, 0.92, "AUTO", 2, 1, false)))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("KTV_AI_ALLOW_PRIVATE_NETWORK=true");
+
+        assertThatCode(() -> service.update(new AiConfigService.ConfigUpdate(
+                true, "http://127.0.0.1:11434/v1", null, false, "local-model", null, 10,
+                0.97, 0.92, "AUTO", 2, 1, true)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void partialUpdateWithoutAllowPrivateNetwork_inheritsPersistedPrivateNetworkSetting() {
+        AppProperties properties = new AppProperties();
+        properties.getAi().setAllowPrivateNetwork(false);
+        SettingRepository settings = mock(SettingRepository.class);
+        List<Setting> stored = new java.util.ArrayList<>();
+        when(settings.findById(anyString())).thenAnswer(invocation -> stored.stream()
+                .filter(setting -> invocation.getArgument(0).equals(setting.getKey())).findFirst());
+        when(settings.save(any(Setting.class))).thenAnswer(invocation -> {
+            Setting setting = invocation.getArgument(0);
+            stored.removeIf(existing -> existing.getKey().equals(setting.getKey()));
+            stored.add(setting);
+            return setting;
+        });
+        AiConfigService service = service(properties, settings, mock(AppSecretRepository.class), mock(SecretCryptoService.class));
+
+        service.update(new AiConfigService.ConfigUpdate(
+                true, "http://127.0.0.1:11434/v1", null, false, "local-model", null, 10,
+                0.97, 0.92, "AUTO", 2, 1, true));
+
+        // Partial update with null allowPrivateNetwork should inherit true and NOT throw SSRF exception
+        assertThatCode(() -> service.update(new AiConfigService.ConfigUpdate(
+                true, "http://127.0.0.1:11434/v1", null, false, "local-model-v2", null, 15,
+                0.97, 0.92, "AUTO", 2, 1, null)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void freshServicePartialUpdateUsesPersistedPrivateNetworkPermission() {
+        AppProperties properties = new AppProperties();
+        properties.getAi().setAllowPrivateNetwork(false);
+        SettingRepository settings = mock(SettingRepository.class);
+        when(settings.findById("ai.allow_private_network"))
+                .thenReturn(Optional.of(new Setting("ai.allow_private_network", "true")));
+        AiConfigService service = service(properties, settings, mock(AppSecretRepository.class),
+                mock(SecretCryptoService.class));
+
+        assertThatCode(() -> service.update(new AiConfigService.ConfigUpdate(
+                true, "http://127.0.0.1:11434/v1", null, false, "local-model-v2", null, 15,
+                0.97, 0.92, "AUTO", 2, 1, null)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void failedPrivateNetworkUpdateCannotLeavePermissionEnabledInMemory() {
+        AppProperties properties = new AppProperties();
+        properties.getAi().setAllowPrivateNetwork(false);
+        SettingRepository settings = mock(SettingRepository.class);
+        AppSecretRepository secrets = mock(AppSecretRepository.class);
+        SecretCryptoService crypto = mock(SecretCryptoService.class);
+        List<Setting> stored = new java.util.ArrayList<>(List.of(
+                new Setting("ai.allow_private_network", "false")));
+        when(settings.findById(org.mockito.ArgumentMatchers.anyString())).thenAnswer(invocation -> stored.stream()
+                .filter(setting -> invocation.getArgument(0).equals(setting.getKey())).findFirst());
+        when(settings.save(any(Setting.class))).thenAnswer(invocation -> {
+            Setting setting = invocation.getArgument(0);
+            stored.removeIf(existing -> existing.getKey().equals(setting.getKey()));
+            stored.add(setting);
+            return setting;
+        });
+        when(secrets.findById("ai.api_key")).thenReturn(Optional.empty());
+        when(crypto.encrypt("ai.api_key", "key-for-test"))
+                .thenThrow(new IllegalStateException("simulated encryption failure"));
+        AiConfigService service = service(properties, settings, secrets, crypto);
+
+        assertThatThrownBy(() -> service.update(new AiConfigService.ConfigUpdate(
+                true, "http://127.0.0.1:11434/v1", "key-for-test", false, "local-model", null, 10,
+                0.97, 0.92, "AUTO", 2, 1, true)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("simulated encryption failure");
+
+        stored.clear();
+        stored.add(new Setting("ai.allow_private_network", "false"));
+        assertThat(service.isAllowPrivateNetwork()).isFalse();
+        assertThatThrownBy(() -> service.update(new AiConfigService.ConfigUpdate(
+                true, "http://127.0.0.1:11434/v1", null, false, "local-model", null, 10,
+                0.97, 0.92, "AUTO", 2, 1, null)))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("KTV_AI_ALLOW_PRIVATE_NETWORK=true");
+    }
+
+    @Test
     void isConfiguredRequiresCompleteSafePublicConfigurationAndRecognizesConfiguredKey() {
         AppProperties properties = new AppProperties();
         AiConfigService service = service(properties, mock(SettingRepository.class),
@@ -152,7 +253,8 @@ class AiConfigServiceTest {
         assertThatThrownBy(() -> service.update(null))
                 .isInstanceOfSatisfying(ApiException.class,
                         error -> assertThat(error.getCode()).isEqualTo("INVALID_AI_CONFIG"));
-        verifyNoInteractions(settings, secrets, crypto);
+        verify(settings, never()).save(any(Setting.class));
+        verifyNoInteractions(secrets, crypto);
     }
 
     @Test

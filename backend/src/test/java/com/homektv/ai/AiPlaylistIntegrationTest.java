@@ -23,6 +23,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
 import java.util.Map;
+import java.time.OffsetDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -49,6 +50,8 @@ class AiPlaylistIntegrationTest {
     @Autowired PlaylistSongRepository playlistSongRepository;
     @Autowired SongRepository songRepository;
     @Autowired AiAnalysisTaskRepository aiAnalysisTaskRepository;
+    @Autowired AiAnalysisTaskClaimService aiAnalysisTaskClaimService;
+    @Autowired AiAnalysisTaskRecoveryService aiAnalysisTaskRecoveryService;
     @Autowired MediaImportRecordRepository mediaImportRecordRepository;
     @Autowired AiAnalysisFinalizer aiAnalysisFinalizer;
 
@@ -124,6 +127,71 @@ class AiPlaylistIntegrationTest {
 
         assertThatThrownBy(() -> aiAnalysisTaskRepository.saveAndFlush(taskFor(song.getId())))
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void oldAiExecutionCannotWriteAfterPauseResumeClaimsANewerAttempt() {
+        String suffix = String.valueOf(System.nanoTime());
+        MediaImportRecord record = saveImportRecord(suffix);
+        AiAnalysisTask task = new AiAnalysisTask();
+        task.setTargetType("IMPORT_RECORD");
+        task.setTargetId(record.getId());
+        task.setBatchId("aba-" + suffix);
+        task.setModelRole("BULK");
+        task.setModel("test-model");
+        task.setStatus("pending");
+        task = aiAnalysisTaskRepository.saveAndFlush(task);
+        Long taskId = task.getId();
+
+        int oldAttempt = aiAnalysisTaskClaimService.claim(taskId).orElseThrow();
+        task = aiAnalysisTaskRepository.findById(taskId).orElseThrow();
+        task.setStatus("paused");
+        aiAnalysisTaskRepository.saveAndFlush(task);
+        task.setStatus("pending");
+        aiAnalysisTaskRepository.saveAndFlush(task);
+        int currentAttempt = aiAnalysisTaskClaimService.claim(taskId).orElseThrow();
+
+        AiSongClassification oldResult = importIdentity("旧执行标题", "旧执行歌手");
+        AiSongClassification currentResult = importIdentity("新执行标题", "新执行歌手");
+        assertThat(oldAttempt).isEqualTo(1);
+        assertThat(currentAttempt).isEqualTo(2);
+        assertThat(aiAnalysisFinalizer.finishProcessing(taskId, oldAttempt, "old", "{}", "{}",
+                "BULK", "test-model", oldResult, true, 0.8, null)).isFalse();
+        assertThat(mediaImportRecordRepository.findById(record.getId()).orElseThrow().getParsedTitle())
+                .isEqualTo("原导入标题-" + suffix);
+
+        assertThat(aiAnalysisFinalizer.finishProcessing(taskId, currentAttempt, "current", "{}", "{}",
+                "BULK", "test-model", currentResult, true, 0.8, null)).isTrue();
+        assertThat(mediaImportRecordRepository.findById(record.getId()).orElseThrow().getParsedTitle())
+                .isEqualTo("新执行标题");
+    }
+
+    @Test
+    void startupRecoveryFailsOnlyOrphanedPendingAndProcessingTasks() {
+        OffsetDateTime cutoff = OffsetDateTime.now().plusMinutes(1);
+        int preexistingRecoverable = aiAnalysisTaskRepository
+                .findTop500ByStatusInAndCreatedAtBeforeOrderByCreatedAtAscIdAsc(
+                        List.of("pending", "processing"), cutoff).size();
+        String suffix = String.valueOf(System.nanoTime());
+        AiAnalysisTask pending = saveAnalysisTask("pending", suffix + "-pending");
+        AiAnalysisTask processing = saveAnalysisTask("processing", suffix + "-processing");
+        AiAnalysisTask paused = saveAnalysisTask("paused", suffix + "-paused");
+        AiAnalysisTask review = saveAnalysisTask("review", suffix + "-review");
+        AiAnalysisTask applied = saveAnalysisTask("auto_applied", suffix + "-applied");
+
+        int recovered = aiAnalysisTaskRecoveryService.recoverOrphanedTasks(cutoff);
+
+        assertThat(recovered).isEqualTo(preexistingRecoverable + 2);
+        assertThat(aiAnalysisTaskRepository.findById(pending.getId()).orElseThrow())
+                .satisfies(task -> assertThat(task.getStatus()).isEqualTo("failed"))
+                .satisfies(task -> assertThat(task.getErrorMessage()).contains("服务重启"));
+        assertThat(aiAnalysisTaskRepository.findById(processing.getId()).orElseThrow())
+                .satisfies(task -> assertThat(task.getStatus()).isEqualTo("failed"))
+                .satisfies(task -> assertThat(task.getErrorMessage()).contains("服务重启"));
+        assertThat(aiAnalysisTaskRepository.findById(paused.getId()).orElseThrow().getStatus()).isEqualTo("paused");
+        assertThat(aiAnalysisTaskRepository.findById(review.getId()).orElseThrow().getStatus()).isEqualTo("review");
+        assertThat(aiAnalysisTaskRepository.findById(applied.getId()).orElseThrow().getStatus())
+                .isEqualTo("auto_applied");
     }
 
     @Test
@@ -224,6 +292,14 @@ class AiPlaylistIntegrationTest {
         return aiAnalysisTaskRepository.saveAndFlush(task);
     }
 
+    private AiAnalysisTask saveAnalysisTask(String status, String suffix) {
+        Song song = saveSong("恢复任务-" + suffix, "artist-" + suffix, "recovery-" + suffix);
+        AiAnalysisTask task = taskFor(song.getId());
+        task.setStatus(status);
+        task.setBatchId("recovery-" + suffix);
+        return aiAnalysisTaskRepository.saveAndFlush(task);
+    }
+
     private AiAnalysisTask processingImportTask(Long recordId, String batchId) {
         AiAnalysisTask task = new AiAnalysisTask();
         task.setTargetType("IMPORT_RECORD");
@@ -251,8 +327,14 @@ class AiPlaylistIntegrationTest {
                 title, artist, "国语", "90年代", List.of("流行"), List.of("怀旧"),
                 "全年龄", "独唱", List.of(), "集成测试", 0.99,
                 0.99, 0.99, 0.99, 0.99, "男歌手", Map.of());
-        return aiAnalysisFinalizer.finishProcessing(task.getId(), "{}", "{}", "{}",
+        return aiAnalysisFinalizer.finishProcessing(task.getId(), task.getAttemptCount(), "{}", "{}", "{}",
                 "BULK", "test-model", classification, true, 0.90, null);
+    }
+
+    private AiSongClassification importIdentity(String title, String artist) {
+        return new AiSongClassification(title, artist, "国语", "90年代", List.of("流行"), List.of("怀旧"),
+                "全年龄", "独唱", List.of(), "轮次验收", 0.99,
+                0.99, 0.99, 0.99, 0.99, "男歌手", Map.of());
     }
 
     private AiAnalysisTask taskFor(Long songId) {

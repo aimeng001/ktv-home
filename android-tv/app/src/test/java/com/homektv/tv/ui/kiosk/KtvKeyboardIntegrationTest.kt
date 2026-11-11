@@ -61,4 +61,41 @@ class KtvKeyboardIntegrationTest {
         session.onDigitPressed('0', 1200L)
         assertEquals("10", session.currentKeyword)
     }
+
+    @Test
+    fun numericPanelAppendsDigitsAndPhysicalT9PathRemainsAvailable() {
+        val session = KtvKeyboardInputSession()
+        session.onNumericKeyPressed('2')
+        session.onNumericKeyPressed('0')
+        assertEquals("20", session.currentKeyword)
+
+        session.onDigitPressed('2', 1000L)
+        assertEquals("20A", session.currentKeyword)
+    }
+
+    @Test
+    fun bopomofoNonInitialsStayLocalUntilAConfirmedInitialIsPressed() {
+        val session = KtvKeyboardInputSession()
+        session.onBopomofoSymbolPressed('ㄧ')
+        assertEquals("", session.currentKeyword)
+        assertEquals("ㄧ", session.pendingBopomofo)
+
+        session.onBopomofoSymbolPressed('ㄓ')
+        assertEquals("Z", session.currentKeyword)
+        assertEquals("", session.pendingBopomofo)
+
+        session.onBopomofoSymbolPressed('ˊ')
+        session.backspace()
+        assertEquals("Z", session.currentKeyword)
+        assertEquals("", session.pendingBopomofo)
+        session.backspace()
+        assertEquals("", session.currentKeyword)
+    }
+
+    @Test
+    fun commonCharacterCandidateAppendsToTheSameSearchSession() {
+        val session = KtvKeyboardInputSession()
+        session.onCandidateCharacterPressed("爱")
+        assertEquals("爱", session.currentKeyword)
+    }
 }

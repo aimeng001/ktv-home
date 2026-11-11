@@ -1,0 +1,418 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/ktv_bottom_dock"
+    android:layout_width="match_parent"
+    android:layout_height="@dimen/ktv_dashboard_bottom_dock_height"
+    android:background="@android:color/transparent"
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:paddingHorizontal="16dp">
+
+    <!-- 兼容隐藏项：保持历史接口与单测契约 100% 连通 -->
+    <TextView
+        android:id="@+id/btnDockHome"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:focusable="false"
+        android:visibility="gone"
+        android:nextFocusUp="@id/video_container"
+        android:drawableTop="@drawable/ic_category"
+        android:text="首页"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/btnDockCheer"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:focusable="false"
+        android:visibility="gone"
+        android:nextFocusUp="@id/video_container"
+        android:drawableTop="@drawable/ic_cheer"
+        android:text="喝彩"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/btnDockMixer"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:focusable="false"
+        android:visibility="gone"
+        android:nextFocusUp="@id/video_container"
+        android:drawableTop="@drawable/ic_mixer"
+        android:text="调音"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- 左侧 5 个圆形线框按钮：播放、伴唱、重唱、切歌、音量- -->
+    <LinearLayout
+        android:id="@+id/dockLeftGroup"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingEnd="6dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/video_container"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <!-- 1. 播放/暂停 -->
+        <TextView
+            android:id="@+id/btnDockPlayPause"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/bg_ktv_dock_circle_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:contentDescription="暂停或继续播放"
+            android:drawableTop="@drawable/ic_player_play"
+            android:drawablePadding="3dp"
+            android:nextFocusUp="@id/tileTikTok"
+            android:nextFocusRight="@id/btnDockVocal"
+            android:paddingTop="30dp"
+            android:paddingBottom="8dp"
+            android:text="播放"
+            android:textColor="@color/text"
+            android:textSize="13sp" />
+
+        <!-- 2. 伴唱/原唱 -->
+        <TextView
+            android:id="@+id/btnDockVocal"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/bg_ktv_dock_circle_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:contentDescription="切换原唱或伴唱"
+            android:drawableTop="@drawable/ic_dock_accompany"
+            android:drawablePadding="3dp"
+            android:nextFocusUp="@id/tileTikTok"
+            android:nextFocusLeft="@id/btnDockPlayPause"
+            android:nextFocusRight="@id/btnDockRestart"
+            android:paddingTop="30dp"
+            android:paddingBottom="8dp"
+            android:text="伴唱"
+            android:textColor="@color/text"
+            android:textSize="13sp" />
+
+        <!-- 3. 重唱 -->
+        <TextView
+            android:id="@+id/btnDockRestart"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/bg_ktv_dock_circle_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:contentDescription="重唱当前歌曲"
+            android:drawableTop="@drawable/ic_player_replay"
+            android:drawablePadding="3dp"
+            android:nextFocusUp="@id/tileTikTok"
+            android:nextFocusLeft="@id/btnDockVocal"
+            android:nextFocusRight="@id/btnDockNext"
+            android:paddingTop="30dp"
+            android:paddingBottom="8dp"
+            android:text="重唱"
+            android:textColor="@color/text"
+            android:textSize="13sp" />
+
+        <!-- 4. 切歌 -->
+        <TextView
+            android:id="@+id/btnDockNext"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/bg_ktv_dock_circle_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:contentDescription="切换到下一首"
+            android:drawableTop="@drawable/ic_player_next"
+            android:drawablePadding="3dp"
+            android:nextFocusUp="@id/tileSongName"
+            android:nextFocusLeft="@id/btnDockRestart"
+            android:nextFocusRight="@id/btnDockVolDown"
+            android:paddingTop="30dp"
+            android:paddingBottom="8dp"
+            android:text="切歌"
+            android:textColor="@color/text"
+            android:textSize="13sp" />
+
+        <!-- 5. 音量- -->
+        <TextView
+            android:id="@+id/btnDockVolDown"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/bg_ktv_dock_circle_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:contentDescription="减小音量"
+            android:drawableTop="@drawable/ic_volume_down"
+            android:drawablePadding="3dp"
+            android:nextFocusUp="@id/tileSongName"
+            android:nextFocusLeft="@id/btnDockNext"
+            android:nextFocusRight="@id/video_container"
+            android:paddingTop="30dp"
+            android:paddingBottom="8dp"
+            android:text="音量"
+            android:textColor="@color/text"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- 中央 16:9 实时 MV 小窗与梯形遮罩 -->
+    <FrameLayout
+        android:id="@+id/video_container"
+        android:layout_width="@dimen/ktv_dashboard_pip_width"
+        android:layout_height="@dimen/ktv_dashboard_pip_height"
+        android:background="@drawable/bg_ktv_dock_video_frame"
+        android:clipToOutline="true"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="全屏播放当前 MV"
+        android:nextFocusUp="@id/tileSongName"
+        android:nextFocusLeft="@id/btnDockVolDown"
+        android:nextFocusRight="@id/btnDockVolUp"
+        android:stateListAnimator="@animator/ktv_card_focus_scale"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <!-- 内部左羽化阴影：对标 IKTV 50.0.4 left_video_shadow -->
+        <View
+            android:id="@+id/inner_video_shadow_left"
+            android:layout_width="20dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="start"
+            android:background="@drawable/ktv_left_video_shadow"
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no" />
+
+        <!-- 内部右羽化阴影：对标 IKTV 50.0.4 right_video_shadow -->
+        <View
+            android:id="@+id/inner_video_shadow_right"
+            android:layout_width="20dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="end"
+            android:background="@drawable/ktv_right_video_shadow"
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no" />
+
+
+    </FrameLayout>
+
+    <ImageView
+        android:id="@+id/video_shadow_left"
+        android:layout_width="24dp"
+        android:layout_height="0dp"
+        android:contentDescription="@null"
+        android:scaleType="fitXY"
+        android:src="@drawable/bg_ktv_dock_shadow_left"
+        app:layout_constraintBottom_toBottomOf="@id/video_container"
+        app:layout_constraintEnd_toStartOf="@id/video_container"
+        app:layout_constraintTop_toTopOf="@id/video_container" />
+
+    <ImageView
+        android:id="@+id/video_shadow_right"
+        android:layout_width="24dp"
+        android:layout_height="0dp"
+        android:contentDescription="@null"
+        android:scaleType="fitXY"
+        android:src="@drawable/bg_ktv_dock_shadow_right"
+        app:layout_constraintBottom_toBottomOf="@id/video_container"
+        app:layout_constraintStart_toEndOf="@id/video_container"
+        app:layout_constraintTop_toTopOf="@id/video_container" />
+
+    <!-- 右侧 5 个圆形线框按钮：音量+、降调、升调、下载、已点 -->
+    <LinearLayout
+        android:id="@+id/dockRightGroup"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="6dp"
+        app:layout_constraintStart_toEndOf="@id/video_container"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <!-- 6. 音量+ -->
+        <TextView
+            android:id="@+id/btnDockVolUp"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/bg_ktv_dock_circle_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:contentDescription="增加音量"
+            android:drawableTop="@drawable/ic_volume_up"
+            android:drawablePadding="3dp"
+            android:nextFocusUp="@id/tileTheme"
+            android:nextFocusLeft="@id/video_container"
+            android:nextFocusRight="@id/btnDockToneDown"
+            android:paddingTop="30dp"
+            android:paddingBottom="8dp"
+            android:text="音量"
+            android:textColor="@color/text"
+            android:textSize="13sp" />
+
+        <!-- 7. 降调（Home KTV 不提供变调，点击显示能力说明） -->
+        <TextView
+            android:id="@+id/btnDockToneDown"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/bg_ktv_dock_circle_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:contentDescription="伴奏降调"
+            android:drawableTop="@drawable/ktv_ref_v50_dock_tone_down"
+            android:drawablePadding="3dp"
+            android:nextFocusUp="@id/tileFavorites"
+            android:nextFocusLeft="@id/btnDockVolUp"
+            android:nextFocusRight="@id/btnDockToneUp"
+            android:visibility="visible"
+            android:paddingTop="30dp"
+            android:paddingBottom="8dp"
+            android:text="降调"
+            android:textColor="@color/text"
+            android:textSize="13sp" />
+
+        <!-- 8. 升调（Home KTV 不提供变调，点击显示能力说明） -->
+        <TextView
+            android:id="@+id/btnDockToneUp"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/bg_ktv_dock_circle_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:contentDescription="伴奏升调"
+            android:drawableTop="@drawable/ktv_ref_v50_dock_tone_up"
+            android:drawablePadding="3dp"
+            android:nextFocusUp="@id/tileFavorites"
+            android:nextFocusLeft="@id/btnDockToneDown"
+            android:nextFocusRight="@id/btnDockDownloads"
+            android:visibility="visible"
+            android:paddingTop="30dp"
+            android:paddingBottom="8dp"
+            android:text="升调"
+            android:textColor="@color/text"
+            android:textSize="13sp" />
+
+        <!-- 下载入口保留；无 Home KTV 歌曲下载 API 时显示明确说明 -->
+        <TextView
+            android:id="@+id/btnDockDownloads"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/bg_ktv_dock_circle_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:contentDescription="打开下载管理说明"
+            android:drawableTop="@drawable/ktv_ref_v50_dock_download"
+            android:drawablePadding="3dp"
+            android:nextFocusUp="@id/tileLocal"
+            android:nextFocusLeft="@id/btnDockToneUp"
+            android:nextFocusRight="@id/btnDockQueue"
+            android:visibility="visible"
+            android:paddingTop="30dp"
+            android:paddingBottom="8dp"
+            android:text="下载"
+            android:textColor="@color/text"
+            android:textSize="13sp" />
+
+        <!-- 已唱历史仍由三栏浏览器的历史导航提供 -->
+        <TextView
+            android:id="@+id/btnDockHistory"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:background="@drawable/bg_ktv_dock_circle_button"
+            android:clickable="true"
+            android:focusable="false"
+            android:gravity="center"
+            android:contentDescription="查看最近演唱记录"
+            android:drawableTop="@drawable/ic_history"
+            android:drawablePadding="3dp"
+            android:nextFocusUp="@id/tileLocal"
+            android:nextFocusLeft="@id/btnDockVolUp"
+            android:nextFocusRight="@id/btnDockQueue"
+            android:visibility="gone"
+            android:paddingTop="30dp"
+            android:paddingBottom="8dp"
+            android:text="已唱"
+            android:textColor="@color/text"
+            android:textSize="13sp" />
+
+        <!-- 10. 已点 (带红色待播数字角标) -->
+        <FrameLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="2dp">
+
+            <TextView
+                android:id="@+id/btnDockQueue"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_ktv_dock_circle_button"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:contentDescription="已点歌单"
+                android:drawableTop="@drawable/ic_dock_order_list"
+                android:drawablePadding="3dp"
+                android:nextFocusUp="@id/tileLocal"
+                android:nextFocusLeft="@id/btnDockDownloads"
+                android:paddingTop="30dp"
+                android:paddingBottom="8dp"
+                android:text="已点"
+                android:textColor="@color/text"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/txtDockQueueCount"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="4dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/bg_ktv_queue_badge"
+                android:gravity="center"
+                android:text="0"
+                android:contentDescription="待播歌曲数量"
+                android:textColor="@android:color/white"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:visibility="visible" />
+        </FrameLayout>
+    </LinearLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>

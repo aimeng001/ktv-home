@@ -35,7 +35,10 @@
       <div v-if="playlistLoading" class="match-loading">正在加载已有歌单…</div>
       <div v-else class="playlist-picker-list">
         <button v-for="playlist in playlistOptions" :key="playlist.id" class="playlist-picker-item" :disabled="playlistAddingId === playlist.id" @click="addSongToPlaylist(playlist)"><span><strong>{{ playlist.name }}</strong><small>{{ playlist.theme || '未设置主题' }} · {{ playlist.songCount || 0 }} / 100 首</small></span><span class="picker-action">{{ playlistAddingId === playlist.id ? '加入中…' : '加入' }}</span></button>
-        <div v-if="!playlistOptions.length" class="match-empty">暂无已有歌单，请先在主题歌单页面创建</div>
+        <div v-if="!playlistOptions.length" class="match-empty">
+          <p>暂无已有歌单，请先在主题歌单页面创建</p>
+          <button type="button" class="primary" style="margin-top:12px" @click="goToCreatePlaylist">前往主题歌单</button>
+        </div>
       </div>
     </div></div>
     <AiTaskPanel v-if="showAiTaskPanel" :selected-ids="Array.from(selected)" @close="showAiTaskPanel=false" @applied="load" />
@@ -138,6 +141,7 @@ async function saveSongEdit(){
 }
 async function openPlaylistPicker(song){playlistPickerSong.value=song;playlistPickerOpen.value=true;playlistLoading.value=true;try{playlistOptions.value=await api.adminAiPlaylists()}catch(e){await alertDialog(e.message||'歌单加载失败')}finally{playlistLoading.value=false}}
 function closePlaylistPicker(){if(!playlistAddingId.value)playlistPickerOpen.value=false}
+function goToCreatePlaylist(){closePlaylistPicker();router.push({name:'admin-ai'})}
 async function addSongToPlaylist(playlist){if(!playlistPickerSong.value)return;playlistAddingId.value=playlist.id;try{const result=await api.adminAiAddPlaylistSong(playlist.id,playlistPickerSong.value.id);playlist.songCount=result?.songs?.length??result?.songCount??((playlist.songCount||0)+1);await alertDialog(`《${playlistPickerSong.value.title}》已加入歌单“${playlist.name}”`);playlistPickerOpen.value=false}catch(e){await alertDialog(e.message||'加入歌单失败')}finally{playlistAddingId.value=null}}
 /** 跳转到指定页 / Go to a specific page */
 function go(p){if(p>=0&&p<totalPages.value){page.value=p;load()}}

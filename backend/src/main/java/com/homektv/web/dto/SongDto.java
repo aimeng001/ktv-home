@@ -4,7 +4,7 @@ import com.homektv.domain.Song;
 import com.homektv.library.ArtistAvatarUrl;
 
 /**
- * 歌曲列表/搜索结果项（详设§11.1）。
+ * 歌曲列表/搜索结果项（详设§11.1），可附带已探测视频分辨率。
  *
  * Song list / search result item (see detailed design &sect;11.1).
  */
@@ -22,8 +22,34 @@ public record SongDto(
         int playCount,
         String artistAvatarUrl,
         boolean playable,
-        String unavailableReason
+        String unavailableReason,
+        String titlePinyin,
+        String titleInitials,
+        String artistPinyin,
+        String artistInitials,
+        String resolution
 ) {
+    /** Source-compatible constructor for the previous catalog DTO shape. */
+    public SongDto(Long id, String catalogNumber, String title, String artist, String artistGender,
+                   String mediaType, boolean hasVocalTrack, int durationMs, String lyricType,
+                   String coverUrl, int playCount, String artistAvatarUrl, boolean playable,
+                   String unavailableReason) {
+        this(id, catalogNumber, title, artist, artistGender, mediaType, hasVocalTrack, durationMs,
+                lyricType, coverUrl, playCount, artistAvatarUrl, playable, unavailableReason,
+                "", "", "", "", null);
+    }
+
+    /** Source-compatible constructor for callers that already supply pinyin metadata. */
+    public SongDto(Long id, String catalogNumber, String title, String artist, String artistGender,
+                   String mediaType, boolean hasVocalTrack, int durationMs, String lyricType,
+                   String coverUrl, int playCount, String artistAvatarUrl, boolean playable,
+                   String unavailableReason, String titlePinyin, String titleInitials,
+                   String artistPinyin, String artistInitials) {
+        this(id, catalogNumber, title, artist, artistGender, mediaType, hasVocalTrack, durationMs,
+                lyricType, coverUrl, playCount, artistAvatarUrl, playable, unavailableReason,
+                titlePinyin, titleInitials, artistPinyin, artistInitials, null);
+    }
+
     /** Source-compatible constructor for callers using the original protocol fields. */
     public SongDto(Long id, String title, String artist, String artistGender, String mediaType,
                    boolean hasVocalTrack, int durationMs, String lyricType, String coverUrl,
@@ -54,6 +80,11 @@ public record SongDto(
 
     /** Converts a song while carrying the server-side batch readiness decision. */
     public static SongDto from(Song s, boolean playable, String unavailableReason) {
+        return from(s, playable, unavailableReason, null);
+    }
+
+    /** Converts a song while carrying batch readiness and stored video resolution metadata. */
+    public static SongDto from(Song s, boolean playable, String unavailableReason, String resolution) {
         return new SongDto(
                 s.getId(),
                 s.getCatalogNumber(),
@@ -68,7 +99,16 @@ public record SongDto(
                 s.getPlayCount(),
                 ArtistAvatarUrl.forCredit(s.getArtist()),
                 playable,
-                playable ? null : unavailableReason
+                playable ? null : unavailableReason,
+                orEmpty(s.getTitlePy()),
+                orEmpty(s.getTitleInit()),
+                orEmpty(s.getArtistPy()),
+                orEmpty(s.getArtistInit()),
+                resolution
         );
+    }
+
+    private static String orEmpty(String value) {
+        return value == null ? "" : value;
     }
 }

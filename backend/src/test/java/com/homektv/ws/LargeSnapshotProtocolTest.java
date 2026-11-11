@@ -12,11 +12,15 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class LargeSnapshotProtocolTest {
@@ -41,20 +45,41 @@ class LargeSnapshotProtocolTest {
         when(session.getAttributes()).thenReturn(Map.of("client_type", "h5"));
         when(session.isOpen()).thenReturn(true);
         broadcaster.register(session);
+        List<TextMessage> sentFrames = new CopyOnWriteArrayList<>();
+        CountDownLatch finalChunkSent = new CountDownLatch(1);
+        ObjectMapper mapper = new ObjectMapper();
+        doAnswer(invocation -> {
+            TextMessage frame = invocation.getArgument(0);
+            sentFrames.add(frame);
+            if (mapper.readTree(frame.getPayload()).path("payload").path("last").asBoolean()) {
+                finalChunkSent.countDown();
+            }
+            return null;
+        }).when(session).sendMessage(any(TextMessage.class));
 
         broadcaster.broadcastPlayback(WsEvent.of(WsEvent.SYNC_FULL, oversizedSnapshot()));
 
-        var message = org.mockito.ArgumentCaptor.forClass(TextMessage.class);
-        verify(session, org.mockito.Mockito.atLeastOnce()).sendMessage(message.capture());
-        assertThat(message.getAllValues())
+        assertThat(finalChunkSent.await(5, TimeUnit.SECONDS)).isTrue();
+        verify(session, org.mockito.Mockito.atLeastOnce()).sendMessage(any(TextMessage.class));
+        assertThat(sentFrames)
                 .allSatisfy(frame -> assertThat(frame.getPayload().getBytes(StandardCharsets.UTF_8).length)
                         .isLessThanOrEqualTo(MAX_MESSAGE_BYTES));
-        assertThat(message.getAllValues()).allSatisfy(frame ->
+        assertThat(sentFrames).allSatisfy(frame ->
                 assertThat(frame.getPayload()).contains("\"type\":\"snapshot_chunk\""));
-        int entries = message.getAllValues().stream()
+        List<com.fasterxml.jackson.databind.JsonNode> chunks = sentFrames.stream()
+                .map(frame -> {
+                    try {
+                        return mapper.readTree(frame.getPayload()).path("payload");
+                    } catch (Exception exception) {
+                        throw new AssertionError(exception);
+                    }
+                }).toList();
+        assertThat(chunks).extracting(chunk -> chunk.path("index").asInt())
+                .containsExactlyElementsOf(java.util.stream.IntStream.range(0, chunks.size()).boxed().toList());
+        int entries = sentFrames.stream()
                 .mapToInt(frame -> {
                     try {
-                        return new ObjectMapper().readTree(frame.getPayload())
+                        return mapper.readTree(frame.getPayload())
                                 .path("payload").path("entries").size();
                     } catch (Exception exception) {
                         throw new AssertionError(exception);

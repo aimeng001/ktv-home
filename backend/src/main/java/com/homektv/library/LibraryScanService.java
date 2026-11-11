@@ -652,7 +652,8 @@ public class LibraryScanService {
                 && !Objects.equals(song.getVocalForm(), candidate.vocalForm())) {
             song.setVocalForm(candidate.vocalForm());
         }
-        if (!Objects.equals(song.getCatalogNumber(), candidate.catalogNumber())) {
+        if (!song.isCatalogNumberLocked()
+                && !Objects.equals(song.getCatalogNumber(), candidate.catalogNumber())) {
             song.setCatalogNumber(candidate.catalogNumber());
         }
         if (!Objects.equals(song.getFingerprint(), fingerprint)) {

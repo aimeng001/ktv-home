@@ -17,10 +17,11 @@ class KtvKeyboardState(
     val currentKeyword: String get() = _keyword.value
 
     fun input(char: String) {
-        val trimmed = char.trim().uppercase()
-        if (trimmed.isEmpty()) return
+        val normalized = if (char == " ") " " else char.trim().uppercase()
+        if (normalized.isEmpty()) return
+        if (normalized == " " && (_keyword.value.isEmpty() || _keyword.value.endsWith(" "))) return
         if (_keyword.value.length < maxLength) {
-            _keyword.value += trimmed
+            _keyword.value += normalized
         }
     }
 

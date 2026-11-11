@@ -5,7 +5,7 @@
     android:id="@+id/kioskRootOverlay"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/ktv_dashboard_background"
+    android:background="@android:color/transparent"
     tools:theme="@style/Theme.HomeKtvTv.MainActivity"
     tools:context=".ui.MainActivity"
     android:visibility="gone"
@@ -14,10 +14,11 @@
     android:descendantFocusability="afterDescendants"
     android:orientation="vertical">
 
-        <!-- 顶部导航栏 -->
+        <!-- 顶部导航栏（已由 activity_main.xml 的 header_bar 统一接管，高度设为 0dp 彻底释放 1080P 视口） -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="52dp"
+            android:layout_height="wrap_content"
+            android:visibility="gone"
             android:gravity="center_vertical"
             android:paddingHorizontal="32dp"
             android:background="@android:color/transparent">
@@ -225,9 +226,34 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:paddingHorizontal="24dp"
-            android:paddingTop="4dp"
+            android:paddingHorizontal="10dp"
+            android:paddingTop="0dp"
             android:paddingBottom="4dp">
+
+            <!-- Short feedback floats above the page; it never reserves a full-width banner row. -->
+            <TextView
+                android:id="@+id/kioskTransientFeedback"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="12dp"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/bg_ktv_transient_toast"
+                android:clickable="false"
+                android:focusable="false"
+                android:gravity="center"
+                android:importantForAccessibility="yes"
+                android:accessibilityLiveRegion="polite"
+                android:maxWidth="420dp"
+                android:minHeight="32dp"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="6dp"
+                android:textColor="@color/text"
+                android:textSize="13sp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
 
             <!-- 核心交互区（键盘 / 筛选 / 列表） -->
             <FrameLayout
@@ -245,6 +271,10 @@
                     android:id="@+id/kioskDashboardView"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
+                    android:layout_marginStart="14dp"
+                    android:layout_marginTop="5dp"
+                    android:layout_marginEnd="14dp"
+                    android:layout_marginBottom="6dp"
                     android:visibility="visible" />
 
                 <!-- 拼音搜歌面板 -->
@@ -656,7 +686,7 @@
                 </LinearLayout>
             </FrameLayout>
 
-            <!-- 播放中的 MV 在中下方持续预览；退出点歌台时回到全屏容器 -->
+        <!-- PiP 状态由主界面的常驻底栏承载；此锚点保留供旧版状态兼容，不显示重复小窗。 -->
             <FrameLayout
                 android:id="@+id/pipVideoFrame"
                 android:layout_width="0dp"
@@ -683,7 +713,7 @@
                     android:id="@+id/txtPipLabel"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="bottom"
+                    android:layout_gravity="top"
                     android:gravity="center_vertical"
                     android:paddingHorizontal="8dp"
                     android:paddingVertical="5dp"
@@ -696,9 +726,10 @@
             </FrameLayout>
         </androidx.constraintlayout.widget.ConstraintLayout>
 
-        <!-- 底部常驻播控条 -->
+    <!-- 播控已提升为 Activity 根级常驻底栏，避免点歌台内出现第二套控件。 -->
         <com.homektv.tv.ui.KtvBottomBarView
             android:id="@+id/kioskBottomBar"
             android:layout_width="match_parent"
-            android:layout_height="56dp" />
+        android:layout_height="56dp"
+        android:visibility="gone" />
 </LinearLayout>

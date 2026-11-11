@@ -61,6 +61,20 @@ class ParsedMetaTest {
     }
 
     @Test
+    void catalogNumberAcceptsEightToTenAsciiDigitsAndRejectsOtherLengths() {
+        assertThat(new ParsedMeta("歌名", "歌手", "国语", "流行", "", "RECOGNIZED", "12345678")
+                .catalogNumber()).isEqualTo("12345678");
+        assertThat(new ParsedMeta("歌名", "歌手", "国语", "流行", "", "RECOGNIZED", "123456789")
+                .catalogNumber()).isEqualTo("123456789");
+        assertThat(new ParsedMeta("歌名", "歌手", "国语", "流行", "", "RECOGNIZED", "1234567890")
+                .catalogNumber()).isEqualTo("1234567890");
+        assertThat(new ParsedMeta("歌名", "歌手", "国语", "流行", "", "RECOGNIZED", "12345678901")
+                .catalogNumber()).isEmpty();
+        assertThat(new ParsedMeta("歌名", "歌手", "国语", "流行", "", "RECOGNIZED", "１２３４５６７８")
+                .catalogNumber()).isEmpty();
+    }
+
+    @Test
     void unrecognizedFactoryNormalizesNullAndPreservesFallbackTitle() {
         ParsedMeta nullFallback = ParsedMeta.unrecognized(null);
         ParsedMeta namedFallback = ParsedMeta.unrecognized("  歌名 ");

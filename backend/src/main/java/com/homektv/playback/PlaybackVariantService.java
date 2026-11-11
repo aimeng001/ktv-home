@@ -356,23 +356,6 @@ public class PlaybackVariantService {
         return variant.getSourceFileId() + "-" + variant.getSourceFingerprint() + ".mp4";
     }
 
-    private static long fileSize(Path path) {
-        try { return Files.size(path); } catch (IOException e) { throw new ApiException("FILE_NOT_FOUND", "无法读取媒体大小"); }
-    }
-
-    private static long modifiedMillis(Path path) {
-        try { return Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS).toMillis(); }
-        catch (IOException e) { throw new ApiException("FILE_NOT_FOUND", "无法读取媒体修改时间"); }
-    }
-
-    private static OffsetDateTime fileMtime(Path path) {
-        try { return Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS).toInstant().atOffset(ZoneOffset.UTC); }
-        catch (IOException e) { return OffsetDateTime.now(ZoneOffset.UTC); }
-    }
-
-    private static String workerId() { return "playback-" + UUID.randomUUID(); }
-    private OffsetDateTime leaseUntil() { return OffsetDateTime.now().plus(timeout).plusMinutes(5); }
-
     private static void moveAtomically(Path temp, Path output) throws IOException {
         try {
             Files.move(temp, output, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);

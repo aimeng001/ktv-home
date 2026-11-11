@@ -51,12 +51,14 @@ class SettingServiceTest {
     void externalAudioLayoutDefaultsToNormalAndAcceptsDualChannel() {
         assertThat(service.externalDefaultAudioLayout()).isEqualTo(AudioLayout.NORMAL_STEREO);
         Setting stored = new Setting(SettingService.EXTERNAL_DEFAULT_AUDIO_LAYOUT, "\"DUAL_CHANNEL\"");
+        SettingService configuredService = new SettingService(repository, new ObjectMapper());
         when(repository.findAll()).thenReturn(java.util.List.of(stored));
-        assertThat(service.externalDefaultAudioLayout()).isEqualTo(AudioLayout.DUAL_CHANNEL);
+        assertThat(configuredService.externalDefaultAudioLayout()).isEqualTo(AudioLayout.DUAL_CHANNEL);
 
         when(repository.findAll()).thenReturn(List.of(
                 new Setting(SettingService.EXTERNAL_DEFAULT_AUDIO_LAYOUT, "\"unknown\"")));
-        assertThat(service.externalDefaultAudioLayout()).isEqualTo(AudioLayout.NORMAL_STEREO);
+        SettingService legacyValueService = new SettingService(repository, new ObjectMapper());
+        assertThat(legacyValueService.externalDefaultAudioLayout()).isEqualTo(AudioLayout.NORMAL_STEREO);
     }
 
     @Test

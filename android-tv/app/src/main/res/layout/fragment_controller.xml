@@ -31,6 +31,8 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:maxLines="1"
+                    android:ellipsize="end"
                     android:text="@string/app_name"
                     android:textAppearance="@style/TextAppearance.HomeKtv.PageTitle" />
 
@@ -48,6 +50,15 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal" />
             </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/headerActionsRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="end"
+                android:orientation="horizontal"
+                android:visibility="gone" />
 
             <TextView
                 android:id="@+id/controllerSubtitle"
@@ -240,7 +251,7 @@
                         <Button
                             android:id="@+id/btnMyServerSetup"
                             android:layout_width="match_parent"
-                            android:layout_height="44dp"
+                            android:layout_height="48dp"
                             android:layout_marginTop="10dp"
                             android:background="@drawable/btn_ghost"
                             android:backgroundTint="@null"
@@ -433,7 +444,7 @@
             <Button
                 android:id="@+id/miniPlayerToggle"
                 android:layout_width="64dp"
-                android:layout_height="40dp"
+                android:layout_height="48dp"
                 android:background="@drawable/btn_gold"
                 android:text="@string/play_action"
                 android:textAllCaps="false"
@@ -443,7 +454,7 @@
             <Button
                 android:id="@+id/miniPlayerQueue"
                 android:layout_width="60dp"
-                android:layout_height="40dp"
+                android:layout_height="48dp"
                 android:layout_marginStart="4dp"
                 android:background="@drawable/btn_keyboard_key"
                 android:text="@string/queue_short_label"

@@ -10,6 +10,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.GridLayout
@@ -95,6 +96,7 @@ class ControllerFragment : Fragment() {
     private var lastRenderedState: ControllerUiState? = null
     private var restoredArtistGender = ""
     private var restoredArtistInitial = ""
+    private var restoredArtistRegion = ""
     private var restoredCatalogValue = ""
     private var restoredCatalogDetail = false
     private var restoredCatalogPage = 0
@@ -148,6 +150,7 @@ class ControllerFragment : Fragment() {
         }
         restoredArtistGender = savedInstanceState?.getString(KEY_ARTIST_GENDER).orEmpty()
         restoredArtistInitial = savedInstanceState?.getString(KEY_ARTIST_INITIAL).orEmpty()
+        restoredArtistRegion = savedInstanceState?.getString(KEY_ARTIST_REGION).orEmpty()
         restoredCatalogValue = savedInstanceState?.getString(KEY_CATALOG_VALUE).orEmpty()
         restoredCatalogDetail = savedInstanceState?.getBoolean(KEY_CATALOG_DETAIL, false) == true
         restoredCatalogPage = savedInstanceState?.getInt(KEY_CATALOG_PAGE, 0)?.coerceIn(0, 64) ?: 0
@@ -174,6 +177,7 @@ class ControllerFragment : Fragment() {
                                 gender = viewModel.state.value.artistGender,
                                 initial = viewModel.state.value.artistInitial,
                                 restorePage = 0,
+                                region = viewModel.state.value.artistRegion,
                             )
                         }
                         CatalogMode.LANGUAGES -> {
@@ -218,6 +222,7 @@ class ControllerFragment : Fragment() {
             val snapshot = viewModel.state.value
             outState.putString(KEY_ARTIST_GENDER, snapshot.artistGender)
             outState.putString(KEY_ARTIST_INITIAL, snapshot.artistInitial)
+            outState.putString(KEY_ARTIST_REGION, snapshot.artistRegion)
             outState.putString(KEY_CATALOG_VALUE, snapshot.catalogValue)
             outState.putBoolean(KEY_CATALOG_DETAIL, snapshot.catalogDetail)
             outState.putInt(KEY_CATALOG_PAGE, snapshot.catalogPage)
@@ -315,6 +320,11 @@ class ControllerFragment : Fragment() {
         binding.headerActions.addView(button("服务器") {
             openServerSetup()
         }, wrapParams())
+        if (phone) {
+            binding.header.removeView(binding.headerActions)
+            binding.headerActionsRow.addView(binding.headerActions)
+            binding.headerActionsRow.visibility = View.VISIBLE
+        }
         binding.btnMyServerSetup.setOnClickListener { openServerSetup() }
 
         binding.catalogTabsContainer.removeViews(1, (binding.catalogTabsContainer.childCount - 1).coerceAtLeast(0))
@@ -524,7 +534,12 @@ class ControllerFragment : Fragment() {
                 if (restoredCatalogDetail && restoredCatalogValue.isNotBlank()) {
                     viewModel.loadArtistSongs(restoredCatalogValue, restoredCatalogPage)
                 } else {
-                    viewModel.loadArtists(restoredArtistGender, restoredArtistInitial, restoredCatalogPage)
+                    viewModel.loadArtists(
+                        restoredArtistGender,
+                        restoredArtistInitial,
+                        restoredCatalogPage,
+                        restoredArtistRegion,
+                    )
                 }
             }
             CatalogMode.LANGUAGES -> {
@@ -561,6 +576,12 @@ class ControllerFragment : Fragment() {
     }
 
     private fun showPhonePanel(panel: ControllerPhonePanel) {
+        if (isPhoneLayout() && phonePanel == ControllerPhonePanel.SEARCH && panel != ControllerPhonePanel.SEARCH) {
+            requireActivity()
+                .getSystemService(InputMethodManager::class.java)
+                ?.hideSoftInputFromWindow(searchInput.windowToken, 0)
+            searchInput.clearFocus()
+        }
         phonePanel = panel
         updatePhoneNavigationSelection()
         applyPhonePanelVisibility()
@@ -853,7 +874,12 @@ class ControllerFragment : Fragment() {
             CatalogMode.ARTISTS -> if (state.catalogDetail) {
                 viewModel.loadArtistSongs(state.catalogValue, state.catalogPage)
             } else {
-                viewModel.loadArtists(state.artistGender, state.artistInitial, state.catalogPage)
+                viewModel.loadArtists(
+                    state.artistGender,
+                    state.artistInitial,
+                    state.catalogPage,
+                    state.artistRegion,
+                )
             }
             CatalogMode.LANGUAGES -> if (state.catalogDetail) {
                 viewModel.loadLanguageSongs(state.catalogValue, state.catalogPage)
@@ -1089,6 +1115,7 @@ class ControllerFragment : Fragment() {
         private const val KEY_PHONE_PANEL = "controller_phone_panel"
         private const val KEY_ARTIST_GENDER = "controller_artist_gender"
         private const val KEY_ARTIST_INITIAL = "controller_artist_initial"
+        private const val KEY_ARTIST_REGION = "controller_artist_region"
         private const val KEY_CATALOG_VALUE = "controller_catalog_value"
         private const val KEY_CATALOG_DETAIL = "controller_catalog_detail"
         private const val KEY_CATALOG_PAGE = "controller_catalog_page"

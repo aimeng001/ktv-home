@@ -4,6 +4,7 @@ import com.homektv.tv.net.KtvApiError
 import com.homektv.tv.net.KtvApiErrorKind
 import com.homektv.tv.net.NowPlaying
 import com.homektv.tv.net.QueueSnapshot
+import com.homektv.tv.net.PlaybackProgress
 import com.homektv.tv.net.RoomHostStatus
 import com.homektv.tv.net.SongDto
 import com.homektv.tv.net.UserProfile
@@ -14,6 +15,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ControllerStateReducerTest {
+    @Test
+    fun progressOnlyUpdatesTheMatchingQueueAndCannotResurrectAnIdleQueue() {
+        val playing = ControllerUiState(queue = QueueSnapshot(
+            playing = NowPlaying(queueId = 22L),
+            positionMs = 1_000L,
+            stateRevision = 22L,
+        ))
+
+        val stale = ControllerStateReducer.withProgress(playing, PlaybackProgress(21L, 92_000L))
+        assertEquals(1_000L, stale.queue.positionMs)
+        assertEquals(22L, stale.queue.stateRevision)
+
+        val current = ControllerStateReducer.withProgress(playing, PlaybackProgress(22L, 2_500L))
+        assertEquals(2_500L, current.queue.positionMs)
+        assertEquals(22L, current.queue.stateRevision)
+
+        val legacy = ControllerStateReducer.withProgress(playing, PlaybackProgress(null, 3_000L))
+        assertEquals(3_000L, legacy.queue.positionMs)
+
+        val idle = ControllerUiState(queue = QueueSnapshot(positionMs = 400L))
+        assertEquals(idle, ControllerStateReducer.withProgress(idle, PlaybackProgress(22L, 9_000L)))
+    }
+
     @Test
     fun queueLoadStateDistinguishesLoadingSuccessfulEmptyAndFailure() {
         val loading = ControllerUiState()

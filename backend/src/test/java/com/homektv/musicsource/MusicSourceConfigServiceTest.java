@@ -45,7 +45,18 @@ class MusicSourceConfigServiceTest {
     void returnsDefaultsWhenNoStoredConfigExists() {
         stubConfig(List.of());
 
-        assertThat(service.getConfig()).isEqualTo(MusicSourceConfig.defaults());
+        assertThat(service.getConfig().dailyLimit()).isEqualTo(37);
+    }
+
+    @Test
+    void usesEnvironmentDailyLimitWhenStoredConfigOmitsDailyLimit() {
+        stubConfig(List.of("""
+                {"enabled":true,"providers":["QQ"],"resultLimit":20,"timeoutSeconds":5,
+                 "searchCacheHours":6,"concurrencyLimit":1,"requestIntervalMs":1500,
+                 "autoApplyThreshold":0.95}
+                """));
+
+        assertThat(service.getConfig().dailyLimit()).isEqualTo(37);
     }
 
     @Test
@@ -57,7 +68,7 @@ class MusicSourceConfigServiceTest {
                 """));
 
         assertThat(service.getConfig()).isEqualTo(new MusicSourceConfig(
-                true, Set.of(MusicProvider.QQ), 12, 5, 8, 3, 2500, 0.75));
+                true, Set.of(MusicProvider.QQ), 12, 5, 8, 3, 2500, 0.75, 37));
     }
 
     @Test
@@ -67,14 +78,14 @@ class MusicSourceConfigServiceTest {
                 """));
 
         assertThat(service.getConfig()).isEqualTo(new MusicSourceConfig(
-                true, Set.of(), 12, 5, 6, 1, 1500, 0.95));
+                true, Set.of(), 12, 5, 6, 1, 1500, 0.95, 37));
     }
 
     @Test
     void fallsBackToDefaultsWhenStoredJsonCannotBeParsed() {
         stubConfig(List.of("{broken json"));
 
-        assertThat(service.getConfig()).isEqualTo(MusicSourceConfig.defaults());
+        assertThat(service.getConfig()).isEqualTo(MusicSourceConfig.defaults(37));
     }
 
     @Test
@@ -232,6 +243,25 @@ class MusicSourceConfigServiceTest {
 
         assertThat(service.getOrCreateKugouDeviceId()).isEqualTo("NEWDEVICEID");
         verify(jdbc).update(anyString(), eq("KUGOU"), anyString());
+    }
+
+    @Test
+    void dailyLimitPersistsAndAppearsInConfigView() {
+        stubConfig(List.of("""
+                {"enabled":true,"providers":["QQ"],"resultLimit":20,"timeoutSeconds":5,"searchCacheHours":6,"concurrencyLimit":1,"requestIntervalMs":1500,"autoApplyThreshold":0.95,"dailyLimit":500}
+                """));
+        assertThat(service.getConfig().dailyLimit()).isEqualTo(500);
+        assertThat(service.configView()).containsEntry("dailyLimit", 500);
+        stubEmptyProviderStates();
+        assertThat(service.states()).allSatisfy(row -> assertThat(row.get("dailyLimit")).isEqualTo(500));
+    }
+
+    @Test
+    void rejectsOutOfRangeDailyLimit() {
+        for (int invalidDailyLimit : List.of(9, 2001)) {
+            assertThatThrownBy(() -> service.save(new MusicSourceConfig(true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95, invalidDailyLimit)))
+                    .isInstanceOfSatisfying(ApiException.class, error -> assertThat(error.getCode()).isEqualTo("MUSIC_SOURCE_CONFIG_INVALID"));
+        }
     }
 
     private void stubConfig(List<String> values) {

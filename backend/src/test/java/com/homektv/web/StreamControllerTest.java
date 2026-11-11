@@ -14,6 +14,7 @@ import com.homektv.repo.SongFileRepository;
 import com.homektv.resource.ResourceBudget;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -937,6 +938,7 @@ class StreamControllerTest {
     }
 
     @Test
+    @ResourceLock("logback:com.homektv.web.LiveTranscodeSession")
     void nonZeroFfmpegExitAfterPartialOutputFailsTheStream() throws Exception {
         Path library = Files.createDirectory(tempDir.resolve("transcode-nonzero-lib"));
         Path media = Files.createFile(library.resolve("song.mkv"));

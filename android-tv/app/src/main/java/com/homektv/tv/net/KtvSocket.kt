@@ -45,8 +45,8 @@ class KtvSocket(
     interface Listener {
         /** 收到 sync_full 或任一携带完整快照的广播事件（now_playing/queue_updated/…）。 */
         fun onSnapshot(event: String, snapshot: QueueSnapshot)
-        /** 收到 progress 转发（一般 TV 自己就是源，这里主要用于多 TV 场景，可忽略）。 */
-        fun onProgress(positionMs: Long) {}
+        /** 收到绑定队列身份的播放进度转发。 */
+        fun onProgress(progress: PlaybackProgress) {}
         /** 氛围音效（P3.1 TV 混播）。 */
         fun onEffect(effectId: String) {}
         /** toast 提示。 */
@@ -423,7 +423,9 @@ class KtvSocket(
                 }
             }
             "progress" -> {
-                listener.onProgress(parseProgressPosition(payload))
+                val progress = parsePlaybackProgress(payload)
+                publishPlaybackBridgeProgress(progress)
+                listener.onProgress(progress)
             }
             "effect_play" -> {
                 listener.onEffect(parseTextPayload(payload, "effect_id"))
@@ -454,8 +456,8 @@ class KtvSocket(
                 }
             }
             // 以下事件 payload 均为完整快照
-            "sync_full", "queue_updated", "now_playing", "player_state", "playback_restarted", "playback_seeked",
-            "volume_changed", "vocal_changed" -> {
+            "sync_full", "queue_updated", "order_song", "top_song", "now_playing",
+            "player_state", "playback_restarted", "playback_seeked", "volume_changed", "vocal_changed" -> {
                 syncChunkAssembler.reset()
                 val snap = payload?.let {
                     runCatching { json.decodeFromJsonElement(QueueSnapshot.serializer(), it) }.getOrNull()
@@ -507,6 +509,11 @@ class KtvSocket(
     private fun publishPlaybackBridgeRoomHost(status: RoomHostStatus) {
         val bridgeEpoch = playbackBridgeEpoch ?: return
         PlaybackSnapshotBridge.publishRoomHost(sessionHost, bridgeEpoch, status)
+    }
+
+    private fun publishPlaybackBridgeProgress(progress: PlaybackProgress) {
+        val bridgeEpoch = playbackBridgeEpoch ?: return
+        PlaybackSnapshotBridge.publishProgress(sessionHost, bridgeEpoch, progress)
     }
 
     private fun triggerBackgroundRecovery() {
@@ -580,6 +587,16 @@ internal fun safeWebSocketLogTarget(serverHost: String?): String =
 internal fun parseProgressPosition(payload: JsonElement?): Long = runCatching {
     (payload as? JsonObject)?.get("position_ms")?.jsonPrimitive?.long
 }.getOrNull()?.coerceAtLeast(0L) ?: 0L
+
+internal fun parsePlaybackProgress(payload: JsonElement?): PlaybackProgress {
+    val objectPayload = payload as? JsonObject
+    val queueId = if (objectPayload?.containsKey("queue_id") == true) {
+        runCatching { objectPayload["queue_id"]?.jsonPrimitive?.long }.getOrNull() ?: 0L
+    } else {
+        null
+    }
+    return PlaybackProgress(queueId, parseProgressPosition(payload))
+}
 
 internal fun parseTextPayload(payload: JsonElement?, field: String): String = runCatching {
     (payload as? JsonObject)?.get(field)?.jsonPrimitive?.contentOrNull

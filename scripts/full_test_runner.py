@@ -29,6 +29,7 @@ from xml.etree import ElementTree
 DOCKER_BACKEND_TEST_CLASSES: tuple[str, ...] = (
     "AiPlaylistIntegrationTest",
     "AdminServiceIntegrationTest",
+    "ApplicationSettingsTransactionIntegrationTest",
     "CollaborativeArtistIntegrationTest",
     "LargeExternalLibraryScanTest",
     "LargeLibraryMemoryTest",

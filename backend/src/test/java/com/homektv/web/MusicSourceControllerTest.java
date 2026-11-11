@@ -6,6 +6,8 @@ import com.homektv.musicsource.MusicProvider;
 import com.homektv.musicsource.MusicSourceConfig;
 import com.homektv.musicsource.MusicSourceConfigService;
 import com.homektv.musicsource.MusicSourceSearchService;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -16,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -26,6 +29,8 @@ class MusicSourceControllerTest {
     @Test
     void savesProviderConfigurationAndQueuesUnresolvedArtistProfiles() {
         Fixture fixture = fixture();
+        when(fixture.config.getConfig()).thenReturn(new MusicSourceConfig(
+                false, Set.of(), 20, 5, 6, 1, 1500, 0.95, 44));
         Map<String, Object> view = Map.of("enabled", true);
         when(fixture.config.configView()).thenReturn(view);
 
@@ -33,8 +38,48 @@ class MusicSourceControllerTest {
                 new MusicSourceController.ConfigRequest(true, List.of("qq", "QQ"), 15, 8, 10, 2, 1800, 0.85));
 
         assertThat(result).isSameAs(view);
-        verify(fixture.config).save(new MusicSourceConfig(true, Set.of(MusicProvider.QQ), 15, 8, 10, 2, 1800, 0.85));
+        verify(fixture.config).save(new MusicSourceConfig(true, Set.of(MusicProvider.QQ), 15, 8, 10, 2, 1800, 0.85, 44));
         verify(fixture.avatarJobs).enqueueUnresolvedProfilesAsync();
+    }
+
+    @Test
+    void savesDailyLimitSuppliedByTheSettingsJson() throws Exception {
+        Fixture fixture = fixture();
+        String json = """
+                {"enabled":true,"providers":["QQ"],"resultLimit":20,"timeoutSeconds":5,
+                 "searchCacheHours":6,"concurrencyLimit":1,"requestIntervalMs":1500,
+                 "autoApplyThreshold":0.95,"dailyLimit":73}
+                """;
+        var request = new ObjectMapper()
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                .readValue(json, MusicSourceController.ConfigRequest.class);
+
+        fixture.controller.saveConfig(request);
+
+        var saved = forClass(MusicSourceConfig.class);
+        verify(fixture.config).save(saved.capture());
+        assertThat(saved.getValue().dailyLimit()).isEqualTo(73);
+    }
+
+    @Test
+    void preservesConfiguredDailyLimitWhenLegacyJsonOmitsIt() throws Exception {
+        Fixture fixture = fixture();
+        when(fixture.config.getConfig()).thenReturn(new MusicSourceConfig(
+                false, Set.of(), 20, 5, 6, 1, 1500, 0.95, 84));
+        String json = """
+                {"enabled":true,"providers":["QQ"],"resultLimit":20,"timeoutSeconds":5,
+                 "searchCacheHours":6,"concurrencyLimit":1,"requestIntervalMs":1500,
+                 "autoApplyThreshold":0.95}
+                """;
+        var request = new ObjectMapper()
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                .readValue(json, MusicSourceController.ConfigRequest.class);
+
+        fixture.controller.saveConfig(request);
+
+        var saved = forClass(MusicSourceConfig.class);
+        verify(fixture.config).save(saved.capture());
+        assertThat(saved.getValue().dailyLimit()).isEqualTo(84);
     }
 
     @Test

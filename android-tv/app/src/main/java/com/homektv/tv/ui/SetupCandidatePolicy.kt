@@ -4,6 +4,8 @@ import com.homektv.tv.net.AppConfig
 import com.homektv.tv.net.DiscoveredServer
 import com.homektv.tv.net.SavedServer
 import com.homektv.tv.net.ServerSessionScope
+import com.homektv.tv.net.playerCredentialForTransport
+import com.homektv.tv.session.DeviceMode
 
 internal object SetupCandidatePolicy {
     fun resolve(
@@ -41,4 +43,12 @@ internal object SetupCandidatePolicy {
             else -> initialServer?.hostPort == targetServer.hostPort
         }
     }
+
+    fun requiresHttpsForPlayerCredential(
+        mode: DeviceMode,
+        serverHost: String,
+        credential: String?,
+        credentialWillBeUsed: Boolean,
+    ): Boolean = mode != DeviceMode.CONTROLLER && credentialWillBeUsed &&
+        !credential.isNullOrBlank() && playerCredentialForTransport(serverHost, credential) == null
 }

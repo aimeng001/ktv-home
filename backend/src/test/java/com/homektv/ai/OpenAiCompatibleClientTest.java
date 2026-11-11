@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -63,7 +64,8 @@ class OpenAiCompatibleClientTest {
             else respond(exchange, 200, completion("{\"ok\":true}"));
         });
 
-        JsonNode result = client(AiConfigService.JsonMode.AUTO).completeJson("BULK", "system", "user", 100);
+        JsonNode result = clientWithLoopbackConfig(AiConfigService.JsonMode.AUTO)
+                .completeJson("BULK", "system", "user", 100);
 
         assertThat(result.path("ok").asBoolean()).isTrue();
         assertThat(bodies).hasSize(2);
@@ -85,7 +87,7 @@ class OpenAiCompatibleClientTest {
             }
         });
 
-        assertThat(client(AiConfigService.JsonMode.AUTO)
+        assertThat(clientWithLoopbackConfig(AiConfigService.JsonMode.AUTO)
                 .completeJson("BULK", "system", "user", 100).path("ok").asBoolean()).isTrue();
         assertThat(requests.get()).isEqualTo(2);
     }
@@ -116,7 +118,8 @@ class OpenAiCompatibleClientTest {
             else respond(exchange, 200, completion("{'ok':true,}"));
         });
 
-        JsonNode result = client(AiConfigService.JsonMode.AUTO).completeJson("BULK", "system", "user", 100);
+        JsonNode result = clientWithLoopbackConfig(AiConfigService.JsonMode.AUTO)
+                .completeJson("BULK", "system", "user", 100);
 
         assertThat(result.path("ok").asBoolean()).isTrue();
         assertThat(bodies).hasSize(2);
@@ -220,7 +223,7 @@ class OpenAiCompatibleClientTest {
             if (completions.getAndIncrement() == 0) respond(exchange, 429, "{\"error\":{\"message\":\"rate limit\"}}");
             else respond(exchange, 200, completion("{\"ok\":true}"));
         });
-        OpenAiCompatibleClient client = client(AiConfigService.JsonMode.PROMPT_ONLY);
+        OpenAiCompatibleClient client = clientWithLoopbackConfig(AiConfigService.JsonMode.PROMPT_ONLY);
 
         assertThat(client.completeJson("BULK", "system", "user", 100).path("ok").asBoolean()).isTrue();
         assertThat(client.listModels()).containsExactly("a-model", "z-model");
@@ -240,6 +243,45 @@ class OpenAiCompatibleClientTest {
                 .completeJson("BULK", "system", "user", 100))
                 .isInstanceOf(OpenAiCompatibleClient.AiProviderException.class)
                 .hasFieldOrPropertyWithValue("code", "AI_RESPONSE_TOO_LARGE");
+    }
+
+    @Test
+    void doesNotRetryWhenSuccessfulProviderResponseIsNotJson() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        start(exchange -> {
+            read(exchange);
+            requests.incrementAndGet();
+            respond(exchange, 200, "not-json");
+        });
+
+        Throwable failure = catchThrowable(() -> clientWithLoopbackConfig(AiConfigService.JsonMode.AUTO)
+                .completeJson("BULK", "system", "user", 100));
+
+        assertThat(requests.get()).isEqualTo(1);
+        assertThat(failure)
+                .isInstanceOf(OpenAiCompatibleClient.AiProviderException.class)
+                .hasFieldOrPropertyWithValue("code", "AI_PROVIDER_RESPONSE_INVALID");
+    }
+
+    @Test
+    void doesNotRetryWhenSuccessfulProviderResponseBodyIsInterrupted() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        start(exchange -> {
+            read(exchange);
+            requests.incrementAndGet();
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, 128);
+            exchange.getResponseBody().write("{\"choices\":".getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
+        });
+
+        Throwable failure = catchThrowable(() -> clientWithLoopbackConfig()
+                .completeJson("BULK", "system", "user", 100));
+
+        assertThat(requests.get()).isEqualTo(1);
+        assertThat(failure)
+                .isInstanceOf(OpenAiCompatibleClient.AiProviderException.class)
+                .hasFieldOrPropertyWithValue("code", "AI_PROVIDER_RESPONSE_READ_FAILED");
     }
 
     @Test
@@ -401,7 +443,7 @@ class OpenAiCompatibleClientTest {
             respond(exchange, 401, "{\"error\":\"unauthorized\"}");
         });
 
-        assertThatThrownBy(() -> client(AiConfigService.JsonMode.PROMPT_ONLY)
+        assertThatThrownBy(() -> clientWithLoopbackConfig(AiConfigService.JsonMode.PROMPT_ONLY)
                 .completeJson("BULK", "system", "user", 100))
                 .isInstanceOf(OpenAiCompatibleClient.AiProviderException.class)
                 .hasFieldOrPropertyWithValue("code", "AI_AUTH_FAILED")
@@ -453,7 +495,7 @@ class OpenAiCompatibleClientTest {
             respond(exchange, 503, "{\"error\":\"temporarily unavailable\"}");
         });
 
-        assertThatThrownBy(() -> client(AiConfigService.JsonMode.PROMPT_ONLY)
+        assertThatThrownBy(() -> clientWithLoopbackConfig(AiConfigService.JsonMode.PROMPT_ONLY)
                 .completeJson("BULK", "system", "user", 100))
                 .isInstanceOf(OpenAiCompatibleClient.AiProviderException.class)
                 .hasFieldOrPropertyWithValue("code", "AI_PROVIDER_ERROR")
@@ -467,10 +509,9 @@ class OpenAiCompatibleClientTest {
         try (java.net.ServerSocket socket = new java.net.ServerSocket(0)) {
             unusedPort = socket.getLocalPort();
         }
-        OpenAiCompatibleClient client = client(new AiConfigService.ResolvedConfig(
+        OpenAiCompatibleClient client = clientWithResolvedConfig(new AiConfigService.ResolvedConfig(
                 true, "http://127.0.0.1:" + unusedPort + "/v1", "bulk-model", "",
-                1, 0.97, 0.92, AiConfigService.JsonMode.PROMPT_ONLY, 2, 1, ""),
-                mock(SongFileRepository.class));
+                1, 0.97, 0.92, AiConfigService.JsonMode.PROMPT_ONLY, 2, 1, ""));
 
         assertThatThrownBy(() -> client.completeJson("BULK", "system", "user", 100))
                 .isInstanceOf(OpenAiCompatibleClient.AiProviderException.class)
@@ -670,6 +711,28 @@ class OpenAiCompatibleClientTest {
 
     private OpenAiCompatibleClient client(AiConfigService.JsonMode mode) {
         return client(mode, mock(SongFileRepository.class));
+    }
+
+    private OpenAiCompatibleClient clientWithLoopbackConfig() {
+        return clientWithLoopbackConfig(AiConfigService.JsonMode.PROMPT_ONLY);
+    }
+
+    private OpenAiCompatibleClient clientWithLoopbackConfig(AiConfigService.JsonMode mode) {
+        String host = server.getAddress().getAddress().getHostAddress();
+        if (host.contains(":")) host = "[" + host + "]";
+        AiConfigService.ResolvedConfig resolved = new AiConfigService.ResolvedConfig(
+                true, "http://" + host + ":" + server.getAddress().getPort() + "/v1", "test-model", "",
+                5, 0.97, 0.92, mode, 2, 1, "test-key");
+        return clientWithResolvedConfig(resolved);
+    }
+
+    private OpenAiCompatibleClient clientWithResolvedConfig(AiConfigService.ResolvedConfig resolved) {
+        AiConfigService configService = new AiConfigService(null, null, null, null, new ObjectMapper()) {
+            @Override public void requireConfigured() { }
+            @Override public AiConfigService.ResolvedConfig resolve() { return resolved; }
+            @Override public void validateOutboundBaseUrl(String baseUrl) { }
+        };
+        return new OpenAiCompatibleClient(configService, new ObjectMapper(), RestClient.builder(), null);
     }
 
     private OpenAiCompatibleClient client(AiConfigService.JsonMode mode, SongFileRepository files) {

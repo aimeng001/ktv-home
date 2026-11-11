@@ -143,10 +143,11 @@ public class HistoryController {
         for (PlayHistory history : histories) {
             Song song = songs.get(history.getSongId());
             if (song != null) {
-                AppUser playedBy = users.get(history.getPlayedBy());
-                String nickname = history.getPlayedBy() == null ? "家人" : playedBy == null ? "家人" : playedBy.getNickname();
-                result.add(new RecentHistoryDto(history.getId(), songDtos.get(song.getId()), history.getPlayedBy(), nickname,
-                        currentUserId != null && currentUserId.equals(history.getPlayedBy()), history.getPlayedAt()));
+                Long playedById = history.getPlayedBy();
+                AppUser playedBy = playedById == null ? null : users.get(playedById);
+                String nickname = playedById == null || playedBy == null ? "家人" : playedBy.getNickname();
+                result.add(new RecentHistoryDto(history.getId(), songDtos.get(song.getId()), playedById, nickname,
+                        currentUserId != null && currentUserId.equals(playedById), history.getPlayedAt()));
             }
         }
         return result;

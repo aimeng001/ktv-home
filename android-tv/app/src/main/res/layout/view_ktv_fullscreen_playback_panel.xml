@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/fullscreenPlaybackOverlayRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clickable="false"
+    android:focusable="false"
+    android:visibility="gone">
+
+    <LinearLayout
+        android:id="@+id/fullscreenNowPlayingBar"
+        android:layout_width="match_parent"
+        android:layout_height="116dp"
+        android:layout_gravity="top"
+        android:background="@color/ktv_fullscreen_panel_bg"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/txtFullscreenNowPlaying"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:ellipsize="marquee"
+            android:focusable="false"
+            android:gravity="center_vertical|end"
+            android:includeFontPadding="false"
+            android:marqueeRepeatLimit="marquee_forever"
+            android:paddingStart="12dp"
+            android:paddingEnd="10dp"
+            android:singleLine="true"
+            android:textColor="@android:color/white"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/fullscreenControlsPanel"
+        android:layout_width="match_parent"
+        android:layout_height="210dp"
+        android:layout_gravity="bottom"
+        android:background="@color/ktv_fullscreen_panel_bg"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/fullscreenProgressRow"
+            android:layout_width="match_parent"
+            android:layout_height="70dp"
+            android:layout_marginStart="50dp"
+            android:layout_marginEnd="50dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/btnFullscreenRewind"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                android:background="@drawable/ktv_fullscreen_focus_circle"
+                android:contentDescription="快退 10 秒"
+                android:focusable="true"
+                android:focusableInTouchMode="false"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ktv_ref_v50_player_rewind" />
+
+            <TextView
+                android:id="@+id/txtFullscreenCurrentTime"
+                android:layout_width="100dp"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:textColor="@android:color/white" />
+
+            <SeekBar
+                android:id="@+id/seekFullscreenProgress"
+                android:layout_width="0dp"
+                android:layout_height="60dp"
+                android:layout_weight="1"
+                android:clickable="false"
+                android:focusable="false"
+                android:focusableInTouchMode="false"
+                android:max="1000"
+                android:maxHeight="5px"
+                android:minHeight="5px"
+                android:paddingStart="30dp"
+                android:paddingEnd="30dp"
+                android:progressDrawable="@drawable/ktv_fullscreen_seek_track"
+                android:thumb="@drawable/ktv_ref_v50_player_seek_thumb" />
+
+            <TextView
+                android:id="@+id/txtFullscreenDuration"
+                android:layout_width="100dp"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:textColor="@android:color/white" />
+
+            <ImageView
+                android:id="@+id/btnFullscreenForward"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                android:background="@drawable/ktv_fullscreen_focus_circle"
+                android:contentDescription="快进 10 秒"
+                android:focusable="true"
+                android:focusableInTouchMode="false"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ktv_ref_v50_player_forward" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/fullscreenActionRow"
+            android:layout_width="1400dp"
+            android:layout_height="140dp"
+            android:layout_gravity="center_horizontal"
+            android:gravity="top|center_horizontal"
+            android:orientation="horizontal" />
+    </LinearLayout>
+</FrameLayout>

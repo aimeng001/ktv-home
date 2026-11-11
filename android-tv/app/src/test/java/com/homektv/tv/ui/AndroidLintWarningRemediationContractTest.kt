@@ -69,7 +69,7 @@ class AndroidLintWarningRemediationContractTest {
         assertEquals("@null", windowBackground?.textContent?.trim())
 
         val overlay = elements(parse("src/main/res/layout/view_ktv_kiosk_overlay.xml")).first()
-        assertEquals("@drawable/ktv_dashboard_background", overlay.getAttribute("android:background"))
+        assertEquals("@android:color/transparent", overlay.getAttribute("android:background"))
     }
 
     @Test

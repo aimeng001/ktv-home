@@ -12,8 +12,6 @@ enum class PlaybackEngineType {
 
 /** Routes unsupported containers/tracks to the software fallback player. */
 class DualEnginePlaybackRouter {
-    private val softwareContainers = setOf("rm", "rmvb", "realmedia")
-    private val softwareCodecs = setOf("rv10", "rv20", "rv30", "rv40", "realvideo")
 
     fun selectEngine(videoCodec: String?, format: String?): PlaybackEngineType {
         // 服务端对老格式已在流式管道中统一封装为标准 H.264/AAC fMP4 流，

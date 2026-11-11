@@ -4,6 +4,7 @@ import com.homektv.tv.net.KtvApiError
 import com.homektv.tv.net.KtvApiErrorKind
 import com.homektv.tv.net.PlaylistSummary
 import com.homektv.tv.net.PlaylistDetail
+import com.homektv.tv.net.PlaybackProgress
 import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.RecentHistoryItem
 import com.homektv.tv.net.RoomHostStatus
@@ -46,10 +47,14 @@ data class ControllerUiState(
     val artistInitials: List<String> = emptyList(),
     val artistGender: String = "",
     val artistInitial: String = "",
+    val artistRegion: String = "",
     val languages: List<NamedCount> = emptyList(),
     val tags: List<NamedCount> = emptyList(),
     val catalogSongs: List<SongDto> = emptyList(),
+    /** TV-specific full-library paging state; phone catalog rendering ignores it. */
+    val kioskLibraryBrowse: KioskLibraryBrowseState = KioskLibraryBrowseState(),
     val catalogPage: Int = 0,
+    val catalogTotal: Long = 0,
     val catalogHasMore: Boolean = false,
     val catalogLoadingMore: Boolean = false,
     /** True while the first page of a catalog root is loading. */
@@ -57,6 +62,8 @@ data class ControllerUiState(
     val catalogDetail: Boolean = false,
     val catalogStatus: CatalogUiStatus = CatalogUiStatus(),
     val catalogStatusRevision: Long = 0,
+    /** Monotonic identity for tag-root requests so commercial shortcuts can resolve only after a real response. */
+    val tagRootRequestRevision: Long = 0,
     /** Stable artist key/language/tag used to restore a detail screen. */
     val catalogValue: String = "",
     val queue: QueueSnapshot = QueueSnapshot(),
@@ -94,6 +101,12 @@ data class ControllerUiState(
 }
 
 object ControllerStateReducer {
+    fun withProgress(state: ControllerUiState, progress: PlaybackProgress): ControllerUiState {
+        val playing = state.queue.playing ?: return state
+        if (progress.queueId != null && progress.queueId != playing.queueId) return state
+        return state.copy(queue = state.queue.copy(positionMs = progress.positionMs.coerceAtLeast(0L)))
+    }
+
     fun withSnapshot(state: ControllerUiState, snapshot: QueueSnapshot): ControllerUiState {
         val currentRevision = state.queue.stateRevision
         val incomingRevision = snapshot.stateRevision

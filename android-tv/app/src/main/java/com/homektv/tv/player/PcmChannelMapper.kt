@@ -21,14 +21,13 @@ object PcmChannelMapper {
         originalChannel: String?,
         accompanimentChannel: String?,
     ): PcmChannelMode {
-        val selectedChannel = when {
-            vocalMode.equals("original", ignoreCase = true) -> originalChannel
-            vocalMode.equals("accompaniment", ignoreCase = true) -> accompanimentChannel
-            else -> null
-        }
+        if (vocalMode.equals("original", ignoreCase = true)) return PcmChannelMode.STEREO
+        val isAccompaniment = vocalMode.equals("accompaniment", ignoreCase = true)
         return when {
-            selectedChannel.equals("LEFT", ignoreCase = true) -> PcmChannelMode.LEFT_MONO
-            selectedChannel.equals("RIGHT", ignoreCase = true) -> PcmChannelMode.RIGHT_MONO
+            isAccompaniment && accompanimentChannel.equals("RIGHT", ignoreCase = true) -> PcmChannelMode.RIGHT_MONO
+            isAccompaniment && accompanimentChannel.equals("LEFT", ignoreCase = true) -> PcmChannelMode.LEFT_MONO
+            isAccompaniment && originalChannel.equals("LEFT", ignoreCase = true) -> PcmChannelMode.RIGHT_MONO
+            isAccompaniment -> PcmChannelMode.LEFT_MONO
             else -> PcmChannelMode.STEREO
         }
     }

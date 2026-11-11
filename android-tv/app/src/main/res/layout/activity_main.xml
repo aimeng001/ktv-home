@@ -1,66 +1,223 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 主容器：骨架阶段展示待机页（TV-01 简化版）+ 连接状态。
-     后续 TV-02/03 播放页、TV-04/05 浮层将叠加在此容器上。 -->
+<!-- 三段式 KTV 主界面：顶部状态栏、中部页面和常驻底部播控栏。 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@drawable/ktv_dashboard_background"
     tools:context=".ui.MainActivity">
 
-    <!-- 待机页 -->
+    <LinearLayout
+        android:id="@+id/header_bar"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_gravity="top"
+        android:background="@android:color/transparent"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp">
+
+        <!-- Home KTV 全局操作与状态 -->
+        <LinearLayout
+            android:id="@+id/headerShortcutGroup"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/btnTopSystem"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="15dp"
+                android:background="@drawable/bg_ktv_header_action"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp"
+                android:contentDescription="系统信息"
+                android:src="@drawable/ic_android_system_info" />
+
+            <ImageView
+                android:id="@+id/btnTopMobileQr"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="15dp"
+                android:background="@drawable/bg_ktv_header_action"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp"
+                android:contentDescription="手机扫码点歌"
+                android:src="@drawable/ic_mobile_order" />
+
+            <ImageView
+                android:id="@+id/btnTopSettings"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="15dp"
+                android:background="@drawable/bg_ktv_header_action"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp"
+                android:contentDescription="系统设置"
+                android:src="@drawable/ic_settings" />
+
+            <ImageView
+                android:id="@+id/btnTopSearch"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="15dp"
+                android:background="@drawable/bg_ktv_header_action"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp"
+                android:contentDescription="搜索歌曲"
+                android:src="@drawable/ic_search" />
+
+            <ImageView
+                android:id="@+id/btnTopLibraryScan"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="15dp"
+                android:background="@drawable/bg_ktv_header_action"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp"
+                android:contentDescription="更新歌库"
+                android:src="@drawable/ic_cloud_library_scan" />
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/imgStandbyLogo"
+            android:layout_width="40dp"
+            android:layout_height="32dp"
+            android:layout_marginEnd="8dp"
+            android:visibility="gone"
+            android:contentDescription="@string/app_name"
+            android:scaleType="fitCenter"
+            android:src="@drawable/home_ktv_logo" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="24dp"
+            android:visibility="gone"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/txtBrandName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/brand_home_ktv"
+                android:textAppearance="@style/TextAppearance.HomeKtv.BrandTitle" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:text="@string/brand_tagline"
+                android:textColor="@color/dim2"
+                android:textSize="10sp" />
+        </LinearLayout>
+
+        <com.homektv.tv.ui.MarqueeTextView
+            android:id="@+id/txtMarquee"
+            android:visibility="gone"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="marquee"
+            android:focusable="false"
+            android:accessibilityLiveRegion="polite"
+            android:marqueeRepeatLimit="marquee_forever"
+            android:paddingHorizontal="16dp"
+            android:singleLine="true"
+            android:text="@string/home_subtitle"
+            android:textColor="@color/dim"
+            android:textSize="15sp" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/txtPhones"
+            android:visibility="gone"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="18dp"
+            android:textColor="@color/dim"
+            android:textSize="14sp" />
+
+        <ImageView
+            android:id="@+id/imgHeaderWifi"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginEnd="8dp"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_wifi" />
+
+        <TextView
+            android:id="@+id/txtClock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <!-- 时间与日期之间的垂直分隔线：对标 IKTV 50.0.4 -->
+        <View
+            android:layout_width="1dp"
+            android:layout_height="20dp"
+            android:layout_marginHorizontal="8dp"
+            android:background="#55FFFFFF" />
+
+        <LinearLayout
+            android:id="@+id/headerDateGroup"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/txtHeaderDate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp" />
+            <TextView
+                android:id="@+id/txtHeaderWeekday"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/txtStatus"
+            android:visibility="gone"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/status_connecting"
+            android:textColor="@color/ktv_vocal_green"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/page_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="64dp"
+        android:layout_marginBottom="@dimen/ktv_dashboard_bottom_dock_height">
+
+    <!-- 中部页面保留当前真实推荐与扫码数据源，后续大厅磁贴可直接替换此内容。 -->
     <LinearLayout
         android:id="@+id/standbyPanel"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:visibility="gone"
         android:background="@drawable/standby_background"
         android:orientation="vertical"
-        android:paddingHorizontal="64dp"
-        android:paddingVertical="28dp">
-
-        <!-- 顶部栏 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-
-            <ImageView android:id="@+id/imgStandbyLogo" android:layout_width="64dp" android:layout_height="48dp" android:layout_marginEnd="12dp" android:contentDescription="@string/app_name" android:scaleType="fitCenter" android:src="@drawable/home_ktv_logo" />
-            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical">
-            <TextView android:id="@+id/txtBrandName" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/brand_home_ktv" android:textAppearance="@style/TextAppearance.HomeKtv.BrandHero" />
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="@string/brand_tagline" android:textColor="@color/dim2" android:textSize="11sp" />
-            </LinearLayout>
-
-            <View
-                android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
-
-            <TextView
-                android:id="@+id/txtPhones"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="20dp"
-                android:textColor="@color/dim"
-                android:textSize="18sp" />
-
-            <TextView
-                android:id="@+id/txtClock"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="18dp"
-                android:textColor="@color/dim"
-                android:textSize="24sp" />
-
-            <TextView
-                android:id="@+id/txtStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/status_connecting"
-                android:textColor="@color/dim"
-                android:textSize="18sp" />
-        </LinearLayout>
+        android:paddingHorizontal="44dp"
+        android:paddingVertical="18dp">
 
         <!-- 主视觉 -->
         <androidx.constraintlayout.widget.ConstraintLayout
@@ -74,6 +231,7 @@
                 android:id="@+id/homeHeroPanel"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:visibility="gone"
                 android:orientation="vertical"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toStartOf="@id/qrPanel"
@@ -91,7 +249,7 @@
                 android:layout_marginTop="12dp"
                 android:text="@string/home_welcome"
                 android:textColor="@android:color/white"
-                android:textSize="56sp"
+                android:textSize="34sp"
                 android:textStyle="bold" />
 
             <View android:layout_width="72dp" android:layout_height="4dp" android:layout_marginTop="10dp" android:background="@color/gold" />
@@ -104,7 +262,7 @@
                 android:text="@string/home_subtitle"
                 android:textColor="@color/dim"
                 android:lineSpacingExtra="2dp"
-                android:textSize="20sp" />
+                android:textSize="16sp" />
 
                 <LinearLayout
                     android:layout_width="wrap_content"
@@ -118,7 +276,7 @@
             </LinearLayout>
 
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:id="@+id/qrPanel"
                 android:background="@drawable/qr_panel"
@@ -127,11 +285,10 @@
                 android:gravity="center"
                 android:orientation="vertical"
                 android:padding="20dp"
-                app:layout_constraintStart_toEndOf="@id/homeHeroPanel"
+                app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintHorizontal_weight="0.55">
+                app:layout_constraintBottom_toBottomOf="parent">
 
             <TextView android:id="@+id/qrTitle" android:layout_width="wrap_content" android:layout_height="26dp" android:gravity="center" android:includeFontPadding="true" android:text="@string/standby_scan_title" android:textColor="@android:color/white" android:textSize="17sp" android:textStyle="bold" />
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:text="@string/standby_scan_sub" android:textColor="@color/dim" android:textSize="12sp" />
@@ -190,22 +347,69 @@
                 android:orientation="horizontal" />
         </LinearLayout>
     </LinearLayout>
+        <!-- 点歌大厅作为中部页面显示，顶栏与根级底栏始终保留。 -->
+        <ViewStub
+            android:id="@+id/kioskOverlayStub"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout="@layout/view_ktv_kiosk_overlay" />
+    </FrameLayout>
 
-    <!-- 播放层（P1.28）：叠在待机页之上，播放时显示、idle 时隐藏。
-         完整播放页 UI（双行歌词/信息条/进度条 TV-02/03）在 P1.31/P1.32 叠加。 -->
-    <FrameLayout
-        android:id="@+id/fullscreenVideoAnchor"
+    <include
+        layout="@layout/view_ktv_bottom_dock"
         android:layout_width="match_parent"
-        android:layout_height="match_parent">
+        android:layout_height="@dimen/ktv_dashboard_bottom_dock_height"
+        android:layout_gravity="bottom" />
+
+    <!-- 统一常驻 PlayerView 容器：PiP 时对齐底栏居中视窗，全屏时 match_parent 铺满全屏，绝不换宿主 -->
+    <FrameLayout
+        android:id="@+id/sharedPlayerContainer"
+        android:layout_width="@dimen/ktv_dashboard_pip_width"
+        android:layout_height="@dimen/ktv_dashboard_pip_height"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="6dp"
+        android:background="@drawable/bg_ktv_dock_video_frame"
+        android:clipToOutline="true"
+        android:visibility="visible">
+
         <androidx.media3.ui.PlayerView
             android:id="@+id/playerView"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:visibility="invisible"
             android:background="@android:color/black"
-            android:visibility="gone"
+            android:focusable="false"
+            android:clickable="false"
             app:use_controller="false"
             app:resize_mode="zoom"
             app:surface_type="surface_view" />
+
+        <TextView
+            android:id="@+id/txtDockNowPlaying"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="#B8000000"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="3dp"
+            android:textColor="@android:color/white"
+            android:textSize="10sp"
+            android:visibility="gone" />
+
+        <ImageView
+            android:id="@+id/imgDockQr"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="4dp"
+            android:background="@drawable/qr_frame"
+            android:contentDescription="扫码打开手机点歌台"
+            android:focusable="false"
+            android:padding="2dp"
+            android:scaleType="fitCenter"
+            android:visibility="gone" />
     </FrameLayout>
 
     <!-- TV-02 KTV 视频播放页叠加层 -->
@@ -214,7 +418,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:visibility="gone"
-        android:padding="28dp">
+        android:padding="0dp">
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -239,7 +443,7 @@
                 <TextView android:id="@+id/txtNextSong" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="@android:color/white" android:textSize="17sp" />
             </LinearLayout>
         </LinearLayout>
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_gravity="bottom" android:orientation="vertical" android:paddingBottom="8dp">
+        <LinearLayout android:id="@+id/fullscreenLyricsLayer" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_gravity="bottom" android:layout_marginStart="28dp" android:layout_marginEnd="28dp" android:orientation="vertical" android:paddingBottom="8dp">
             <com.homektv.tv.ui.KaraokeLyricView android:id="@+id/txtLyricPrevious" android:layout_width="match_parent" android:layout_height="58dp" />
             <TextView android:id="@+id/txtLyricCurrent" android:layout_width="match_parent" android:layout_height="58dp" android:gravity="center" android:includeFontPadding="false" android:maxLines="1" android:textColor="@android:color/white" android:textSize="42sp" android:textStyle="bold" android:shadowColor="#E6000000" android:shadowDx="2" android:shadowDy="2" android:shadowRadius="4" />
             <ProgressBar android:id="@+id/playProgress" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="18dp" android:max="1000" android:progressTint="@color/gold" />
@@ -251,8 +455,40 @@
                 <TextView android:id="@+id/txtDuration" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="@color/dim" android:textSize="14sp" />
             </LinearLayout>
         </LinearLayout>
-        <ImageView android:id="@+id/imgMiniQr" android:layout_width="104dp" android:layout_height="104dp" android:layout_gravity="bottom|end" android:layout_marginBottom="78dp" android:background="@android:color/white" android:padding="4dp" android:scaleType="fitCenter" android:contentDescription="@string/standby_scan_title" />
-        <TextView android:id="@+id/txtMiniQrHint" android:layout_width="104dp" android:layout_height="24dp" android:layout_gravity="bottom|end" android:layout_marginBottom="50dp" android:gravity="center" android:text="@string/qr_wechat_order" android:textColor="@android:color/white" android:textSize="14sp" android:textStyle="bold" android:shadowColor="#F0000000" android:shadowDx="1" android:shadowDy="1" android:shadowRadius="3" />
+        <LinearLayout
+            android:id="@+id/playerMiniQrPanel"
+            android:layout_width="104dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="80dp"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/imgMiniQr"
+                android:layout_width="104dp"
+                android:layout_height="104dp"
+                android:background="@android:color/white"
+                android:contentDescription="@string/standby_scan_title"
+                android:padding="4dp"
+                android:scaleType="fitCenter" />
+
+            <TextView
+                android:id="@+id/txtMiniQrHint"
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:layout_marginTop="2dp"
+                android:gravity="center"
+                android:shadowColor="#F0000000"
+                android:shadowDx="1"
+                android:shadowDy="1"
+                android:shadowRadius="3"
+                android:text="@string/qr_wechat_order"
+                android:textColor="@android:color/white"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+        <include layout="@layout/view_ktv_fullscreen_playback_panel" />
     </FrameLayout>
 
     <!-- TV-03 音频海报仅在音频曲目/预览打开时膨胀 -->
@@ -337,8 +573,8 @@
         android:visibility="gone">
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/singing_mode_label" android:textColor="@color/gold" android:textSize="18sp" android:textStyle="bold" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:orientation="horizontal">
-            <Button style="?android:attr/buttonBarButtonStyle" android:id="@+id/btnVocalOriginal" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:background="@drawable/btn_keyboard_key" android:text="@string/vocal_original" android:textSize="20sp" />
-            <Button style="?android:attr/buttonBarButtonStyle" android:id="@+id/btnVocalAccompaniment" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:layout_marginStart="16dp" android:background="@drawable/btn_keyboard_key" android:text="@string/vocal_backing" android:textSize="20sp" />
+            <Button style="?android:attr/buttonBarButtonStyle" android:id="@+id/btnVocalOriginal" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:background="@drawable/btn_keyboard_key" android:text="@string/vocal_original" android:textColor="@color/vocal_choice_text" android:textSize="20sp" />
+            <Button style="?android:attr/buttonBarButtonStyle" android:id="@+id/btnVocalAccompaniment" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:layout_marginStart="16dp" android:background="@drawable/btn_keyboard_key" android:text="@string/vocal_backing" android:textColor="@color/vocal_choice_text" android:textSize="20sp" />
         </LinearLayout>
     </LinearLayout>
 
@@ -362,10 +598,4 @@
         </ScrollView>
     </LinearLayout>
 
-    <!-- TV-06 商用点歌台顶层 Overlay (Kiosk Mode) -->
-    <ViewStub
-        android:id="@+id/kioskOverlayStub"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout="@layout/view_ktv_kiosk_overlay" />
 </FrameLayout>

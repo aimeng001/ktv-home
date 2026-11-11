@@ -9,7 +9,7 @@ package com.homektv.library;
  * @param category 分类（文件名未提供时为空）
  * @param vocalForm 演唱形式（文件名未提供时为空）
  * @param status    {@link #RECOGNIZED} 或 {@link #NEEDS_REVIEW}
- * @param catalogNumber 8 位曲库编号（文件名未提供时为空）
+ * @param catalogNumber 8–10 位曲库编号（文件名未提供时为空）
  */
 public record ParsedMeta(String title, String artist, String language, String category,
                          String vocalForm, String status, String catalogNumber) {
@@ -25,6 +25,9 @@ public record ParsedMeta(String title, String artist, String language, String ca
         vocalForm = vocalForm == null ? "" : vocalForm.trim();
         status = NEEDS_REVIEW.equals(status) ? NEEDS_REVIEW : RECOGNIZED;
         catalogNumber = catalogNumber == null ? "" : catalogNumber.trim();
+        if (!catalogNumber.isEmpty() && !catalogNumber.matches("[0-9]{8,10}")) {
+            catalogNumber = "";
+        }
     }
 
     /** 保留现有五参数构造调用方的兼容 API。 */

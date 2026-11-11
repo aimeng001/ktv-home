@@ -19,10 +19,10 @@ public class CategoryBrowseService {
     private static final int MAX_PUBLIC_ARTIST_PAGE_SIZE = 100;
     private static final int PUBLIC_SONG_PAGE_SIZE = 50;
     private static final int MAX_PUBLIC_SONG_PAGE_SIZE = 100;
+    private static final Set<String> SUPPORTED_ARTIST_REGIONS = Set.of("", "内地", "港台", "国外");
     private final SongRepository songRepository;
     private final SongAvailabilityPolicy availabilityPolicy;
     private final ArtistDirectoryProjectionService artistDirectoryProjection;
-
     public CategoryBrowseService(SongRepository songRepository) {
         this(songRepository, null, null);
     }
@@ -73,27 +73,39 @@ public class CategoryBrowseService {
      * one HTTP response.
      */
     public ArtistPage artistsPage(String gender, String initial, int page, int size) {
+        return artistsPage(gender, initial, "", page, size);
+    }
+
+    public ArtistPage artistsPage(String gender, String initial, String region, int page, int size) {
         int safePage = Math.max(0, page);
         int safeSize = Math.max(1, Math.min(size <= 0 ? PUBLIC_ARTIST_PAGE_SIZE : size,
                 MAX_PUBLIC_ARTIST_PAGE_SIZE));
         String safeGender = normalize(gender);
         String safeInitial = normalize(initial).toUpperCase(Locale.ROOT);
+        String safeRegion = normalize(region);
+        if (!SUPPORTED_ARTIST_REGIONS.contains(safeRegion)) {
+            throw new com.homektv.web.ApiException("INVALID_ARTIST_REGION", "歌手地区筛选值无效");
+        }
         if ("热门".equals(safeInitial)) safeInitial = "";
 
+        boolean regionDataAvailable = artistDirectoryProjection != null
+                ? artistDirectoryProjection.hasRegionReference()
+                : songRepository.hasActiveIktvArtistRegionReference();
         if (artistDirectoryProjection != null) {
             Optional<ArtistDirectoryProjectionService.ProjectionPage> projected =
-                    artistDirectoryProjection.page(safeGender, safeInitial, safePage, safeSize);
+                    artistDirectoryProjection.page(safeGender, safeInitial, safeRegion, safePage, safeSize);
             if (projected.isPresent()) {
                 ArtistDirectoryProjectionService.ProjectionPage pageData = projected.get();
                 List<Map<String, Object>> items = pageData.rows().stream()
                         .map(CategoryBrowseService::publicArtistValue)
                         .toList();
-                return new ArtistPage(items, pageData.total(), safePage, safeSize);
+                return new ArtistPage(items, pageData.total(), safePage, safeSize,
+                        safeRegion, regionDataAvailable);
             }
         }
 
         Page<SongRepository.PublicArtistDirectoryProjection> rows = songRepository.pagePublicArtistDirectory(
-                "ok", safeGender, safeInitial, PageRequest.of(safePage, safeSize));
+                "ok", safeGender, safeInitial, safeRegion, PageRequest.of(safePage, safeSize));
         List<SongRepository.PublicArtistDirectoryProjection> content = rows == null || rows.getContent() == null
                 ? List.of() : rows.getContent();
         List<Map<String, Object>> items = content.stream()
@@ -101,18 +113,26 @@ public class CategoryBrowseService {
                 .map(CategoryBrowseService::publicArtistValue)
                 .toList();
         long total = rows == null ? 0 : rows.getTotalElements();
-        return new ArtistPage(items, total, safePage, safeSize);
+        return new ArtistPage(items, total, safePage, safeSize, safeRegion, regionDataAvailable);
     }
 
     /** Returns only the small initial-letter index needed by the public UI. */
     public List<String> artistInitials(String gender) {
+        return artistInitials(gender, "");
+    }
+
+    public List<String> artistInitials(String gender, String region) {
         String safeGender = normalize(gender);
+        String safeRegion = normalize(region);
+        if (!SUPPORTED_ARTIST_REGIONS.contains(safeRegion)) {
+            throw new com.homektv.web.ApiException("INVALID_ARTIST_REGION", "歌手地区筛选值无效");
+        }
         if (artistDirectoryProjection != null) {
-            Optional<List<String>> projected = artistDirectoryProjection.initials(safeGender);
+            Optional<List<String>> projected = artistDirectoryProjection.initials(safeGender, safeRegion);
             if (projected.isPresent()) return projected.get();
         }
         List<SongRepository.ArtistInitialProjection> rows = songRepository.findPublicArtistInitials(
-                "ok", safeGender);
+                "ok", safeGender, safeRegion);
         if (rows == null) return List.of();
         return rows.stream()
                 .filter(Objects::nonNull)
@@ -204,17 +224,23 @@ public class CategoryBrowseService {
 
     private static Map<String, Object> publicArtistValue(SongRepository.PublicArtistDirectoryProjection row) {
         return publicArtistValue(row.getArtistKey(), row.getName(), row.getInitial(), row.getGender(),
-                row.getSongCount(), row.getArtistKind(), row.getAvatarPath());
+                row.getSongCount(), row.getArtistKind(), row.getAvatarPath(), row.getRegion());
     }
 
     private static Map<String, Object> publicArtistValue(ArtistDirectoryProjectionService.ArtistRow row) {
         return publicArtistValue(row.artistKey(), row.name(), row.initial(), row.gender(),
-                row.songCount(), row.artistKind(), row.avatarPath());
+                row.songCount(), row.artistKind(), row.avatarPath(), row.region());
     }
 
     private static Map<String, Object> publicArtistValue(String rawArtistKey, String rawName, String rawInitial,
                                                           String gender, Long songCount, String artistKind,
                                                           String avatarPath) {
+        return publicArtistValue(rawArtistKey, rawName, rawInitial, gender, songCount, artistKind, avatarPath, "");
+    }
+
+    private static Map<String, Object> publicArtistValue(String rawArtistKey, String rawName, String rawInitial,
+                                                          String gender, Long songCount, String artistKind,
+                                                          String avatarPath, String region) {
         String name = rawName == null || rawName.isBlank() ? "未知歌手" : rawName.trim();
         String artistKey = rawArtistKey == null || rawArtistKey.isBlank()
                 ? ArtistCreditParser.key(name) : rawArtistKey;
@@ -228,6 +254,7 @@ public class CategoryBrowseService {
         value.put("name", name);
         value.put("initial", initial);
         value.put("gender", gender == null || gender.isBlank() ? "未知" : gender);
+        value.put("region", region == null ? "" : region);
         value.put("songCount", (int) Math.min(Integer.MAX_VALUE, Math.max(0L, count)));
         value.put("artistKind", kind);
         value.put("avatarUrl", ArtistKindClassifier.isPlaceholder(name)
@@ -300,7 +327,12 @@ public class CategoryBrowseService {
         }
     }
 
-    public record ArtistPage(List<Map<String, Object>> items, long total, int page, int size) {}
+    public record ArtistPage(List<Map<String, Object>> items, long total, int page, int size,
+                             String region, boolean regionDataAvailable) {
+        public ArtistPage(List<Map<String, Object>> items, long total, int page, int size) {
+            this(items, total, page, size, "", false);
+        }
+    }
 
     public record SongPage(List<SongDto> items, long total, int page, int size) {}
 }

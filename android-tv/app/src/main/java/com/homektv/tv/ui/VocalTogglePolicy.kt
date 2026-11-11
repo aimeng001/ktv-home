@@ -1,6 +1,7 @@
 package com.homektv.tv.ui
 
 import com.homektv.tv.player.AudioPlaybackRoute
+import com.homektv.tv.player.VocalMode
 
 /**
  * 原伴唱切换策略，根据当前媒体的实际音频布局决定原伴唱开关使能与提示文案。
@@ -9,9 +10,14 @@ import com.homektv.tv.player.AudioPlaybackRoute
  * avoiding invalid attempts to mute tracks on plain stereo streams.
  */
 data class VocalTogglePolicy(
-    val isEnabled: Boolean,
-    val hint: String,
+    val isEnabled: Boolean = true,
+    val hint: String = "原唱/伴唱",
 ) {
+    fun getNextVocalMode(currentMode: VocalMode): VocalMode = when (currentMode) {
+        VocalMode.ORIGINAL -> VocalMode.ACCOMPANIMENT
+        VocalMode.ACCOMPANIMENT -> VocalMode.ORIGINAL
+    }
+
     companion object {
         fun resolve(layout: String?, audioTracks: Int = 1): VocalTogglePolicy {
             val route = AudioPlaybackRoute.forLayout(layout, audioTracks)
@@ -29,11 +35,11 @@ data class VocalTogglePolicy(
         }
 
         fun resolveOsdText(vocalMode: String?): String {
-            return if (vocalMode.equals("original", ignoreCase = true)) "当前：原唱" else "当前：伴唱"
+            return if (VocalMode.fromWire(vocalMode) == VocalMode.ORIGINAL) "当前：原唱" else "当前：伴唱"
         }
 
         fun toggleMode(currentMode: String?): String {
-            return if (currentMode.equals("original", ignoreCase = true)) "accompaniment" else "original"
+            return VocalTogglePolicy().getNextVocalMode(VocalMode.fromWire(currentMode)).wireValue
         }
     }
 }

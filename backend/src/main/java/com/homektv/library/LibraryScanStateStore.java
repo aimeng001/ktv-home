@@ -195,6 +195,17 @@ public class LibraryScanStateStore {
         }
     }
 
+    public boolean hasActiveLease() {
+        Boolean active = jdbc.queryForObject("""
+                SELECT EXISTS (
+                    SELECT 1 FROM library_scan_state
+                     WHERE library_key = ? AND state = 'RUNNING'
+                       AND heartbeat_at >= CURRENT_TIMESTAMP - (? * INTERVAL '1 second')
+                )
+                """, Boolean.class, ACTIVE_LIBRARY_KEY, LEASE_SECONDS);
+        return Boolean.TRUE.equals(active);
+    }
+
     private static String normalizedRoot(AppProperties props) {
         return Path.of(LibraryModePolicy.activeLibraryRoot(props).toString())
                 .toAbsolutePath().normalize().toString();

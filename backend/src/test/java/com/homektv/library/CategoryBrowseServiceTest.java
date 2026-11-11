@@ -206,7 +206,7 @@ class CategoryBrowseServiceTest {
         when(row.getSongCount()).thenReturn(7285L);
         when(row.getArtistKind()).thenReturn("PERSON");
         when(row.getAvatarPath()).thenReturn("artist-covers/zhou.jpg");
-        when(repository.pagePublicArtistDirectory(eq("ok"), eq("男歌手"), eq("Z"), any(Pageable.class)))
+        when(repository.pagePublicArtistDirectory(eq("ok"), eq("男歌手"), eq("Z"), eq(""), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(row), PageRequest.of(0, 30), 101));
 
         CategoryBrowseService.ArtistPage result = new CategoryBrowseService(repository)
@@ -219,8 +219,44 @@ class CategoryBrowseServiceTest {
                 .containsEntry("songCount", 7285)
                 .containsEntry("avatarUrl", "/api/artists/avatar?key=zhoujielun");
         assertThat(result.total()).isEqualTo(101);
-        verify(repository).pagePublicArtistDirectory(eq("ok"), eq("男歌手"), eq("Z"), any(Pageable.class));
+        verify(repository).pagePublicArtistDirectory(eq("ok"), eq("男歌手"), eq("Z"), eq(""), any(Pageable.class));
         verify(repository, never()).aggregateArtistsByStatus(any());
+    }
+
+    @Test
+    void artistRegionIsAppliedBeforePaginationAndEchoedWithAvailability() {
+        SongRepository repository = mock(SongRepository.class);
+        SongRepository.PublicArtistDirectoryProjection row = mock(SongRepository.PublicArtistDirectoryProjection.class);
+        when(row.getArtistKey()).thenReturn("zhoujielun");
+        when(row.getName()).thenReturn("周杰伦");
+        when(row.getInitial()).thenReturn("Z");
+        when(row.getGender()).thenReturn("男歌手");
+        when(row.getRegion()).thenReturn("港台");
+        when(row.getSongCount()).thenReturn(5L);
+        when(row.getArtistKind()).thenReturn("PERSON");
+        when(repository.hasActiveIktvArtistRegionReference()).thenReturn(true);
+        when(repository.pagePublicArtistDirectory(eq("ok"), eq("男歌手"), eq("Z"), eq("港台"), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), PageRequest.of(0, 30), 1));
+
+        CategoryBrowseService.ArtistPage result = new CategoryBrowseService(repository)
+                .artistsPage("男歌手", "Z", "港台", 0, 30);
+
+        assertThat(result.region()).isEqualTo("港台");
+        assertThat(result.regionDataAvailable()).isTrue();
+        assertThat(result.total()).isEqualTo(1);
+        assertThat(result.items().getFirst()).containsEntry("region", "港台");
+        verify(repository).pagePublicArtistDirectory(eq("ok"), eq("男歌手"), eq("Z"), eq("港台"), any(Pageable.class));
+    }
+
+    @Test
+    void invalidArtistRegionIsRejectedInsteadOfReturningUnfilteredRows() {
+        SongRepository repository = mock(SongRepository.class);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                new CategoryBrowseService(repository).artistsPage("", "", "火星", 0, 30))
+                .isInstanceOf(com.homektv.web.ApiException.class)
+                .hasMessageContaining("地区筛选值无效");
+        verify(repository, never()).pagePublicArtistDirectory(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -235,8 +271,8 @@ class CategoryBrowseServiceTest {
         when(row.getSongCount()).thenReturn(Long.MAX_VALUE);
         when(row.getArtistKind()).thenReturn(null);
         when(row.getAvatarPath()).thenReturn("artist-covers/stale.jpg");
-        when(projection.page("", "", 0, 30)).thenReturn(Optional.empty());
-        when(repository.pagePublicArtistDirectory(eq("ok"), eq(""), eq(""), any(Pageable.class)))
+        when(projection.page("", "", "", 0, 30)).thenReturn(Optional.empty());
+        when(repository.pagePublicArtistDirectory(eq("ok"), eq(""), eq(""), eq(""), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(Arrays.asList(null, row), PageRequest.of(0, 30), 5));
 
         CategoryBrowseService.ArtistPage result = new CategoryBrowseService(repository, null, projection)
@@ -254,7 +290,7 @@ class CategoryBrowseServiceTest {
                 .containsEntry("songCount", Integer.MAX_VALUE)
                 .containsEntry("artistKind", "UNATTRIBUTED")
                 .containsEntry("avatarUrl", null);
-        verify(repository).pagePublicArtistDirectory(eq("ok"), eq(""), eq(""), any(Pageable.class));
+        verify(repository).pagePublicArtistDirectory(eq("ok"), eq(""), eq(""), eq(""), any(Pageable.class));
     }
 
     @Test
@@ -264,7 +300,7 @@ class CategoryBrowseServiceTest {
         Page<SongRepository.PublicArtistDirectoryProjection> nullContentPage = mock(Page.class);
         when(nullContentPage.getContent()).thenReturn(null);
         when(nullContentPage.getTotalElements()).thenReturn(7L);
-        when(repository.pagePublicArtistDirectory(eq("ok"), eq(""), eq(""), any(Pageable.class)))
+        when(repository.pagePublicArtistDirectory(eq("ok"), eq(""), eq(""), eq(""), any(Pageable.class)))
                 .thenReturn(null, nullContentPage);
         CategoryBrowseService service = new CategoryBrowseService(repository);
 
@@ -286,7 +322,7 @@ class CategoryBrowseServiceTest {
                 publicArtistRow(null, "💿", " ", "男歌手", 0L, null, null),
                 publicArtistRow(null, "张", null, null, null, null, null),
                 publicArtistRow("wang", "王歌手", "W", " ", null, " ", " "));
-        when(repository.pagePublicArtistDirectory(eq("ok"), eq(""), eq(""), any(Pageable.class)))
+        when(repository.pagePublicArtistDirectory(eq("ok"), eq(""), eq(""), eq(""), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(rows, PageRequest.of(0, 30), rows.size()));
 
         List<Map<String, Object>> items;
@@ -315,7 +351,7 @@ class CategoryBrowseServiceTest {
         SongRepository.ArtistInitialProjection a = mock(SongRepository.ArtistInitialProjection.class);
         when(z.getInitial()).thenReturn("Z");
         when(a.getInitial()).thenReturn("A");
-        when(repository.findPublicArtistInitials("ok", "")).thenReturn(List.of(a, z));
+        when(repository.findPublicArtistInitials("ok", "", "")).thenReturn(List.of(a, z));
 
         assertThat(new CategoryBrowseService(repository).artistInitials(" "))
                 .containsExactly("A", "Z");
@@ -335,22 +371,22 @@ class CategoryBrowseServiceTest {
         when(lowerInitial.getInitial()).thenReturn(" a ");
         when(duplicateInitial.getInitial()).thenReturn("A");
         when(zInitial.getInitial()).thenReturn("z");
-        when(projection.initials("")).thenReturn(Optional.of(List.of("R")), Optional.empty(), Optional.empty());
-        when(repository.findPublicArtistInitials("ok", ""))
+        when(projection.initials("", "")).thenReturn(Optional.of(List.of("R")), Optional.empty(), Optional.empty());
+        when(repository.findPublicArtistInitials("ok", "", ""))
                 .thenReturn(null, Arrays.asList(null, nullInitial, blankInitial, lowerInitial, duplicateInitial, zInitial));
         CategoryBrowseService service = new CategoryBrowseService(repository, null, projection);
 
         assertThat(service.artistInitials(null)).containsExactly("R");
         assertThat(service.artistInitials(null)).isEmpty();
         assertThat(service.artistInitials(null)).containsExactly("A", "Z");
-        verify(repository, org.mockito.Mockito.times(2)).findPublicArtistInitials("ok", "");
+        verify(repository, org.mockito.Mockito.times(2)).findPublicArtistInitials("ok", "", "");
     }
 
     @Test
     void projectionPageIsUsedBeforeLegacyFullAggregate() {
         SongRepository repository = mock(SongRepository.class);
         ArtistDirectoryProjectionService projection = mock(ArtistDirectoryProjectionService.class);
-        when(projection.page("男歌手", "Z", 0, 30)).thenReturn(java.util.Optional.of(
+        when(projection.page("男歌手", "Z", "", 0, 30)).thenReturn(java.util.Optional.of(
                 new ArtistDirectoryProjectionService.ProjectionPage(
                         List.of(new ArtistDirectoryProjectionService.ArtistRow(
                                 "zhou", "周杰伦", "Z", "男歌手", 7285L, false, "PERSON", null)),
@@ -361,7 +397,7 @@ class CategoryBrowseServiceTest {
 
         assertThat(result.total()).isEqualTo(1L);
         assertThat(result.items().getFirst()).containsEntry("name", "周杰伦");
-        verify(repository, never()).pagePublicArtistDirectory(any(), any(), any(), any());
+        verify(repository, never()).pagePublicArtistDirectory(any(), any(), any(), any(), any());
     }
     @Test
     void tags_delegatesToRepositoryAggregationWithoutIteration() {

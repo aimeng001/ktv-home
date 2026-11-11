@@ -1,7 +1,8 @@
 <template>
   <!-- Toast 消息容器 / Toast message container -->
+  <div class="proto-toast-announcer" role="status" aria-live="polite" aria-atomic="true">{{ message }}</div>
   <transition name="toast">
-    <div v-if="message" class="proto-toast">{{ message }}</div>
+    <div v-if="message" class="proto-toast" aria-hidden="true">{{ message }}</div>
   </transition>
 </template>
 
@@ -25,6 +26,10 @@ const { message } = useToast()
   border: 1px solid rgba(255,255,255,.08); color: #f0f2f7;
   padding: 12px 20px; border-radius: 12px; font-size: 13px; z-index: 4000; white-space: nowrap;
   box-shadow: 0 12px 40px rgba(0,0,0,.5);
+}
+.proto-toast-announcer {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 .toast-enter-active, .toast-leave-active { transition: opacity .25s; }
 .toast-enter-from, .toast-leave-to { opacity: 0; }

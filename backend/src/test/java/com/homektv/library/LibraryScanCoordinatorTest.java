@@ -3,8 +3,14 @@ package com.homektv.library;
 import com.homektv.config.AppProperties;
 import com.homektv.web.ApiException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.Assumptions;
 
 import java.util.Optional;
+import java.nio.file.Path;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.io.IOException;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -16,6 +22,73 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 class LibraryScanCoordinatorTest {
+
+    @Test
+    void detailedSubmissionRejectsSymlinkLibraryRootWithoutClaiming(@TempDir Path tempDir) throws IOException {
+        Path target = Files.createDirectory(tempDir.resolve("target"));
+        Path link = tempDir.resolve("library-link");
+        try {
+            Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException | SecurityException unavailable) {
+            Assumptions.assumeTrue(false, "symbolic links are unavailable in this test environment");
+        }
+        Assumptions.assumeFalse(Files.isDirectory(link, LinkOption.NOFOLLOW_LINKS),
+                "the filesystem does not expose this link as a symbolic link");
+
+        AppProperties props = new AppProperties();
+        props.setLibraryMode(LibraryMode.EXTERNAL_READ_ONLY);
+        props.setSourceLibraryPath(link.toAbsolutePath().toString());
+        LibraryScanStateStore state = mock(LibraryScanStateStore.class);
+        LibraryScanCoordinator coordinator = new LibraryScanCoordinator(
+                props, mock(LibraryScanService.class), state, ignored -> {
+                    throw new AssertionError("symbolic library roots must not be submitted");
+                });
+
+        LibraryScanCoordinator.ScanSubmission result = coordinator.submitScan();
+
+        assertThat(result.accepted()).isFalse();
+        assertThat(result.requestStatus()).isEqualTo("ROOT_UNAVAILABLE");
+        verifyNoInteractions(state);
+    }
+
+    @Test
+    void detailedSubmissionDistinguishesAcceptedAndAlreadyRunningRequests() {
+        AppProperties props = new AppProperties();
+        props.setLibraryMode(LibraryMode.EXTERNAL_READ_ONLY);
+        props.setSourceLibraryPath(Path.of("src/test/resources").toAbsolutePath().toString());
+        LibraryScanStateStore state = mock(LibraryScanStateStore.class);
+        AtomicReference<Runnable> submitted = new AtomicReference<>();
+        when(state.tryClaim(props, "MANUAL_OR_WATCH")).thenReturn(Optional.of(claim(90L)));
+        LibraryScanCoordinator coordinator = new LibraryScanCoordinator(
+                props, mock(LibraryScanService.class), state, submitted::set);
+
+        LibraryScanCoordinator.ScanSubmission accepted = coordinator.submitScan();
+        LibraryScanCoordinator.ScanSubmission alreadyRunning = coordinator.submitScan();
+
+        assertThat(accepted.accepted()).isTrue();
+        assertThat(accepted.requestStatus()).isEqualTo("ACCEPTED");
+        assertThat(alreadyRunning.accepted()).isTrue();
+        assertThat(alreadyRunning.requestStatus()).isEqualTo("ALREADY_RUNNING");
+        assertThat(submitted.get()).isNotNull();
+        verify(state, times(1)).tryClaim(props, "MANUAL_OR_WATCH");
+    }
+
+    @Test
+    void detailedSubmissionRejectsManagedLibraryModeWithoutClaiming() {
+        AppProperties props = new AppProperties();
+        props.setLibraryMode(LibraryMode.MANAGED);
+        LibraryScanStateStore state = mock(LibraryScanStateStore.class);
+        LibraryScanCoordinator coordinator = new LibraryScanCoordinator(
+                props, mock(LibraryScanService.class), state, ignored -> {
+                    throw new AssertionError("managed mode must not submit an external scan");
+                });
+
+        LibraryScanCoordinator.ScanSubmission result = coordinator.submitScan();
+
+        assertThat(result.accepted()).isFalse();
+        assertThat(result.requestStatus()).isEqualTo("NOT_APPLICABLE");
+        verifyNoInteractions(state);
+    }
 
     @Test
     void bootstrapSubmitsOneBackgroundScanAndPersistsCompletion() {

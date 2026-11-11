@@ -10,6 +10,7 @@ import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -37,6 +39,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -48,6 +51,7 @@ class AiAnalysisWorkerTest {
 
     @Mock
     private AiAnalysisTaskRepository taskRepository;
+    private AiAnalysisTaskClaimService claimService;
     @Mock
     private AiAnalysisFinalizer finalizer;
     @Mock
@@ -66,6 +70,18 @@ class AiAnalysisWorkerTest {
     private MediaImportRecordRepository importRecordRepository;
     @Mock
     private LocalClassificationService localClassificationService;
+
+    @BeforeEach
+    void adaptLegacyRepositoryClaimStubsToTheExecutionClaimSeam() {
+        claimService = mock(AiAnalysisTaskClaimService.class, invocation -> {
+            if ("claim".equals(invocation.getMethod().getName())) {
+                Long taskId = invocation.getArgument(0);
+                return taskRepository.claimPending(taskId) == 1
+                        ? OptionalInt.of(1) : OptionalInt.empty();
+            }
+            return org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation);
+        });
+    }
 
     @Test
     void workerThatLosesAtomicClaimDoesNotLoadTaskOrCallProvider() {
@@ -139,7 +155,7 @@ class AiAnalysisWorkerTest {
 
         worker().analyze(42L);
 
-        verify(finalizer).finishProcessing(42L, "result-json", "confidence-json", "evidence-json",
+        verify(finalizer).finishProcessing(42L, 1, "result-json", "confidence-json", "evidence-json",
                 "LOCAL", "LOCAL", result, false, 0.0,
                 "AI 未配置，已降级为本地解析结果，等待人工审核");
         verify(aiClient, never()).classify(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
@@ -188,7 +204,7 @@ class AiAnalysisWorkerTest {
             songMutationCommitted.set(true);
             return true;
         }).when(finalizer).finishProcessing(
-                org.mockito.ArgumentMatchers.eq(42L), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq(42L), org.mockito.ArgumentMatchers.eq(1), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.eq(result), org.mockito.ArgumentMatchers.eq(true),
@@ -231,7 +247,7 @@ class AiAnalysisWorkerTest {
 
         verify(localClassificationService).fromImport(record);
         verify(songRepository, never()).findById(any());
-        verify(finalizer).finishProcessing(42L, "result-json", "confidence-json", "evidence-json",
+        verify(finalizer).finishProcessing(42L, 1, "result-json", "confidence-json", "evidence-json",
                 "LOCAL", "LOCAL", result, false, 0.9,
                 "AI 未配置，已降级为本地解析结果，等待人工审核");
     }
@@ -251,7 +267,7 @@ class AiAnalysisWorkerTest {
         when(concurrencyLimiter.acquire("BULK")).thenReturn(permit);
         when(aiClient.classify(song, "BULK")).thenReturn(result);
         when(autoApplyPolicy.shouldAutoApply(result)).thenReturn(true);
-        when(finalizer.finishProcessing(any(), any(), any(), any(), any(), any(), any(),
+        when(finalizer.finishProcessing(any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), any(), any(), any(),
                 anyBoolean(), anyDouble(), any())).thenReturn(true);
         stubSerialization(result);
 
@@ -261,7 +277,7 @@ class AiAnalysisWorkerTest {
         verify(concurrencyLimiter).acquire("BULK");
         verify(permit).close();
         verify(autoApplyPolicy).shouldAutoApply(result);
-        verify(finalizer).finishProcessing(42L, "result-json", "confidence-json", "evidence-json",
+        verify(finalizer).finishProcessing(42L, 1, "result-json", "confidence-json", "evidence-json",
                 "BULK", "bulk-model", result, true, 0.9, null);
         verify(localClassificationService, never()).fromSong(any());
     }
@@ -288,7 +304,7 @@ class AiAnalysisWorkerTest {
         verify(aiClient).classifyImport(record, "BULK");
         verify(permit).close();
         verify(autoApplyPolicy, never()).shouldAutoApply(any());
-        verify(finalizer).finishProcessing(42L, "result-json", "confidence-json", "evidence-json",
+        verify(finalizer).finishProcessing(42L, 1, "result-json", "confidence-json", "evidence-json",
                 "BULK", "bulk-model", result, true, 0.9, null);
     }
 
@@ -314,7 +330,7 @@ class AiAnalysisWorkerTest {
 
         verify(aiClient).classifyImport(record, "BULK");
         verify(aiClient).classifyImport(record, "REASONING");
-        verify(finalizer).finishProcessing(42L, "result-json", "confidence-json", "evidence-json",
+        verify(finalizer).finishProcessing(42L, 1, "result-json", "confidence-json", "evidence-json",
                 "REASONING", "reasoning-model", reasoning, true, 0.9, null);
     }
 
@@ -337,7 +353,7 @@ class AiAnalysisWorkerTest {
         worker().analyze(42L);
 
         org.mockito.ArgumentCaptor<String> reviewReason = org.mockito.ArgumentCaptor.forClass(String.class);
-        verify(finalizer).finishProcessing(eq(42L), eq("result-json"), eq("confidence-json"), eq("evidence-json"),
+        verify(finalizer).finishProcessing(eq(42L), eq(1), eq("result-json"), eq("confidence-json"), eq("evidence-json"),
                 eq("LOCAL"), eq("LOCAL"), eq(local), eq(false), eq(0.9), reviewReason.capture());
         assertTrue(reviewReason.getValue().contains("服务拒绝 ***"));
         assertFalse(reviewReason.getValue().contains("secret-key"));
@@ -367,7 +383,7 @@ class AiAnalysisWorkerTest {
         verify(aiClient).classify(song, "BULK");
         verify(aiClient).classify(song, "REASONING");
         verify(concurrencyLimiter).acquire("REASONING");
-        verify(finalizer).finishProcessing(42L, "result-json", "confidence-json", "evidence-json",
+        verify(finalizer).finishProcessing(42L, 1, "result-json", "confidence-json", "evidence-json",
                 "REASONING", "reasoning-model", reasoning, true, 0.9, null);
     }
 
@@ -397,7 +413,7 @@ class AiAnalysisWorkerTest {
         worker().analyze(42L);
 
         verify(aiClient).classify(song, "REASONING");
-        verify(finalizer).finishProcessing(42L, "result-json", "confidence-json", "evidence-json",
+        verify(finalizer).finishProcessing(42L, 1, "result-json", "confidence-json", "evidence-json",
                 "REASONING", "reasoning-model", reasoning, false, 0.9, null);
     }
 
@@ -418,7 +434,7 @@ class AiAnalysisWorkerTest {
         worker().analyze(42L);
 
         verify(aiClient, never()).classify(song, "REASONING");
-        verify(finalizer).finishProcessing(42L, "result-json", "confidence-json", "evidence-json",
+        verify(finalizer).finishProcessing(42L, 1, "result-json", "confidence-json", "evidence-json",
                 "BULK", "bulk-model", result, false, 0.9, null);
     }
 
@@ -439,7 +455,7 @@ class AiAnalysisWorkerTest {
         worker().analyze(42L);
 
         verify(aiClient, never()).classify(song, "REASONING");
-        verify(finalizer).finishProcessing(42L, "result-json", "confidence-json", "evidence-json",
+        verify(finalizer).finishProcessing(42L, 1, "result-json", "confidence-json", "evidence-json",
                 "BULK", "bulk-model", result, false, 0.9, null);
     }
 
@@ -460,7 +476,7 @@ class AiAnalysisWorkerTest {
 
         verify(localClassificationService).fromSong(song);
         verifyNoInteractions(aiClient, concurrencyLimiter);
-        verify(finalizer).finishProcessing(42L, "result-json", "confidence-json", "evidence-json",
+        verify(finalizer).finishProcessing(42L, 1, "result-json", "confidence-json", "evidence-json",
                 "LOCAL", "LOCAL", result, false, 0.9,
                 "AI 未配置，已降级为本地解析结果，等待人工审核");
     }
@@ -485,7 +501,7 @@ class AiAnalysisWorkerTest {
         worker().analyze(42L);
 
         verify(localClassificationService).fromImport(record);
-        verify(finalizer).finishProcessing(eq(42L), eq("result-json"), eq("confidence-json"), eq("evidence-json"),
+        verify(finalizer).finishProcessing(eq(42L), eq(1), eq("result-json"), eq("confidence-json"), eq("evidence-json"),
                 eq("LOCAL"), eq("LOCAL"), eq(result), eq(false), eq(0.9),
                 org.mockito.ArgumentMatchers.contains("IllegalStateException"));
     }
@@ -511,7 +527,7 @@ class AiAnalysisWorkerTest {
         worker().analyze(42L);
 
         verify(localClassificationService).fromSong(song);
-        verify(finalizer).finishProcessing(eq(42L), eq("result-json"), eq("confidence-json"), eq("evidence-json"),
+        verify(finalizer).finishProcessing(eq(42L), eq(1), eq("result-json"), eq("confidence-json"), eq("evidence-json"),
                 eq("LOCAL"), eq("LOCAL"), eq(local), eq(false), eq(0.9),
                 org.mockito.ArgumentMatchers.contains("AI 增强模型不可用"));
     }
@@ -540,7 +556,7 @@ class AiAnalysisWorkerTest {
 
         verify(aiClient).classifyImport(record, "REASONING");
         verify(localClassificationService).fromImport(record);
-        verify(finalizer).finishProcessing(eq(42L), eq("result-json"), eq("confidence-json"), eq("evidence-json"),
+        verify(finalizer).finishProcessing(eq(42L), eq(1), eq("result-json"), eq("confidence-json"), eq("evidence-json"),
                 eq("LOCAL"), eq("LOCAL"), eq(local), eq(false), eq(0.9),
                 org.mockito.ArgumentMatchers.contains("AI 增强模型不可用"));
     }
@@ -597,7 +613,7 @@ class AiAnalysisWorkerTest {
 
         worker().analyze(42L);
 
-        verify(taskRepository).finishProcessingError(42L, "failed", "歌曲不存在: 7");
+        verify(taskRepository).finishProcessingError(42L, 1, "failed", "歌曲不存在: 7");
 
         org.mockito.Mockito.reset(taskRepository, songRepository, importRecordRepository, configService);
         AiAnalysisTask importTask = task(43L, "IMPORT_RECORD", "BULK", "bulk-model", "processing");
@@ -609,7 +625,7 @@ class AiAnalysisWorkerTest {
 
         worker().analyze(43L);
 
-        verify(taskRepository).finishProcessingError(43L, "failed", "导入记录不存在: 13");
+        verify(taskRepository).finishProcessingError(43L, 1, "failed", "导入记录不存在: 13");
     }
 
     @Test
@@ -625,12 +641,12 @@ class AiAnalysisWorkerTest {
         when(localClassificationService.fromSong(song)).thenReturn(result);
         stubSerialization(result);
         doThrow(new ApiException("AI_IDENTITY_CONFLICT", "身份冲突待审核"))
-                .when(finalizer).finishProcessing(any(), any(), any(), any(), any(), any(), any(),
+                .when(finalizer).finishProcessing(any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), any(), any(), any(),
                         anyBoolean(), anyDouble(), any());
 
         worker().analyze(42L);
 
-        verify(taskRepository).finishProcessingError(42L, "review", "身份冲突待审核");
+        verify(taskRepository).finishProcessingError(42L, 1, "review", "身份冲突待审核");
     }
 
     @Test
@@ -649,7 +665,7 @@ class AiAnalysisWorkerTest {
 
         worker().analyze(42L);
 
-        verify(taskRepository).finishProcessingError(42L, "failed", "提供商返回错误");
+        verify(taskRepository).finishProcessingError(42L, 1, "failed", "提供商返回错误");
     }
 
     @Test
@@ -689,7 +705,7 @@ class AiAnalysisWorkerTest {
         worker().analyze(42L);
 
         org.mockito.ArgumentCaptor<String> message = org.mockito.ArgumentCaptor.forClass(String.class);
-        verify(taskRepository).finishProcessingError(eq(42L), eq("failed"), message.capture());
+        verify(taskRepository).finishProcessingError(eq(42L), eq(1), eq("failed"), message.capture());
         assertTrue(message.getValue().length() == 1000);
         assertFalse(message.getValue().contains(secret));
         assertTrue(message.getValue().contains("***"));
@@ -737,6 +753,6 @@ class AiAnalysisWorkerTest {
     private AiAnalysisWorker worker() {
         return new AiAnalysisWorker(taskRepository, finalizer, songRepository, aiClient, objectMapper, configService,
                 autoApplyPolicy, concurrencyLimiter, importRecordRepository,
-                localClassificationService);
+                localClassificationService, claimService);
     }
 }

@@ -7,7 +7,6 @@
     <!-- Shared palette sampled from KTV_ANDROID_UI_MOCKUPS_CINEMATIC/07_dashboard_focused.png. -->
     <color name="ktv_screen_bg">#151719</color>
     <color name="ktv_panel_surface">#1A1E21</color>
-    <color name="ktv_card_surface">#272A2E</color>
     <color name="ktv_card_focused">#35383C</color>
     <color name="ktv_input_surface">#202327</color>
     <color name="ktv_border">#43484D</color>
@@ -37,4 +36,12 @@
     <color name="dim2">#768398</color>
     <color name="tag_mv">#38bdf8</color>
     <color name="glass_border">#22ffffff</color>
+    <color name="ktv_fullscreen_panel_bg">#D0000000</color>
+    <color name="ktv_fullscreen_progress_track">#50737373</color>
+    <color name="ktv_fullscreen_progress_played">#31C27C</color>
+    <color name="ktv_fullscreen_focus">#3182FB</color>
+    <color name="ktv_drawer_tab_selected">#E93359</color>
+    <color name="ktv_queue_waiting">#00CC6A</color>
+    <color name="ktv_queue_playing">#F5A623</color>
+    <color name="ktv_drawer_disabled">#88FFFFFF</color>
 </resources>

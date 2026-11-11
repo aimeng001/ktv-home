@@ -91,7 +91,15 @@ export const usePlayerStore = defineStore('player', {
           break
         case 'progress':
           if (payload && typeof payload.position_ms === 'number') {
-            this.positionMs = payload.position_ms
+            const hasQueueId = Object.prototype.hasOwnProperty.call(payload, 'queue_id')
+            if (hasQueueId) {
+              if (!Number.isSafeInteger(payload.queue_id) || payload.queue_id <= 0
+                || payload.queue_id !== this.nowPlaying?.queueId) break
+            } else if (!this.nowPlaying) {
+              // Older servers omitted queue_id; keep their position mirror only while a song is active.
+              break
+            }
+            this.positionMs = Math.max(0, payload.position_ms)
           }
           break
         case 'effect_play':

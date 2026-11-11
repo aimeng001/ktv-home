@@ -9,6 +9,14 @@ import org.w3c.dom.Element
 
 class KtvVisualThemeContractTest {
     @Test
+    fun appCompatWidgetsUseTheSharedGoldAccent() {
+        val themes = parse("src/main/res/values/themes.xml")
+        val appTheme = styleItems(themes, "Theme.HomeKtvTv")
+
+        assertEquals("@color/gold", appTheme["colorAccent"])
+    }
+
+    @Test
     fun appSurfacesUseOneSharedBackgroundAndKeepVideoBlack() {
         val themes = parse("src/main/res/values/themes.xml")
         val appTheme = styleItems(themes, "Theme.HomeKtvTv")
@@ -26,7 +34,10 @@ class KtvVisualThemeContractTest {
         assertEquals("@drawable/ktv_screen_background", androidAttribute(controllerRoot, "background"))
 
         val kioskRoot = findById(parse("src/main/res/layout/view_ktv_kiosk_overlay.xml"), "kioskRootOverlay")
-        assertEquals("@drawable/ktv_dashboard_background", androidAttribute(kioskRoot, "background"))
+        assertEquals("@android:color/transparent", androidAttribute(kioskRoot, "background"))
+
+        val mainActivity = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+        assertTrue("dashboard artwork must span the header and kiosk content", mainActivity.contains("KtvDashboardBackground.applyTo(binding.root)"))
 
         val player = findById(parse("src/main/res/layout/activity_main.xml"), "playerView")
         assertEquals("@android:color/black", androidAttribute(player, "background"))
@@ -64,8 +75,9 @@ class KtvVisualThemeContractTest {
     @Test
     fun dashboardAndCatalogCardsShareTheSelectedVisualTokens() {
         val colors = parse("src/main/res/values/colors.xml")
+        val ktvThemeColors = parse("src/main/res/values/colors_ktv_theme.xml")
         assertEquals("#151719", colorValue(colors, "ktv_screen_bg").uppercase())
-        assertEquals("#272A2E", colorValue(colors, "ktv_card_surface").uppercase())
+        assertEquals("#20252E", colorValue(ktvThemeColors, "ktv_card_surface").uppercase())
         assertEquals("#F0C742", colorValue(colors, "gold").uppercase())
 
         val dashboardCard = locate("src/main/res/drawable/bg_dashboard_tile.xml").readText()
@@ -89,8 +101,12 @@ class KtvVisualThemeContractTest {
     @Test
     fun foregroundTokensRemainReadableOnTheSharedBackgroundAndCards() {
         val colors = parse("src/main/res/values/colors.xml")
+        val ktvThemeColors = parse("src/main/res/values/colors_ktv_theme.xml")
         val foregrounds = listOf(colorValue(colors, "text"), colorValue(colors, "dim"))
-        val surfaces = listOf(colorValue(colors, "ktv_screen_bg"), colorValue(colors, "ktv_card_surface"))
+        val surfaces = listOf(
+            colorValue(colors, "ktv_screen_bg"),
+            colorValue(ktvThemeColors, "ktv_card_surface"),
+        )
 
         foregrounds.forEach { foreground ->
             surfaces.forEach { surface ->
@@ -121,12 +137,12 @@ class KtvVisualThemeContractTest {
     }
 
     @Test
-    fun pipSetupUpdateAndPhoneIconUseSharedSurfaceTokens() {
+    fun pipFrameKeepsVideoBlackAndDecorativeSurfacesUseThemeTokens() {
         assertDrawableUses(
-            "bg_pip_frame",
-            "@color/ktv_panel_surface",
-            "@color/gold",
-            "@dimen/ktv_radius_card",
+            "bg_kiosk_pip_frame",
+            "@android:color/black",
+            "@color/ktv_dashboard_card_border",
+            "5dp",
         )
         assertDrawableUses(
             "setup_device_icon",

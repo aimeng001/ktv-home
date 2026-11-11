@@ -45,4 +45,17 @@ class KtvKeyboardStateTest {
         repeat(30) { state.input("A") }
         assertEquals(16, state.currentKeyword.length)
     }
+
+    @Test
+    fun spaceSeparatesSearchTermsWithoutLeadingOrRepeatedSpaces() {
+        val state = KtvKeyboardState()
+        state.input(" ")
+        state.input("A")
+        state.input(" ")
+        state.input(" ")
+        state.input("B")
+        state.input(" ")
+
+        assertEquals("A B ", state.currentKeyword)
+    }
 }

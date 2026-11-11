@@ -38,6 +38,13 @@ class LibraryUnitTest {
         assertThat(PinyinUtil.initials("G.E.M.邓紫棋")).isEqualTo("gemdzq");
     }
 
+    @Test
+    void zhuyinConsonantTokensMatchHomePinyinInitialSearchSemantics() {
+        assertThat(PinyinUtil.initials("张学友")).startsWith("z");
+        assertThat(PinyinUtil.initials("陈奕迅")).startsWith("c");
+        assertThat(PinyinUtil.initials("石头")).startsWith("s");
+    }
+
     // ---- P1.3 类型判定 ----
     @Test
     void classifyByProbe() {

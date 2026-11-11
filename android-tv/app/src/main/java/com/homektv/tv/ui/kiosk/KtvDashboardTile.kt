@@ -3,27 +3,27 @@ package com.homektv.tv.ui.kiosk
 import androidx.annotation.DrawableRes
 import com.homektv.tv.R
 
+/** The ten Home KTV routes shown in the reference hall, in stable focus-restoration order. */
 enum class KtvDashboardTile(
     val title: String,
     val subtitle: String,
-    @DrawableRes val iconRes: Int,
-    val gradientStartColor: Long,
-    val gradientEndColor: Long,
+    @DrawableRes val artworkRes: Int,
 ) {
-    PINYIN("搜索点歌", "按歌名、中文或拼音首字母搜索", R.drawable.ic_pinyin, 0xFF6B21A8, 0xFF9333EA),
-    SINGER("歌星点歌", "按歌手筛选歌曲", R.drawable.ic_singer, 0xFFC2410C, 0xFFEA580C),
-    CATEGORY("分类点歌", "按曲库分类浏览", R.drawable.ic_category, 0xFF0D9488, 0xFF14B8A6),
-    LANGUAGE("语种点歌", "按曲库语种浏览", R.drawable.ic_language, 0xFF1D4ED8, 0xFF3B82F6),
-    RANKING("排行榜单", "热歌榜/新歌飙升榜", R.drawable.ic_ranking, 0xFFBE123C, 0xFFE11D48),
-    FAVORITES("我的收藏", "已收藏的歌曲", R.drawable.ic_favorites, 0xFFD97706, 0xFFF59E0B),
-    HISTORY("曾经点唱", "最近点过的歌曲", R.drawable.ic_history, 0xFF0891B2, 0xFF06B6D4),
-    ORDERED_QUEUE("已点歌曲", "正在播放与排队歌曲", R.drawable.ic_queue, 0xFF047857, 0xFF10B981);
+    HOT_RANKING("热歌新歌", "浏览热门与新歌", R.drawable.ktv_ref_v50_tile_hot_new),
+    NEW_SONGS("精选专区", "浏览 Home KTV 可用歌单", R.drawable.ktv_ref_v50_tile_featured),
+    SINGER("歌手点歌", "按歌手浏览曲库", R.drawable.ktv_ref_v50_tile_singers_01),
+    SONG_NAME("歌名点歌", "拼音与首字母搜索", R.drawable.ktv_ref_v50_tile_songs_01),
+    LANGUAGE("语种点歌", "按曲库语种筛选", R.drawable.ktv_ref_v50_tile_language),
+    THEME("主题点歌", "按曲库标签筛选", R.drawable.ktv_ref_v50_tile_topic),
+    OPERA("综艺点歌", "按曲库节目标签筛选", R.drawable.ktv_ref_v50_tile_variety),
+    TIKTOK("抖音神曲", "按曲库标签筛选", R.drawable.ktv_ref_v50_tile_tiktok),
+    FAVORITES("我的收藏", "查看 Home KTV 收藏", R.drawable.ktv_ref_v50_tile_favorite),
+    LOCAL("本地媒体", "浏览 Home KTV 已索引曲目", R.drawable.ktv_ref_v50_tile_local);
 
     companion object {
-        /** Visible TV-home actions. RANKING stays in the enum for legacy compatibility only. */
-        val dashboardEntries = listOf(PINYIN, SINGER, CATEGORY, LANGUAGE, FAVORITES, HISTORY, ORDERED_QUEUE)
+        val dashboardEntries: List<KtvDashboardTile> = entries.toList()
 
-        fun restoreDashboardFocus(tile: KtvDashboardTile): KtvDashboardTile =
-            tile.takeIf { it in dashboardEntries } ?: PINYIN
+        fun restoreDashboardFocus(tile: KtvDashboardTile?): KtvDashboardTile =
+            tile?.takeIf { it in dashboardEntries } ?: HOT_RANKING
     }
 }

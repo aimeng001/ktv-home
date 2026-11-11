@@ -10,32 +10,45 @@ import org.w3c.dom.Element
 
 class KtvDashboardReferenceFidelityContractTest {
     @Test
-    fun dashboardUsesItsOwnLayeredGraphiteBackgroundInsteadOfTheFlatSharedSurface() {
+    fun dashboardSharesOneHomeStageAcrossHeaderAndContent() {
+        val activityRoot = parse("src/main/res/layout/activity_main.xml").documentElement
+        assertEquals("@drawable/ktv_dashboard_background", activityRoot.getAttribute("android:background"))
+
         val root = parse("src/main/res/layout/view_ktv_kiosk_overlay.xml").documentElement
-        assertEquals("@drawable/ktv_dashboard_background", root.getAttribute("android:background"))
+        assertEquals("@android:color/transparent", root.getAttribute("android:background"))
+        val mainActivity = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+        assertTrue("stage background must span the toolbar and page content", mainActivity.contains("KtvDashboardBackground.applyTo(binding.root)"))
 
         val drawable = locate("src/main/res/drawable/ktv_dashboard_background.xml").readText()
-        assertTrue("dashboard background must preserve the reference's vertical graphite fade", drawable.contains("<gradient"))
+        assertTrue("dashboard fallback must preserve the Home KTV vertical graphite fade", drawable.contains("<gradient"))
         assertEquals(
             listOf("#222226", "#1E1F24", "#191B1D", "#121718", "#0C0E12", "#0A0B0D", "#0A0B0D"),
-            KtvDashboardBackground.referenceStops.map { it.colorHex },
+            KtvDashboardBackground.fallbackStops.map { it.colorHex },
         )
         assertEquals(listOf(0.000f, 0.085f, 0.213f, 0.426f, 0.638f, 0.851f, 1.000f),
-            KtvDashboardBackground.referenceStops.map { it.position })
+            KtvDashboardBackground.fallbackStops.map { it.position })
     }
 
     @Test
-    fun visibleDashboardLabelsAndTileDensityMatchTheReference() {
+    fun visibleDashboardLabelsDescribeHomeKtvCapabilities() {
         assertEquals(
-            listOf("搜索点歌", "歌星点歌", "分类点歌", "语种点歌", "我的收藏", "曾经点唱", "已点歌曲"),
+            listOf("热歌新歌", "精选专区", "歌手点歌", "歌名点歌", "语种点歌", "主题点歌", "综艺点歌", "抖音神曲", "我的收藏", "本地媒体"),
             KtvDashboardTile.dashboardEntries.map { it.title },
         )
 
-        val tile = parse("src/main/res/layout/item_kiosk_dashboard_tile.xml")
-        val subtitle = (0 until tile.getElementsByTagName("TextView").length)
-            .map { tile.getElementsByTagName("TextView").item(it) as Element }
-            .single { it.getAttribute("android:id") == "@+id/txtTileSubtitle" }
-        assertEquals("gone", subtitle.getAttribute("android:visibility"))
+        val dashboard = parse("src/main/res/layout/view_ktv_bento_dashboard.xml")
+        val titleIds = listOf(
+            "txtHotRankingTitle", "txtNewSongsTitle", "txtSingerTileTitle", "txtSongNameTitle",
+            "txtLanguageTitle", "txtThemeTitle", "txtOperaTitle", "txtTikTokTitle",
+            "txtFavoritesTitle", "txtLocalTitle",
+        )
+        titleIds.forEach { id ->
+            val title = (0 until dashboard.getElementsByTagName("TextView").length)
+                .map { dashboard.getElementsByTagName("TextView").item(it) as Element }
+                .single { it.getAttribute("android:id") == "@+id/$id" }
+            val tile = title.parentNode as Element
+            assertTrue("$id must remain on the active dashboard", tile.getAttribute("android:visibility") != "gone")
+        }
 
         val overlay = parse("src/main/res/layout/view_ktv_kiosk_overlay.xml")
         val headerTabs = listOf("tabDashboard", "tabPinyin", "tabSingers", "tabCategories", "tabLanguages", "tabFavorites", "tabHistory")

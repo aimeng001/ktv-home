@@ -25,7 +25,7 @@
  * Favorites are tied to the current device identity and differ across identities.
  */
 
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, watch } from 'vue'
 import api, { makeControls } from '../api/client'
 import SongRow from '../components/SongRow.vue'
 import TabBar from '../components/TabBar.vue'

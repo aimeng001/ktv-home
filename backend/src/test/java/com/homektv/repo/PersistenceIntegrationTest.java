@@ -9,6 +9,7 @@ import com.homektv.library.CategoryBrowseService;
 import com.homektv.library.ArtistDirectoryProjectionService;
 import com.homektv.library.ArtistGenderDictionaryService;
 import com.homektv.library.ArtistGenderMatcher;
+import com.homektv.library.IktvReferenceCatalogLoader;
 import com.homektv.library.SongMergeService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;
@@ -19,6 +20,8 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -43,7 +46,10 @@ import static org.mockito.Mockito.doAnswer;
  * 2) player_state 单行已初始化；
  * 3) Song 实体（含 text[] tags）可正常读写。
  */
-@SpringBootTest
+@SpringBootTest(properties = {
+        "app.iktv-reference.initial-delay-ms=3600000",
+        "app.iktv-reference.match-initial-delay-ms=3600000"
+})
 @Testcontainers
 @Isolated("Testcontainers JUnit extension does not support parallel test execution")
 class PersistenceIntegrationTest {
@@ -83,6 +89,9 @@ class PersistenceIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private IktvReferenceCatalogLoader iktvReferenceCatalogLoader;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -502,6 +511,144 @@ class PersistenceIntegrationTest {
                 + " candidate_scans=" + candidateScans + " baseline_median_ms=" + baselineMedian
                 + " candidate_median_ms=" + candidateMedian);
         assertThat(productionScans).isEqualTo(1L);
+    }
+
+    @Test
+    void activeReferenceCategoryUsesSamePredicateForTagsListAndCount() {
+        String suffix = UUID.randomUUID().toString();
+        String category = "iktv-ref-test-" + suffix;
+        String snapshotVersion = jdbc.query("""
+                SELECT snapshot_version FROM iktv_reference_snapshots WHERE status = 'ACTIVE'
+                """, rs -> rs.next() ? rs.getString(1) : null);
+        boolean ownsSnapshot = snapshotVersion == null;
+        if (ownsSnapshot) {
+            snapshotVersion = "test-" + suffix;
+            jdbc.update("""
+                    INSERT INTO iktv_reference_snapshots (
+                        snapshot_version, status, expected_song_count, loaded_song_count,
+                        snapshot_sha256, activated_at
+                    ) VALUES (?, 'ACTIVE', 0, 0, ?, now())
+                    """, snapshotVersion, "0".repeat(64));
+        }
+
+        Song song = song("IKTV category projection " + suffix, "IKTV projection artist", "iktv-tag-" + suffix);
+        song.setTags(new String[0]);
+        song.setAiGenres(new String[0]);
+        song.setAiThemes(new String[0]);
+        Song saved = songRepository.save(song);
+        long referenceId = -Math.abs(saved.getId());
+        try {
+            jdbc.update("""
+                    INSERT INTO iktv_reference_songs (
+                        snapshot_version, reference_song_id, catalog_number, title, artist_credit,
+                        edition, language, category, song_type, normalized_title, normalized_artist,
+                        normalized_edition, special_tags, special_tag_conflict
+                    ) VALUES (?, ?, '', 'test', 'test', '', '', '', '', 'test', 'test', '', '{}', false)
+                    """, snapshotVersion, referenceId);
+            jdbc.update("""
+                    INSERT INTO iktv_song_categories (song_id, snapshot_version, reference_song_id, category)
+                    VALUES (?, ?, ?, ?)
+                    """, saved.getId(), snapshotVersion, referenceId, category);
+
+            var tag = songRepository.aggregateTagsByStatusOk().stream()
+                    .filter(value -> category.equals(value.getName())).findFirst().orElseThrow();
+            var page = songRepository.browseCategorySongs("", "", "", category, "",
+                    org.springframework.data.domain.PageRequest.of(0, 10));
+            var byArtistKey = songRepository.browseCategorySongsByArtistKey(
+                    com.homektv.library.ArtistCreditParser.key("IKTV projection artist"),
+                    "", "", category, "", org.springframework.data.domain.PageRequest.of(0, 10));
+
+            assertThat(tag.getSongCount()).isEqualTo(1L);
+            assertThat(page.getTotalElements()).isEqualTo(1L);
+            assertThat(page.getContent()).extracting(Song::getId).containsExactly(saved.getId());
+            assertThat(byArtistKey.getTotalElements()).isEqualTo(1L);
+            assertThat(byArtistKey.getContent()).extracting(Song::getId).containsExactly(saved.getId());
+        } finally {
+            songRepository.deleteById(saved.getId());
+            jdbc.update("DELETE FROM iktv_reference_songs WHERE snapshot_version = ? AND reference_song_id = ?",
+                    snapshotVersion, referenceId);
+            if (ownsSnapshot) {
+                jdbc.update("DELETE FROM iktv_reference_snapshots WHERE snapshot_version = ?", snapshotVersion);
+            }
+        }
+    }
+
+    @Test
+    @Transactional
+    void activatingNewReferenceSnapshotPreservesOnlyUnchangedMatchAndCategoryRows() {
+        String previousVersion = UUID.randomUUID().toString().replace("-", "").repeat(2);
+        String nextVersion = UUID.randomUUID().toString().replace("-", "").repeat(2);
+        Song unchangedSong = song("未变化参考曲目", "测试歌手甲", "snapshot-carry-unchanged-" + previousVersion);
+        Song changedSong = song("变化参考曲目", "测试歌手乙", "snapshot-carry-changed-" + previousVersion);
+        long unchangedSongId = songRepository.saveAndFlush(unchangedSong).getId();
+        long changedSongId = songRepository.saveAndFlush(changedSong).getId();
+        long unchangedReferenceId = 910001L;
+        long changedReferenceId = 910002L;
+
+        jdbc.update("UPDATE iktv_reference_snapshots SET status = 'RETIRED' WHERE status = 'ACTIVE'");
+        jdbc.update("""
+                INSERT INTO iktv_reference_snapshots (
+                    snapshot_version, status, expected_song_count, loaded_song_count, snapshot_sha256, activated_at
+                ) VALUES (?, 'ACTIVE', 2, 2, ?, now())
+                """, previousVersion, "a".repeat(64));
+        jdbc.update("""
+                INSERT INTO iktv_reference_snapshots (
+                    snapshot_version, status, expected_song_count, loaded_song_count, snapshot_sha256
+                ) VALUES (?, 'STAGING', 2, 2, ?)
+                """, nextVersion, "b".repeat(64));
+
+        insertReferenceSong(previousVersion, unchangedReferenceId, "12345678", "未变化参考曲目", "测试歌手甲", "热歌");
+        insertReferenceSong(nextVersion, unchangedReferenceId, "12345678", "未变化参考曲目", "测试歌手甲", "热歌");
+        insertReferenceSong(previousVersion, changedReferenceId, "87654321", "变化参考曲目", "测试歌手乙", "热歌");
+        insertReferenceSong(nextVersion, changedReferenceId, "87654321", "变化参考曲目", "测试歌手乙", "精选专区");
+
+        jdbc.update("""
+                INSERT INTO iktv_song_categories (song_id, snapshot_version, reference_song_id, category)
+                VALUES (?, ?, ?, '热歌'), (?, ?, ?, '热歌')
+                """, unchangedSongId, previousVersion, unchangedReferenceId,
+                changedSongId, previousVersion, changedReferenceId);
+        insertMatchResult(unchangedSongId, previousVersion, unchangedReferenceId,
+                "未变化参考曲目", "测试歌手甲");
+        insertMatchResult(changedSongId, previousVersion, changedReferenceId,
+                "变化参考曲目", "测试歌手乙");
+
+        ReflectionTestUtils.invokeMethod(iktvReferenceCatalogLoader,
+                "activateStagedSnapshot", nextVersion, 2L);
+
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM iktv_song_categories
+                 WHERE song_id = ? AND snapshot_version = ? AND category = '热歌'
+                """, Integer.class, unchangedSongId, nextVersion)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM iktv_song_categories WHERE song_id = ? AND snapshot_version = ?
+                """, Integer.class, changedSongId, nextVersion)).isZero();
+        assertThat(jdbc.queryForObject("SELECT snapshot_version FROM iktv_song_match_results WHERE song_id = ?",
+                String.class, unchangedSongId)).isEqualTo(nextVersion);
+        assertThat(jdbc.queryForObject("SELECT snapshot_version FROM iktv_song_match_results WHERE song_id = ?",
+                String.class, changedSongId)).isEqualTo(previousVersion);
+        assertThat(jdbc.queryForObject("""
+                SELECT status FROM iktv_reference_snapshots WHERE snapshot_version = ?
+                """, String.class, nextVersion)).isEqualTo("ACTIVE");
+    }
+
+    private void insertReferenceSong(String version, long referenceId, String catalogNumber,
+                                    String title, String artist, String tag) {
+        jdbc.update("""
+                INSERT INTO iktv_reference_songs (
+                    snapshot_version, reference_song_id, catalog_number, title, artist_credit,
+                    edition, language, category, song_type, normalized_title, normalized_artist,
+                    normalized_edition, special_tags, special_tag_conflict
+                ) VALUES (?, ?, ?, ?, ?, '', '', '', '', ?, ?, '', ARRAY[?]::text[], false)
+                """, version, referenceId, catalogNumber, title, artist, title, artist, tag);
+    }
+
+    private void insertMatchResult(long songId, String version, long referenceId, String title, String artist) {
+        jdbc.update("""
+                INSERT INTO iktv_song_match_results (
+                    song_id, snapshot_version, reference_song_id, matching_method, match_status,
+                    reason_code, normalized_title, normalized_artist
+                ) VALUES (?, ?, ?, 'CATALOG_NUMBER', 'MATCHED', 'MATCHED', ?, ?)
+                """, songId, version, referenceId, title, artist);
     }
 
     @Test

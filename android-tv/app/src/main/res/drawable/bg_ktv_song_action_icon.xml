@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 获得焦点态：单层 2dp 蓝框圆角矩形 -->
+    <item android:state_focused="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="15dp" />
+            <stroke android:width="2dp" android:color="@color/ktv_focus_blue" />
+            <solid android:color="#333182FB" />
+        </shape>
+    </item>
+    <!-- 按下态 -->
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="15dp" />
+            <solid android:color="#4D3182FB" />
+        </shape>
+    </item>
+    <!-- 选中态（如已收藏） -->
+    <item android:state_selected="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="15dp" />
+            <solid android:color="#26F5A623" />
+            <stroke android:width="1dp" android:color="#F5A623" />
+        </shape>
+    </item>
+    <!-- 默认常态：完全透明 -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="15dp" />
+            <solid android:color="@android:color/transparent" />
+        </shape>
+    </item>
+</selector>

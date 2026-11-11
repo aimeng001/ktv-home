@@ -264,6 +264,21 @@ class ProviderRequestRateLimiterTest {
                 .isEqualTo(Propagation.REQUIRES_NEW);
     }
 
+    @Test
+    void usesDynamicDailyLimitFromConfigServiceWhenAvailable() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ProviderRequestRateLimiter.RateState state = state(50, null);
+        stubState(jdbc, state);
+        MusicSourceConfigService configService = mock(MusicSourceConfigService.class);
+        when(configService.getConfig()).thenReturn(new MusicSourceConfig(true, java.util.Set.of(), 20, 5, 6, 1, 1500, 0.95, 50));
+
+        ProviderRequestRateLimiter limiter = new ProviderRequestRateLimiter(
+                jdbc, Clock.fixed(NOW, ZoneOffset.UTC), 500, 300, configService);
+
+        assertThatThrownBy(() -> limiter.beforeRequest(MusicProvider.QQ))
+                .isInstanceOf(ProviderRateLimitedException.class);
+    }
+
     private static ProviderRequestRateLimiter.RateState state(int count, Instant nextRequestAt) {
         return new ProviderRequestRateLimiter.RateState(
                 nextRequestAt == null ? NOW.minusSeconds(1) : nextRequestAt,

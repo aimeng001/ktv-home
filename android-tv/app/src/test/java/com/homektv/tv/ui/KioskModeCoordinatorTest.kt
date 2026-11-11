@@ -3,6 +3,7 @@ package com.homektv.tv.ui
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -43,6 +44,18 @@ class KioskModeCoordinatorTest {
         val coordinator = KioskModeCoordinator(idleTimeoutMs = 20_000L)
         coordinator.toggleKiosk(true)
         assertTrue(coordinator.isKioskActive.value)
+    }
+
+    @Test
+    fun enterKioskWithoutObservedPlayback_keepsDashboardAvailable() {
+        val scheduler = FakeIdleTimerScheduler()
+        val coordinator = KioskModeCoordinator(idleTimeoutMs = 20_000L, scheduler = scheduler)
+
+        coordinator.toggleKiosk(true)
+
+        assertNull("No queue snapshot means no playing MV has been observed", scheduler.scheduledDelay)
+        scheduler.fire()
+        assertTrue("The dashboard must stay available while playback state is unknown", coordinator.isKioskActive.value)
     }
 
     @Test
@@ -106,10 +119,53 @@ class KioskModeCoordinatorTest {
     }
 
     @Test
+    fun idleTimeoutUsesFullscreenActionWhenTheEnabledPolicyHandlesIt() {
+        val scheduler = FakeIdleTimerScheduler()
+        var fullscreenRequested = false
+        val coordinator = KioskModeCoordinator(
+            idleTimeoutMs = 15_000L,
+            scheduler = scheduler,
+            onIdleTimeout = {
+                fullscreenRequested = true
+                true
+            },
+        )
+
+        coordinator.setPlaybackActive(true)
+        coordinator.toggleKiosk(true)
+        scheduler.fire()
+
+        assertTrue(fullscreenRequested)
+        assertTrue("A handled fullscreen transition keeps kiosk state available for return", coordinator.isKioskActive.value)
+    }
+
+    @Test
+    fun fullscreenPlayback_suspendsKioskIdleExit_andResumesAfterFullscreenEnds() {
+        val scheduler = FakeIdleTimerScheduler()
+        val coordinator = KioskModeCoordinator(idleTimeoutMs = 15_000L, scheduler = scheduler)
+
+        coordinator.setPlaybackActive(true)
+        coordinator.toggleKiosk(true)
+        coordinator.setFullscreenPlaybackActive(true)
+        assertTrue("全屏 MV 播放期间应取消点歌台空闲退出计时", scheduler.isCancelled)
+
+        scheduler.fire()
+        assertTrue("全屏 MV 播放期间点歌台状态不能因空闲计时被清除", coordinator.isKioskActive.value)
+
+        coordinator.setFullscreenPlaybackActive(false)
+        assertFalse("退出全屏后应恢复点歌台空闲计时", scheduler.isCancelled)
+        assertEquals(15_000L, scheduler.scheduledDelay)
+
+        scheduler.fire()
+        assertFalse("恢复计时后应保留原有点歌台自动退出语义", coordinator.isKioskActive.value)
+    }
+
+    @Test
     fun modalActive_cancelsScheduledTimeout_andResumesOnDismiss() {
         val scheduler = FakeIdleTimerScheduler()
         val coordinator = KioskModeCoordinator(idleTimeoutMs = 25_000L, scheduler = scheduler)
 
+        coordinator.setPlaybackActive(true)
         coordinator.toggleKiosk(true)
         assertFalse(scheduler.isCancelled)
 
@@ -128,6 +184,7 @@ class KioskModeCoordinatorTest {
         val scheduler = FakeIdleTimerScheduler()
         val coordinator = KioskModeCoordinator(idleTimeoutMs = 25_000L, scheduler = scheduler)
 
+        coordinator.setPlaybackActive(true)
         coordinator.toggleKiosk(true)
         assertFalse(scheduler.isCancelled)
 

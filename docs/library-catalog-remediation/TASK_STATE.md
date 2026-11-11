@@ -1,5 +1,13 @@
 # TASK_STATE：曲库闭环观点审核与 TDD 实施
 
+## 2026-11-10 自动全库融合执行快照
+- 当前执行依据：[`plans/2026-11-10-nas-iktv-feature-delivery-remediation-v2.md`](../../plans/2026-11-10-nas-iktv-feature-delivery-remediation-v2.md)，用户已要求按计划执行。首次全库自动处理，后续对已提交变化自动增量重算，不要求用户逐首人工编辑。
+- 阶段 0 基线：指定 IKTV SQLite `song` 表 254,191 行，`number` 类型为 SQLite INTEGER；因此从该值不能恢复可能存在的前导零。现有后端只加载 `iktv-singers.csv` 与 `iktv-special-songs.csv`，当前标签加载数为 11,969 名歌手与 76,893 条标签记录。普通文件读取只检查了少量 NAS 文件名样本，未对 NAS 作全库枚举。
+- 环境边界：本机 JDK 21 可用；本轮检测的本地 PostgreSQL 5432/5433 端口未监听，未发现本机 PostgreSQL 16 安装。禁止 Docker 操作，真实数据库迁移和首轮回填仍按计划要求另行授权。
+- 阶段 1 RED：9/10 位编号被解析器与实体 setter 清空，`ParsedMeta` 接受 11 位值，迁移完整性断言仍锁定 V52。日志：`backend/target/iktv-remediation/stage1-red-catalog-number.log`，38 项、5 项失败。
+- 阶段 1 GREEN：已加 V53 `VARCHAR(10)` 扩列、8–10 位 ASCII 数字约束和统一前缀提取；DTO 继续使用字符串并验证详情字段。定向测试日志：`backend/target/iktv-remediation/stage1-green-catalog-number.log`，38 项通过。
+- 未完成：隔离 PostgreSQL 升级测试不可用；阶段 2–8 尚未实施。实际 Home 数据库、NAS 全库和参考样片均未写入。
+
 ## 当前阶段
 - 用户已确认按计划执行；T0 证据审核和整改计划已交付。
 - T1–T5 原有切片保持；本轮在未提交工作树追加 T2/T3/T4 的根因修复：租约 heartbeat/fencing、根身份校验与显式 rebind、目录 revision 写入契约、Android 根目录页面刷新。

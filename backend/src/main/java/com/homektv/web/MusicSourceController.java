@@ -40,9 +40,12 @@ public class MusicSourceController {
     @PutMapping("/music-sources/config")
     public Map<String, Object> saveConfig(@RequestBody ConfigRequest request) {
         Set<MusicProvider> providers = parseProviders(request.providers());
+        int dailyLimit = request.dailyLimit() == null
+                ? configService.getConfig().dailyLimit()
+                : request.dailyLimit();
         configService.save(new MusicSourceConfig(request.enabled(), providers, request.resultLimit(),
                 request.timeoutSeconds(), request.searchCacheHours(), request.concurrencyLimit(),
-                request.requestIntervalMs(), request.autoApplyThreshold()));
+                request.requestIntervalMs(), request.autoApplyThreshold(), dailyLimit));
         avatarJobs.enqueueUnresolvedProfilesAsync();
         return configService.configView();
     }
@@ -94,7 +97,14 @@ public class MusicSourceController {
 
     public record ConfigRequest(boolean enabled, List<String> providers, int resultLimit,
                                 int timeoutSeconds, int searchCacheHours, int concurrencyLimit,
-                                int requestIntervalMs, double autoApplyThreshold) {}
+                                int requestIntervalMs, double autoApplyThreshold, Integer dailyLimit) {
+        public ConfigRequest(boolean enabled, List<String> providers, int resultLimit,
+                             int timeoutSeconds, int searchCacheHours, int concurrencyLimit,
+                             int requestIntervalMs, double autoApplyThreshold) {
+            this(enabled, providers, resultLimit, timeoutSeconds, searchCacheHours, concurrencyLimit,
+                    requestIntervalMs, autoApplyThreshold, null);
+        }
+    }
     public record ProviderRequest(List<String> providers) {}
     public record BatchMatchRequest(List<Long> songIds) {}
 }
