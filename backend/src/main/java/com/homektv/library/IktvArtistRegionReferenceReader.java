@@ -35,7 +35,14 @@ public final class IktvArtistRegionReferenceReader {
         byte[] bytes = readBounded(input);
         String sha256 = sha256(bytes);
         if (!sha256.equalsIgnoreCase(expectedSha256)) {
-            throw new IllegalStateException("ARTIST_REFERENCE_SHA256_MISMATCH");
+            byte[] crlfBytes = normalizeToCrlf(bytes);
+            String crlfSha256 = sha256(crlfBytes);
+            if (crlfSha256.equalsIgnoreCase(expectedSha256)) {
+                bytes = crlfBytes;
+                sha256 = crlfSha256;
+            } else {
+                throw new IllegalStateException("ARTIST_REFERENCE_SHA256_MISMATCH");
+            }
         }
         List<List<String>> rows = parseCsv(new String(bytes, StandardCharsets.UTF_8));
         if (rows.isEmpty() || rows.get(0).size() != 2
@@ -132,6 +139,12 @@ public final class IktvArtistRegionReferenceReader {
 
     private static String stripBom(String value) {
         return value.startsWith("\uFEFF") ? value.substring(1) : value;
+    }
+
+    private static byte[] normalizeToCrlf(byte[] bytes) {
+        String text = new String(bytes, StandardCharsets.UTF_8);
+        String normalized = text.replace("\r\n", "\n").replace("\n", "\r\n");
+        return normalized.getBytes(StandardCharsets.UTF_8);
     }
 
     private static String sha256(byte[] bytes) {

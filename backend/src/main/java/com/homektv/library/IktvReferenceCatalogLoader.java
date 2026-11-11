@@ -240,7 +240,7 @@ public final class IktvReferenceCatalogLoader {
                               AND changed_key.normalized_artist = result.normalized_artist
                        )
                        OR result.home_catalog_number IN (SELECT catalog_number FROM changed_numbers)
-                       OR result.number_clues && ARRAY(SELECT catalog_number FROM changed_numbers)
+                       OR result.number_clues && ARRAY(SELECT catalog_number::text FROM changed_numbers)
                    )
                 """, previousVersion, nextVersion, nextVersion, previousVersion,
                 nextVersion, previousVersion);
