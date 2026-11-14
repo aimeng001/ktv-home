@@ -6,11 +6,10 @@ import com.homektv.tv.net.LibraryStatus
 internal object StartupScanPolicy {
     fun shouldRequest(
         enabled: Boolean,
-        canOpenKiosk: Boolean,
         connected: Boolean,
         status: LibraryStatus?,
     ): Boolean {
-        if (!enabled || !canOpenKiosk || !connected || status == null) return false
+        if (!enabled || !connected || status == null) return false
         return status.scanRequestSupported &&
             status.libraryMode == "EXTERNAL_READ_ONLY" &&
             status.rootState == "READABLE" &&

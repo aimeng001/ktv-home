@@ -45,6 +45,17 @@ class KtvPitchDialogLayoutContractTest {
         assertTrue(source.contains("isEnabled = false"))
     }
 
+    @Test
+    fun pitchSeekBarProvidesVisibleFocusRingDrawableAndPadding() {
+        val xml = locate("src/main/res/layout/dialog_ktv_pitch.xml").readText()
+        val seekBlock = xml.substringAfter("android:id=\"@+id/seekPitch\"").substringBefore("/>")
+        val drawable = locate("src/main/res/drawable/bg_ktv_pitch_seek_focus.xml")
+
+        assertTrue("seekPitch 必须配置聚焦高亮背景 bg_ktv_pitch_seek_focus", seekBlock.contains("@drawable/bg_ktv_pitch_seek_focus"))
+        assertTrue("seekPitch 应保留内边距以容纳高亮边框", seekBlock.contains("android:padding=\"6dp\""))
+        assertTrue("bg_ktv_pitch_seek_focus 资源文件必须存在", drawable.isFile)
+    }
+
     private fun locate(relativePath: String): File {
         val workingDirectory = File(System.getProperty("user.dir").orEmpty())
         val candidates = sequence {

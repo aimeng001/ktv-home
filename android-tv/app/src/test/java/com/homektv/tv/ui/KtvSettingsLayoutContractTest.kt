@@ -68,11 +68,11 @@ class KtvSettingsLayoutContractTest {
             assertEquals("@drawable/bg_ktv_header_action", action.getAttribute("android:background"))
         }
         assertFalse("The visible toolbar must not append a Home KTV logo", byId.containsKey("@+id/imgHeaderBrand"))
-        assertTrue("The standby logo remains available", byId.containsKey("@+id/imgStandbyLogo"))
+        assertFalse("Standby header logo must be removed", byId.containsKey("@+id/imgStandbyLogo"))
         assertTrue("Search remains visible in every device mode", activity.contains("binding.btnTopSearch.visibility = View.VISIBLE"))
         assertTrue("Global search must remember its origin", activity.contains("openGlobalSearch(binding.btnTopSearch)"))
         assertTrue(activity.contains("KtvSystemInfoDialog("))
-        assertTrue(activity.contains("secondaryActionLabel = \"服务与设备\""))
+        assertTrue(activity.contains("secondaryActionLabel = getString(R.string.server_mode_label)"))
         assertTrue(activity.contains("SetupActivity.EXTRA_RETURN_TO_CALLER"))
         assertTrue(activity.contains("KtvSettingsAction.OPEN_LIBRARY_SCAN"))
         assertTrue(activity.contains("KtvSettingsAction.OPEN_MEDIA_FEEDBACK"))

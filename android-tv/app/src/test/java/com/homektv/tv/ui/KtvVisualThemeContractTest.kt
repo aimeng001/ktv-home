@@ -26,13 +26,6 @@ class KtvVisualThemeContractTest {
         assertEquals("@drawable/setup_background", androidAttribute(setup, "background"))
         assertBackgroundAlias("setup_background")
 
-        val standby = findById(parse("src/main/res/layout/activity_main.xml"), "standbyPanel")
-        assertEquals("@drawable/standby_background", androidAttribute(standby, "background"))
-        assertBackgroundAlias("standby_background")
-
-        val controllerRoot = findById(parse("src/main/res/layout/fragment_controller.xml"), "controllerRoot")
-        assertEquals("@drawable/ktv_screen_background", androidAttribute(controllerRoot, "background"))
-
         val kioskRoot = findById(parse("src/main/res/layout/view_ktv_kiosk_overlay.xml"), "kioskRootOverlay")
         assertEquals("@android:color/transparent", androidAttribute(kioskRoot, "background"))
 
@@ -51,20 +44,10 @@ class KtvVisualThemeContractTest {
             setupActivity.contains("KtvDashboardBackground.applyTo(binding.root)"),
         )
 
-        val controller = locate("src/main/java/com/homektv/tv/ui/controller/ControllerFragment.kt").readText()
-        assertTrue(
-            "the phone controller must use the same stage artwork",
-            controller.contains("KtvDashboardBackground.applyTo(binding.root)"),
-        )
-
         val mainActivity = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
         assertTrue(
-            "standby must use the selected stage artwork",
-            mainActivity.contains("KtvDashboardBackground.applyTo(binding.standbyPanel)"),
-        )
-        assertTrue(
-            "the legacy queue page must use the selected stage artwork",
-            mainActivity.contains("KtvDashboardBackground.applyTo(binding.queueOverlay)"),
+            "main activity must use the selected stage artwork",
+            mainActivity.contains("KtvDashboardBackground.applyTo(binding.root)"),
         )
         assertTrue(
             "audio playback OSD must use the selected stage artwork",
@@ -121,8 +104,6 @@ class KtvVisualThemeContractTest {
     @Test
     fun sharedSpacingAndBodyTypographyAreUsedByRealLayouts() {
         val main = parse("src/main/res/layout/activity_main.xml")
-        val queueOverlay = findById(main, "queueOverlay")
-        assertEquals("@drawable/ktv_screen_background", androidAttribute(queueOverlay, "background"))
         assertEquals(
             "@dimen/ktv_spacing_lg",
             androidAttribute(findById(main, "volumeBar"), "layout_marginStart"),

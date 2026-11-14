@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FlywayMigrationIntegrityTest {
 
     private static final Pattern MIGRATION_FILE_PATTERN = Pattern.compile("^V(\\d+)__(.+)\\.sql$");
-    private static final int CURRENT_LATEST_VERSION = 57;
+    private static final int CURRENT_LATEST_VERSION = 58;
 
     @Test
     void allMigrationVersionsFromOneToLatestArePresentAndContiguous() throws Exception {
@@ -110,6 +110,11 @@ class FlywayMigrationIntegrityTest {
                         "STALE_GENERATION", "HOME_SOURCE_CHANGED_AFTER_STAGING")
                 .doesNotContain("DELETE FROM songs", "DELETE FROM song_files", "UPDATE song_files SET",
                         "DELETE FROM iktv_song_categories");
+
+        Path v58Path = findMigrationPath(migrationDirectory, 58);
+        String v58Content = Files.readString(v58Path);
+        assertThat(v58Content).contains("idx_song_artists_key_lower", "idx_songs_ok_norm_artist")
+                .doesNotContain("DELETE FROM songs", "UPDATE songs");
 
     }
 

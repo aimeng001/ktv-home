@@ -66,6 +66,7 @@ class KtvBottomDockController(
         val onDownloads: () -> Unit,
         val onPitchDown: () -> Unit,
         val onPitchUp: () -> Unit,
+        val onVolumeDelta: (Int) -> Unit = {},
     )
 
     val videoContainer: FrameLayout get() = binding.videoContainer
@@ -81,6 +82,7 @@ class KtvBottomDockController(
     val isVideoVisible: Boolean get() = videoVisible
     private var cachedQrBitmap: Bitmap? = null
     private val iconCachePolicy = BottomDockIconCachePolicy()
+    private val frameRenderCache = BottomDockFrameRenderCache()
 
     init {
         binding.btnDockHome.setOnClickListener { actions.onHome() }
@@ -95,14 +97,8 @@ class KtvBottomDockController(
         binding.btnDockDownloads.setOnClickListener { actions.onDownloads() }
         binding.btnDockToneDown.setOnClickListener { actions.onPitchDown() }
         binding.btnDockToneUp.setOnClickListener { actions.onPitchUp() }
-        binding.btnDockVolDown.setOnClickListener {
-            val am = binding.root.context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
-            am?.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_LOWER, android.media.AudioManager.FLAG_SHOW_UI)
-        }
-        binding.btnDockVolUp.setOnClickListener {
-            val am = binding.root.context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
-            am?.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_RAISE, android.media.AudioManager.FLAG_SHOW_UI)
-        }
+        binding.btnDockVolDown.setOnClickListener { actions.onVolumeDelta(-5) }
+        binding.btnDockVolUp.setOnClickListener { actions.onVolumeDelta(5) }
         val handleVideoClick = {
             if (isFullscreen) {
                 onFullscreenClick?.invoke()
@@ -194,6 +190,7 @@ class KtvBottomDockController(
     private fun updateContainerVisibility() {
         if (!isFullscreen) {
             val effectiveVideoVisible = videoVisible && !externalDisplayActive
+            if (!frameRenderCache.shouldApply(effectiveVideoVisible)) return
             val frameState = BottomDockVideoFramePolicy.resolve(effectiveVideoVisible)
             playerView.visibility = if (effectiveVideoVisible) View.VISIBLE else View.INVISIBLE
             val shouldShowContainer = effectiveVideoVisible
@@ -227,34 +224,90 @@ class KtvBottomDockController(
         }
     }
 
+    enum class DockFocusUpMode {
+        KIOSK_DASHBOARD,
+        KIOSK_BROWSER,
+        HEADER_BAR,
+    }
+
+    private fun orderedVisibleFocusableControls(): List<View> = listOf(
+        binding.btnDockPlayPause,
+        binding.btnDockVocal,
+        binding.btnDockRestart,
+        binding.btnDockNext,
+        binding.btnDockVolDown,
+        binding.videoContainer,
+        binding.btnDockVolUp,
+        binding.btnDockToneDown,
+        binding.btnDockToneUp,
+        binding.btnDockDownloads,
+        binding.btnDockQueue,
+    )
+
+    fun defaultDownTargetId(): Int {
+        if (binding.root.visibility != View.VISIBLE) return View.NO_ID
+        return orderedVisibleFocusableControls()
+            .firstOrNull { it.visibility == View.VISIBLE && it.isFocusable }
+            ?.id
+            ?: View.NO_ID
+    }
+
+    fun focusDefaultControl(headerFallback: View? = null): Boolean {
+        if (binding.root.visibility == View.VISIBLE) {
+            val target = orderedVisibleFocusableControls()
+                .firstOrNull { it.visibility == View.VISIBLE && it.isFocusable }
+            if (target != null && target.requestRemoteFocus()) return true
+        }
+        return headerFallback
+            ?.takeIf { it.visibility == View.VISIBLE && it.isFocusable }
+            ?.requestRemoteFocus() == true
+    }
+
     fun focusVideo() {
-        binding.videoContainer.requestFocus()
+        binding.videoContainer.requestRemoteFocus()
     }
 
     fun focusHome() {
-        binding.btnDockHome.requestFocus()
+        focusDefaultControl()
     }
 
     fun focusMixer() {
-        binding.btnDockMixer.requestFocus()
+        focusDefaultControl()
     }
 
     fun updateFocusUpTargets(isDashboard: Boolean) {
-        val browserLeftTarget = if (isDashboard) R.id.tileTikTok else R.id.browserResultsRecyclerView
-        val browserCenterTarget = if (isDashboard) R.id.tileSongName else R.id.browserResultsRecyclerView
-        val browserRightTarget = if (isDashboard) R.id.tileLocal else R.id.browserResultsRecyclerView
+        updateFocusUpMode(
+            if (isDashboard) DockFocusUpMode.KIOSK_DASHBOARD else DockFocusUpMode.KIOSK_BROWSER,
+        )
+    }
 
-        binding.btnDockPlayPause.nextFocusUpId = browserLeftTarget
-        binding.btnDockVocal.nextFocusUpId = browserLeftTarget
-        binding.btnDockRestart.nextFocusUpId = browserLeftTarget
-        binding.btnDockNext.nextFocusUpId = browserCenterTarget
-        binding.btnDockVolDown.nextFocusUpId = browserCenterTarget
-        binding.videoContainer.nextFocusUpId = browserCenterTarget
-        binding.btnDockVolUp.nextFocusUpId = if (isDashboard) R.id.tileTheme else browserRightTarget
-        binding.btnDockToneDown.nextFocusUpId = if (isDashboard) R.id.tileFavorites else browserRightTarget
-        binding.btnDockToneUp.nextFocusUpId = if (isDashboard) R.id.tileFavorites else browserRightTarget
-        binding.btnDockDownloads.nextFocusUpId = browserRightTarget
-        binding.btnDockQueue.nextFocusUpId = browserRightTarget
+    fun updateFocusUpMode(mode: DockFocusUpMode, headerAnchorId: Int = View.NO_ID) {
+        when (mode) {
+            DockFocusUpMode.KIOSK_DASHBOARD,
+            DockFocusUpMode.KIOSK_BROWSER -> {
+                val isDashboard = mode == DockFocusUpMode.KIOSK_DASHBOARD
+                val browserLeftTarget = if (isDashboard) R.id.tileTikTok else R.id.browserResultsRecyclerView
+                val browserCenterTarget = if (isDashboard) R.id.tileSongName else R.id.browserResultsRecyclerView
+                val browserRightTarget = if (isDashboard) R.id.tileLocal else R.id.browserResultsRecyclerView
+
+                binding.btnDockPlayPause.nextFocusUpId = browserLeftTarget
+                binding.btnDockVocal.nextFocusUpId = browserLeftTarget
+                binding.btnDockRestart.nextFocusUpId = browserLeftTarget
+                binding.btnDockNext.nextFocusUpId = browserCenterTarget
+                binding.btnDockVolDown.nextFocusUpId = browserCenterTarget
+                binding.videoContainer.nextFocusUpId = browserCenterTarget
+                binding.btnDockVolUp.nextFocusUpId = if (isDashboard) R.id.tileTheme else browserRightTarget
+                binding.btnDockToneDown.nextFocusUpId = if (isDashboard) R.id.tileFavorites else browserRightTarget
+                binding.btnDockToneUp.nextFocusUpId = if (isDashboard) R.id.tileFavorites else browserRightTarget
+                binding.btnDockDownloads.nextFocusUpId = browserRightTarget
+                binding.btnDockQueue.nextFocusUpId = browserRightTarget
+            }
+            DockFocusUpMode.HEADER_BAR -> {
+                orderedVisibleFocusableControls().forEach { control ->
+                    control.nextFocusUpId = headerAnchorId
+                }
+            }
+        }
     }
 
     fun toggleFullscreen() {
@@ -269,6 +322,7 @@ class KtvBottomDockController(
     fun enterFullscreen(): Boolean {
         if (!DockFullscreenPolicy.canEnterFullscreen(videoVisible, externalDisplayActive, isFullscreen)) return false
         isFullscreen = true
+        frameRenderCache.invalidate()
         applyWindowBounds(DockFullscreenPolicy.boundsFor(true))
         txtNowPlaying?.visibility = View.GONE
         imgQr?.visibility = View.GONE
@@ -279,6 +333,7 @@ class KtvBottomDockController(
     fun exitFullscreen() {
         if (!isFullscreen) return
         isFullscreen = false
+        frameRenderCache.invalidate()
         applyWindowBounds(DockFullscreenPolicy.boundsFor(false))
         txtNowPlaying?.visibility = View.GONE
         imgQr?.visibility = View.GONE

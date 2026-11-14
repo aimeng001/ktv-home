@@ -45,6 +45,7 @@ import com.homektv.tv.ui.kiosk.KtvSingerRegionPolicy
 import com.homektv.tv.ui.kiosk.KioskCategoryLoadPolicy
 import com.homektv.tv.ui.kiosk.KioskCommercialTagPolicy
 import com.homektv.tv.ui.kiosk.KioskCategoryMode
+import com.homektv.tv.ui.kiosk.KioskSongGridPaginationPolicy
 import com.homektv.tv.ui.kiosk.KtvDashboardPhotoCarousel
 import com.homektv.tv.ui.kiosk.KtvGlobalSearchPolicy
 import com.homektv.tv.ui.kiosk.T9PinyinSearchPolicy
@@ -76,6 +77,7 @@ class KtvKioskOverlayController(
     private val shouldExitOnBack: () -> Boolean = { true },
     initialExternalDisplayActive: Boolean = false,
     private val globalSearchEnabled: () -> Boolean = { true },
+    private val onRequestExitConfirm: (hasPlaying: Boolean) -> Unit = {},
 ) {
 
     private val ActivityMainBinding.kioskOverlay: ViewKtvKioskOverlayBinding
@@ -104,13 +106,13 @@ class KtvKioskOverlayController(
     }
 
     val presentationState = KioskPresentationState(initialTab = KioskTab.DASHBOARD)
-    private val backExitGate = com.homektv.tv.navigation.BackExitGate()
 
     private val browserSongAdapter = KtvKioskBrowserSongAdapter(
         onOrder = ::orderSong,
         onOrderTop = ::orderSongTop,
         onToggleFavorite = personalActionRouter::toggleFavorite,
         imageLoader = ::loadSingerAvatar,
+        onBottomRowDown = ::focusPaginationBarFromSongGrid,
     )
     private val singerAvatarCache = WeightedLruCache<String, android.graphics.Bitmap>(
         capacity = 128,
@@ -134,6 +136,9 @@ class KtvKioskOverlayController(
     private var artistsLoaded = false
     private var rankingsLoaded = false
     private var browsingAllSongs = false
+    private var currentSongPageIndex = 0
+    private var lastSongListResetSignature = ""
+    private var currentLoadedSongs: List<SongDto> = emptyList()
     private var pendingBrowserPageTarget: Int? = null
     private var pendingSingerPageTarget: Int? = null
     private var pendingCommercialTagRoute: KioskCommercialRoute? = null
@@ -178,29 +183,19 @@ class KtvKioskOverlayController(
         // 1. 列表布局绑定
         overlay.singerRecyclerView.layoutManager = LinearLayoutManager(activity)
         overlay.singerRecyclerView.adapter = singerAdapter
+        overlay.singerRecyclerView.itemAnimator = null
 
-        browserBinding.browserResultsRecyclerView.layoutManager = GridLayoutManager(activity, 3)
-        browserBinding.browserResultsRecyclerView.adapter = browserSongAdapter
-        browserBinding.browserResultsRecyclerView.addOnLayoutChangeListener { view, _, top, _, bottom, _, _, _, _ ->
-            val availableHeight = (bottom - top) - view.paddingTop
-            if (availableHeight <= 0) return@addOnLayoutChangeListener
-            val rowStepPx = TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP,
-                50f,
-                view.resources.displayMetrics,
-            ).roundToInt().coerceAtLeast(1)
-            val visibleRows = (availableHeight / rowStepPx).coerceIn(1, 5)
-            val desiredPaddingBottom = (availableHeight - visibleRows * rowStepPx).coerceAtLeast(0)
-            if (view.paddingBottom != desiredPaddingBottom) {
-                view.post {
-                    if (view.paddingBottom != desiredPaddingBottom) {
-                        view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, desiredPaddingBottom)
-                    }
-                }
-            }
+        browserBinding.browserResultsRecyclerView.layoutManager = object : GridLayoutManager(
+            activity,
+            KioskSongGridPaginationPolicy.COLUMNS,
+        ) {
+            override fun canScrollVertically(): Boolean = false
         }
+        browserBinding.browserResultsRecyclerView.adapter = browserSongAdapter
+        browserBinding.browserResultsRecyclerView.itemAnimator = null
         browserBinding.browserSingerRecyclerView.layoutManager = GridLayoutManager(activity, 8)
         browserBinding.browserSingerRecyclerView.adapter = singerAdapter
+        browserBinding.browserSingerRecyclerView.itemAnimator = null
         bindCommercialCapsuleDpadNavigation()
         installPaging(browserBinding.browserSingerRecyclerView) {
             catalogActions.loadMoreCatalog()
@@ -252,15 +247,6 @@ class KtvKioskOverlayController(
 
         installPaging(overlay.singerRecyclerView) {
             catalogActions.loadMoreCatalog()
-        }
-        installPaging(browserBinding.browserResultsRecyclerView) {
-            if (browsingAllSongs && presentationState.currentTab.value == KioskTab.PINYIN) {
-                catalogActionRouter.moreAllSongs()
-            } else if (presentationState.selectedArtist.value != null || categoryDetail) {
-                catalogActions.loadMoreCatalog()
-            } else if (presentationState.currentTab.value == KioskTab.PINYIN) {
-                catalogActions.loadMoreSearch()
-            }
         }
 
         // 2. 磁贴与三栏路由绑定
@@ -363,12 +349,18 @@ class KtvKioskOverlayController(
         overlay.kioskKeyboard.onImeRequest = {
             coordinator.resetIdleTimer()
             coordinator.setModalActive(true)
+            val imm = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as? android.view.inputmethod.InputMethodManager
             val inputView = android.widget.EditText(activity).apply {
                 setText(overlay.kioskKeyboard.state.currentKeyword)
                 setSelection(text.length)
                 hint = "输入首字母或歌曲名"
+                setTextColor(android.graphics.Color.WHITE)
+                setHintTextColor(0xFFA8B3C5.toInt())
+                setSingleLine(true)
+                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
             }
-            androidx.appcompat.app.AlertDialog.Builder(activity)
+            val dialog = androidx.appcompat.app.AlertDialog.Builder(activity, R.style.Theme_HomeKtvTv_UpdateDialog)
                 .setTitle("切换系统输入法")
                 .setView(inputView)
                 .setPositiveButton("确定") { _, _ ->
@@ -376,10 +368,40 @@ class KtvKioskOverlayController(
                     overlay.kioskKeyboard.setKeyword(text)
                 }
                 .setNegativeButton("取消", null)
-                .setOnDismissListener {
-                    coordinator.setModalActive(false)
+                .create()
+            inputView.setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+                    actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                ) {
+                    overlay.kioskKeyboard.setKeyword(inputView.text.toString().trim())
+                    dialog.dismiss()
+                    true
+                } else {
+                    false
                 }
-                .show()
+            }
+            dialog.window?.setSoftInputMode(
+                android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE,
+            )
+            dialog.setOnShowListener {
+                inputView.post {
+                    inputView.requestRemoteFocus()
+                    imm?.showSoftInput(inputView, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                }
+            }
+            val cleanup = {
+                imm?.hideSoftInputFromWindow(inputView.windowToken, 0)
+                coordinator.setModalActive(false)
+                overlay.kioskKeyboard.restoreModeBeforeSystemIme()
+                overlay.kioskKeyboard.post { overlay.kioskKeyboard.requestRemoteFocus() }
+            }
+            val hostActivity = activity as? MainActivity
+            if (hostActivity != null) {
+                hostActivity.showTrackedAlertDialog(dialog) { cleanup() }
+            } else {
+                dialog.setOnDismissListener { cleanup() }
+                dialog.show()
+            }
         }
     }
 
@@ -583,12 +605,22 @@ class KtvKioskOverlayController(
         val overlay = binding.kioskOverlay
         val selectedArtist = presentationState.selectedArtist.value
 
+        if (presentationState.currentTab.value == KioskTab.SINGERS &&
+            selectedArtist == null &&
+            state.artists.isNotEmpty()
+        ) {
+            browserBinding.browserSingerRecyclerView.visibility = View.VISIBLE
+        }
         singerAdapter.submitList(state.artists) {
             val pendingTarget = pendingSingerPageTarget
             if (pendingTarget != null && pendingTarget < state.artists.size) {
                 pendingSingerPageTarget = null
                 browserBinding.browserSingerRecyclerView.scrollToPosition(pendingTarget)
                 updatePageIndicator(state)
+            }
+            if (browserBinding.browserSingerRecyclerView.visibility == View.VISIBLE) {
+                browserBinding.browserSingerRecyclerView.requestLayout()
+                browserBinding.browserSingerRecyclerView.invalidate()
             }
         }
         overlay.txtSingerStatus.text = when {
@@ -714,15 +746,37 @@ class KtvKioskOverlayController(
         browserSongAdapter.setSearchKeyword(
             if (tab == KioskTab.PINYIN && selectedArtist == null) state.query else "",
         )
+        val listSignature = songListResetSignature(state)
+        if (listSignature != lastSongListResetSignature) {
+            lastSongListResetSignature = listSignature
+            currentSongPageIndex = 0
+            pendingBrowserPageTarget = null
+        }
+        currentLoadedSongs = visibleSongs
+        val pendingTarget = pendingBrowserPageTarget
+        val stillLoadingMore = state.catalogLoading || state.catalogLoadingMore ||
+            state.searchLoadingMore || state.kioskLibraryBrowse.loadingMore
+        if (pendingTarget != null) {
+            if (pendingTarget < visibleSongs.size) {
+                currentSongPageIndex = pendingTarget / SONG_GRID_PAGE_SIZE
+                pendingBrowserPageTarget = null
+            } else if (!currentSongsHasMore(state) && !stillLoadingMore) {
+                pendingBrowserPageTarget = null
+            }
+        }
+        val songPageSlice = KioskSongGridPaginationPolicy.slicePage(
+            items = visibleSongs,
+            requestedPageIndex = currentSongPageIndex,
+            reportedTotal = currentSongsTotal(state, visibleSongs.size),
+            hasMore = currentSongsHasMore(state),
+            pageSize = SONG_GRID_PAGE_SIZE,
+        )
+        currentSongPageIndex = songPageSlice.pageIndex
         browserSongAdapter.updateQueueProjection(state.queueProjection)
         browserSongAdapter.updateFavoriteIds(state.favoriteIds)
-        browserSongAdapter.submitList(visibleSongs) {
-            val pendingTarget = pendingBrowserPageTarget
-            if (pendingTarget != null && pendingTarget < browserSongAdapter.itemCount) {
-                pendingBrowserPageTarget = null
-                browser.browserResultsRecyclerView.scrollToPosition(pendingTarget)
-                updatePageIndicator()
-            }
+        browserSongAdapter.submitList(songPageSlice.items) {
+            browser.browserResultsRecyclerView.scrollToPosition(0)
+            updatePageIndicator(state)
         }
 
         val isSingersRoot = (tab == KioskTab.SINGERS && selectedArtist == null)
@@ -774,6 +828,7 @@ class KtvKioskOverlayController(
                 tab == KioskTab.PINYIN && state.query.isBlank() -> "暂无精选推荐歌曲"
                 tab == KioskTab.PINYIN && state.loading -> "正在搜索歌曲…"
                 tab == KioskTab.PINYIN && state.query.isNotBlank() -> "未找到相关歌曲"
+                tab == KioskTab.CATEGORIES && !categoryDetail && state.catalogLoading -> "正在加载分类…"
                 tab == KioskTab.CATEGORIES && categoryDetail && state.catalogLoading -> "正在加载分类歌曲…"
                 tab == KioskTab.CATEGORIES && categoryDetail && state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null ->
                     "分类歌曲加载失败，按确定重试"
@@ -1144,54 +1199,109 @@ class KtvKioskOverlayController(
             return
         }
 
-        val rv = browserBinding.browserResultsRecyclerView
-        val lm = rv.layoutManager as? GridLayoutManager ?: return
-        val first = lm.findFirstVisibleItemPosition().coerceAtLeast(0)
-        val currentPageStart = (first / SONG_GRID_PAGE_SIZE) * SONG_GRID_PAGE_SIZE
-        val target = if (delta > 0) currentPageStart + SONG_GRID_PAGE_SIZE
-            else maxOf(0, currentPageStart - SONG_GRID_PAGE_SIZE)
-        if (target >= browserSongAdapter.itemCount && delta > 0) {
-            val hasMore = when {
-                browsingAllSongs -> state.kioskLibraryBrowse.hasMore
-                presentationState.selectedArtist.value != null || categoryDetail -> state.catalogHasMore
-                presentationState.currentTab.value == KioskTab.PINYIN -> state.searchHasMore
-                else -> false
+        val action = KioskSongGridPaginationPolicy.resolveTurnPage(
+            currentPageIndex = currentSongPageIndex,
+            delta = delta,
+            loadedCount = currentLoadedSongs.size,
+            hasMore = currentSongsHasMore(state),
+        )
+        when (action) {
+            is KioskSongGridPaginationPolicy.TurnPageAction.ShowPage -> {
+                currentSongPageIndex = action.targetPageIndex
+                pendingBrowserPageTarget = null
+                renderThreeColumnBrowser(state)
             }
-            if (hasMore) {
-                pendingBrowserPageTarget = target
-                when {
-                    browsingAllSongs -> catalogActionRouter.moreAllSongs()
-                    presentationState.selectedArtist.value != null || categoryDetail -> catalogActions.loadMoreCatalog()
-                    presentationState.currentTab.value == KioskTab.PINYIN -> catalogActions.loadMoreSearch()
-                }
-            } else if (browserSongAdapter.itemCount > 0) {
-                rv.smoothScrollToPosition(browserSongAdapter.itemCount - 1)
+            is KioskSongGridPaginationPolicy.TurnPageAction.LoadMoreForPage -> {
+                pendingBrowserPageTarget = action.targetPageIndex * SONG_GRID_PAGE_SIZE
+                requestNextSongsPage()
             }
-        } else if (browserSongAdapter.itemCount > 0) {
-            rv.smoothScrollToPosition(target.coerceAtMost(browserSongAdapter.itemCount - 1))
+            KioskSongGridPaginationPolicy.TurnPageAction.Stay -> Unit
         }
         updatePageIndicator(state)
+    }
+
+    private fun focusPaginationBarFromSongGrid(): Boolean {
+        val target = listOf(
+            browserBinding.btnPageNext,
+            browserBinding.btnPagePrev,
+            browserBinding.btnBrowserBack,
+        ).firstOrNull { it.isShown && it.isFocusable } ?: return false
+        return target.requestFocus()
+    }
+
+    private fun currentSongsHasMore(state: ControllerUiState): Boolean = when {
+        browsingAllSongs -> state.kioskLibraryBrowse.hasMore
+        presentationState.selectedArtist.value != null || categoryDetail -> state.catalogHasMore
+        presentationState.currentTab.value == KioskTab.PINYIN && state.query.isNotBlank() -> state.searchHasMore
+        presentationState.currentTab.value == KioskTab.PINYIN -> state.catalogHasMore
+        else -> false
+    }
+
+    private fun currentSongsTotal(state: ControllerUiState, loadedCount: Int): Long = when {
+        browsingAllSongs -> state.kioskLibraryBrowse.total
+        presentationState.selectedArtist.value != null || categoryDetail -> state.catalogTotal
+        presentationState.currentTab.value == KioskTab.PINYIN && state.query.isNotBlank() && state.searchHasMore ->
+            (loadedCount + SONG_GRID_PAGE_SIZE).toLong()
+        presentationState.currentTab.value == KioskTab.PINYIN && state.query.isBlank() -> state.catalogTotal
+        else -> loadedCount.toLong()
+    }.coerceAtMost(MAX_VISIBLE_CATALOG_ITEMS.toLong())
+
+    private fun requestNextSongsPage() {
+        val state = controllerState
+        when {
+            browsingAllSongs -> catalogActionRouter.moreAllSongs()
+            presentationState.selectedArtist.value != null || categoryDetail -> catalogActions.loadMoreCatalog()
+            presentationState.currentTab.value == KioskTab.PINYIN && state.query.isNotBlank() ->
+                catalogActions.loadMoreSearch()
+            presentationState.currentTab.value == KioskTab.PINYIN -> catalogActions.loadMoreCatalog()
+        }
+    }
+
+    private fun songListResetSignature(state: ControllerUiState): String = buildString {
+        append(presentationState.currentTab.value.name).append('|')
+        append(presentationState.commercialRoute.value?.name ?: "").append('|')
+        append(presentationState.selectedArtist.value ?: "").append('|')
+        append(categoryMode.name).append('|')
+        append(categoryDetail).append('|')
+        append(browsingAllSongs).append('|')
+        append(playlistDetail).append('|')
+        append(state.query).append('|')
+        append(state.catalogValue)
     }
 
     private fun updatePageIndicator(state: ControllerUiState = controllerState) {
         val isSingerRoot = presentationState.currentTab.value == KioskTab.SINGERS &&
             presentationState.selectedArtist.value == null
-        val rv = if (isSingerRoot) browserBinding.browserSingerRecyclerView
-            else browserBinding.browserResultsRecyclerView
-        val lm = rv.layoutManager as? GridLayoutManager ?: return
-        val first = lm.findFirstVisibleItemPosition().coerceAtLeast(0)
-        val pageSize = if (isSingerRoot) SINGER_GRID_PAGE_SIZE else SONG_GRID_PAGE_SIZE
-        val count = if (isSingerRoot) singerAdapter.itemCount else browserSongAdapter.itemCount
-        val total = when {
-            isSingerRoot -> state.catalogTotal
-            browsingAllSongs -> state.kioskLibraryBrowse.total
-            presentationState.selectedArtist.value != null || categoryDetail -> state.catalogTotal
-            presentationState.currentTab.value == KioskTab.PINYIN && state.searchHasMore -> (count + pageSize).toLong()
-            else -> count.toLong()
-        }.coerceAtMost(MAX_VISIBLE_CATALOG_ITEMS.toLong())
-        val currentPage = (first / pageSize) + 1
-        val totalPages = ((total + pageSize - 1) / pageSize).toInt().coerceAtLeast(1)
-        browserBinding.txtPageNumber.text = "$currentPage / $totalPages"
+        val upGridId = if (isSingerRoot) {
+            R.id.browserSingerRecyclerView
+        } else {
+            R.id.browserResultsRecyclerView
+        }
+        browserBinding.btnPagePrev.nextFocusUpId = upGridId
+        browserBinding.btnPageNext.nextFocusUpId = upGridId
+        browserBinding.btnBrowserBack.nextFocusUpId = upGridId
+
+        if (isSingerRoot) {
+            val rv = browserBinding.browserSingerRecyclerView
+            val lm = rv.layoutManager as? GridLayoutManager ?: return
+            val first = lm.findFirstVisibleItemPosition().coerceAtLeast(0)
+            val total = state.catalogTotal.coerceAtMost(MAX_VISIBLE_CATALOG_ITEMS.toLong())
+            val currentPage = (first / SINGER_GRID_PAGE_SIZE) + 1
+            val totalPages = ((total + SINGER_GRID_PAGE_SIZE - 1) / SINGER_GRID_PAGE_SIZE).toInt().coerceAtLeast(1)
+            browserBinding.txtPageNumber.text = "$currentPage / $totalPages"
+            return
+        }
+
+        val total = currentSongsTotal(state, currentLoadedSongs.size)
+        val slice = KioskSongGridPaginationPolicy.slicePage(
+            items = currentLoadedSongs,
+            requestedPageIndex = currentSongPageIndex,
+            reportedTotal = total,
+            hasMore = currentSongsHasMore(state),
+            pageSize = SONG_GRID_PAGE_SIZE,
+        )
+        currentSongPageIndex = slice.pageIndex
+        browserBinding.txtPageNumber.text = slice.pageLabel
     }
 
     private fun renderSubCategoryRail(tab: KioskTab, route: KioskCommercialRoute?) {
@@ -1638,6 +1748,10 @@ class KtvKioskOverlayController(
             focusController.hasInnerDetailBack = false
             if (wasArtistSelected) {
                 overlay.kioskKeyboard.clear()
+                if (controllerState.query.isNotEmpty()) {
+                    catalogActions.setQuery("")
+                    browserSongAdapter.setSearchKeyword("")
+                }
                 loadDefaultSongs()
             }
         }
@@ -1648,7 +1762,14 @@ class KtvKioskOverlayController(
             KioskTab.DASHBOARD -> if (
                 focusController.isKioskActive && !artistsLoaded && controllerState.artists.isEmpty()
             ) loadArtists()
-            KioskTab.PINYIN -> if (!rankingsLoaded && controllerState.ranking.isEmpty()) loadRankings()
+            KioskTab.PINYIN -> {
+                val activeQuery = if (presentationState.selectedArtist.value == null) controllerState.query else ""
+                if (overlay.kioskKeyboard.state.currentKeyword != activeQuery) {
+                    overlay.kioskKeyboard.setKeyword(activeQuery)
+                }
+                browserSongAdapter.setSearchKeyword(activeQuery)
+                if (!rankingsLoaded && controllerState.ranking.isEmpty()) loadRankings()
+            }
             KioskTab.SINGERS -> if (!artistsLoaded || controllerState.artists.isEmpty()) loadArtists()
             KioskTab.RANKINGS -> if (!rankingsLoaded) loadRankings()
             KioskTab.CATEGORIES -> if (
@@ -2096,7 +2217,7 @@ class KtvKioskOverlayController(
                 waitingList = snapshot.list.filter { it.status == "waiting" },
                 isPlaying = snapshot.state == "playing",
                 statusMessage = staleMessage,
-                retryAvailable = !state.queueLoading,
+                retryAvailable = !state.queueLoading && state.errorFor(com.homektv.tv.controller.UiDomain.QUEUE) != null,
             )
         } else {
             val message = when {
@@ -2238,7 +2359,7 @@ class KtvKioskOverlayController(
             val returnFocus = globalSearchReturnFocus
             globalSearchReturnFocus = null
             returnFocus?.post {
-                if (returnFocus.isAttachedToWindow && returnFocus.isShown) returnFocus.requestFocus()
+                if (returnFocus.isAttachedToWindow && returnFocus.isShown) returnFocus.requestRemoteFocus()
             }
         }
     }
@@ -2364,7 +2485,6 @@ class KtvKioskOverlayController(
 
     private fun returnToDashboardFromBrowser() {
         showVarietyPanel(false)
-        backExitGate.reset()
         if (globalSearchReturnFocus != null) {
             val returnFocus = globalSearchReturnFocus
             globalSearchReturnFocus = null
@@ -2430,9 +2550,6 @@ class KtvKioskOverlayController(
                 return true
             }
         }
-        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) {
-            backExitGate.reset()
-        }
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (!focusController.shouldInterceptBack(event.action)) {
                 return false
@@ -2454,23 +2571,15 @@ class KtvKioskOverlayController(
                             returnToDashboardFromBrowser()
                         } else {
                             val hasPlaying = currentSnapshot?.playing != null || currentSnapshot?.state == "playing"
-                            val action = KioskLifecyclePolicy.resolveDashboardBackAction(hasPlaying)
-                            if (action == KioskBackAction.RETURN_TO_FULLSCREEN_MV) {
-                                backExitGate.reset()
-                                bottomDockController.enterFullscreen()
-                            } else if (!shouldExitOnBack()) {
-                                backExitGate.reset()
-                            } else {
-                                val decision = backExitGate.onBack(android.os.SystemClock.elapsedRealtime(), isAtTopLevel = true)
-                                when (decision) {
-                                    com.homektv.tv.navigation.BackExitDecision.CONSUMED_AND_PROMPTED -> {
-                                        Toast.makeText(activity, "当前已在大厅首页，再次按返回键退出应用", Toast.LENGTH_SHORT).show()
-                                    }
-                                    com.homektv.tv.navigation.BackExitDecision.EXIT_APP -> {
-                                        activity.finish()
-                                    }
-                                    com.homektv.tv.navigation.BackExitDecision.IGNORED -> {}
+                            when (KioskLifecyclePolicy.resolveDashboardBackAction(hasPlaying, shouldExitOnBack())) {
+                                KioskBackAction.PROMPT_EXIT_WITH_FULLSCREEN,
+                                KioskBackAction.PROMPT_EXIT_ONLY -> {
+                                    onRequestExitConfirm(hasPlaying)
                                 }
+                                KioskBackAction.RETURN_TO_FULLSCREEN_MV -> {
+                                    bottomDockController.enterFullscreen()
+                                }
+                                KioskBackAction.STAY_ON_DASHBOARD -> Unit
                             }
                         }
                     },

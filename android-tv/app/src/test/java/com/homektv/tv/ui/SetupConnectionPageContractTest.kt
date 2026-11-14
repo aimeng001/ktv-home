@@ -25,8 +25,10 @@ class SetupConnectionPageContractTest {
         assertEquals("gone", manual.getAttribute("android:visibility"))
         assertEquals("@+id/setupDiscoveryPage", ancestorWithId(byId.getValue("@+id/historyContainer")))
         assertEquals("@+id/setupDiscoveryPage", ancestorWithId(byId.getValue("@+id/lanContainer")))
-        listOf("inputHost", "inputNickname", "inputCredential", "modeGroup", "btnConnect")
+        listOf("inputHost", "inputCredential", "btnConnect")
             .forEach { id -> assertEquals("@+id/setupManualPage", ancestorWithId(byId.getValue("@+id/$id"))) }
+        listOf("inputNickname", "modeGroup", "modePlayer", "modeController", "modeCombined")
+            .forEach { id -> assertFalse("精简后的连接页不应再包含 $id", byId.containsKey("@+id/$id")) }
 
         assertTrue(byId.containsKey("@+id/btnOpenManualSetup"))
         assertTrue(byId.containsKey("@+id/btnSetupBackToDiscovery"))
@@ -44,6 +46,9 @@ class SetupConnectionPageContractTest {
         assertTrue(source.contains("binding.setupManualPage.visibility = if (showingDiscovery) View.GONE else View.VISIBLE"))
         assertTrue(source.contains("binding.root.post { firstFocusableView()?.requestFocus() }"))
         assertTrue(source.contains("focusables += binding.inputCredential"))
+        assertTrue(source.contains("focusables += binding.btnConnect"))
+        assertFalse(source.contains("applyResponsiveLayout"))
+        assertFalse(source.contains("applyOrientationForMode"))
         assertTrue(source.contains("outState.putString(KEY_SETUP_PAGE, setupPage.name)"))
         assertFalse(source.substringAfter("private fun showSetupPage").substringBefore("private fun startRhythm").contains("setText("))
     }
@@ -56,6 +61,30 @@ class SetupConnectionPageContractTest {
             current = current.parentNode
         }
         return null
+    }
+
+    @Test
+    fun setupActivityPrefillsServerHostConnectsFocusToSubmitButtonAndScrollsFormScrollView() {
+        val source = locate("src/main/java/com/homektv/tv/ui/SetupActivity.kt").readText()
+        val onCreateFn = source.substringAfter("override fun onCreate(savedInstanceState: Bundle?)")
+            .substringBefore("override fun onSaveInstanceState")
+        assertTrue(
+            "onCreate 在未传入 candidate 且无恢复状态时必须回填已配置的 config.serverHost",
+            onCreateFn.contains("config.serverHost") && onCreateFn.contains("inputHost.text.isNullOrBlank()"),
+        )
+
+        val focusFn = source.substringAfter("private fun rebuildFocusChain()")
+            .substringBefore("private fun firstFocusableView")
+        assertTrue(
+            "手动连接页焦点链须依次包含返回、地址、密钥与连接按钮",
+            focusFn.contains("binding.inputCredential") &&
+                focusFn.contains("binding.btnConnect") &&
+                !focusFn.contains("modeGroup"),
+        )
+        assertTrue(
+            "焦点滚动应作用在可滚动的 setupFormScroll 而非外层 FrameLayout setupScroll",
+            source.contains("binding.setupFormScroll.post"),
+        )
     }
 
     private fun locate(relativePath: String): File {

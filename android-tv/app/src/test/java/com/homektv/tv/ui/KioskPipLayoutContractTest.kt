@@ -24,7 +24,6 @@ class KioskPipLayoutContractTest {
         assertEquals("64dp", mainById("page_container").getAttribute("android:layout_marginTop"))
         assertEquals("match_parent", mainById("page_container").getAttribute("android:layout_height"))
         assertEquals(mainById("page_container"), mainById("kioskOverlayStub").parentNode)
-        assertEquals("gone", mainById("homeHeroPanel").getAttribute("android:visibility"))
         val dockInclude = (0 until mainElements.length)
             .map { mainElements.item(it) }
             .filterIsInstance<Element>()

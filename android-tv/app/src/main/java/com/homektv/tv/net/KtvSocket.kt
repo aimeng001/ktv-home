@@ -40,7 +40,6 @@ import com.homektv.tv.session.ServerRecoveryCoordinator
 class KtvSocket(
     private val config: AppConfig,
     private val listener: Listener,
-    private val role: KtvSocketRole = KtvSocketRole.PLAYER,
 ) {
     interface Listener {
         /** 收到 sync_full 或任一携带完整快照的广播事件（now_playing/queue_updated/…）。 */
@@ -86,10 +85,7 @@ class KtvSocket(
     private val sessionServer = config.serverForHost(config.serverHost)
     private val sessionHost = sessionServer?.hostPort ?: config.serverHost
     private val sessionPlayerToken = config.playerTokenFor(sessionServer)
-    private val sessionUserToken = config.userTokenFor(sessionServer)
-    private val playbackBridgeEpoch = if (role == KtvSocketRole.PLAYER) {
-        PlaybackSnapshotBridge.beginSession(sessionHost)
-    } else null
+    private val playbackBridgeEpoch = PlaybackSnapshotBridge.beginSession(sessionHost)
     private val finishedOutbox = FinishedReportOutbox(
         config.pendingFinishedQueueIds(sessionServer),
         { queueIds -> config.savePendingFinishedQueueIds(queueIds, sessionServer) },
@@ -115,13 +111,12 @@ class KtvSocket(
     // 15s 应用层心跳
     private val heartbeat = object : Runnable {
         override fun run() {
-            val generation = if (role == KtvSocketRole.PLAYER) leaseGate.activeGeneration() else null
-            if (role == KtvSocketRole.PLAYER) {
-                if (generation == null) listener.onPlayerRole(false)
-                else {
-                    flushFinishedReports(generation)
-                    flushPlaybackErrors(generation)
-                }
+            val generation = leaseGate.activeGeneration()
+            if (generation == null) {
+                listener.onPlayerRole(false)
+            } else {
+                flushFinishedReports(generation)
+                flushPlaybackErrors(generation)
             }
             ws?.send("""{"type":"ping","payload":{"generation":${generation ?: "null"}}}""")
             main.postDelayed(this, HEARTBEAT_MS)
@@ -174,7 +169,6 @@ class KtvSocket(
 
     /** 上行播放进度（P1.28 播放引擎每 1s 调用）。 */
     fun sendProgress(positionMs: Long, queueId: Long? = null) {
-        if (role != KtvSocketRole.PLAYER) return
         val generation = leaseGate.activeGeneration() ?: return
         val payload = buildJsonObject {
             put("position_ms", positionMs)
@@ -186,7 +180,6 @@ class KtvSocket(
 
     /** 上行播放完成（P1.33 自动连播）。 */
     fun sendFinished(queueId: Long? = null) {
-        if (role != KtvSocketRole.PLAYER) return
         val id = queueId?.takeIf { it > 0 } ?: return
         when (finishedOutbox.enqueue(id)) {
             FinishedReportOutbox.EnqueueResult.ADDED,
@@ -204,7 +197,6 @@ class KtvSocket(
 
     /** 播放文件不可读时上报，服务端会标记当前项异常并推进队列。 */
     fun sendPlayError(message: String, fileId: Long? = null, queueId: Long? = null) {
-        if (role != KtvSocketRole.PLAYER) return
         val id = queueId?.takeIf { it > 0 } ?: return
         when (playErrorOutbox.enqueue(PendingPlaybackError(id, fileId, message))) {
             PlaybackErrorOutbox.EnqueueResult.ADDED,
@@ -223,16 +215,11 @@ class KtvSocket(
         val epoch = socketEpoch.begin()
         syncChunkAssembler.reset()
         syncReadyGate.onOpen()
-        val url = when (role) {
-            KtvSocketRole.PLAYER -> config.wsUrlFor(sessionServer, sessionPlayerToken)
-            KtvSocketRole.CONTROLLER -> config.controllerWsUrlFor(sessionServer, sessionUserToken)
-        }
+        val url = config.wsUrlFor(sessionServer, sessionPlayerToken)
         Log.d(TAG, "connecting ${safeWebSocketLogTarget(sessionHost)}")
         val request = Request.Builder().url(url)
-        if (role == KtvSocketRole.PLAYER) {
-            playerCredentialForTransport(sessionHost.orEmpty(), config.playerCredentialFor(sessionServer))
-                ?.let { request.header("X-Player-Credential", it) }
-        }
+        playerCredentialForTransport(sessionHost.orEmpty(), config.playerCredentialFor(sessionServer))
+            ?.let { request.header("X-Player-Credential", it) }
         val req = request.build()
         ws = http.newWebSocket(req, socketListener(epoch))
     }
@@ -392,7 +379,6 @@ class KtvSocket(
     ) {
         when (type) {
             "player_role", "pong" -> {
-                if (role != KtvSocketRole.PLAYER) return
                 val assignment = payload as? JsonObject ?: return
                 val role = assignment["role"]?.jsonPrimitive?.contentOrNullSafe() ?: return
                 val generation = runCatching { assignment["generation"]?.jsonPrimitive?.long }.getOrNull() ?: return
@@ -407,7 +393,6 @@ class KtvSocket(
         leaseGate.activeGeneration()?.let(::flushPlaybackErrors)
             }
             "playback_report_ack" -> {
-                if (role != KtvSocketRole.PLAYER) return
                 val ack = payload as? JsonObject ?: return
                 val queueId = runCatching { ack["queue_id"]?.jsonPrimitive?.long }.getOrNull() ?: return
                 val status = ack["status"]?.jsonPrimitive?.contentOrNullSafe() ?: return

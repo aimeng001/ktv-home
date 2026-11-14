@@ -41,8 +41,7 @@
                     android:focusable="true"
                     android:nextFocusLeft="@id/drawerTabHistory"
                     android:nextFocusRight="@id/drawerTabQueue"
-                    android:nextFocusUp="@id/btnDrawerClose"
-                    android:nextFocusDown="@id/btnDownloadStartAll">
+                    android:nextFocusUp="@id/btnDrawerClose">
 
                     <TextView
                         android:id="@+id/txtDrawerTabDownloads"
@@ -357,7 +356,7 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_ktv_queue_download_action"
                         android:enabled="false"
-                        android:focusable="true"
+                        android:focusable="false"
                         android:text="@string/queue_drawer_download_start_all"
                         android:textColor="@color/ktv_drawer_disabled"
                         android:textSize="11sp" />
@@ -370,7 +369,7 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_ktv_queue_download_action"
                         android:enabled="false"
-                        android:focusable="true"
+                        android:focusable="false"
                         android:text="@string/queue_drawer_download_pause_all"
                         android:textColor="@color/ktv_drawer_disabled"
                         android:textSize="11sp" />
@@ -382,7 +381,7 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_ktv_queue_download_action"
                         android:enabled="false"
-                        android:focusable="true"
+                        android:focusable="false"
                         android:text="@string/queue_drawer_download_delete_all"
                         android:textColor="@color/ktv_drawer_disabled"
                         android:textSize="11sp" />

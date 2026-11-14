@@ -16,11 +16,10 @@ class StartupScanPolicyTest {
             scanRequestSupported = true,
         )
 
-        assertTrue(StartupScanPolicy.shouldRequest(true, true, true, eligible))
-        assertFalse(StartupScanPolicy.shouldRequest(false, true, true, eligible))
-        assertFalse(StartupScanPolicy.shouldRequest(true, false, true, eligible))
-        assertFalse(StartupScanPolicy.shouldRequest(true, true, false, eligible))
-        assertFalse(StartupScanPolicy.shouldRequest(true, true, true, null))
+        assertTrue(StartupScanPolicy.shouldRequest(true, true, eligible))
+        assertFalse(StartupScanPolicy.shouldRequest(false, true, eligible))
+        assertFalse(StartupScanPolicy.shouldRequest(true, false, eligible))
+        assertFalse(StartupScanPolicy.shouldRequest(true, true, null))
     }
 
     @Test
@@ -33,10 +32,10 @@ class StartupScanPolicyTest {
             scanRequestSupported = true,
         )
 
-        assertFalse(StartupScanPolicy.shouldRequest(true, true, true, eligible.copy(libraryMode = "MANAGED")))
-        assertFalse(StartupScanPolicy.shouldRequest(true, true, true, eligible.copy(rootState = "NOT_FOUND")))
-        assertFalse(StartupScanPolicy.shouldRequest(true, true, true, eligible.copy(rootIdentityState = "MISMATCH")))
-        assertFalse(StartupScanPolicy.shouldRequest(true, true, true, eligible.copy(scanState = "RUNNING")))
-        assertFalse(StartupScanPolicy.shouldRequest(true, true, true, eligible.copy(scanRequestSupported = false)))
+        assertFalse(StartupScanPolicy.shouldRequest(true, true, eligible.copy(libraryMode = "MANAGED")))
+        assertFalse(StartupScanPolicy.shouldRequest(true, true, eligible.copy(rootState = "NOT_FOUND")))
+        assertFalse(StartupScanPolicy.shouldRequest(true, true, eligible.copy(rootIdentityState = "MISMATCH")))
+        assertFalse(StartupScanPolicy.shouldRequest(true, true, eligible.copy(scanState = "RUNNING")))
+        assertFalse(StartupScanPolicy.shouldRequest(true, true, eligible.copy(scanRequestSupported = false)))
     }
 }

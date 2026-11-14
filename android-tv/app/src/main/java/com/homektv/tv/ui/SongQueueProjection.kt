@@ -36,4 +36,8 @@ object SongQueueProjection {
         }
         return result
     }
+
+    /** Counts waiting entries present in the authoritative queue snapshot. */
+    fun waitingCount(snapshot: QueueSnapshot): Int =
+        snapshot.list.count { it.status == "waiting" }
 }

@@ -138,6 +138,23 @@ class CollaborativeArtistIntegrationTest {
                 .containsExactly("单依纯", "王子异");
     }
 
+    @Test
+    void browseCategorySongsByArtistKeyMatchesCreditedAndLegacyRowsWithFunctionalIndexes() {
+        Song credited = save("晴天", "周杰伦", "artist-key-credited");
+        artistCredits.replace(credited.getId(), List.of("周杰伦"));
+        save("七里香", " 周 杰 伦 ", "artist-key-legacy");
+        Song other = save("江南", "林俊杰", "artist-key-other");
+        artistCredits.replace(other.getId(), List.of("林俊杰"));
+
+        String canonicalKey = ArtistCreditParser.key("周杰伦");
+        CategoryBrowseService.SongPage page = browseService.songsPage(
+                "", canonicalKey.toUpperCase(), "", "", "", "", "title", 0, 15);
+
+        assertThat(page.total()).isEqualTo(2L);
+        assertThat(page.items()).extracting(SongDto::title)
+                .containsExactlyInAnyOrder("晴天", "七里香");
+    }
+
     private Song save(String title, String artist, String fingerprint) {
         Song song = new Song();
         song.setTitle(title);

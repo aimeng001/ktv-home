@@ -10,17 +10,16 @@ import org.w3c.dom.Element
 
 class AndroidLintWarningRemediationContractTest {
     @Test
-    fun mainActivityDoesNotPinOrientationInTheManifest() {
+    fun mainActivityPinsLandscapeOrientationAndRemovesDynamicModeSwitching() {
         val manifest = parse("src/main/AndroidManifest.xml")
         val mainActivity = elements(manifest).single {
             it.getAttribute("android:name") == ".ui.MainActivity"
         }
 
-        assertFalse(mainActivity.hasAttribute("android:screenOrientation"))
-        assertTrue(read("src/main/java/com/homektv/tv/ui/SetupActivity.kt").contains("applyOrientationForMode(mode)"))
+        assertEquals("sensorLandscape", mainActivity.getAttribute("android:screenOrientation"))
+        assertFalse(read("src/main/java/com/homektv/tv/ui/SetupActivity.kt").contains("applyOrientationForMode("))
         val mainActivitySource = read("src/main/java/com/homektv/tv/ui/MainActivity.kt")
-        assertTrue(mainActivitySource.contains("applyOrientationForMode(config.effectiveMode())"))
-        assertTrue(mainActivitySource.contains("requestedOrientation = when"))
+        assertFalse(mainActivitySource.contains("applyOrientationForMode("))
     }
 
     @Test

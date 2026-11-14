@@ -132,17 +132,12 @@ class KtvDashboardLayoutContractTest {
     }
 
     @Test
-    fun rootDockQueueButtonUsesDrawerForKioskModesEvenWhenKioskIsInactive() {
+    fun rootDockQueueButtonUsesDrawerEvenWhenKioskIsInactive() {
         val source = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
         val queueAction = source.substringAfter("private fun showQueueOverlay(")
             .substringBefore("private fun showHomePage()")
 
-        assertTrue(queueAction.contains("if (modeCapabilities.canOpenKiosk)"))
         assertTrue(queueAction.contains("ensureKioskController().openQueueDrawer(onDismiss)"))
-        assertTrue(queueAction.indexOf("ensureKioskController().openQueueDrawer(onDismiss)") <
-            queueAction.indexOf("binding.queueOverlay.visibility = View.VISIBLE"))
-        assertTrue("non-kiosk device modes must retain the existing queue page",
-            queueAction.contains("binding.queueOverlay.visibility = View.VISIBLE"))
     }
 
     @Test
@@ -197,7 +192,7 @@ class KtvDashboardLayoutContractTest {
             dashboardView.contains("R.drawable.ktv_ref_v50_tile_singers_03") &&
             dashboardView.contains("R.drawable.ktv_ref_v50_tile_songs_03"))
         assertTrue("the image scale mode avoids FIT_XY stretching across tiles", dashboardView.contains("ImageView.ScaleType.CENTER_CROP"))
-        assertEquals(10_000L, KtvDashboardPhotoCarousel.INTERVAL_MS)
+        assertEquals(3_500L, KtvDashboardPhotoCarousel.INTERVAL_MS)
     }
 
     private fun elementChildren(parent: Element): List<Element> = (0 until parent.childNodes.length)

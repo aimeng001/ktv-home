@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -101,26 +102,60 @@ public final class ResourceBudget {
 
     /** Reserves a live transcode slot before returning an HTTP success response. */
     public Optional<Permit> tryAcquireLiveTranscode() {
+        return tryAcquireLiveTranscode(Duration.ZERO);
+    }
+
+    /** Reserves a live transcode slot, waiting up to {@code waitTimeout} for in-flight teardown. */
+    public Optional<Permit> tryAcquireLiveTranscode(Duration waitTimeout) {
+        return tryAcquireWithGrace(waitTimeout, Work.LIVE_TRANSCODE, true);
+    }
+
+    /** Admits a media response only when a bounded stream slot is available. */
+    public Optional<Permit> tryAcquireMediaStream() {
+        return tryAcquireMediaStream(Duration.ZERO);
+    }
+
+    /** Admits a media response, waiting up to {@code waitTimeout} for an active stream to close. */
+    public Optional<Permit> tryAcquireMediaStream(Duration waitTimeout) {
+        return tryAcquireWithGrace(waitTimeout, Work.MEDIA_STREAM, false);
+    }
+
+    private Optional<Permit> tryAcquireWithGrace(Duration waitTimeout, Work work, boolean signalOnAcquire) {
+        long remainingNanos = waitTimeout == null || waitTimeout.isNegative() ? 0L : waitTimeout.toNanos();
         lock.lock();
         try {
-            if (activeLiveTranscodes >= liveTranscodeLimit) return Optional.empty();
-            activeLiveTranscodes++;
-            capacityChanged.signalAll();
-            return Optional.of(new Permit(this, Work.LIVE_TRANSCODE));
+            while (!hasCapacity(work)) {
+                if (remainingNanos <= 0L) return Optional.empty();
+                try {
+                    remainingNanos = capacityChanged.awaitNanos(remainingNanos);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return Optional.empty();
+                }
+            }
+            incrementActive(work);
+            if (signalOnAcquire) capacityChanged.signalAll();
+            return Optional.of(new Permit(this, work));
         } finally {
             lock.unlock();
         }
     }
 
-    /** Admits a media response only when a bounded stream slot is available. */
-    public Optional<Permit> tryAcquireMediaStream() {
-        lock.lock();
-        try {
-            if (activeMediaStreams >= mediaStreamLimit) return Optional.empty();
-            activeMediaStreams++;
-            return Optional.of(new Permit(this, Work.MEDIA_STREAM));
-        } finally {
-            lock.unlock();
+    private boolean hasCapacity(Work work) {
+        return switch (work) {
+            case LIVE_TRANSCODE -> activeLiveTranscodes < liveTranscodeLimit;
+            case MEDIA_STREAM -> activeMediaStreams < mediaStreamLimit;
+            case PROBE -> activeProbes < currentProbeLimit();
+            case MANAGED_TRANSCODE -> activeManagedTranscodes < managedTranscodeLimit;
+        };
+    }
+
+    private void incrementActive(Work work) {
+        switch (work) {
+            case LIVE_TRANSCODE -> activeLiveTranscodes++;
+            case MEDIA_STREAM -> activeMediaStreams++;
+            case PROBE -> activeProbes++;
+            case MANAGED_TRANSCODE -> activeManagedTranscodes++;
         }
     }
 

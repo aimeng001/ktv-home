@@ -1531,6 +1531,43 @@ class StreamControllerTest {
         assertThat(budget.activeLiveTranscodeCount()).isZero();
     }
 
+    @Test
+    void briefStreamPermitContentionWaitsBoundedGraceWindowBeforeReturning429() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("stream-grace"));
+        Path media = Files.write(library.resolve("song.mp4"), new byte[]{0x01, 0x02});
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("mp4");
+        songFile.setMediaType("MV");
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(301L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        ResourceBudget budget = new ResourceBudget(1, 1, 1, 1, 1, () -> false);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), null, ProcessBuilder::start, budget);
+
+        ResourceBudget.Permit activePermit = budget.tryAcquireMediaStream().orElseThrow();
+        Thread releaser = new Thread(() -> {
+            try {
+                Thread.sleep(60);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            } finally {
+                activePermit.close();
+            }
+        });
+        releaser.start();
+
+        var response = controller.streamInternal(301L, null, null, false);
+        releaser.join(2_000);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        response.getBody().writeTo(output);
+        assertThat(output.toByteArray()).containsExactly((byte) 0x01, (byte) 0x02);
+        assertThat(budget.activeMediaStreamCount()).isZero();
+    }
+
     private static void diesWhenDestroyed(Process process) {
         AtomicBoolean alive = new AtomicBoolean(true);
         when(process.isAlive()).thenAnswer(invocation -> alive.get());

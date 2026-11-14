@@ -34,8 +34,6 @@ import com.homektv.tv.net.SavedServer
 import com.homektv.tv.net.SongDto
 import com.homektv.tv.net.UserProfile
 import com.homektv.tv.player.PlaybackEngine
-import com.homektv.tv.session.DeviceMode
-import com.homektv.tv.session.DeviceModeMigrationPolicy
 import com.homektv.tv.ui.kiosk.KtvCommercialDashboardView
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -99,16 +97,12 @@ class KtvCommercialUiNavigationTest {
         fixture.setApiSnapshot(QueueSnapshot())
         val config = AppConfig(context)
         val previousHost = config.serverHost
-        val previousMode = config.modeFor(previousHost)
-        val previousMigrationVersion = config.getModeMigrationVersion()
         assertFalse("the fixture server must not replace a saved endpoint", config.savedServers.any {
             it.hostPort == fixture.serverHost
         })
         assertFalse("the fixture endpoint must be distinct from the selected server", previousHost == fixture.serverHost)
         val fixtureHost = fixture.serverHost
         config.serverHost = fixture.serverHost
-        config.saveMode(DeviceMode.COMBINED, fixture.serverHost)
-        config.setModeMigrationVersion(DeviceModeMigrationPolicy.CURRENT_VERSION)
 
         var scenario: ActivityScenario<MainActivity>? = null
         try {
@@ -391,10 +385,6 @@ class KtvCommercialUiNavigationTest {
             scenario?.close()
             fixture.close()
             config.serverHost = previousHost
-            if (previousMode != null && !previousHost.isNullOrBlank()) {
-                config.saveMode(previousMode, previousHost)
-            }
-            config.setModeMigrationVersion(previousMigrationVersion)
             config.forgetServer(SavedServer(fixtureHost, fixtureHost))
         }
     }
@@ -407,8 +397,6 @@ class KtvCommercialUiNavigationTest {
 
         val config = AppConfig(context)
         val previousHost = config.serverHost
-        val previousMode = config.modeFor(previousHost)
-        val previousMigrationVersion = config.getModeMigrationVersion()
         config.serverHost = "127.0.0.1:9"
 
         var scenario: ActivityScenario<MainActivity>? = null
@@ -465,10 +453,6 @@ class KtvCommercialUiNavigationTest {
         } finally {
             scenario?.close()
             config.serverHost = previousHost
-            if (previousMode != null && !previousHost.isNullOrBlank()) {
-                config.saveMode(previousMode, previousHost)
-            }
-            config.setModeMigrationVersion(previousMigrationVersion)
         }
     }
 

@@ -56,6 +56,38 @@ class KtvKioskBrowserSingerLayoutTest {
         )
     }
 
+    @Test
+    fun singerAndResultsRecyclerViewsDisableItemAnimationsAndSetVisibleBeforeSubmitList() {
+        val controllerSource = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+        assertTrue(
+            "overlay.singerRecyclerView 必须禁用默认 ItemAnimator 避免切页隐身渲染卡顿",
+            controllerSource.contains("overlay.singerRecyclerView.itemAnimator = null"),
+        )
+        assertTrue(
+            "browserSingerRecyclerView 必须禁用默认 ItemAnimator 避免歌星网格空白",
+            controllerSource.contains("browserBinding.browserSingerRecyclerView.itemAnimator = null"),
+        )
+
+        val renderCatalogFn = controllerSource.substringAfter("private fun renderCatalogState(state: ControllerUiState)")
+            .substringBefore("private fun renderThreeColumnBrowser")
+        assertTrue(
+            "提交歌星列表前须先确保 browserSingerRecyclerView 可见并在回调中触发重排",
+            renderCatalogFn.indexOf("browserBinding.browserSingerRecyclerView.visibility = View.VISIBLE") in
+                0 until renderCatalogFn.indexOf("singerAdapter.submitList(state.artists)"),
+        )
+        assertTrue(
+            "提交歌星列表回调须请求 requestLayout 兜底刷新网格",
+            renderCatalogFn.contains("browserBinding.browserSingerRecyclerView.requestLayout()"),
+        )
+
+        val renderBrowserFn = controllerSource.substringAfter("private fun renderThreeColumnBrowser(state: ControllerUiState)")
+            .substringBefore("private fun syncFocusTargets")
+        assertTrue(
+            "分类首页加载中应明确展示“正在加载分类…”而非误报“选择一个分类查看歌曲”",
+            renderBrowserFn.contains("tab == KioskTab.CATEGORIES && !categoryDetail && state.catalogLoading -> \"正在加载分类…\""),
+        )
+    }
+
     private fun locate(relativePath: String): File {
         var current = File(System.getProperty("user.dir").orEmpty())
         repeat(6) {

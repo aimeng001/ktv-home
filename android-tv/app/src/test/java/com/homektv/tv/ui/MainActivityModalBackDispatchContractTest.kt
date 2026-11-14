@@ -24,6 +24,18 @@ class MainActivityModalBackDispatchContractTest {
     }
 
     @Test
+    fun exitConfirmDialogIsTrackedAsModalAndOffersConfirmedExit() {
+        val main = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+        val exitDialogMethod = main.substringAfter("private fun showExitConfirmDialog(hasPlaying: Boolean)")
+            .substringBefore("\n    private fun ")
+        assertTrue(exitDialogMethod.contains("退出应用"))
+        assertTrue(exitDialogMethod.contains("返回全屏播放"))
+        assertTrue(exitDialogMethod.contains("取消"))
+        assertTrue(exitDialogMethod.contains("showTrackedAlertDialog("))
+        assertTrue(exitDialogMethod.contains("confirmExitApplication()"))
+    }
+
+    @Test
     fun modalInitialFocusIsRequestedAfterWindowShowAndSupportsTouchMode() {
         val qrDialog = locate("src/main/java/com/homektv/tv/ui/KtvQrDialog.kt").readText()
         val capabilityDialog = locate("src/main/java/com/homektv/tv/ui/KtvCapabilityDrawerDialog.kt").readText()
@@ -38,6 +50,20 @@ class MainActivityModalBackDispatchContractTest {
         assertTrue(queueDialog.contains("restoreBackgroundFocus()"))
         assertTrue(focusHelper.contains("if (isInTouchMode) requestFocusFromTouch() else requestFocus()"))
         assertFalse(qrDialog.contains("binding.btnQrClose.requestFocus()"))
+    }
+
+    @Test
+    fun activityBackRespectsExitSettingInBothCombinedAndPlayerModesWithoutDeadBackExitGate() {
+        val main = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+        val backSection = main.substringAfterLast("if (event.keyCode == KeyEvent.KEYCODE_BACK) {")
+            .substringBefore("return super.dispatchKeyEvent(event)")
+
+        assertFalse("back_exit 开关不得只限制在 canOpenKiosk 模式", backSection.contains("modeCapabilities.canOpenKiosk && !tvSettingsStore.snapshot().exitOnBackEnabled"))
+        assertTrue("Activity 首页返回必须复用 KioskLifecyclePolicy.resolveDashboardBackAction", backSection.contains("KioskLifecyclePolicy.resolveDashboardBackAction("))
+        assertFalse("MainActivity 不应残留只做 reset 的死 backExitGate", main.contains("backExitGate"))
+
+        val kiosk = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+        assertFalse("KtvKioskOverlayController 不应残留死 backExitGate", kiosk.contains("backExitGate"))
     }
 
     private fun locate(relativePath: String): File {

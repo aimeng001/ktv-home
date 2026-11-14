@@ -223,13 +223,17 @@ class KtvThreeColumnBrowserLayoutContractTest {
             .substringBefore("private fun updatePageIndicator(")
         val indicator = source.substringAfter("private fun updatePageIndicator(")
             .substringBefore("private fun renderSubCategoryRail(")
+        val browserRender = source.substringAfter("private fun renderThreeColumnBrowser(")
+            .substringBefore("private fun showVarietyPanel(")
 
         assertTrue(paging.contains("browserSingerRecyclerView"))
         assertTrue(paging.contains("SINGER_GRID_PAGE_SIZE"))
-        assertTrue(paging.contains("browserResultsRecyclerView"))
+        assertTrue(paging.contains("KioskSongGridPaginationPolicy.resolveTurnPage"))
         assertTrue(paging.contains("SONG_GRID_PAGE_SIZE"))
-        assertTrue(indicator.contains("singerAdapter.itemCount"))
         assertTrue(indicator.contains("state.catalogTotal"))
+        assertTrue(indicator.contains("KioskSongGridPaginationPolicy.slicePage"))
+        assertTrue(browserRender.contains("KioskSongGridPaginationPolicy.slicePage"))
+        assertTrue(source.contains("override fun canScrollVertically(): Boolean = false"))
     }
 
     @Test

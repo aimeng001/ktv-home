@@ -11,7 +11,6 @@ import com.homektv.tv.net.AppConfig
 import com.homektv.tv.net.NowPlaying
 import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.SongDto
-import com.homektv.tv.session.DeviceMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -33,10 +32,8 @@ class PlaybackOverlaySubtitleSafeAreaInstrumentedTest {
 
         val config = AppConfig(context)
         val previousHost = config.serverHost
-        val previousMode = config.modeFor() ?: config.effectiveMode()
         val localOfflineHost = "127.0.0.1:9"
         config.serverHost = localOfflineHost
-        config.saveMode(DeviceMode.COMBINED, localOfflineHost)
 
         var scenario: ActivityScenario<MainActivity>? = null
         try {
@@ -86,7 +83,6 @@ class PlaybackOverlaySubtitleSafeAreaInstrumentedTest {
         } finally {
             scenario?.close()
             config.serverHost = previousHost
-            config.saveMode(previousMode, previousHost)
         }
     }
 }

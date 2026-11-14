@@ -236,7 +236,9 @@ class KtvHistoryDrawerAdapter(
             val subtitle = buildList {
                 song?.artist?.takeIf(String::isNotBlank)?.let(::add)
                 item.playedByNick.takeIf(String::isNotBlank)?.let(::add)
-                item.playedAt.takeIf(String::isNotBlank)?.let(::add)
+                item.playedAt.takeIf(String::isNotBlank)?.let {
+                    add(HistoryTimestampFormatter.formatLocal(it))
+                }
             }.joinToString(" · ")
             binding.txtHistoryIndex.text = index.toString()
             binding.txtHistoryTitle.text = title
@@ -353,7 +355,9 @@ class KtvQueueDrawerDialog(
             onRetryHistory?.invoke()
         }
         binding.queueDrawerRoot.setOnClickListener { dismiss() }
+        binding.queueDrawerRoot.isFocusable = false
         binding.queueDrawerPanel.setOnClickListener { /* 阻止冒泡 */ }
+        binding.queueDrawerPanel.isFocusable = false
 
         setOnShowListener {
             coordinator?.setModalActive(true)
@@ -369,8 +373,8 @@ class KtvQueueDrawerDialog(
             restoreBackgroundFocus()
             returnFocus?.let { view ->
                 view.post {
-                    if (view.isAttachedToWindow && view.isShown && view.isFocusable) {
-                        view.requestRemoteFocus()
+                    if (!view.isInTouchMode && view.isAttachedToWindow && view.isShown && view.isFocusable) {
+                        view.requestFocus()
                     }
                 }
             }
@@ -422,14 +426,22 @@ class KtvQueueDrawerDialog(
         this.isPlaying = isPlaying
         updateEqualizer()
         hasWaitingItems = waitingList.isNotEmpty()
-        adapter.submitList(waitingList)
+        val oldList = adapter.currentList.toList()
+        val shiftedIndices = QueueDrawerDiffPolicy.shiftedPositions(oldList, waitingList)
+        adapter.submitList(waitingList) {
+            shiftedIndices.forEach { idx ->
+                if (idx in 0 until adapter.itemCount) {
+                    adapter.notifyItemChanged(idx)
+                }
+            }
+        }
 
         val isEmpty = waitingList.isEmpty()
         binding.txtDrawerEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
         binding.drawerRecyclerView.visibility = if (isEmpty) View.GONE else View.VISIBLE
         setQueueStatus(message = statusMessage, retryAvailable = retryAvailable)
-        binding.btnDrawerClose.nextFocusDownId = if (isEmpty) binding.btnDrawerClose.id else binding.drawerRecyclerView.id
         updateShuffleEnabled()
+        syncHeaderFocusNavigation()
     }
 
     fun showUnavailable(message: String, retryAvailable: Boolean) {
@@ -454,16 +466,10 @@ class KtvQueueDrawerDialog(
             binding.btnDrawerShuffle.nextFocusRightId = binding.btnDrawerRetry.id
             binding.btnDrawerRetry.nextFocusLeftId = binding.btnDrawerShuffle.id
             binding.btnDrawerRetry.nextFocusRightId = binding.btnDrawerClose.id
-            binding.btnDrawerClose.nextFocusLeftId = binding.btnDrawerRetry.id
         } else {
             binding.btnDrawerShuffle.nextFocusRightId = binding.btnDrawerClose.id
-            binding.btnDrawerClose.nextFocusLeftId = binding.btnDrawerShuffle.id
         }
-        binding.btnDrawerClose.nextFocusDownId = when {
-            retryAvailable -> binding.btnDrawerRetry.id
-            hasWaitingItems -> binding.drawerRecyclerView.id
-            else -> binding.btnDrawerClose.id
-        }
+        syncHeaderFocusNavigation()
     }
 
     fun setActionsAvailable(available: Boolean) {
@@ -478,7 +484,39 @@ class KtvQueueDrawerDialog(
             action = "control:shuffle",
             pendingActions = pendingActions,
         )
-        binding.btnDrawerShuffle.isEnabled = actionsAvailable && hasWaitingItems && noShufflePending
+        val enabled = actionsAvailable && hasWaitingItems && noShufflePending
+        binding.btnDrawerShuffle.isEnabled = enabled
+        binding.btnDrawerShuffle.isFocusable = enabled
+        syncHeaderFocusNavigation()
+    }
+
+    private fun syncHeaderFocusNavigation() {
+        if (!::binding.isInitialized) return
+        binding.btnDrawerClose.nextFocusDownId = when (selectedTab) {
+            KtvQueueDrawerTab.QUEUE, null -> binding.drawerTabQueue.id
+            KtvQueueDrawerTab.HISTORY -> binding.drawerTabHistory.id
+            KtvQueueDrawerTab.DOWNLOADS -> binding.drawerTabDownloads.id
+        }
+        val queueRetryVisible = selectedTab == KtvQueueDrawerTab.QUEUE &&
+            binding.btnDrawerRetry.visibility == View.VISIBLE
+        binding.btnDrawerClose.nextFocusLeftId = if (queueRetryVisible) {
+            binding.btnDrawerRetry.id
+        } else {
+            binding.drawerTabHistory.id
+        }
+        binding.drawerTabQueue.nextFocusDownId = when {
+            binding.btnDrawerRetry.visibility == View.VISIBLE -> binding.btnDrawerRetry.id
+            hasWaitingItems && binding.btnDrawerShuffle.isEnabled -> binding.btnDrawerShuffle.id
+            hasWaitingItems -> binding.drawerRecyclerView.id
+            else -> binding.drawerTabQueue.id
+        }
+        binding.drawerTabDownloads.nextFocusDownId = binding.drawerTabDownloads.id
+        if (selectedTab == KtvQueueDrawerTab.HISTORY &&
+            binding.btnHistoryRetry.visibility != View.VISIBLE &&
+            binding.rvHistoryDrawer.visibility != View.VISIBLE
+        ) {
+            binding.drawerTabHistory.nextFocusDownId = binding.drawerTabHistory.id
+        }
     }
 
     fun updateActor(currentUserId: Long?, isHost: Boolean) {
@@ -541,6 +579,7 @@ class KtvQueueDrawerDialog(
             renderHistoryState(emptyList(), loading = true, errorMessage = null, retryAvailable = false)
             onHistoryTabSelected?.invoke()
         }
+        syncHeaderFocusNavigation()
     }
 
     private fun setTabStyle(container: View, label: TextView, underline: View, selected: Boolean) {
@@ -589,5 +628,39 @@ class KtvQueueDrawerDialog(
                 (animator.target as? View)?.scaleY = if (value is Float) value.coerceAtMost(0.65f) else 0.5f
             }
         }
+    }
+}
+
+/** Computes 0-based indices whose queue entry shifted position across list updates so ordinal badges rebind. */
+internal object QueueDrawerDiffPolicy {
+    fun shiftedPositions(oldList: List<QueueEntry>, newList: List<QueueEntry>): List<Int> {
+        if (newList.isEmpty()) return emptyList()
+        val oldIndexById = buildMap(oldList.size) {
+            oldList.forEachIndexed { index, entry ->
+                val id = entry.queueId
+                if (id != null && id > 0) put(id, index)
+            }
+        }
+        return newList.mapIndexedNotNull { newIndex, entry ->
+            val id = entry.queueId ?: return@mapIndexedNotNull null
+            val oldIndex = oldIndexById[id] ?: return@mapIndexedNotNull null
+            if (oldIndex != newIndex) newIndex else null
+        }
+    }
+}
+
+internal object HistoryTimestampFormatter {
+    private val localPattern = java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")
+
+    fun formatLocal(
+        raw: String,
+        zoneId: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+    ): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return raw
+        val instant = runCatching { java.time.Instant.parse(trimmed) }.getOrNull()
+            ?: runCatching { java.time.OffsetDateTime.parse(trimmed).toInstant() }.getOrNull()
+            ?: return raw
+        return localPattern.format(instant.atZone(zoneId))
     }
 }

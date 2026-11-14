@@ -82,12 +82,6 @@ class KtvThemeTokenTest {
         assertTrue(videoFrame.contains("@color/ktv_focus_blue"))
     }
 
-    @Test
-    fun kioskDashboardDoesNotShowStandbyBrandBesideTheFiveHeaderActions() {
-        assertFalse(KtvHeaderBrandVisibilityPolicy.shouldShowStandbyBrand(canOpenKiosk = true))
-        assertTrue(KtvHeaderBrandVisibilityPolicy.shouldShowStandbyBrand(canOpenKiosk = false))
-    }
-
     private fun styleItems(document: org.w3c.dom.Document, styleName: String): Map<String, String> =
         (0 until document.getElementsByTagName("style").length)
             .map { document.getElementsByTagName("style").item(it) as Element }

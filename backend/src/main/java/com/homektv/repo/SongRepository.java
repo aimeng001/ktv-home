@@ -476,15 +476,16 @@ public interface SongRepository extends JpaRepository<Song, Long> {
     @Query(value = """
             SELECT * FROM songs s
             WHERE s.status = 'ok'
-              AND (
-                  EXISTS (
-                      SELECT 1 FROM song_artists sa
-                      WHERE sa.song_id = s.id AND LOWER(sa.artist_key) = LOWER(:artistKey)
-                  )
-                  OR (
-                      NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
-                      AND LOWER(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) = LOWER(:artistKey)
-                  )
+              AND s.id IN (
+                  SELECT sa.song_id
+                  FROM song_artists sa
+                  WHERE LOWER(sa.artist_key) = LOWER(:artistKey)
+                  UNION
+                  SELECT s2.id
+                  FROM songs s2
+                  WHERE s2.status = 'ok'
+                    AND LOWER(regexp_replace(trim(s2.artist), '[[:space:]]+', '', 'g')) = LOWER(:artistKey)
+                    AND NOT EXISTS (SELECT 1 FROM song_artists sa2 WHERE sa2.song_id = s2.id)
               )
               AND (
                   :artistGender = ''
@@ -520,15 +521,16 @@ public interface SongRepository extends JpaRepository<Song, Long> {
             countQuery = """
             SELECT COUNT(*) FROM songs s
             WHERE s.status = 'ok'
-              AND (
-                  EXISTS (
-                      SELECT 1 FROM song_artists sa
-                      WHERE sa.song_id = s.id AND LOWER(sa.artist_key) = LOWER(:artistKey)
-                  )
-                  OR (
-                      NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
-                      AND LOWER(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) = LOWER(:artistKey)
-                  )
+              AND s.id IN (
+                  SELECT sa.song_id
+                  FROM song_artists sa
+                  WHERE LOWER(sa.artist_key) = LOWER(:artistKey)
+                  UNION
+                  SELECT s2.id
+                  FROM songs s2
+                  WHERE s2.status = 'ok'
+                    AND LOWER(regexp_replace(trim(s2.artist), '[[:space:]]+', '', 'g')) = LOWER(:artistKey)
+                    AND NOT EXISTS (SELECT 1 FROM song_artists sa2 WHERE sa2.song_id = s2.id)
               )
               AND (
                   :artistGender = ''

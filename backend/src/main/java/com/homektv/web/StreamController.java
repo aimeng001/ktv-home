@@ -25,6 +25,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -290,7 +291,9 @@ public class StreamController {
     }
 
     private MediaStreamLease reserveMediaStream(HttpServletRequest request) {
-        ResourceBudget.Permit permit = resourceBudget.tryAcquireMediaStream().orElse(null);
+        ResourceBudget.Permit permit = resourceBudget
+                .tryAcquireMediaStream(Duration.ofMillis(250))
+                .orElse(null);
         if (permit == null) return null;
         MediaStreamLease lease = new MediaStreamLease(permit);
         try {

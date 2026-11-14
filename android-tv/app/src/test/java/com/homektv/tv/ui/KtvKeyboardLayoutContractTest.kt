@@ -155,6 +155,36 @@ class KtvKeyboardLayoutContractTest {
         assertTrue(drawable.contains("#25FFFFFF"))
     }
 
+    @Test
+    fun systemImeDialogActivatesSoftInputAndRestoresPreviousModeHighlight() {
+        val keyboard = locate("src/main/java/com/homektv/tv/ui/KtvKeyboardView.kt").readText()
+        assertTrue(keyboard.contains("restoreModeBeforeSystemIme"))
+        assertTrue(keyboard.contains("lastNonSystemMode"))
+        assertTrue(keyboard.contains("草图") || keyboard.contains("常用字点选"))
+
+        val overlay = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+        val imeBlock = overlay.substringAfter("overlay.kioskKeyboard.onImeRequest = {")
+            .substringBefore("private fun bindCommercialCapsuleDpadNavigation")
+        assertTrue(imeBlock.contains("requestRemoteFocus()"))
+        assertTrue(imeBlock.contains("showSoftInput("))
+        assertTrue(imeBlock.contains("SOFT_INPUT_STATE_VISIBLE"))
+        assertTrue(imeBlock.contains("hideSoftInputFromWindow("))
+        assertTrue(imeBlock.contains("restoreModeBeforeSystemIme()"))
+    }
+
+    @Test
+    fun handwritingPanelAllowsTwoLineHintAndExplicitClearButtonAndBrowserHintStaysCompact() {
+        val source = locate("src/main/java/com/homektv/tv/ui/KtvKeyboardView.kt").readText()
+        val panel = source.substringAfter("private fun renderHandwritingPanel")
+            .substringBefore("private fun renderZhuyinKeys")
+        val browserXml = locate("src/main/res/layout/view_ktv_three_column_browser.xml").readText()
+        val centerHintBlock = browserXml.substringAfter("android:id=\"@+id/txtBrowserCenterHint\"").substringBefore("/>")
+
+        assertTrue("手写板提示需支持最多两行并省略号收尾", panel.contains("maxLines = 2") && panel.contains("TruncateAt.END"))
+        assertTrue("手写板需提供显式“清除”按钮清空笔迹", panel.contains("\"清除\"") && panel.contains("canvas.clearInk()"))
+        assertTrue("三栏中心提示需使用紧凑字体和边距", centerHintBlock.contains("android:padding=\"6dp\"") && centerHintBlock.contains("android:textSize=\"13sp\"") && centerHintBlock.contains("android:maxLines=\"3\""))
+    }
+
     private fun locate(relativePath: String): File {
         val workingDirectory = File(System.getProperty("user.dir").orEmpty())
         return sequenceOf(

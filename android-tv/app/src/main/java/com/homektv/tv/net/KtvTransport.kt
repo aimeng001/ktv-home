@@ -37,6 +37,7 @@ class KtvHttpTransport internal constructor(
     private val serverHost: () -> String?,
     private val callFactory: Call.Factory = SharedHttpClients.transportClient(),
     private val ownsClientResources: Boolean = false,
+    private val readCallFactory: Call.Factory = callFactory,
 ) : KtvTransport, Closeable {
     constructor(
         config: AppConfig,
@@ -45,9 +46,10 @@ class KtvHttpTransport internal constructor(
     ) : this({ config.serverHost }, http, ownsClientResources)
 
     constructor(config: AppConfig) : this(
-        { config.serverHost },
-        SharedHttpClients.transportClient(),
+        serverHost = { config.serverHost },
+        callFactory = SharedHttpClients.transportClient(),
         ownsClientResources = false,
+        readCallFactory = SharedHttpClients.browseReadClient(),
     )
 
     private val activeCalls = ActiveCallRegistry()
@@ -55,7 +57,7 @@ class KtvHttpTransport internal constructor(
     override suspend fun get(path: String): KtvApiResult<String> {
         val request = buildRequest(path) { get() }
         return when (request) {
-            is KtvApiResult.Success -> execute(request.value)
+            is KtvApiResult.Success -> execute(request.value, readCallFactory)
             is KtvApiResult.Failure -> request
         }
     }
@@ -63,7 +65,7 @@ class KtvHttpTransport internal constructor(
     override suspend fun getBytes(path: String): KtvApiResult<ByteArray> {
         val request = buildRequest(path) { get() }
         return when (request) {
-            is KtvApiResult.Success -> executeBytes(request.value)
+            is KtvApiResult.Success -> executeBytes(request.value, readCallFactory)
             is KtvApiResult.Failure -> request
         }
     }
@@ -73,7 +75,7 @@ class KtvHttpTransport internal constructor(
             post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
         }
         return when (request) {
-            is KtvApiResult.Success -> execute(request.value)
+            is KtvApiResult.Success -> execute(request.value, callFactory)
             is KtvApiResult.Failure -> request
         }
     }
@@ -81,7 +83,7 @@ class KtvHttpTransport internal constructor(
     override suspend fun delete(path: String): KtvApiResult<String> {
         val request = buildRequest(path) { delete() }
         return when (request) {
-            is KtvApiResult.Success -> execute(request.value)
+            is KtvApiResult.Success -> execute(request.value, callFactory)
             is KtvApiResult.Failure -> request
         }
     }
@@ -111,14 +113,20 @@ class KtvHttpTransport internal constructor(
         activeCalls.cancelAll()
         if (ownsClientResources) {
             (callFactory as? OkHttpClient)?.closeResources()
+            if (readCallFactory !== callFactory) {
+                (readCallFactory as? OkHttpClient)?.closeResources()
+            }
         }
     }
 
     private fun url(host: String, path: String): String = resolveUrl(host, path)
 
-    private suspend fun execute(request: Request): KtvApiResult<String> =
+    private suspend fun execute(
+        request: Request,
+        factory: Call.Factory,
+    ): KtvApiResult<String> =
         suspendCancellableCoroutine { continuation ->
-            val call = activeCalls.register(callFactory.newCall(request))
+            val call = activeCalls.register(factory.newCall(request))
             continuation.invokeOnCancellation {
                 call.cancel()
                 activeCalls.unregister(call)
@@ -162,9 +170,12 @@ class KtvHttpTransport internal constructor(
             })
         }
 
-    private suspend fun executeBytes(request: Request): KtvApiResult<ByteArray> =
+    private suspend fun executeBytes(
+        request: Request,
+        factory: Call.Factory,
+    ): KtvApiResult<ByteArray> =
         suspendCancellableCoroutine { continuation ->
-            val call = activeCalls.register(callFactory.newCall(request))
+            val call = activeCalls.register(factory.newCall(request))
             continuation.invokeOnCancellation {
                 call.cancel()
                 activeCalls.unregister(call)

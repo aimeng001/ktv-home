@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/bg_library_scan_dialog"
+    android:background="@drawable/player_glass"
     android:padding="12dp">
 
     <TextView
@@ -26,7 +26,7 @@
         android:layout_marginStart="16dp"
         android:layout_marginTop="13dp"
         android:text="更新歌库"
-        android:textColor="#FF111111"
+        android:textColor="@color/gold"
         android:textSize="16sp"
         android:textStyle="bold"
         app:layout_constraintEnd_toEndOf="parent"
@@ -40,7 +40,7 @@
         android:layout_marginStart="16dp"
         android:layout_marginTop="3dp"
         android:text="即将扫描当前曲库，您确定要执行此操作吗？"
-        android:textColor="#FF363636"
+        android:textColor="#D8DFEA"
         android:textSize="14sp"
         android:maxLines="2"
         android:ellipsize="end"

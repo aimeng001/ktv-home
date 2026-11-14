@@ -1,7 +1,6 @@
 package com.homektv.tv.ui
 
 import android.view.KeyEvent
-import com.homektv.tv.session.DeviceMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -10,21 +9,8 @@ import org.junit.Test
 class KioskLifecyclePolicyTest {
 
     @Test
-    fun combinedMode_autoLaunchesKioskOnStartup() {
-        val shouldLaunchKiosk = KioskLifecyclePolicy.shouldAutoLaunchKioskOnStart(
-            deviceMode = DeviceMode.COMBINED,
-            canOpenKiosk = true,
-        )
-        assertTrue(shouldLaunchKiosk)
-    }
-
-    @Test
-    fun playerMode_doesNotAutoLaunchKiosk_protectingPureTerminal() {
-        val shouldLaunchKiosk = KioskLifecyclePolicy.shouldAutoLaunchKioskOnStart(
-            deviceMode = DeviceMode.PLAYER,
-            canOpenKiosk = false,
-        )
-        assertFalse("纯受控播放机模式绝不能自启点歌台，防止崩溃", shouldLaunchKiosk)
+    fun tvClientAlwaysAutoLaunchesKioskOnStartup() {
+        assertTrue(KioskLifecyclePolicy.shouldAutoLaunchKioskOnStart())
     }
 
     @Test
@@ -38,14 +24,79 @@ class KioskLifecyclePolicyTest {
     }
 
     @Test
-    fun backKeyOnDashboard_closesKioskOnlyWhenPlaying() {
+    fun backKeyOnDashboard_promptsExitInsteadOfTrappingInFullscreenLoop() {
         assertEquals(
-            KioskBackAction.RETURN_TO_FULLSCREEN_MV,
-            KioskLifecyclePolicy.resolveDashboardBackAction(hasPlaying = true),
+            KioskBackAction.PROMPT_EXIT_WITH_FULLSCREEN,
+            KioskLifecyclePolicy.resolveDashboardBackAction(hasPlaying = true, exitOnBackEnabled = true),
         )
         assertEquals(
-            KioskBackAction.STAY_ON_DASHBOARD_OR_PROMPT_EXIT,
-            KioskLifecyclePolicy.resolveDashboardBackAction(hasPlaying = false),
+            KioskBackAction.PROMPT_EXIT_ONLY,
+            KioskLifecyclePolicy.resolveDashboardBackAction(hasPlaying = false, exitOnBackEnabled = true),
+        )
+        assertEquals(
+            KioskBackAction.STAY_ON_DASHBOARD,
+            KioskLifecyclePolicy.resolveDashboardBackAction(hasPlaying = false, exitOnBackEnabled = false),
+        )
+    }
+
+    @Test
+    fun nonKioskKeyDispatch_neverHijacksDirectionalKeysAndRespectsFocusedButton() {
+        listOf(
+            KeyEvent.KEYCODE_DPAD_UP,
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+        ).forEach { keyCode ->
+            assertEquals(
+                NonKioskKeyAction.PASS_TO_FOCUS,
+                KioskLifecyclePolicy.resolveNonKioskKeyAction(
+                    keyCode = keyCode,
+                    focusedViewIsInteractive = false,
+                ),
+            )
+            assertEquals(
+                NonKioskKeyAction.PASS_TO_FOCUS,
+                KioskLifecyclePolicy.resolveNonKioskKeyAction(
+                    keyCode = keyCode,
+                    focusedViewIsInteractive = true,
+                ),
+            )
+        }
+
+        assertEquals(
+            NonKioskKeyAction.PASS_TO_FOCUS,
+            KioskLifecyclePolicy.resolveNonKioskKeyAction(
+                keyCode = KeyEvent.KEYCODE_DPAD_CENTER,
+                focusedViewIsInteractive = true,
+            ),
+        )
+        assertEquals(
+            NonKioskKeyAction.OPEN_KIOSK,
+            KioskLifecyclePolicy.resolveNonKioskKeyAction(
+                keyCode = KeyEvent.KEYCODE_DPAD_CENTER,
+                focusedViewIsInteractive = false,
+            ),
+        )
+        assertEquals(
+            NonKioskKeyAction.OPEN_KIOSK,
+            KioskLifecyclePolicy.resolveNonKioskKeyAction(
+                keyCode = KeyEvent.KEYCODE_ENTER,
+                focusedViewIsInteractive = false,
+            ),
+        )
+        assertEquals(
+            NonKioskKeyAction.TOGGLE_PLAYBACK,
+            KioskLifecyclePolicy.resolveNonKioskKeyAction(
+                keyCode = KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                focusedViewIsInteractive = false,
+            ),
+        )
+        assertEquals(
+            NonKioskKeyAction.NEXT_SONG,
+            KioskLifecyclePolicy.resolveNonKioskKeyAction(
+                keyCode = KeyEvent.KEYCODE_MEDIA_NEXT,
+                focusedViewIsInteractive = false,
+            ),
         )
     }
 }

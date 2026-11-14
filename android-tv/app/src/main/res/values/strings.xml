@@ -56,15 +56,10 @@
     <string name="setup_back_to_discovery">返回设备发现</string>
     <string name="setup_manual_title">手动连接服务器</string>
     <string name="setup_server_address_prompt">或输入服务器地址，例如 192.168.1.88:8080</string>
-    <string name="setup_nickname_label">点歌昵称（可选）</string>
-    <string name="setup_nickname_example">例如：小明</string>
     <string name="setup_credential_label">电视连接密钥（可选）</string>
     <string name="setup_credential_hint">启用密钥时请使用 HTTPS 地址（https://主机:端口）</string>
     <string name="setup_credential_requires_https">电视连接密钥仅通过 HTTPS/WSS 发送，请将地址改为 https://主机:端口</string>
-    <string name="setup_device_mode_label">设备使用模式</string>
-    <string name="setup_mode_player">播放器</string>
-    <string name="setup_mode_controller">控制器</string>
-    <string name="setup_mode_combined">组合</string>
+    <string name="artist_filter_group">组合</string>
     <string name="home_mode_badge">家庭欢唱模式</string>
     <string name="home_welcome">今晚开唱</string>
     <string name="home_subtitle">手机点歌，电视欢唱\n一家人的客厅 KTV</string>
@@ -84,7 +79,7 @@
     <string name="queue_label">播放队列</string>
     <string name="kiosk_label">点歌台</string>
     <string name="microphone_off">麦克风：关</string>
-    <string name="server_mode_label">服务器/模式</string>
+    <string name="server_mode_label">服务器设置</string>
     <string name="singing_mode_label">演唱模式</string>
     <string name="return_to_video">返回全屏 MV</string>
     <string name="common_close">关闭</string>
@@ -102,7 +97,7 @@
     <string name="queue_drawer_history_loading">正在加载演唱历史…</string>
     <string name="queue_drawer_history_list">演唱历史列表</string>
     <string name="queue_drawer_history_repeat_description">再次点歌：%1$s</string>
-    <string name="queue_drawer_downloads_empty">暂无下载任务</string>
+    <string name="queue_drawer_downloads_empty">Home KTV 采用局域网实时串流播放，只读曲库无需下载歌曲到本地</string>
     <string name="queue_drawer_download_start_all">全部开始</string>
     <string name="queue_drawer_download_pause_all">全部暂停</string>
     <string name="queue_drawer_download_delete_all">全部删除</string>

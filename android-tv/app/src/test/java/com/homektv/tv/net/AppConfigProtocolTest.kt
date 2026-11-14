@@ -25,14 +25,6 @@ class AppConfigProtocolTest {
     }
 
     @Test
-    fun controllerWebsocketUsesWssForHttpsServer() {
-        assertEquals(
-            "wss://ktv.local:8443/ws?client_type=controller&client_token=user-1&protocol_version=2&platform=ANDROID_PHONE&device_mode=CONTROLLER",
-            buildControllerWebSocketUrl("https://ktv.local:8443", "user-1"),
-        )
-    }
-
-    @Test
     fun queryEncodingPreservesOnlyUnreservedUtf8Bytes() {
         assertEquals(
             "tv%20%E4%BD%A0%E5%A5%BD%26%3D%2F%2B._~-",

@@ -150,4 +150,45 @@ class KtvBottomDockControllerTest {
             applyBounds.contains("updateContainerVisibility()"),
         )
     }
+
+    @Test
+    fun frameRenderCacheSkipsRedundantBackgroundRebindsAndResetsOnFullscreenTransitions() {
+        val cache = BottomDockFrameRenderCache()
+        assertTrue(cache.shouldApply(effectiveVideoVisible = false))
+        assertFalse(cache.shouldApply(effectiveVideoVisible = false))
+        assertTrue(cache.shouldApply(effectiveVideoVisible = true))
+        assertFalse(cache.shouldApply(effectiveVideoVisible = true))
+
+        cache.invalidate()
+        assertTrue(cache.shouldApply(effectiveVideoVisible = true))
+
+        val controller = java.io.File("src/main/java/com/homektv/tv/ui/KtvBottomDockController.kt").let { file ->
+            if (file.exists()) file.readText() else java.io.File("../$file").readText()
+        }
+        val updateVisibility = controller.substringAfter("private fun updateContainerVisibility()")
+            .substringBefore("fun setExternalDisplayActive")
+        assertTrue(
+            "updateContainerVisibility 必须缓存已应用状态，避免 500ms 快照刷新重复触发 setBackgroundResource 导致 Surface 抖动",
+            updateVisibility.contains("frameRenderCache.shouldApply("),
+        )
+        val enterFullscreen = controller.substringAfter("fun enterFullscreen(): Boolean")
+            .substringBefore("fun exitFullscreen()")
+        assertTrue(
+            "进入全屏清理背景时必须失效 frameRenderCache，确保退出全屏后能恢复底栏边框",
+            enterFullscreen.contains("frameRenderCache.invalidate()"),
+        )
+    }
+
+    @Test
+    fun playbackEngineLogsSeekAndFirstFrameDiagnostics() {
+        val engine = java.io.File("src/main/java/com/homektv/tv/player/PlaybackEngine.kt").let { file ->
+            if (file.exists()) file.readText() else java.io.File("../$file").readText()
+        }
+        val seekFn = engine.substringAfter("fun seekTo(positionMs: Long)")
+            .substringBefore("private fun reloadLiveTranscodeAt")
+        assertTrue("seekTo 必须记录目标位置与引擎诊断日志", seekFn.contains("Log.d("))
+        val firstFrameFn = engine.substringAfter("override fun onRenderedFirstFrame()")
+            .substringBefore("override fun onPlaybackStateChanged")
+        assertTrue("onRenderedFirstFrame 必须记录首帧渲染诊断日志", firstFrameFn.contains("Log.d("))
+    }
 }

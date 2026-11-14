@@ -44,19 +44,15 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
+            android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|keyboardHidden|navigation|uiMode"
             android:launchMode="singleTop"
             android:theme="@style/Theme.HomeKtvTv.MainActivity" />
 
         <activity
-            android:name=".ui.ControllerActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden|navigation|uiMode"
-            android:theme="@style/Theme.HomeKtvTv" />
-
-        <activity
             android:name=".ui.SetupActivity"
             android:exported="true"
+            android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|keyboardHidden|navigation|uiMode"
             android:theme="@style/Theme.HomeKtvTv">
             <!-- 普通启动器入口 -->

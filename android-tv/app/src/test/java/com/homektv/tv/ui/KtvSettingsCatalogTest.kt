@@ -13,7 +13,6 @@ class KtvSettingsCatalogTest {
             autoFullscreenEnabled = false,
             globalSearchEnabled = true,
             exitOnBackEnabled = true,
-            canOpenKiosk = true,
             startupSyncEnabled = true,
         )
 
@@ -51,7 +50,6 @@ class KtvSettingsCatalogTest {
             autoFullscreenEnabled = false,
             globalSearchEnabled = true,
             exitOnBackEnabled = true,
-            canOpenKiosk = true,
         ).associateBy { it.key }
 
         assertEquals(KtvSettingsAction.OPEN_LIBRARY_SCAN, entries.getValue("sync_songs").action)
@@ -68,16 +66,30 @@ class KtvSettingsCatalogTest {
     }
 
     @Test
-    fun settingsValuesReflectPreferencesAndDeviceCapabilities() {
-        val available = KtvSettingsCatalog.entries(true, true, false, canOpenKiosk = true).associateBy { it.key }
-        val unavailable = KtvSettingsCatalog.entries(false, true, true, canOpenKiosk = false).associateBy { it.key }
+    fun settingsValuesReflectPreferencesOnTvClient() {
+        val enabled = KtvSettingsCatalog.entries(true, true, false, startupSyncEnabled = true).associateBy { it.key }
+        val disabled = KtvSettingsCatalog.entries(false, false, true, startupSyncEnabled = false).associateBy { it.key }
 
-        assertTrue(available.getValue("auto_fullscreen").checked)
-        assertTrue(available.getValue("global_search").checked)
-        assertFalse(available.getValue("back_exit").checked)
-        assertTrue(available.getValue("global_search").enabled)
-        assertFalse(unavailable.getValue("global_search").enabled)
-        assertFalse(unavailable.getValue("startup_sync").enabled)
-        assertEquals("Home KTV 服务连接在系统信息中设置", available.getValue("download_server").description)
+        assertTrue(enabled.getValue("auto_fullscreen").checked)
+        assertTrue(enabled.getValue("global_search").checked)
+        assertFalse(enabled.getValue("back_exit").checked)
+        assertTrue(enabled.getValue("global_search").enabled)
+        assertTrue(enabled.getValue("startup_sync").enabled)
+        assertFalse(disabled.getValue("global_search").checked)
+        assertFalse(disabled.getValue("startup_sync").checked)
+        assertEquals("Home KTV 服务连接在系统信息中设置", enabled.getValue("download_server").description)
+    }
+
+    @Test
+    fun backExitSettingDescribesConfirmationDialogInsteadOfDoubleBack() {
+        val enabled = KtvSettingsCatalog.entries(false, true, true)
+            .associateBy { it.key }.getValue("back_exit")
+        val disabled = KtvSettingsCatalog.entries(false, true, false)
+            .associateBy { it.key }.getValue("back_exit")
+
+        assertEquals("首页按返回键弹出退出确认", enabled.value)
+        assertEquals("首页按返回键不退出应用", disabled.value)
+        assertFalse(enabled.description.contains("双返回"))
+        assertTrue(disabled.enabled)
     }
 }

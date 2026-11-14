@@ -73,6 +73,6 @@ class KtvDashboardPhotoCarousel(
 
     companion object {
         const val PHOTO_PAIR_COUNT = 3
-        const val INTERVAL_MS = 10_000L
+        const val INTERVAL_MS = 3_500L
     }
 }

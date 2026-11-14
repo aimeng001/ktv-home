@@ -81,4 +81,17 @@ class SongQueueProjectionTest {
 
         assertFalse((projection[109L] as SongQueueState.Waiting).canManage)
     }
+
+    @Test
+    fun waitingCountCountsOnlyWaitingEntriesFromTheSnapshot() {
+        val snapshot = QueueSnapshot(
+            list = listOf(
+                QueueEntry(status = "waiting"),
+                QueueEntry(status = "playing"),
+                QueueEntry(status = "waiting"),
+            ),
+        )
+
+        assertEquals(2, SongQueueProjection.waitingCount(snapshot))
+    }
 }

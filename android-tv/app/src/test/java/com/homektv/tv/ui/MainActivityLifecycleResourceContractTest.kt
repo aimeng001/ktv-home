@@ -1,5 +1,6 @@
 package com.homektv.tv.ui
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -25,42 +26,17 @@ class MainActivityLifecycleResourceContractTest {
     }
 
     @Test
-    fun recommendationBitmapCacheHasFiniteByteWeight() {
+    fun displaySettingsTickerDefersInitialPollAndCleansUpInStopAndDestroy() {
         val source = locateMainActivity().readText()
-
-        assertTrue(source.contains("maxBytes ="))
-        assertTrue(source.contains("allocationByteCount.toLong()"))
-    }
-
-    @Test
-    fun carouselRunsOnlyWhenStandbyPanelIsVisible() {
-        val source = locateMainActivity().readText()
-        val ticker = source.substringAfter("private val standbyTicker")
-            .substringBefore("private val burnInTicker")
-
-        assertTrue(ticker.contains("standbyPanel.visibility"))
-        assertTrue(source.contains("removeCallbacks(standbyTicker)"))
-    }
-
-    @Test
-    fun burnInTickerPausesWhenStandbyIsHiddenAndSettingsTickerDefersInitialPoll() {
-        val source = locateMainActivity().readText()
-        val burnInTicker = source.substringAfter("private val burnInTicker")
-            .substringBefore("private val standbySettingsTicker")
 
         assertTrue(
-            "burnInTicker must stop mutating translation when standbyPanel is not VISIBLE",
-            burnInTicker.contains("standbyPanel.visibility != View.VISIBLE"),
+            "onCreate must defer first displaySettingsTicker poll instead of duplicating loadDisplayContent",
+            source.contains("binding.root.postDelayed(displaySettingsTicker, 60_000L)") &&
+                !source.contains("binding.root.post(displaySettingsTicker)"),
         )
         assertTrue(
-            "onCreate must defer first standbySettingsTicker poll instead of duplicating loadStandbyContent",
-            source.contains("binding.standbyPanel.postDelayed(standbySettingsTicker, 60_000L)") &&
-                !source.contains("binding.standbyPanel.post(standbySettingsTicker)"),
-        )
-        assertTrue(
-            "onDestroy must remove standbySettingsTicker and burnInTicker callbacks",
-            source.contains("removeCallbacks(standbySettingsTicker)") &&
-                source.contains("removeCallbacks(burnInTicker)"),
+            "onDestroy must remove displaySettingsTicker callbacks",
+            source.contains("removeCallbacks(displaySettingsTicker)"),
         )
     }
 
@@ -71,8 +47,6 @@ class MainActivityLifecycleResourceContractTest {
             .substringBefore("private fun untrackModalDialog")
         val destroyMethod = source.substringAfter("override fun onDestroy()")
             .substringBefore("/** 顶层 BACK")
-        val migrationMethod = source.substringAfter("private fun checkModeMigration()")
-            .substringBefore("override fun onDestroy()")
         val confirmMethod = source.substringAfter("private fun confirmControl(")
             .substringBefore("private fun sendControl(")
         val trackedAlertHelper = source.substringAfter("private fun showTrackedAlertDialog(")
@@ -92,11 +66,6 @@ class MainActivityLifecycleResourceContractTest {
             destroyMethod.contains("dismissActiveModalDialogs()"),
         )
         assertTrue(
-            "checkModeMigration must guard against duplicate showing dialogs and track the dialog",
-            migrationMethod.contains("modeMigrationDialog?.isShowing != true") &&
-                (migrationMethod.contains("trackModalDialog(") || migrationMethod.contains("showTrackedAlertDialog(")),
-        )
-        assertTrue(
             "confirmControl must track its AlertDialog for BACK/idle/destroy handling",
             (confirmMethod.contains("trackModalDialog(") && confirmMethod.contains("untrackModalDialog(")) ||
                 confirmMethod.contains("showTrackedAlertDialog("),
@@ -104,37 +73,28 @@ class MainActivityLifecycleResourceContractTest {
     }
 
     @Test
-    fun onStopPausesStandbyTickersInBackground() {
+    fun onStopPausesDisplaySettingsTickerInBackground() {
         val source = locateMainActivity().readText()
         val stopMethod = source.substringAfter("override fun onStop()")
             .substringBefore("private fun checkSessionRestart()")
 
         assertTrue(
-            "onStop must remove standby ticker callbacks while MainActivity is backgrounded",
-            stopMethod.contains("removeStandbyTickers()") ||
-                (stopMethod.contains("removeCallbacks(standbyTicker)") &&
-                    stopMethod.contains("removeCallbacks(burnInTicker)") &&
-                    stopMethod.contains("removeCallbacks(standbySettingsTicker)")),
+            "onStop must remove displaySettingsTicker callbacks while MainActivity is backgrounded",
+            stopMethod.contains("removeDisplaySettingsTicker()") ||
+                stopMethod.contains("removeCallbacks(displaySettingsTicker)"),
         )
+        assertFalse(source.contains("standbyPanel"))
     }
 
     @Test
-    fun logoRequestUsesCancellationAndGenerationGuard() {
-        val source = locateMainActivity().readText()
-
-        assertTrue(source.contains("standbyLogoJob?.cancel()"))
-        assertTrue(source.contains("standbyLogoRequestId"))
-        assertTrue(source.contains("logoRequestId != standbyLogoRequestId"))
-    }
-
-    @Test
-    fun standbyStatsDoNotRenderSyntheticZeroValues() {
+    fun legacyStandbyPanelViewsAreRemovedFromMainActivity() {
         val source = locateMainActivity().readText()
         val layout = locateLayout().readText()
 
-        assertTrue(layout.contains("@+id/txtWaitingStat"))
-        assertTrue(source.contains("txtWaitingStat.visibility"))
-        assertTrue(source.contains("txtPlayedStat.visibility"))
+        assertTrue(!layout.contains("@+id/txtWaitingStat"))
+        assertTrue(!layout.contains("@+id/standbyPanel"))
+        assertTrue(!source.contains("txtWaitingStat"))
+        assertTrue(!source.contains("txtPlayedStat"))
         assertTrue(!source.contains("libraryCount ?: recommendations.size"))
     }
 

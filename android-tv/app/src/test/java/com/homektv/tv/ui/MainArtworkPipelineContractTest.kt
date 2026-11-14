@@ -15,14 +15,6 @@ class MainArtworkPipelineContractTest {
         assertTrue(text.contains("ArtworkDecoder.decode"))
     }
 
-    @Test
-    fun controllerFragmentDoesNotDecodePlaylistArtworkSynchronouslyOnMain() {
-        val source = locate("src/main/java/com/homektv/tv/ui/controller/ControllerFragment.kt").readText()
-
-        assertFalse(source.contains("setImageBitmap(ArtworkDecoder.decode"))
-        assertTrue(source.contains("withContext(Dispatchers.Default)"))
-    }
-
     private fun locate(relativePath: String): File {
         val workingDirectory = File(System.getProperty("user.dir").orEmpty())
         val candidates = sequence {

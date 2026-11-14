@@ -125,7 +125,7 @@
             android:ellipsize="end"
             android:includeFontPadding="false"
             android:maxLines="1"
-            android:textColor="@color/ktv_focus_blue"
+            android:textColor="@color/gold"
             android:textSize="10sp"
             android:visibility="gone" />
     </LinearLayout>

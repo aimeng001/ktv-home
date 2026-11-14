@@ -32,7 +32,6 @@ object KtvSettingsCatalog {
         autoFullscreenEnabled: Boolean,
         globalSearchEnabled: Boolean,
         exitOnBackEnabled: Boolean,
-        canOpenKiosk: Boolean,
         startupSyncEnabled: Boolean = false,
     ): List<KtvSettingsEntry> = listOf(
         KtvSettingsEntry(
@@ -119,17 +118,13 @@ object KtvSettingsCatalog {
         KtvSettingsEntry(
             key = "global_search",
             title = "全局搜索",
-            value = if (canOpenKiosk) "在点歌页面检索曲库" else "当前设备模式没有电视点歌台",
-            description = if (canOpenKiosk) {
-                "控制点歌页面是否启用全局曲库检索。顶部搜索和歌名点歌始终可用。"
-            } else {
-                "当前设备工作模式没有电视点歌台。"
-            },
+            value = "在点歌页面检索曲库",
+            description = "控制点歌页面是否启用全局曲库检索。顶部搜索和歌名点歌始终可用。",
             iconRes = R.drawable.ktv_ref_v50_settings_search,
             column = KtvSettingsColumn.RIGHT,
             action = KtvSettingsAction.TOGGLE_LOCAL_PREFERENCE,
             indicator = KtvSettingsIndicator.SWITCH,
-            enabled = canOpenKiosk,
+            enabled = true,
             checked = globalSearchEnabled,
         ),
         KtvSettingsEntry(
@@ -146,19 +141,19 @@ object KtvSettingsCatalog {
             key = "startup_sync",
             title = "启动同步",
             value = if (startupSyncEnabled) "电视冷启动时扫描一次" else "关闭",
-            description = "仅在电视业务模式、服务已连接且服务确认外部曲库可扫描时，每次冷启动请求一次；不导入媒体。",
+            description = "仅在服务已连接且服务确认外部曲库可扫描时，每次冷启动请求一次；不导入媒体。",
             iconRes = R.drawable.ktv_ref_v50_settings_sync,
             column = KtvSettingsColumn.RIGHT,
             action = KtvSettingsAction.TOGGLE_LOCAL_PREFERENCE,
             indicator = KtvSettingsIndicator.SWITCH,
-            enabled = canOpenKiosk,
+            enabled = true,
             checked = startupSyncEnabled,
         ),
         KtvSettingsEntry(
             key = "back_exit",
             title = "返回键退出应用",
-            value = if (exitOnBackEnabled) "首页连续按两次返回键退出应用" else "首页返回键不会退出应用",
-            description = "控制 Home KTV 首页的双返回退出行为。",
+            value = if (exitOnBackEnabled) "首页按返回键弹出退出确认" else "首页按返回键不退出应用",
+            description = "控制 Home KTV 首页按返回键时是否弹出退出确认框（关闭后仍在播放时退回全屏播放）。",
             iconRes = R.drawable.ktv_ref_v50_settings_back,
             column = KtvSettingsColumn.RIGHT,
             action = KtvSettingsAction.TOGGLE_LOCAL_PREFERENCE,

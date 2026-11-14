@@ -3,8 +3,6 @@ package com.homektv.tv.net
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
-import android.content.res.Configuration
-import com.homektv.tv.session.DeviceMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -156,13 +154,11 @@ class AppConfigStateTest {
         val sourceUserKey = ServerSessionScope.preferenceKey("user_token_", source)
         val targetUserKey = ServerSessionScope.preferenceKey("user_token_", target)
         val sourceNicknameKey = ServerSessionScope.preferenceKey("nickname_", source)
-        val sourceModeKey = ServerSessionScope.preferenceKey("mode_", source)
 
         context.preferences().edit()
             .putString(sourceUserKey, " old-user ")
             .putString(targetUserKey, "target-user")
             .putString(sourceNicknameKey, "房主")
-            .putString(sourceModeKey, "CONTROLLER")
             .putString("pending_finished_queue_ids_nas-a:8080", "5,7")
             .putString("pending_playback_errors_nas-a:8080", "[{\"queueId\":5,\"fileId\":6,\"message\":\"failed\"}]")
             .putString("client_token", "legacy-token")
@@ -173,9 +169,6 @@ class AppConfigStateTest {
         assertEquals("target-user", context.preferences().getString(targetUserKey, null))
         assertEquals("房主", context.preferences().getString(
             ServerSessionScope.preferenceKey("nickname_", target), null,
-        ))
-        assertEquals("CONTROLLER", context.preferences().getString(
-            ServerSessionScope.preferenceKey("mode_", target), null,
         ))
         assertEquals(listOf(5L, 7L), config.pendingFinishedQueueIds(target))
         assertEquals(listOf(5L), config.pendingPlaybackErrors(target).map { it.queueId })
@@ -231,13 +224,19 @@ class AppConfigStateTest {
     }
 
     @Test
-    fun scopedTokensNicknameModeAndStartupPreferenceRemainStable() {
+    fun scopedTokensNicknameAndStartupPreferenceRemainStableWhenLegacyModePrefsExist() {
         val context = InMemoryContext()
         val config = AppConfig(context)
         val server = SavedServer("nas-a:8080", "A")
         config.rememberServer(server)
-        context.preferences().edit().putString("client_token", " legacy-player ").commit()
+        context.preferences().edit()
+            .putString("client_token", " legacy-player ")
+            .putString(ServerSessionScope.preferenceKey("mode_", server), "CONTROLLER")
+            .putInt("mode_migration_version", 4)
+            .commit()
 
+        assertEquals(server.hostPort, config.serverHost)
+        assertEquals(listOf(server), config.savedServers)
         assertEquals("legacy-player", config.playerToken)
         assertEquals(config.playerToken, config.clientToken)
         assertNotEquals(config.playerToken, config.userToken)
@@ -249,20 +248,11 @@ class AppConfigStateTest {
         assertEquals(32, config.nicknameFor(server.hostPort).length)
         config.saveNickname("", null)
 
-        config.saveMode(DeviceMode.CONTROLLER, server.hostPort)
-        assertEquals(DeviceMode.CONTROLLER, config.modeFor(server.hostPort))
-        context.preferences().edit()
-            .putString(ServerSessionScope.preferenceKey("mode_", server), "INVALID")
-            .commit()
-        assertNull(config.modeFor(server.hostPort))
-
         assertFalse(config.microphoneMonitorEnabled)
         config.microphoneMonitorEnabled = true
         assertTrue(config.microphoneMonitorEnabled)
         config.microphoneMonitorEnabled = false
         assertFalse(config.microphoneMonitorEnabled)
-        config.setModeMigrationVersion(4)
-        assertEquals(4, config.getModeMigrationVersion())
     }
 
     @Test
@@ -307,12 +297,9 @@ class AppConfigStateTest {
         assertEquals("http:///m", config.h5Url())
         assertEquals(buildTvWebSocketUrl("", "token"), config.wsUrlFor(null, "token"))
         assertEquals("", config.nicknameFor(null))
-        assertNull(config.modeFor(null))
-        assertNull(config.modeFor(server.hostPort))
         config.saveNickname("  ", server.hostPort)
         assertEquals("", config.nicknameFor(server.hostPort))
         config.saveNickname("unused", null)
-        config.saveMode(DeviceMode.PLAYER, null)
         config.savePendingFinishedQueueIds(emptyList(), server = null)
         config.savePendingPlaybackErrors(emptyList(), null)
         assertTrue(config.pendingFinishedQueueIds(server).isEmpty())
@@ -355,7 +342,6 @@ class AppConfigStateTest {
         val config = AppConfig(context)
         val server = SavedServer("nas-a:8080", "A")
         config.rememberServer(server)
-        assertNull(config.modeFor(server.hostPort))
         assertEquals("", config.nicknameFor(server.hostPort))
         context.preferences().edit().putString("client_token", "   ").commit()
 
@@ -398,66 +384,14 @@ class AppConfigStateTest {
     }
 
     @Test
-    fun controllerWebSocketUsesInjectedPlatformAndEffectiveModeForSavedAndMissingServer() {
-        val phone = AppConfigPlatformInfo(
-            hasLeanback = false,
-            hasTouchscreen = true,
-            uiMode = Configuration.UI_MODE_TYPE_NORMAL,
-            smallestScreenWidthDp = 400,
-        )
-        val config = AppConfig(InMemoryContext(), phone)
-        val server = SavedServer("nas-a:8080", "A")
-        config.rememberServer(server)
-        config.saveMode(DeviceMode.PLAYER, server.hostPort)
-
-        assertEquals(
-            "ws://nas-a:8080/ws?client_type=controller&client_token=user%20token&protocol_version=2&platform=ANDROID_PHONE&device_mode=PLAYER",
-            config.controllerWsUrlFor(server, "user token"),
-        )
-        assertTrue(config.controllerWsUrlFor(null, "").contains("device_mode=CONTROLLER"))
-    }
-
-    @Test
-    fun platformAndModeRecommendationsCoverLeanbackUiModeAndScreenWidthPaths() {
-        val leanback = AppConfig(
-            InMemoryContext(),
-            AppConfigPlatformInfo(true, true, Configuration.UI_MODE_TYPE_NORMAL, 400),
-        )
-        assertEquals("ANDROID_TV", leanback.controllerPlatform())
-        assertEquals(DeviceMode.COMBINED, leanback.recommendedMode)
-
-        val televisionUiMode = AppConfig(
-            InMemoryContext(),
-            AppConfigPlatformInfo(false, false, Configuration.UI_MODE_TYPE_TELEVISION, 400),
-        )
-        assertEquals("ANDROID_TV", televisionUiMode.controllerPlatform())
-        assertEquals(DeviceMode.COMBINED, televisionUiMode.recommendedMode)
-
-        val tablet = AppConfig(
-            InMemoryContext(),
-            AppConfigPlatformInfo(false, true, Configuration.UI_MODE_TYPE_NORMAL, 600),
-        )
-        assertEquals("ANDROID_TABLET", tablet.controllerPlatform())
-        assertEquals(DeviceMode.CONTROLLER, tablet.recommendedMode)
-
-        val phone = AppConfig(
-            InMemoryContext(),
-            AppConfigPlatformInfo(false, true, Configuration.UI_MODE_TYPE_NORMAL, 599),
-        )
-        assertEquals("ANDROID_PHONE", phone.controllerPlatform())
-        assertEquals(DeviceMode.CONTROLLER, phone.recommendedMode)
-    }
-
-    @Test
     fun legacyScopeMigrationCoversCopyPreserveAndBlankSourceCombinations() {
-        val prefixes = listOf("user_token_", "player_token_", "nickname_", "mode_")
+        val prefixes = listOf("user_token_", "player_token_", "nickname_")
         val scenarios: List<List<Pair<String?, String?>>> = listOf(
-            listOf("source-user" to null, "source-player" to null, "source-name" to null, "source-mode" to null),
-            listOf("source-user" to "  ", "source-player" to "target-player", "source-name" to "target-name", "  " to "target-mode"),
-            listOf(null to null, null to null, null to null, null to "target-mode"),
-            listOf("  " to null, "  " to null, "  " to null, "  " to null),
-            listOf("source-user" to "  ", "source-player" to "  ", "source-name" to "  ", "source-mode" to "  "),
-            listOf(null to null, null to null, null to null, "source-mode" to "target-mode"),
+            listOf("source-user" to null, "source-player" to null, "source-name" to null),
+            listOf("source-user" to "  ", "source-player" to "target-player", "source-name" to "target-name"),
+            listOf(null to null, null to null, null to null),
+            listOf("  " to null, "  " to null, "  " to null),
+            listOf("source-user" to "  ", "source-player" to "  ", "source-name" to "  "),
         )
 
         scenarios.forEachIndexed { index, values ->

@@ -39,6 +39,7 @@ class KtvKeyboardView @JvmOverloads constructor(
     var onLayoutModeChanged: ((KeyboardLayoutMode) -> Unit)? = null
 
     private var currentInputMode = Mode.ABC
+    private var lastNonSystemMode = Mode.ABC
     private var contentFocusTargetId = R.id.browserResultsRecyclerView
     private var gridButtons: List<Button> = emptyList()
     private var alternateModePanel: View? = null
@@ -78,6 +79,9 @@ class KtvKeyboardView @JvmOverloads constructor(
     }
 
     private fun updateModeSelection(mode: Mode) {
+        if (mode != Mode.SYSTEM) {
+            lastNonSystemMode = mode
+        }
         currentInputMode = mode
         binding.btnToggleT9.isSelected = (mode == Mode.ABC)
         binding.btnMode123.isSelected = (mode == Mode.NUMBER)
@@ -274,14 +278,41 @@ class KtvKeyboardView @JvmOverloads constructor(
 
         val canvas = KtvHandwritingCanvasView(context).apply {
             id = View.generateViewId()
-            nextFocusLeftId = contentFocusTargetId
-            nextFocusRightId = activeModeButtonId()
-            nextFocusUpId = candidates.first().id
-            nextFocusDownId = contentFocusTargetId
         }
         panel.addView(canvas, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f).apply {
             topMargin = dpToPx(5f)
         })
+        val clearButton = Button(context).apply {
+            id = View.generateViewId()
+            text = "清除"
+            textSize = 11f
+            minWidth = 0
+            minHeight = 0
+            isFocusable = true
+            setPadding(dpToPx(8f), dpToPx(3f), dpToPx(8f), dpToPx(3f))
+            setBackgroundResource(R.drawable.bg_ktv_input_action_btn)
+            setTextColor(0xFFFFFFFF.toInt())
+            contentDescription = "清除手写笔迹"
+            setOnClickListener { canvas.clearInk() }
+        }
+        val footerRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dpToPx(2f), dpToPx(3f), dpToPx(2f), 0)
+        }
+        footerRow.addView(TextView(context).apply {
+            text = "手写板用于草图比划，请点选上方常用字或切回拼音/系统输入法"
+            setTextColor(0xFFA8B3C5.toInt())
+            textSize = 11f
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setLineSpacing(0f, 1.15f)
+            isFocusable = false
+        }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+        footerRow.addView(clearButton, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, dpToPx(26f)).apply {
+            marginStart = dpToPx(6f)
+        })
+        panel.addView(footerRow, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         panel.layoutParams = GridLayout.LayoutParams().apply {
             width = LayoutParams.MATCH_PARENT
             height = maxOf(binding.keyboardGridScroll.height, dpToPx(124f))
@@ -291,8 +322,8 @@ class KtvKeyboardView @JvmOverloads constructor(
         alternateModeAction = canvas
         handwritingCanvas = canvas
         gridButtons = candidates
-        wireModeContentFocus = { wireHandwritingFocus(gridButtons, canvas) }
-        wireHandwritingFocus(candidates, canvas)
+        wireModeContentFocus = { wireHandwritingFocus(gridButtons, canvas, clearButton) }
+        wireHandwritingFocus(candidates, canvas, clearButton)
     }
 
     private fun renderZhuyinKeys(grid: GridLayout) {
@@ -341,13 +372,25 @@ class KtvKeyboardView @JvmOverloads constructor(
         resizeGridRows(rowCount = rows)
     }
 
-    private fun wireHandwritingFocus(candidates: List<Button>, canvas: KtvHandwritingCanvasView) {
+    private fun wireHandwritingFocus(
+        candidates: List<Button>,
+        canvas: KtvHandwritingCanvasView,
+        clearButton: Button,
+    ) {
         candidates.forEachIndexed { index, button ->
             button.nextFocusLeftId = if (index == 0) contentFocusTargetId else candidates[index - 1].id
             button.nextFocusRightId = if (index == candidates.lastIndex) activeModeButtonId() else candidates[index + 1].id
             button.nextFocusUpId = binding.btnBackspace.id
             button.nextFocusDownId = canvas.id
         }
+        canvas.nextFocusLeftId = contentFocusTargetId
+        canvas.nextFocusRightId = activeModeButtonId()
+        canvas.nextFocusUpId = candidates.first().id
+        canvas.nextFocusDownId = clearButton.id
+        clearButton.nextFocusLeftId = contentFocusTargetId
+        clearButton.nextFocusRightId = activeModeButtonId()
+        clearButton.nextFocusUpId = canvas.id
+        clearButton.nextFocusDownId = contentFocusTargetId
     }
 
     private fun wireQwertyFocus() {
@@ -541,6 +584,13 @@ class KtvKeyboardView @JvmOverloads constructor(
         switchMode(Mode.SYSTEM, requestIme = true)
     }
 
+    fun restoreModeBeforeSystemIme() {
+        if (currentInputMode == Mode.SYSTEM) {
+            updateModeSelection(lastNonSystemMode)
+            renderKeys()
+        }
+    }
+
     fun measureNaturalContentHeightPx(availableWidthPx: Int): Int {
         if (availableWidthPx <= 0 || binding.keyboardContentRoot.measuredWidth != availableWidthPx) return 0
         return binding.keyboardContentRoot.measuredHeight
@@ -565,8 +615,14 @@ class KtvKeyboardView @JvmOverloads constructor(
 
     fun consumeBackForActiveDrawing(action: Int): Boolean {
         val canvas = handwritingCanvas ?: return false
-        if (!canvas.isRemoteDrawing) return false
-        if (action == android.view.KeyEvent.ACTION_UP) canvas.finishRemoteDrawing()
+        if (!canvas.isRemoteDrawing && !canvas.hasInk()) return false
+        if (action == android.view.KeyEvent.ACTION_UP) {
+            if (canvas.isRemoteDrawing) {
+                canvas.finishRemoteDrawing()
+            } else if (canvas.hasInk()) {
+                canvas.clearInk()
+            }
+        }
         return action == android.view.KeyEvent.ACTION_DOWN || action == android.view.KeyEvent.ACTION_UP
     }
 

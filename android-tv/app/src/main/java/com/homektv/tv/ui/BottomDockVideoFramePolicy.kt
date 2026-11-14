@@ -15,3 +15,18 @@ object BottomDockVideoFramePolicy {
             showEdgeShadows = effectiveVideoVisible,
         )
 }
+
+/** Caches the last applied dock PiP frame state so 500ms snapshot renders skip redundant rebinds. */
+class BottomDockFrameRenderCache {
+    private var lastEffectiveVideoVisible: Boolean? = null
+
+    fun shouldApply(effectiveVideoVisible: Boolean): Boolean {
+        if (lastEffectiveVideoVisible == effectiveVideoVisible) return false
+        lastEffectiveVideoVisible = effectiveVideoVisible
+        return true
+    }
+
+    fun invalidate() {
+        lastEffectiveVideoVisible = null
+    }
+}

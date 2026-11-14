@@ -6,8 +6,6 @@ import androidx.lifecycle.viewModelScope
 import com.homektv.tv.net.AppConfig
 import com.homektv.tv.net.KtvApiResult
 import com.homektv.tv.net.KtvHttpTransport
-import com.homektv.tv.net.KtvSocket
-import com.homektv.tv.net.KtvSocketRole
 import com.homektv.tv.net.LibraryApi
 import com.homektv.tv.net.QueueApi
 import com.homektv.tv.net.QueueSnapshot
@@ -38,8 +36,7 @@ import kotlinx.coroutines.isActive
 /** Coordinates controller REST operations and the read-only realtime snapshot. */
 class ControllerViewModel(
     application: Application,
-    private val realtimeEnabled: Boolean = true,
-) : AndroidViewModel(application), KtvSocket.Listener, ControllerActions, ControllerCatalogActions,
+) : AndroidViewModel(application), ControllerActions, ControllerCatalogActions,
     ControllerCatalogVisibility, ControllerPersonalActions {
 
     private val config = AppConfig(application)
@@ -53,7 +50,6 @@ class ControllerViewModel(
     private val roomHostApi = RoomHostApi(transport, config.userToken)
     private val wishApi = WishApi(transport, config.userToken)
     private val libraryApi = LibraryApi(transport)
-    private val socket = if (realtimeEnabled) KtvSocket(config, this, KtvSocketRole.CONTROLLER) else null
     private val actions = ActionCoordinator()
     private var searchJob: Job? = null
     private var searchMoreJob: Job? = null
@@ -78,40 +74,37 @@ class ControllerViewModel(
     private var bridgeConnected: Boolean? = null
 
     init {
-        socket?.connect()
-        if (!realtimeEnabled) {
-            snapshotBridgeJob = viewModelScope.launch {
-                PlaybackSnapshotBridge.events
-                    .filter { it?.serverHost == config.serverHost }
-                    .collectLatest { envelope ->
-                        val current = envelope ?: return@collectLatest
-                        val wasConnected = bridgeConnected
-                        bridgeConnected = current.connected
-                        if (!current.connected) {
-                            _state.update { ControllerStateReducer.withConnection(it, false) }
-                        } else {
-                            if (wasConnected != true) loadRoomHost()
-                            if (RegistrationReducer.shouldRegisterOnConnect(_state.value.registration, current.connected, wasConnected)) {
-                                registerUser()
-                            }
-                            current.roomHost?.let { roomHost ->
-                                _state.update { ControllerStateReducer.withRoomHost(it, roomHost) }
-                            }
-                            if (current.event == "progress") {
-                                current.snapshot?.let { snapshot ->
-                                    _state.update { ControllerStateReducer.withSnapshot(it, snapshot) }
-                                }
-                                current.progress?.let { progress ->
-                                    _state.update { ControllerStateReducer.withProgress(it, progress) }
-                                }
-                                return@collectLatest
-                            }
+        snapshotBridgeJob = viewModelScope.launch {
+            PlaybackSnapshotBridge.events
+                .filter { it?.serverHost == config.serverHost }
+                .collectLatest { envelope ->
+                    val current = envelope ?: return@collectLatest
+                    val wasConnected = bridgeConnected
+                    bridgeConnected = current.connected
+                    if (!current.connected) {
+                        _state.update { ControllerStateReducer.withConnection(it, false) }
+                    } else {
+                        if (wasConnected != true) loadRoomHost()
+                        if (RegistrationReducer.shouldRegisterOnConnect(_state.value.registration, current.connected, wasConnected)) {
+                            registerUser()
+                        }
+                        current.roomHost?.let { roomHost ->
+                            _state.update { ControllerStateReducer.withRoomHost(it, roomHost) }
+                        }
+                        if (current.event == "progress") {
                             current.snapshot?.let { snapshot ->
                                 _state.update { ControllerStateReducer.withSnapshot(it, snapshot) }
-                            } ?: _state.update { ControllerStateReducer.withConnection(it, true) }
+                            }
+                            current.progress?.let { progress ->
+                                _state.update { ControllerStateReducer.withProgress(it, progress) }
+                            }
+                            return@collectLatest
                         }
+                        current.snapshot?.let { snapshot ->
+                            _state.update { ControllerStateReducer.withSnapshot(it, snapshot) }
+                        } ?: _state.update { ControllerStateReducer.withConnection(it, true) }
                     }
-            }
+                }
         }
         refreshQueue()
         if (config.isConfigured) refreshCatalogStatus()
@@ -291,7 +284,7 @@ class ControllerViewModel(
         queueRequests.launch {
             when (val result = queueApi.snapshot()) {
                 is KtvApiResult.Success -> _state.update {
-                    if (!realtimeEnabled && bridgeConnected == false) {
+                    if (bridgeConnected == false) {
                         ControllerStateReducer.withSuccessfulRead(it, UiDomain.QUEUE).copy(queue = result.value)
                     } else {
                         ControllerStateReducer.withSnapshot(it, result.value)
@@ -669,7 +662,7 @@ class ControllerViewModel(
     }
 
     private suspend fun loadKioskAllSongsPage(page: Int, requestId: Long) {
-        when (val result = songApi.browseSongPage(page = page)) {
+        when (val result = songApi.browseSongPage(page = page, size = SONG_CATALOG_PAGE_SIZE)) {
             is KtvApiResult.Success -> _state.update { state ->
                 state.copy(
                     kioskLibraryBrowse = KioskLibraryBrowseReducer.pageSucceeded(
@@ -803,9 +796,9 @@ class ControllerViewModel(
 
     private suspend fun loadSongCatalogPage(page: Int, expected: CatalogQuery) {
             val result = when (expected.kind) {
-                CatalogKind.ARTIST_SONGS -> songApi.browseSongPage(page = page, artistKey = expected.value)
-                CatalogKind.LANGUAGE_SONGS -> songApi.browseSongPage(page = page, language = expected.value)
-                CatalogKind.TAG_SONGS -> songApi.browseSongPage(page = page, tag = expected.value)
+                CatalogKind.ARTIST_SONGS -> songApi.browseSongPage(page = page, size = SONG_CATALOG_PAGE_SIZE, artistKey = expected.value)
+                CatalogKind.LANGUAGE_SONGS -> songApi.browseSongPage(page = page, size = SONG_CATALOG_PAGE_SIZE, language = expected.value)
+                CatalogKind.TAG_SONGS -> songApi.browseSongPage(page = page, size = SONG_CATALOG_PAGE_SIZE, tag = expected.value)
                 CatalogKind.ARTISTS, CatalogKind.NONE -> return
             }
             when (result) {
@@ -1180,36 +1173,6 @@ class ControllerViewModel(
         _state.update { it.copy(message = null, error = null) }
     }
 
-    override fun onSnapshot(event: String, snapshot: QueueSnapshot) {
-        _state.update { ControllerStateReducer.withSnapshot(it, snapshot) }
-    }
-
-    override fun onProgress(progress: com.homektv.tv.net.PlaybackProgress) {
-        _state.update { ControllerStateReducer.withProgress(it, progress) }
-    }
-
-    override fun onConnectionChanged(connected: Boolean) {
-        _state.update { ControllerStateReducer.withConnection(it, connected) }
-        if (connected) {
-            loadRoomHost()
-            if (_state.value.registration != RegistrationStatus.REGISTERED) {
-                registerUser()
-            }
-        }
-    }
-
-    override fun onToast(text: String) {
-        if (text.isNotBlank()) _state.update { it.copy(message = text) }
-    }
-
-    override fun onRoomHostChanged(status: com.homektv.tv.net.RoomHostStatus) {
-        _state.update { ControllerStateReducer.withRoomHost(it, status) }
-    }
-
-    override fun onPlayerRole(active: Boolean) {
-        // Controller sessions are never eligible for a playback lease.
-    }
-
     private fun write(
         action: String,
         params: Map<String, Any?>,
@@ -1291,7 +1254,6 @@ class ControllerViewModel(
         personalRequests.cancel()
         roomHostRequests.cancel()
         coverRequests.cancel()
-        socket?.close()
         transport.close()
         super.onCleared()
     }
@@ -1305,18 +1267,18 @@ class ControllerViewModel(
         private const val MAX_PERSONAL_ITEMS = 2000
         private const val MAX_ARTIST_INITIALS = 128
         private const val ARTIST_GRID_PAGE_SIZE = 32
+        private const val SONG_CATALOG_PAGE_SIZE = 15
         private const val HOT_INITIAL = "热门"
     }
 }
 
 class ControllerViewModelFactory(
     private val application: Application,
-    private val realtimeEnabled: Boolean,
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(ControllerViewModel::class.java))
-        return ControllerViewModel(application, realtimeEnabled) as T
+        return ControllerViewModel(application) as T
     }
 }
 

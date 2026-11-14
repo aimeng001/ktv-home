@@ -16,12 +16,9 @@ class BootReceiver : BroadcastReceiver() {
             launch(context, SetupActivity::class.java)
             return
         }
-        val mode = config.effectiveMode()
-        if (BootLaunchPolicy.shouldLaunchPlayer(mode, configured = true)) {
+        if (BootLaunchPolicy.shouldLaunchPlayer(configured = true)) {
             launch(context, MainActivity::class.java)
         }
-        // Controller phones/tablets remain quiet at boot; the user opens the
-        // app normally and no playback/wake lock is started in that mode.
     }
 
     private fun launch(context: Context, target: Class<*>) {

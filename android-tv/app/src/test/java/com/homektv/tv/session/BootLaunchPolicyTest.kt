@@ -6,14 +6,8 @@ import org.junit.Test
 
 class BootLaunchPolicyTest {
     @Test
-    fun controllerModeDoesNotLaunchAnActivityAtBoot() {
-        assertFalse(BootLaunchPolicy.shouldLaunchPlayer(DeviceMode.CONTROLLER, configured = true))
-    }
-
-    @Test
-    fun configuredPlayerAndCombinedModesLaunch() {
-        assertTrue(BootLaunchPolicy.shouldLaunchPlayer(DeviceMode.PLAYER, configured = true))
-        assertTrue(BootLaunchPolicy.shouldLaunchPlayer(DeviceMode.COMBINED, configured = true))
-        assertFalse(BootLaunchPolicy.shouldLaunchPlayer(DeviceMode.PLAYER, configured = false))
+    fun configuredTvInstallationLaunchesAtBootAndUnconfiguredStaysInSetup() {
+        assertTrue(BootLaunchPolicy.shouldLaunchPlayer(configured = true))
+        assertFalse(BootLaunchPolicy.shouldLaunchPlayer(configured = false))
     }
 }

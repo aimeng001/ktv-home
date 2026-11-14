@@ -244,6 +244,101 @@ class KtvHttpTransportTest {
         }
     }
 
+    @Test
+    fun readRequestsRouteToReadClientAndRetryDroppedSocketWhileWritesNeverRetry() = runBlocking {
+        suspend fun verifyRouting(
+            invoke: suspend (KtvHttpTransport) -> KtvApiResult<*>,
+            expectReadFactory: Boolean,
+        ) {
+            val writeFactory = ControlledCallFactory()
+            val readFactory = ControlledCallFactory()
+            val routedTransport = KtvHttpTransport(
+                serverHost = { "127.0.0.1:1" },
+                callFactory = writeFactory,
+                ownsClientResources = false,
+                readCallFactory = readFactory,
+            )
+            try {
+                val job = async(Dispatchers.IO) { invoke(routedTransport) }
+                val targetFactory = if (expectReadFactory) readFactory else writeFactory
+                targetFactory.awaitCall().respond(200)
+                assertTrue(job.await() is KtvApiResult.Success<*>)
+            } finally {
+                routedTransport.close()
+            }
+        }
+
+        verifyRouting(invoke = { it.get("/songs") }, expectReadFactory = true)
+        verifyRouting(invoke = { it.getBytes("/cover/1") }, expectReadFactory = true)
+        verifyRouting(
+            invoke = { it.post("/control", buildJsonObject { put("action", "next") }) },
+            expectReadFactory = false,
+        )
+        verifyRouting(invoke = { it.delete("/queue/1") }, expectReadFactory = false)
+
+        // 真实 ServerSocket 验证：复用连接池中失效 Keep-Alive Socket 时，
+        // GET 会由 browseReadClient 自动新建连接重试一次并成功，而 POST 使用 transportClient 绝不重放。
+        ServerSocket(0, 4, InetAddress.getByName("127.0.0.1")).use { listener ->
+            listener.soTimeout = 5_000
+            val acceptedCount = java.util.concurrent.atomic.AtomicInteger(0)
+            val serverThread = thread(isDaemon = true) {
+                // Socket 1: handle warmup GET (keep-alive), then drop on second GET request
+                listener.accept().use { sock1 ->
+                    sock1.soTimeout = 5_000
+                    acceptedCount.incrementAndGet()
+                    val reader = sock1.getInputStream().bufferedReader()
+                    while (true) {
+                        val line = reader.readLine() ?: break
+                        if (line.isEmpty()) break
+                    }
+                    val okBody = "{\"ok\":true}".toByteArray()
+                    val keepAliveHeaders = "HTTP/1.1 200 OK\r\nContent-Length: ${okBody.size}\r\n\r\n"
+                    sock1.getOutputStream().write(keepAliveHeaders.toByteArray())
+                    sock1.getOutputStream().write(okBody)
+                    sock1.getOutputStream().flush()
+                    // Wait until second GET arrives on pooled Socket 1, then drop without response
+                    reader.readLine()
+                }
+                // Socket 2: accept retried GET (keep-alive), then drop when POST reuses it
+                listener.accept().use { sock2 ->
+                    sock2.soTimeout = 5_000
+                    acceptedCount.incrementAndGet()
+                    val reader = sock2.getInputStream().bufferedReader()
+                    while (true) {
+                        val line = reader.readLine() ?: break
+                        if (line.isEmpty()) break
+                    }
+                    val okBody = "{\"retried\":true}".toByteArray()
+                    val keepAliveHeaders = "HTTP/1.1 200 OK\r\nContent-Length: ${okBody.size}\r\n\r\n"
+                    sock2.getOutputStream().write(keepAliveHeaders.toByteArray())
+                    sock2.getOutputStream().write(okBody)
+                    sock2.getOutputStream().flush()
+                    // Wait until POST arrives on pooled Socket 2, then drop — POST must NOT retry!
+                    reader.readLine()
+                }
+            }
+
+            val host = "127.0.0.1:${listener.localPort}"
+            val realTransport = KtvHttpTransport(
+                serverHost = { host },
+                callFactory = SharedHttpClients.transportClient(),
+                ownsClientResources = false,
+                readCallFactory = SharedHttpClients.browseReadClient(),
+            )
+            try {
+                assertTrue(realTransport.get("/warmup") is KtvApiResult.Success<*>)
+                val getRetryResult = realTransport.get("/songs?page=1")
+                assertTrue("GET on dropped keep-alive should recover via retry, got=$getRetryResult", getRetryResult is KtvApiResult.Success<*>)
+                val postResult = realTransport.post("/queue", buildJsonObject { put("songId", 1) })
+                assertTrue("POST must fail instead of retrying on dropped socket, got=$postResult", postResult is KtvApiResult.Failure)
+            } finally {
+                realTransport.close()
+                serverThread.join(TimeUnit.SECONDS.toMillis(3))
+            }
+            assertEquals("Only 2 sockets should ever be opened (GET warmup+retry, no Socket 3 for POST)", 2, acceptedCount.get())
+        }
+    }
+
     private fun transport(serverHost: () -> String?) = KtvHttpTransport(
         serverHost,
         OkHttpClient.Builder().callTimeout(5, TimeUnit.SECONDS).build(),

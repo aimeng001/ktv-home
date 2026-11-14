@@ -8,7 +8,7 @@ Home KTV is a local-network karaoke system for a NAS or Linux host. The server o
 
 - **Server:** Spring Boot, PostgreSQL, FFmpeg/FFprobe, HTTP APIs, and WebSocket.
 - **Phone and administration:** Vue 3 H5 songbook and admin console.
-- **Android TV:** Media3/ExoPlayer playback client. The APK also provides controller and combined modes.
+- **Android TV:** Media3/ExoPlayer playback and kiosk client replicating IKTV commercial TV interfaces.
 - **Windows Player:** Windows 11 WPF client using mpv and the shared server protocol.
 
 The system is intended for a trusted home network. Do not expose the ordinary song-ordering and remote-control endpoints directly to the public internet.

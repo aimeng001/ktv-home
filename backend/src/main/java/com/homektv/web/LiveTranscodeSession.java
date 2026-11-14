@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -45,7 +46,9 @@ final class LiveTranscodeSession implements AutoCloseable {
             List<String> command,
             Long fileId,
             Double startSeconds) {
-        ResourceBudget.Permit permit = resourceBudget.tryAcquireLiveTranscode().orElse(null);
+        ResourceBudget.Permit permit = resourceBudget
+                .tryAcquireLiveTranscode(Duration.ofMillis(250))
+                .orElse(null);
         if (permit == null) return Optional.empty();
         try {
             return Optional.of(new LiveTranscodeSession(

@@ -23,11 +23,12 @@ class A5SurfaceLayoutContractTest {
     }
 
     @Test
-    fun standbyRecommendationBandStartsHiddenAndHasNoFakeEmptyMessage() {
+    fun legacyStandbyPanelAndRecommendationBandAreRemovedFromMainLayout() {
         val main = parse("src/main/res/layout/activity_main.xml")
         val byId = elements(main).associateBy { it.getAttribute("android:id") }
 
-        assertEquals("gone", byId.getValue("@+id/recommendationBand").getAttribute("android:visibility"))
+        assertFalse(byId.containsKey("@+id/standbyPanel"))
+        assertFalse(byId.containsKey("@+id/recommendationBand"))
         assertFalse(byId.containsKey("@+id/txtRecommendationsEmpty"))
     }
 

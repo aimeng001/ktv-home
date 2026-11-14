@@ -2,7 +2,6 @@ package com.homektv.tv.ui
 
 import com.homektv.tv.net.DiscoveredServer
 import com.homektv.tv.net.SavedServer
-import com.homektv.tv.session.DeviceMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -90,10 +89,9 @@ class SetupCandidatePolicyTest {
     }
 
     @Test
-    fun playerModeWithoutCredentialDoesNotRequireHttps() {
+    fun emptyCredentialDoesNotRequireHttps() {
         assertFalse(
             SetupCandidatePolicy.requiresHttpsForPlayerCredential(
-                DeviceMode.PLAYER,
                 "10.0.2.2:18080",
                 credential = "",
                 credentialWillBeUsed = true,
@@ -102,10 +100,9 @@ class SetupCandidatePolicyTest {
     }
 
     @Test
-    fun playerModeWithCredentialRequiresHttps() {
+    fun tvWithCredentialRequiresHttps() {
         assertTrue(
             SetupCandidatePolicy.requiresHttpsForPlayerCredential(
-                DeviceMode.PLAYER,
                 "10.0.2.2:18080",
                 credential = "test-credential",
                 credentialWillBeUsed = true,
@@ -114,23 +111,10 @@ class SetupCandidatePolicyTest {
     }
 
     @Test
-    fun playerModeWithCredentialAllowsHttps() {
+    fun tvWithCredentialAllowsHttps() {
         assertFalse(
             SetupCandidatePolicy.requiresHttpsForPlayerCredential(
-                DeviceMode.PLAYER,
                 "https://ktv.example:5443",
-                credential = "test-credential",
-                credentialWillBeUsed = true,
-            ),
-        )
-    }
-
-    @Test
-    fun controllerModeDoesNotRequirePlayerCredentialHttps() {
-        assertFalse(
-            SetupCandidatePolicy.requiresHttpsForPlayerCredential(
-                DeviceMode.CONTROLLER,
-                "10.0.2.2:18080",
                 credential = "test-credential",
                 credentialWillBeUsed = true,
             ),

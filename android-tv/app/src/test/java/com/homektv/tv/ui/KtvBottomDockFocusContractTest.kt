@@ -72,7 +72,7 @@ class KtvBottomDockFocusContractTest {
         val browser = locate("src/main/res/layout/view_ktv_three_column_browser.xml").readText()
         assertTrue("历史入口必须继续留在 Home KTV 浏览器中", browser.contains("@+id/browserNavHistory"))
         val activity = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
-        assertTrue(activity.contains("Home KTV 没有歌曲下载任务"))
+        assertTrue(activity.contains("openQueueDrawer(initialTab = KtvQueueDrawerTab.DOWNLOADS)"))
         assertTrue(activity.contains("onPitchDown = { onPitchStep(-1) }"))
         assertTrue(activity.contains("onPitchUp = { onPitchStep(1) }"))
         assertTrue(activity.contains("activeEngine.setPitchSemitones"))
@@ -118,7 +118,7 @@ class KtvBottomDockFocusContractTest {
         val activitySource = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
         assertTrue(activitySource.contains("FullscreenPlaybackAction.PITCH -> openPitchFromFullscreen()"))
         val unavailableMethod = activitySource.substringAfter("private fun showPitchUnavailable(")
-            .substringBefore("private fun showCapabilityDrawer(")
+            .substringBefore("private fun showPitchModal(")
         assertTrue("不可用状态也应使用居中 KtvPitchDialog 统一承载", unavailableMethod.contains("KtvPitchDialog("))
         assertTrue("不可用状态不得再退回 showCapabilityDrawer", !unavailableMethod.contains("showCapabilityDrawer("))
     }

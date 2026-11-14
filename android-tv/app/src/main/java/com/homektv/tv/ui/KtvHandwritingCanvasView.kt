@@ -147,6 +147,8 @@ class KtvHandwritingCanvasView @JvmOverloads constructor(
         return super.onKeyDown(keyCode, event)
     }
 
+    fun hasInk(): Boolean = strokeBuffer.snapshot().isNotEmpty()
+
     /** Returns true only when Back consumed an active remote drawing session. */
     fun finishRemoteDrawing(): Boolean {
         if (!isRemoteDrawing) return false

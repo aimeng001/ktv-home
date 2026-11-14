@@ -3,7 +3,7 @@ package com.homektv.tv.ui
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -72,14 +72,15 @@ class MainActivityPlaybackContractTest {
         assertTrue("必须受外部 HDMI 异显保护", dock.contains("externalDisplayActive"))
 
         val kiosk = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
-        val fullscreenAction = kiosk.substringAfter("if (action == KioskBackAction.RETURN_TO_FULLSCREEN_MV)")
-            .substringBefore("} else {")
-        assertTrue(fullscreenAction.contains("bottomDockController.enterFullscreen()"))
-        assertFalse(fullscreenAction.contains("toggleKiosk(false)"))
+        val promptAction = kiosk.substringAfter("KioskBackAction.PROMPT_EXIT_WITH_FULLSCREEN")
+            .substringBefore("KioskBackAction.RETURN_TO_FULLSCREEN_MV")
+        assertTrue(promptAction.contains("onRequestExitConfirm(hasPlaying)"))
+        assertFalse(promptAction.contains("toggleKiosk(false)"))
 
         val main = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
         assertTrue(main.contains("fullscreenPlaybackPanel.handleKeyEvent(event)"))
         assertTrue(main.contains("bottomDockController.exitFullscreen()"))
+        assertTrue(main.contains("onRequestExitConfirm = ::showExitConfirmDialog"))
     }
 
     @Test
@@ -123,8 +124,7 @@ class MainActivityPlaybackContractTest {
         val standby = (0 until elements.length).map { elements.item(it) }
             .filterIsInstance<org.w3c.dom.Element>()
             .firstOrNull { it.getAttribute("android:id") == "@+id/standbyPanel" }
-        assertNotNull("standbyPanel must exist in activity_main.xml", standby)
-        assertEquals("standbyPanel 默认必须设为 gone，防止冷启动闪现旧版大二维码待机页", "gone", standby?.getAttribute("android:visibility"))
+        assertNull("standbyPanel must be removed from activity_main.xml", standby)
     }
 
     @Test
@@ -172,6 +172,53 @@ class MainActivityPlaybackContractTest {
             "调音面板等浮层在显示时必须在 kioskController 之前消费 Back 键，防止死锁或误退大厅",
             remoteMenuIndex < kioskDispatchIndex,
         )
+    }
+
+    @Test
+    fun volumeAndVocalOsdsBringToFrontAndHandwritingBackClearsInk() {
+        val main = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+        val volumeOsdFn = main.substringAfter("private fun showVolumeOsd(")
+            .substringBefore("private fun showVocalOsd(")
+        val vocalOsdFn = main.substringAfter("private fun showVocalOsd(")
+            .substringBefore("private fun resetIdleTimer(")
+        assertTrue("showVolumeOsd 必须置顶防止被全屏或点歌浮层遮挡", volumeOsdFn.contains("binding.volumeOsd.bringToFront()"))
+        assertTrue("showVocalOsd 必须置顶防止被全屏或点歌浮层遮挡", vocalOsdFn.contains("binding.vocalOsd.bringToFront()"))
+
+        val keyboard = locate("src/main/java/com/homektv/tv/ui/KtvKeyboardView.kt").readText()
+        val backFn = keyboard.substringAfter("fun consumeBackForActiveDrawing(action: Int): Boolean")
+            .substringBefore("private fun clearTransientInputState()")
+        assertTrue("手写画板存在笔迹时按返回键必须先清空笔迹而非直接退页", backFn.contains("hasInk()") && backFn.contains("clearInk()"))
+    }
+
+    @Test
+    fun alertDialogsAndScanConfirmUseDarkTvTheme() {
+        val mainSource = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+        val overlaySource = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+        val scanXml = locate("src/main/res/layout/dialog_library_scan_confirm.xml").readText()
+
+        assertFalse("checkModeMigration 已随多模式切换移除", mainSource.contains("checkModeMigration"))
+
+        val confirmBlock = mainSource.substringAfter("private fun confirmControl").substringBefore("private fun sendControl")
+        assertTrue("confirmControl 必须使用暗色 TV 弹窗主题", confirmBlock.contains("Theme_HomeKtvTv_UpdateDialog"))
+
+        val imeBlock = overlaySource.substringAfter("private fun openSystemImeSearchDialog").substringBefore("private fun onRemoteMenuPressed")
+        assertTrue("系统输入法搜索弹窗必须使用暗色 TV 弹窗主题", imeBlock.contains("Theme_HomeKtvTv_UpdateDialog"))
+        assertTrue("系统输入法输入框应设置白色前景以适配暗色弹窗", imeBlock.contains("Color.WHITE"))
+
+        assertTrue("更新歌库确认框应使用统一暗色玻璃背景", scanXml.contains("@drawable/player_glass"))
+        assertFalse("更新歌库确认框不得使用白底 bg_library_scan_dialog", scanXml.contains("@drawable/bg_library_scan_dialog"))
+    }
+
+    @Test
+    fun modalLifecycleSuspendsBackgroundFocusAndSkipsRestoreInTouchMode() {
+        val mainSource = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+        val trackBlock = mainSource.substringAfter("private fun trackModalDialog").substringBefore("private fun untrackModalDialog")
+        val untrackBlock = mainSource.substringAfter("private fun untrackModalDialog").substringBefore("internal fun showTrackedAlertDialog")
+        val restoreBlock = mainSource.substringAfter("private fun restoreFocus").substringBefore("private fun trackModalDialog")
+
+        assertTrue("trackModalDialog 必须挂起底层页面焦点，防止弹窗后方按钮残留焦点框", trackBlock.contains("suspendBackgroundFocusForModal()"))
+        assertTrue("untrackModalDialog 必须在无弹窗时恢复底层页面焦点能力", untrackBlock.contains("restoreBackgroundFocusAfterModal()"))
+        assertTrue("restoreFocus 在触控模式下不得强行抢占焦点框", restoreBlock.contains("!target.isInTouchMode"))
     }
 
     private fun locate(relativePath: String): File {

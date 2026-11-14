@@ -10,7 +10,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.homektv.tv.R
 import com.homektv.tv.net.AppConfig
-import com.homektv.tv.session.DeviceMode
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -198,7 +197,6 @@ class PlaybackStartupInstrumentedTest {
         try {
             AppConfig(context).apply {
                 serverHost = fixture.hostPort
-                saveMode(DeviceMode.PLAYER, fixture.hostPort)
             }
             scenario = ActivityScenario.launch(Intent(context, MainActivity::class.java))
             assertTrue("MainActivity should connect to the local WebSocket fixture",

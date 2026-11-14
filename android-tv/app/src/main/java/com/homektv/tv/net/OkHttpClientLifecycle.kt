@@ -63,6 +63,14 @@ internal object SharedHttpClients {
         .readTimeout(8, TimeUnit.SECONDS)
         .build()
 
+    /** Idempotent read/browse client with generous 15s read timeout and safe connection retry. */
+    fun browseReadClient(): OkHttpClient = baseClient.newBuilder()
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(8, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+
     fun transportClient(): OkHttpClient = baseClient.newBuilder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)

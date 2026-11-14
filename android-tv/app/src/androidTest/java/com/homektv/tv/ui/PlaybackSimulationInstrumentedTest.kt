@@ -27,7 +27,6 @@ import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.SongDto
 import com.homektv.tv.player.PlaybackEngine
 import com.homektv.tv.player.DesiredPlaybackState
-import com.homektv.tv.session.DeviceMode
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.BufferedReader
@@ -84,10 +83,8 @@ class PlaybackSimulationInstrumentedTest {
         val mediaServer = SlowLocalMediaServer(mediaBytes).start()
         val config = AppConfig(context)
         val previousHost = config.serverHost
-        val previousMode = config.modeFor() ?: config.effectiveMode()
         val localOfflineHost = "127.0.0.1:9"
         config.serverHost = localOfflineHost
-        config.saveMode(DeviceMode.COMBINED, localOfflineHost)
 
         var scenario: ActivityScenario<MainActivity>? = null
         var imageReader: ImageReader? = null
@@ -172,7 +169,6 @@ class PlaybackSimulationInstrumentedTest {
                 setPrivateField(activity, "audioTrackCount", 2)
                 kiosk.toggleKiosk(false)
                 mainBinding.playerView.visibility = android.view.View.VISIBLE
-                mainBinding.standbyPanel.visibility = android.view.View.GONE
                 engine.play(
                     fileId = 91001L,
                     streamUrl = mediaServer.liveTranscodeUrl,
@@ -489,7 +485,7 @@ class PlaybackSimulationInstrumentedTest {
             imageReader?.close()
             scenario?.close()
             mediaServer.close()
-            config.saveMode(previousMode, previousHost)
+            config.serverHost = previousHost
         }
     }
 
@@ -514,10 +510,8 @@ class PlaybackSimulationInstrumentedTest {
         }
         val config = AppConfig(context)
         val previousHost = config.serverHost
-        val previousMode = config.modeFor() ?: config.effectiveMode()
         val apiHost = arguments.getString("realMvApiHost") ?: "127.0.0.1:9"
         config.serverHost = apiHost
-        config.saveMode(DeviceMode.COMBINED, apiHost)
 
         var scenario: ActivityScenario<MainActivity>? = null
         try {
@@ -573,7 +567,6 @@ class PlaybackSimulationInstrumentedTest {
                 setPrivateField(activity, "audioTrackCount", audioTrackCount)
                 kiosk.toggleKiosk(false)
                 binding.playerView.visibility = android.view.View.VISIBLE
-                binding.standbyPanel.visibility = android.view.View.GONE
                 engine.play(
                     fileId = 91003L,
                     streamUrl = streamUrl,
@@ -670,7 +663,7 @@ class PlaybackSimulationInstrumentedTest {
             capture("real_mv_read_only_source_smoke.png")
         } finally {
             scenario?.close()
-            config.saveMode(previousMode, previousHost)
+            config.serverHost = previousHost
         }
     }
 

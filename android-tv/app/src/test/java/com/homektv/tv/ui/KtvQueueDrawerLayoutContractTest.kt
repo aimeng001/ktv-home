@@ -58,6 +58,28 @@ class KtvQueueDrawerLayoutContractTest {
         assertEquals("388dp", drawerWidth.textContent.trim())
     }
 
+    @Test
+    fun disabledDownloadButtonsAreUnfocusableAndCloseButtonFocusDependsOnActiveTab() {
+        val document = parse("src/main/res/layout/dialog_ktv_queue.xml")
+        val elements = (0 until document.getElementsByTagName("*").length)
+            .map { document.getElementsByTagName("*").item(it) as org.w3c.dom.Element }
+        val byId = elements.associateBy { it.getAttribute("android:id") }
+
+        listOf("btnDownloadStartAll", "btnDownloadPauseAll", "btnDownloadDeleteAll").forEach { id ->
+            val button = byId.getValue("@+id/$id")
+            assertEquals("false", button.getAttribute("android:enabled"))
+            assertEquals("false", button.getAttribute("android:focusable"))
+        }
+        val downloadsTab = byId.getValue("@+id/drawerTabDownloads")
+        assertTrue(downloadsTab.getAttribute("android:nextFocusDown").isNullOrBlank())
+
+        val source = locate("src/main/java/com/homektv/tv/ui/KtvQueueDrawerDialog.kt").readText()
+        assertTrue(source.contains("private fun syncHeaderFocusNavigation()"))
+        assertTrue(!source.contains("binding.btnDrawerClose.nextFocusDownId = if (isEmpty) binding.btnDrawerClose.id"))
+        assertTrue(!source.contains("else -> binding.btnDrawerClose.id"))
+        assertTrue(source.contains("binding.btnDrawerShuffle.isFocusable ="))
+    }
+
     private fun parse(relativePath: String) =
         DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(locate(relativePath))
 

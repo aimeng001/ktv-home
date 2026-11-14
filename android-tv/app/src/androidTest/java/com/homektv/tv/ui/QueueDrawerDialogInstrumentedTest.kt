@@ -24,9 +24,9 @@ class QueueDrawerDialogInstrumentedTest {
     @Test
     fun threeTabsLoadRealHistoryAndKeepUnavailableDownloadActionsDisabled() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val scenario = ActivityScenario.launch<ControllerActivity>(
-            Intent(instrumentation.targetContext, ControllerActivity::class.java)
-                .putExtra(ControllerActivity.EXTRA_REALTIME, false),
+        val scenario = ActivityScenario.launch<SetupActivity>(
+            Intent(instrumentation.targetContext, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_FORCE_SETUP, true),
         )
         var dialog: KtvQueueDrawerDialog? = null
         var historyReadCount = 0
@@ -113,9 +113,9 @@ class QueueDrawerDialogInstrumentedTest {
     @Test
     fun emptyQueueIsVisibleAndDismissingDrawerRestoresInitiatingFocus() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val scenario = ActivityScenario.launch<ControllerActivity>(
-            Intent(instrumentation.targetContext, ControllerActivity::class.java)
-                .putExtra(ControllerActivity.EXTRA_REALTIME, false),
+        val scenario = ActivityScenario.launch<SetupActivity>(
+            Intent(instrumentation.targetContext, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_FORCE_SETUP, true),
         )
         var dialog: KtvQueueDrawerDialog? = null
         var dismissed = false
@@ -195,9 +195,9 @@ class QueueDrawerDialogInstrumentedTest {
     @Test
     fun unresolvedQueueShowsUnavailableStateAndKeepsARealRetryAction() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val scenario = ActivityScenario.launch<ControllerActivity>(
-            Intent(instrumentation.targetContext, ControllerActivity::class.java)
-                .putExtra(ControllerActivity.EXTRA_REALTIME, false),
+        val scenario = ActivityScenario.launch<SetupActivity>(
+            Intent(instrumentation.targetContext, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_FORCE_SETUP, true),
         )
         var dialog: KtvQueueDrawerDialog? = null
         var retryCount = 0

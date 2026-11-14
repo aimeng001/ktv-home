@@ -317,6 +317,8 @@ class PlaybackEngine(
         }
     }
 
+    private val fallbackPlayerFactoryInjected = fallbackPlayerFactory != null
+
     private val fallbackPlayer: FallbackPlayer = fallbackPlayerFactory?.invoke(
         appContext,
         { isPlaying ->
@@ -371,9 +373,9 @@ class PlaybackEngine(
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        // 读超时收紧到 8s：链路（盒子 WiFi / Mac 休眠节流）会偶发整段停供数据，
-        // 实测重试新连接可立即恢复。8s 超时 + 25s 缓冲可把这类停顿隐藏在缓冲内。
-        .readTimeout(8, TimeUnit.SECONDS)
+        // 读超时放宽至 20s：兼顾 NAS 磁盘唤醒、FFmpeg 实时转码首包关键帧等待与 WiFi 链路波动，
+        // 避免短暂慢起播被误判超时切歌。
+        .readTimeout(PlaybackTransientRetryPolicy.STREAM_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
@@ -762,6 +764,10 @@ class PlaybackEngine(
 
     /** Applies a server-requested seek without reloading the current media item. */
     fun seekTo(positionMs: Long) {
+        Log.d(
+            TAG,
+            "seekTo positionMs=$positionMs liveTranscode=$currentIsLiveTranscode engine=$activeEngineType fileId=$currentFileId",
+        )
         retryState.seekTo(positionMs)
         cancelRetry()
         if (PlaybackSeekPolicy.shouldReopenLivePipe(currentIsLiveTranscode, activeEngineType)) {
@@ -851,8 +857,9 @@ class PlaybackEngine(
      *  真机实测（腾讯极光 6SE）：只调 ExoPlayer 音量会让系统音量被独立调低后
      *  无法在 App 内恢复（音量键被 App 接管），因此直接联动系统音量。 */
     fun applyVolume(volume: Int, muted: Boolean) {
+        val fixedOutput = audioManager.isVolumeFixed
         val max = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
-        if (max > 0) {
+        if (!fixedOutput && max > 0) {
             val target = volume.coerceIn(0, 100) * max / 100
             if (!muted) {
                 if (audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) != target) {
@@ -867,7 +874,7 @@ class PlaybackEngine(
             }
         }
         if (playerDelegate.isInitialized()) {
-            player.volume = if (muted) 0f else 1f
+            player.volume = resolvePlayerSoftwareVolume(volume, muted, fixedOutput)
         }
         if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
             fallbackPlayer.setVolume(volume, muted)
@@ -1105,26 +1112,52 @@ class PlaybackEngine(
         }
     }
 
-    /** 播放中超过 [VIDEO_STALL_THRESHOLD_MS] 没有视频帧上屏 → 就地 seek 强制 flush 解码器。 */
+    /** 播放中视频帧卡顿看门狗：非转码流就地 seek 冲刷，耗尽后优先降级服务端实时转码。 */
     private fun checkVideoStall() {
-        when (videoWatchdog.poll(SystemClock.elapsedRealtime())) {
-            VideoPlaybackWatchdog.Decision.NONE -> Unit
-            VideoPlaybackWatchdog.Decision.RECOVER -> {
+        val action = PlaybackStallRecoveryPolicy.resolve(
+            decision = videoWatchdog.poll(SystemClock.elapsedRealtime()),
+            isVideo = currentHasVideoDeclared,
+            isLiveTranscode = currentIsLiveTranscode,
+            fileId = currentFileId,
+            requestedFileId = resolutionRequestedFileId,
+        )
+        when (action) {
+            PlaybackStallAction.NONE -> Unit
+            PlaybackStallAction.SKIP_SEEK_FOR_LIVE_PIPE -> {
+                Log.w(TAG, "video watchdog skipped in-place seek on live transcode stream fileId=$currentFileId")
+            }
+            PlaybackStallAction.IN_PLACE_SEEK -> {
                 val position = player.currentPosition
                 Log.w(TAG, "video frame watchdog recovery at position=$position (in-place seek)")
                 player.seekTo(position)
             }
-            VideoPlaybackWatchdog.Decision.EXHAUSTED -> {
-                Log.w(TAG, "video frame watchdog exhausted; reporting playback error")
-                stopProgressTicker()
-                identityGate.invalidate()
-                cancelRetry()
-                onError(
-                    "VIDEO_FIRST_FRAME_TIMEOUT",
-                    PlaybackErrorContext.forPlayback(currentQueueId, currentFileId),
-                )
+            PlaybackStallAction.REQUEST_LIVE_TRANSCODE -> {
+                Log.w(TAG, "video frame watchdog exhausted; escalating fileId=$currentFileId to live transcode")
+                if (!requestPlaybackResolution(
+                        queueId = currentQueueId,
+                        fileId = currentFileId,
+                        positionMs = retryState.positionForRetry(currentPositionMs),
+                        playWhenReady = retryState.playWhenReady,
+                    )
+                ) {
+                    reportVideoTimeoutFailure()
+                }
+            }
+            PlaybackStallAction.REPORT_ERROR -> {
+                reportVideoTimeoutFailure()
             }
         }
+    }
+
+    private fun reportVideoTimeoutFailure() {
+        Log.w(TAG, "video frame watchdog exhausted; reporting playback error")
+        stopProgressTicker()
+        identityGate.invalidate()
+        cancelRetry()
+        onError(
+            "VIDEO_FIRST_FRAME_TIMEOUT",
+            PlaybackErrorContext.forPlayback(currentQueueId, currentFileId),
+        )
     }
 
     private fun startProgressTicker() {
@@ -1272,6 +1305,7 @@ class PlaybackEngine(
         }
 
         override fun onRenderedFirstFrame() {
+            Log.d(TAG, "onRenderedFirstFrame generation=$videoGeneration engine=$activeEngineType fileId=$currentFileId")
             videoWatchdog.onRenderedFirstFrame(videoGeneration, SystemClock.elapsedRealtime())
         }
 
@@ -1314,7 +1348,17 @@ class PlaybackEngine(
                     reportPlaybackFailure("LIVE_TRANSCODE_${error.errorCodeName}", currentQueueId, currentFileId)
                     return
                 }
-                Log.w(TAG, "Media3 decoder/format failure (${error.errorCodeName}); falling back to fallback engine")
+                Log.w(TAG, "Media3 decoder/format failure (${error.errorCodeName}); escalating recovery")
+                if (!fallbackPlayerFactoryInjected &&
+                    requestPlaybackResolution(
+                        currentQueueId,
+                        currentFileId,
+                        retryState.positionForRetry(currentPositionMs),
+                        retryState.playWhenReady,
+                    )
+                ) {
+                    return
+                }
                 if (switchCurrentMediaToFallback(followedByMedia3DecoderFailure = true)) return
                 if (!requestPlaybackResolution(
                         currentQueueId,
@@ -1331,11 +1375,12 @@ class PlaybackEngine(
             val retryTicket = currentRetryTicket
             val retryRequest = currentRequest
             val retryFileId = currentFileId
-            if (isTransient(error) && transientRetryCount < MAX_TRANSIENT_RETRIES
+            if (isTransient(error) && transientRetryCount < PlaybackTransientRetryPolicy.maxRetries
                 && retryTicket != null && retryRequest != null && retryFileId != null) {
+                val delayMs = PlaybackTransientRetryPolicy.delayForAttempt(transientRetryCount)
                 transientRetryCount++
                 val position = retryState.positionForRetry(currentPositionMs)
-                Log.w(TAG, "retry media fileId=$retryFileId attempt=$transientRetryCount position=$position")
+                Log.w(TAG, "retry media fileId=$retryFileId attempt=$transientRetryCount delayMs=$delayMs position=$position")
                 val runnable = Runnable {
                     retryRunnable = null
                     if (retryGate.isCurrent(retryTicket, currentRequest)
@@ -1348,7 +1393,7 @@ class PlaybackEngine(
                     }
                 }
                 retryRunnable = runnable
-                main.postDelayed(runnable, RETRY_DELAY_MS)
+                main.postDelayed(runnable, delayMs)
                 return
             }
             transientRetryCount = 0
@@ -1381,8 +1426,6 @@ class PlaybackEngine(
         private const val TAG = "PlaybackEngine"
         private const val PITCH_PARAMETER_EPSILON = 0.0001f
         private const val PROGRESS_INTERVAL_MS = 100L
-        private const val MAX_TRANSIENT_RETRIES = 2
-        private const val RETRY_DELAY_MS = 750L
     }
 
     private var transientRetryCount = 0
@@ -1401,6 +1444,16 @@ internal fun resolvePlaybackDurationMs(engineDurationMs: Long, metadataDurationM
 
 internal fun resolvePlaybackStreamVolumePercent(index: Int, max: Int): Int? =
     if (max <= 0) null else (index.coerceIn(0, max) * 100 + max / 2) / max
+
+internal fun resolvePlayerSoftwareVolume(
+    volumePercent: Int,
+    muted: Boolean,
+    isVolumeFixed: Boolean,
+): Float = when {
+    muted -> 0f
+    isVolumeFixed -> volumePercent.coerceIn(0, 100) / 100f
+    else -> 1f
+}
 
 
 

@@ -1,26 +1,9 @@
 package com.homektv.tv.net
 
 import android.content.Context
-import android.content.pm.PackageManager
-import android.content.res.Configuration
 import androidx.core.content.edit
-import com.homektv.tv.session.DeviceCapabilities
-import com.homektv.tv.session.DeviceMode
-import com.homektv.tv.session.DeviceModeRouter
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
-
-/** Snapshot of the Android form-factor signals used by address and mode policy. */
-internal data class AppConfigPlatformInfo(
-    val hasLeanback: Boolean,
-    val hasTouchscreen: Boolean,
-    val uiMode: Int,
-    val smallestScreenWidthDp: Int,
-) {
-    val isTelevision: Boolean
-        get() = hasLeanback ||
-            (uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
-}
 
 /**
  * NAS 服务端地址与历史连接持久化。
@@ -30,16 +13,12 @@ internal data class AppConfigPlatformInfo(
 class AppConfig private constructor(
     context: Context,
     credentialStoreFactory: (Context) -> CredentialStore,
-    private val platformInfoProvider: (Context) -> AppConfigPlatformInfo,
 ) {
 
-    constructor(context: Context) : this(context, { CredentialStore(it) }, ::readPlatformInfo)
+    constructor(context: Context) : this(context, { CredentialStore(it) })
 
     internal constructor(context: Context, keyProvider: CredentialKeyProvider) :
-        this(context, { CredentialStore(it, keyProvider) }, ::readPlatformInfo)
-
-    internal constructor(context: Context, platformInfo: AppConfigPlatformInfo) :
-        this(context, { CredentialStore(it) }, { platformInfo })
+        this(context, { CredentialStore(it, keyProvider) })
 
     val appContext = context.applicationContext
     private val prefs = appContext
@@ -113,9 +92,6 @@ class AppConfig private constructor(
         val newNicknameKey = ServerSessionScope.preferenceKey(KEY_NICKNAME_PREFIX, to)
         val oldNickname = prefs.getString(oldNicknameKey, null)
 
-        val oldModeKey = ServerSessionScope.preferenceKey(KEY_MODE_PREFIX, from)
-        val newModeKey = ServerSessionScope.preferenceKey(KEY_MODE_PREFIX, to)
-        val oldMode = prefs.getString(oldModeKey, null)
         val oldPendingKey = ServerSessionScope.preferenceKey(KEY_PENDING_FINISHED_PREFIX, from)
         val pendingFrom = pendingFinishedQueueIds(from)
         val pendingTo = pendingFinishedQueueIds(to)
@@ -133,9 +109,6 @@ class AppConfig private constructor(
             if (!oldNickname.isNullOrBlank() && prefs.getString(newNicknameKey, null).isNullOrBlank()) {
                 putString(newNicknameKey, oldNickname)
             }
-            if (!oldMode.isNullOrBlank() && prefs.getString(newModeKey, null).isNullOrBlank()) {
-                putString(newModeKey, oldMode)
-            }
         }
         savePendingFinishedQueueIds(PendingFinishedPolicy.merge(pendingTo, pendingFrom), to)
         savePendingPlaybackErrors(PlaybackErrorOutbox.merge(pendingPlayErrorsTo, pendingPlayErrorsFrom), to)
@@ -143,7 +116,6 @@ class AppConfig private constructor(
             remove(oldUserTokenKey)
             remove(oldPlayerTokenKey)
             remove(oldNicknameKey)
-            remove(oldModeKey)
             remove(oldPendingKey)
             remove(oldPlayErrorKey)
             remove(KEY_TOKEN)
@@ -172,7 +144,6 @@ class AppConfig private constructor(
                 remove(ServerSessionScope.preferenceKey(KEY_USER_TOKEN_PREFIX, scope))
                 remove(ServerSessionScope.preferenceKey(KEY_PLAYER_TOKEN_PREFIX, scope))
                 remove(ServerSessionScope.preferenceKey(KEY_NICKNAME_PREFIX, scope))
-                remove(ServerSessionScope.preferenceKey(KEY_MODE_PREFIX, scope))
                 remove(ServerSessionScope.preferenceKey(KEY_PENDING_FINISHED_PREFIX, scope))
                 remove(ServerSessionScope.preferenceKey(KEY_PENDING_PLAYBACK_ERRORS_PREFIX, scope))
             }
@@ -259,26 +230,6 @@ class AppConfig private constructor(
     internal fun wsUrlFor(server: SavedServer?, clientToken: String): String =
         buildTvWebSocketUrl(server?.hostPort.orEmpty(), clientToken)
 
-    /** WebSocket 地址 for the controller-compatible V1 session. */
-    fun controllerWsUrl(userToken: String = this.userToken): String =
-        controllerWsUrlFor(serverForHost(), userToken)
-
-    internal fun controllerWsUrlFor(server: SavedServer?, userToken: String): String =
-        buildControllerWebSocketUrl(
-            serverHost = server?.hostPort.orEmpty(),
-            userToken = userToken,
-            platform = controllerPlatform(),
-            deviceMode = effectiveMode(server?.hostPort).name,
-        )
-
-    /** Explicit form-factor metadata lets the server count phones without
-     * conflating them with browser H5 sessions. */
-    fun controllerPlatform(): String {
-        val platform = platformInfoProvider(appContext)
-        if (platform.isTelevision) return "ANDROID_TV"
-        return if (platform.smallestScreenWidthDp >= 600) "ANDROID_TABLET" else "ANDROID_PHONE"
-    }
-
     /** REST/资源基址；服务器显式配置 HTTPS 时保持 TLS。 */
     fun apiBase(): String = buildServerHttpUrl(serverHost.orEmpty(), "/api")
 
@@ -315,34 +266,6 @@ class AppConfig private constructor(
 
     fun saveNickname(nickname: String, hostPort: String? = serverHost) {
         writeScopedString(KEY_NICKNAME_PREFIX, serverForHost(hostPort), nickname.trim().take(MAX_NICKNAME_LENGTH))
-    }
-
-    /** The first-run recommendation; a saved choice always wins per server. */
-    val recommendedMode: DeviceMode
-        get() = platformInfoProvider(appContext).let { platform ->
-            DeviceModeRouter.recommend(
-                DeviceCapabilities(
-                    isTelevision = platform.isTelevision,
-                    hasTouchscreen = platform.hasTouchscreen,
-                ),
-            )
-        }
-
-    fun modeFor(hostPort: String? = serverHost): DeviceMode? =
-        readScopedString(KEY_MODE_PREFIX, serverForHost(hostPort))
-            ?.let { value -> runCatching { DeviceMode.valueOf(value) }.getOrNull() }
-
-    fun effectiveMode(hostPort: String? = serverHost): DeviceMode =
-        DeviceModeRouter.resolve(recommendedMode, modeFor(hostPort))
-
-    fun saveMode(mode: DeviceMode, hostPort: String? = serverHost) {
-        writeScopedString(KEY_MODE_PREFIX, serverForHost(hostPort), mode.name)
-    }
-
-    fun getModeMigrationVersion(): Int = prefs.getInt("mode_migration_version", 0)
-
-    fun setModeMigrationVersion(version: Int) {
-        prefs.edit { putInt("mode_migration_version", version) }
     }
 
     private fun tokenForServer(
@@ -426,7 +349,6 @@ class AppConfig private constructor(
         private const val KEY_PLAYER_TOKEN_PREFIX = "player_token_"
         private const val KEY_USER_TOKEN_PREFIX = "user_token_"
         private const val KEY_NICKNAME_PREFIX = "nickname_"
-        private const val KEY_MODE_PREFIX = "mode_"
         private const val KEY_MICROPHONE_MONITOR = "microphone_monitor_enabled"
         private const val KEY_SAVED_SERVERS = "saved_servers"
         private const val KEY_PENDING_FINISHED_PREFIX = "pending_finished_queue_ids_"
@@ -434,17 +356,6 @@ class AppConfig private constructor(
         private const val MAX_PENDING_PLAYBACK_ERRORS_JSON_CHARS = 1_000_000
         private const val MAX_SAVED_SERVERS = 10
         private const val MAX_NICKNAME_LENGTH = 32
-
-        private fun readPlatformInfo(context: Context): AppConfigPlatformInfo {
-            val configuration = context.resources.configuration
-            val packageManager = context.packageManager
-            return AppConfigPlatformInfo(
-                hasLeanback = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK),
-                hasTouchscreen = packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN),
-                uiMode = configuration.uiMode,
-                smallestScreenWidthDp = configuration.smallestScreenWidthDp,
-            )
-        }
 
         internal fun serverScopedPreferenceKey(prefix: String, serverHost: String?): String =
             ServerSessionScope.hostPreferenceKey(prefix, serverHost)

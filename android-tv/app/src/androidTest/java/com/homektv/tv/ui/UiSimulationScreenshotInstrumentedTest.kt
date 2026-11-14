@@ -20,8 +20,6 @@ import com.homektv.tv.net.AppConfig
 import com.homektv.tv.net.NowPlaying
 import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.SongDto
-import com.homektv.tv.session.DeviceMode
-import com.homektv.tv.session.DeviceModeMigrationPolicy
 import com.homektv.tv.ui.kiosk.KtvCommercialDashboardView
 import com.homektv.tv.ui.kiosk.KtvDashboardBackground
 import java.io.File
@@ -77,7 +75,6 @@ class UiSimulationScreenshotInstrumentedTest {
                     "manual setup form must be at its bottom after scrolling or fit on screen",
                     formScroll.canScrollVertically(1),
                 )
-                assertTrue("device mode selector must be reachable at the bottom of manual setup", activity.findViewById<View>(R.id.modeGroup).isShown)
                 assertTrue("connect action must be reachable at the bottom of manual setup", activity.findViewById<View>(R.id.btnConnect).isShown)
             }
             instrumentation.waitForIdleSync()
@@ -85,61 +82,14 @@ class UiSimulationScreenshotInstrumentedTest {
         } finally {
             setup.close()
         }
-
-        val controller = ActivityScenario.launch<ControllerActivity>(
-            android.content.Intent(instrumentation.targetContext, ControllerActivity::class.java)
-                .putExtra(ControllerActivity.EXTRA_REALTIME, false),
-        )
-        try {
-            val navLabels = listOf("目录", "搜索", "队列", "遥控", "我的")
-            val screenshotNames = listOf(
-                "29_phone_catalog_actual.png",
-                "30_phone_search_actual.png",
-                "31_phone_queue_actual.png",
-                "32_phone_remote_actual.png",
-                "33_phone_my_actual.png",
-            )
-            var phoneNavigationVisible = false
-            controller.onActivity { activity ->
-                assertTrue(
-                    "phone controller pages must render the selected stage artwork",
-                    KtvDashboardBackground.isUsingSelectedArtwork(activity.findViewById(R.id.controllerRoot)),
-                )
-                val navigation = activity.findViewById<LinearLayout>(R.id.phoneNav)
-                phoneNavigationVisible = navigation.visibility == View.VISIBLE
-                if (phoneNavigationVisible) assertEquals(navLabels.size, navigation.childCount)
-            }
-            if (phoneNavigationVisible) {
-                navLabels.indices.forEach { index ->
-                    controller.onActivity { activity ->
-                        val navigation = activity.findViewById<LinearLayout>(R.id.phoneNav)
-                        val tab = navigation.getChildAt(index) as Button
-                        assertEquals(navLabels[index], tab.text.toString())
-                        assertTrue(tab.performClick())
-                    }
-                    instrumentation.waitForIdleSync()
-                    controller.onActivity { activity ->
-                        val tab = activity.findViewById<LinearLayout>(R.id.phoneNav).getChildAt(index)
-                        assertTrue("phone screenshot ${navLabels[index]} must focus its selected tab", tab.requestFocusFromTouch())
-                        assertTrue("phone screenshot ${navLabels[index]} must show its focused tab", tab.hasFocus())
-                    }
-                    capture(screenshotNames[index])
-                }
-            } else {
-                instrumentation.waitForIdleSync()
-                capture("tv_controller_all_panels_actual.png")
-            }
-        } finally {
-            controller.close()
-        }
     }
 
     @Test
     fun capturesDashboardComponentAndEmptyQueueDrawer() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val scenario = ActivityScenario.launch<ControllerActivity>(
-            android.content.Intent(instrumentation.targetContext, ControllerActivity::class.java)
-                .putExtra(ControllerActivity.EXTRA_REALTIME, false),
+        val scenario = ActivityScenario.launch<SetupActivity>(
+            android.content.Intent(instrumentation.targetContext, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_FORCE_SETUP, true),
         )
         var dialog: KtvQueueDrawerDialog? = null
         try {
@@ -189,10 +139,8 @@ class UiSimulationScreenshotInstrumentedTest {
 
         val config = AppConfig(context)
         val previousHost = config.serverHost
-        val previousMode = config.modeFor() ?: config.effectiveMode()
         val localOfflineHost = "127.0.0.1:9"
         config.serverHost = localOfflineHost
-        config.saveMode(DeviceMode.COMBINED, localOfflineHost)
 
         var scenario: ActivityScenario<MainActivity>? = null
         try {
@@ -209,14 +157,6 @@ class UiSimulationScreenshotInstrumentedTest {
                     .get(activity) as com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
                 assertEquals(View.VISIBLE, overlayBinding.kioskRootOverlay.visibility)
                 assertTrue(KtvDashboardBackground.isUsingSelectedArtwork(overlayBinding.kioskRootOverlay))
-                assertTrue(
-                    "standby must share the selected stage artwork",
-                    KtvDashboardBackground.isUsingSelectedArtwork(activity.findViewById(R.id.standbyPanel)),
-                )
-                assertTrue(
-                    "the legacy queue surface must share the selected stage artwork",
-                    KtvDashboardBackground.isUsingSelectedArtwork(activity.findViewById(R.id.queueOverlay)),
-                )
                 assertTrue(overlayBinding.kioskDashboardView.binding.tileHotRanking.hasFocus())
                 val density = activity.resources.displayMetrics.density
                 val minimumTileGapPx = (10 * density).toInt()
@@ -316,124 +256,7 @@ class UiSimulationScreenshotInstrumentedTest {
             capture("audio_playback_surface_empty_fixture.png")
         } finally {
             scenario?.close()
-            config.saveMode(previousMode, previousHost)
-        }
-    }
-
-    @Test
-    fun focusedVocalChoiceKeepsReadableTextOnGoldFocusSurface() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
-        val isTelevision = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
-            (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
-            android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
-        assumeTrue("vocal focus contrast is a TV-only behavior", isTelevision)
-
-        val config = AppConfig(context)
-        val previousHost = config.serverHost
-        val previousMode = config.modeFor() ?: config.effectiveMode()
-        val previousMigrationVersion = config.getModeMigrationVersion()
-        val localOfflineHost = "127.0.0.1:9"
-        config.serverHost = localOfflineHost
-        config.saveMode(DeviceMode.PLAYER, localOfflineHost)
-        // Keep the first-run migration prompt from covering the focused vocal choices.
-        config.setModeMigrationVersion(DeviceModeMigrationPolicy.CURRENT_VERSION)
-        assertEquals("vocal panel fixture must run in PLAYER mode", DeviceMode.PLAYER, config.effectiveMode(localOfflineHost))
-        var scenario: ActivityScenario<MainActivity>? = null
-        try {
-            scenario = ActivityScenario.launch(android.content.Intent(context, MainActivity::class.java))
-            instrumentation.waitForIdleSync()
-            scenario.onActivity { activity ->
-                val keyDown = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DPAD_CENTER)
-                val keyUp = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_DPAD_CENTER)
-                assertTrue("PLAYER-mode DPAD_CENTER must be handled by MainActivity", activity.dispatchKeyEvent(keyDown))
-                activity.dispatchKeyEvent(keyUp)
-            }
-            instrumentation.waitForIdleSync()
-
-            scenario.onActivity { activity ->
-                assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.vocalPanel).visibility)
-                listOf(
-                    "原唱" to activity.findViewById<Button>(R.id.btnVocalOriginal),
-                    "伴唱" to activity.findViewById<Button>(R.id.btnVocalAccompaniment),
-                ).forEach { (label, button) ->
-                    assertTrue("$label choice must accept TV focus", button.requestFocus())
-                    assertTrue("$label choice must expose its focused state", button.hasFocus())
-                    val backgroundColor = focusedSolidColor(button.background)
-                    val contrast = contrastRatio(button.currentTextColor, backgroundColor)
-                    assertTrue(
-                        "$label focused label contrast was ${"%.2f".format(Locale.US, contrast)}:1; " +
-                            "foreground=#${button.currentTextColor.toUInt().toString(16)} " +
-                            "background=#${backgroundColor.toUInt().toString(16)}",
-                        contrast >= 4.5,
-                    )
-                }
-                activity.findViewById<Button>(R.id.btnVocalAccompaniment).requestFocus()
-            }
-            capture("tv_vocal_accompaniment_focused_actual.png")
-        } finally {
-            scenario?.close()
             config.serverHost = previousHost
-            config.saveMode(previousMode, previousHost)
-            config.setModeMigrationVersion(previousMigrationVersion)
-        }
-    }
-
-    @Test
-    fun tvOverlaysPreserveDesignedPaddingWhenSystemInsetsAreApplied() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
-        val isTelevision = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
-            (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
-            android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
-        assumeTrue("overlay insets are validated on a TV layout", isTelevision)
-
-        val config = AppConfig(context)
-        val previousHost = config.serverHost
-        val previousMode = config.modeFor() ?: config.effectiveMode()
-        val previousMigrationVersion = config.getModeMigrationVersion()
-        val localOfflineHost = "127.0.0.1:9"
-        config.serverHost = localOfflineHost
-        config.saveMode(DeviceMode.PLAYER, localOfflineHost)
-        // Keep the first-run migration prompt from covering the remote-menu screenshot.
-        config.setModeMigrationVersion(DeviceModeMigrationPolicy.CURRENT_VERSION)
-        assertEquals("remote menu fixture must run in PLAYER mode", DeviceMode.PLAYER, config.effectiveMode(localOfflineHost))
-        var scenario: ActivityScenario<MainActivity>? = null
-        try {
-            scenario = ActivityScenario.launch(android.content.Intent(context, MainActivity::class.java))
-            instrumentation.waitForIdleSync()
-            scenario.onActivity { activity ->
-                val keyDown = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MENU)
-                val keyUp = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MENU)
-                assertTrue("PLAYER-mode MENU must be handled by MainActivity", activity.dispatchKeyEvent(keyDown))
-                activity.dispatchKeyEvent(keyUp)
-                val remoteMenu = activity.findViewById<View>(R.id.remoteMenu)
-                assertEquals(View.VISIBLE, remoteMenu.visibility)
-                val expectedMenuPadding = (18 * context.resources.displayMetrics.density).toInt()
-                assertTrue(
-                    "remote menu must retain its designed 18dp side inset after system insets",
-                    remoteMenu.paddingLeft >= expectedMenuPadding,
-                )
-                assertTrue(activity.findViewById<Button>(R.id.remoteQueue).isShown)
-            }
-            capture("tv_remote_menu_insets_actual.png")
-            scenario.onActivity { activity ->
-                assertTrue(activity.findViewById<Button>(R.id.remoteQueue).performClick())
-
-                val queueOverlay = activity.findViewById<View>(R.id.queueOverlay)
-                assertEquals(View.VISIBLE, queueOverlay.visibility)
-                val expectedQueuePadding = (44 * context.resources.displayMetrics.density).toInt()
-                assertTrue(
-                    "queue title and controls must retain the designed 44dp inset after system insets",
-                    queueOverlay.paddingLeft >= expectedQueuePadding,
-                )
-            }
-            capture("tv_queue_insets_actual.png")
-        } finally {
-            scenario?.close()
-            config.serverHost = previousHost
-            config.saveMode(previousMode, previousHost)
-            config.setModeMigrationVersion(previousMigrationVersion)
         }
     }
 
@@ -448,10 +271,8 @@ class UiSimulationScreenshotInstrumentedTest {
 
         val config = AppConfig(context)
         val previousHost = config.serverHost
-        val previousMode = config.modeFor() ?: config.effectiveMode()
         val localOfflineHost = "127.0.0.1:9"
         config.serverHost = localOfflineHost
-        config.saveMode(DeviceMode.COMBINED, localOfflineHost)
         var scenario: ActivityScenario<MainActivity>? = null
         var host: KioskTransientFeedbackHost? = null
         try {
@@ -508,56 +329,6 @@ class UiSimulationScreenshotInstrumentedTest {
             scenario?.onActivity { host?.clear() }
             scenario?.close()
             config.serverHost = previousHost
-            config.saveMode(previousMode, previousHost)
-        }
-    }
-
-    @Test
-    fun phoneHeaderKeepsTitleAndStatusOnOneRowWithActionsBelow() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
-        val isTelevision = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
-            (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
-            android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
-        val isPhone = !isTelevision && context.resources.configuration.smallestScreenWidthDp < 600
-        if (!isPhone) return
-
-        val scenario = ActivityScenario.launch<ControllerActivity>(
-            android.content.Intent(context, ControllerActivity::class.java)
-                .putExtra(ControllerActivity.EXTRA_REALTIME, false),
-        )
-        try {
-            instrumentation.waitForIdleSync()
-            scenario.onActivity { activity ->
-                val title = activity.findViewById<android.widget.TextView>(R.id.brandTitle)
-                val status = activity.findViewById<android.widget.TextView>(R.id.statusText)
-                val actions = activity.findViewById<LinearLayout>(R.id.headerActions)
-                val actionsRow = activity.findViewById<LinearLayout>(R.id.headerActionsRow)
-                val subtitle = activity.findViewById<View>(R.id.controllerSubtitle)
-                assertTrue(title.isShown)
-                assertEquals(1, title.lineCount)
-                assertEquals(View.VISIBLE, actionsRow.visibility)
-                assertEquals(3, actions.childCount)
-                assertEquals(R.id.headerActionsRow, (actions.parent as View).id)
-
-                fun rect(view: View) = android.graphics.Rect().also {
-                    assertTrue("${view.resources.getResourceEntryName(view.id)} must be visible", view.getGlobalVisibleRect(it))
-                }
-                val titleRect = rect(title)
-                val statusRect = rect(status)
-                val rowRect = rect(actionsRow)
-                val actionsRect = rect(actions)
-                val subtitleRect = rect(subtitle)
-                val contentRect = rect(activity.findViewById(R.id.controllerContent))
-                assertFalse("title and connection status must not overlap", android.graphics.Rect.intersects(titleRect, statusRect))
-                assertTrue("action buttons must stay within their phone row", rowRect.contains(actionsRect))
-                assertTrue("phone action row must stay within content width", contentRect.contains(rowRect))
-                assertTrue("subtitle must follow the action row", rowRect.bottom <= subtitleRect.top)
-            }
-            capture("phone_header_actions_row_actual.png")
-            holdForEvidenceExport()
-        } finally {
-            scenario.close()
         }
     }
 

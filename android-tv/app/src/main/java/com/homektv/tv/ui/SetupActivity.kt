@@ -2,9 +2,6 @@ package com.homektv.tv.ui
 
 import android.animation.ObjectAnimator
 import android.content.Intent
-import android.content.pm.ActivityInfo
-import android.content.pm.PackageManager
-import android.content.res.Configuration
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -25,7 +22,6 @@ import com.homektv.tv.net.DiscoveredServer
 import com.homektv.tv.net.LanDiscovery
 import com.homektv.tv.net.LanScanner
 import com.homektv.tv.net.SavedServer
-import com.homektv.tv.session.DeviceMode
 import com.homektv.tv.ui.kiosk.KtvDashboardBackground
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -46,8 +42,6 @@ class SetupActivity : AppCompatActivity() {
     private var scanJob: Job? = null
     private var verifyJob: Job? = null
     private var initialCredential = ""
-    private var initialNickname = ""
-    private var initialMode = DeviceMode.COMBINED
     private var initialServer: SavedServer? = null
     private var recoveryCandidate: DiscoveredServer? = null
     private var setupPage = SetupPage.DISCOVERY
@@ -57,21 +51,14 @@ class SetupActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         config = AppConfig(this)
         if (config.isConfigured && !intent.getBooleanExtra(EXTRA_FORCE_SETUP, false)) {
-            val target = if (config.effectiveMode() == DeviceMode.CONTROLLER) {
-                ControllerActivity::class.java
-            } else {
-                MainActivity::class.java
-            }
-            startActivity(Intent(this, target))
+            startActivity(Intent(this, MainActivity::class.java))
             finish()
             return
         }
         discovery = LanDiscovery(this)
-        applyRecommendedOrientation()
         binding = ActivitySetupBinding.inflate(layoutInflater)
         setContentView(binding.root)
         KtvDashboardBackground.applyTo(binding.root)
-        applyResponsiveLayout()
         recoveryCandidate = intent.getStringExtra(EXTRA_CANDIDATE_HOST)?.let { host ->
             DiscoveredServer(
                 hostPort = host,
@@ -79,23 +66,14 @@ class SetupActivity : AppCompatActivity() {
                 instanceId = intent.getStringExtra(EXTRA_CANDIDATE_INSTANCE_ID),
             )
         }
+        val prefillHost = recoveryCandidate?.hostPort ?: config.serverHost.orEmpty()
+        if (savedInstanceState == null && binding.inputHost.text.isNullOrBlank() && prefillHost.isNotBlank()) {
+            binding.inputHost.setText(prefillHost)
+        }
         recoveryCandidate?.let { binding.inputHost.setText(it.hostPort) }
         initialServer = config.serverForHost(config.serverHost)
         initialCredential = initialServer?.let(config::playerCredentialFor).orEmpty()
-        initialNickname = config.nicknameFor()
-        initialMode = config.modeFor() ?: config.recommendedMode
         binding.inputCredential.setText(initialCredential)
-        binding.inputNickname.setText(initialNickname)
-        renderMode(initialMode)
-        binding.modeGroup.setOnCheckedChangeListener { _, checkedId ->
-            val mode = when (checkedId) {
-                binding.modePlayer.id -> DeviceMode.PLAYER
-                binding.modeController.id -> DeviceMode.CONTROLLER
-                binding.modeCombined.id -> DeviceMode.COMBINED
-                else -> return@setOnCheckedChangeListener
-            }
-            applyOrientationForMode(mode)
-        }
 
         binding.btnRefresh.setOnClickListener { startScan() }
         binding.btnConnect.setOnClickListener { submitManual() }
@@ -151,39 +129,6 @@ class SetupActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    private fun applyResponsiveLayout() {
-        val isTelevision = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-            (resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
-            Configuration.UI_MODE_TYPE_TELEVISION
-        if (!SetupResponsiveLayoutPolicy.useCompactLayout(
-                isTelevision,
-                resources.configuration.smallestScreenWidthDp,
-            )
-        ) return
-
-        val density = resources.displayMetrics.density
-        fun dp(value: Int) = (value * density).toInt()
-
-        binding.setupPage.setPadding(dp(16), dp(12), dp(16), dp(12))
-        binding.setupIntroPanel.visibility = View.GONE
-        binding.setupHeroPanel.visibility = View.GONE
-        binding.setupContent.orientation = android.widget.LinearLayout.VERTICAL
-        (binding.setupContent.layoutParams as androidx.constraintlayout.widget.ConstraintLayout.LayoutParams).apply {
-            width = 0
-            height = 0
-            topMargin = dp(12)
-        }.also { binding.setupContent.layoutParams = it }
-        (binding.setupFormScroll.layoutParams as android.widget.LinearLayout.LayoutParams).apply {
-            width = ViewGroup.LayoutParams.MATCH_PARENT
-            height = 0
-            weight = 1f
-        }.also { binding.setupFormScroll.layoutParams = it }
-        binding.txtScanStatus.maxWidth = dp(132)
-        binding.txtScanStatus.maxLines = 1
-        binding.txtScanStatus.ellipsize = android.text.TextUtils.TruncateAt.END
-        binding.txtScanStatus.textSize = 12f
     }
 
     override fun onDestroy() {
@@ -263,7 +208,7 @@ class SetupActivity : AppCompatActivity() {
                 binding.btnRefresh.requestFocus()
             }
             setOnLongClickListener {
-                AlertDialog.Builder(this@SetupActivity)
+                AlertDialog.Builder(this@SetupActivity, R.style.Theme_HomeKtvTv_UpdateDialog)
                     .setTitle(R.string.setup_forget_server_title)
                     .setMessage(getString(R.string.setup_forget_server_msg, server.name))
                     .setPositiveButton(R.string.setup_forget_confirm) { _, _ ->
@@ -323,7 +268,7 @@ class SetupActivity : AppCompatActivity() {
                 ?.let { discovered -> SetupVerificationPolicy.confirm(server, discovered) }
             if (confirmed != null) {
                 if (LegacyIdentityMigrationPolicy.requiresConfirmation(initialServer, confirmed)) {
-                    AlertDialog.Builder(this@SetupActivity)
+                    AlertDialog.Builder(this@SetupActivity, R.style.Theme_HomeKtvTv_UpdateDialog)
                         .setTitle(R.string.setup_identity_migration_title)
                         .setMessage(R.string.setup_identity_migration_message)
                         .setPositiveButton(R.string.setup_identity_migration_keep) { _, _ ->
@@ -358,7 +303,6 @@ class SetupActivity : AppCompatActivity() {
             legacyMigrationAccepted = legacyMigrationAccepted,
         )
         if (SetupCandidatePolicy.requiresHttpsForPlayerCredential(
-                mode = selectedMode(),
                 serverHost = confirmed.hostPort,
                 credential = enteredCredential,
                 credentialWillBeUsed = willUseCredential,
@@ -386,28 +330,10 @@ class SetupActivity : AppCompatActivity() {
                 )
             ) enteredCredential else ""
         }
-        val enteredNickname = binding.inputNickname.text.toString()
-        config.saveNickname(
-            SetupCommitPolicy.nickname(
-                initialServer, confirmed, initialNickname, enteredNickname, legacyMigrationAccepted,
-            ),
-            confirmed.hostPort,
-        )
-        val mode = SetupCommitPolicy.mode(
-            initialServer = initialServer,
-            targetServer = confirmed,
-            initialValue = initialMode,
-            selectedValue = selectedMode(),
-            recommendedValue = config.recommendedMode,
-            legacyMigrationAccepted = legacyMigrationAccepted,
-        )
-        config.saveMode(mode, confirmed.hostPort)
         if (intent.getBooleanExtra(EXTRA_RETURN_TO_CALLER, false)) {
             setResult(RESULT_OK)
         } else {
-            val target = if (mode == DeviceMode.CONTROLLER) ControllerActivity::class.java
-            else MainActivity::class.java
-            startActivity(Intent(this@SetupActivity, target))
+            startActivity(Intent(this@SetupActivity, MainActivity::class.java))
         }
         finish()
     }
@@ -432,9 +358,7 @@ class SetupActivity : AppCompatActivity() {
         } else {
             focusables += binding.btnSetupBackToDiscovery
             focusables += binding.inputHost
-            focusables += binding.inputNickname
             focusables += binding.inputCredential
-            focusables += binding.modeGroup.children.toList()
             focusables += binding.btnConnect
         }
 
@@ -455,42 +379,10 @@ class SetupActivity : AppCompatActivity() {
     }
 
     private fun scrollIntoView(view: View) {
-        binding.setupScroll.post {
+        binding.setupFormScroll.post {
             val rect = android.graphics.Rect()
             view.getDrawingRect(rect)
             view.requestRectangleOnScreen(rect, true)
-        }
-    }
-
-    private fun selectedMode(): DeviceMode = when {
-        binding.modePlayer.isChecked -> DeviceMode.PLAYER
-        binding.modeController.isChecked -> DeviceMode.CONTROLLER
-        else -> DeviceMode.COMBINED
-    }
-
-    private fun renderMode(mode: DeviceMode) {
-        when (mode) {
-            DeviceMode.PLAYER -> binding.modePlayer.isChecked = true
-            DeviceMode.CONTROLLER -> binding.modeController.isChecked = true
-            DeviceMode.COMBINED -> binding.modeCombined.isChecked = true
-        }
-        applyOrientationForMode(mode)
-    }
-
-    private fun applyRecommendedOrientation() {
-        applyOrientationForMode(config.modeFor() ?: config.recommendedMode)
-    }
-
-    private fun applyOrientationForMode(mode: DeviceMode) {
-        val isTelevision = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-            (resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
-            Configuration.UI_MODE_TYPE_TELEVISION
-        val hasTouchscreen = packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
-        requestedOrientation = when {
-            isTelevision || !hasTouchscreen -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            mode == DeviceMode.CONTROLLER && resources.configuration.smallestScreenWidthDp < 600 ->
-                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 
