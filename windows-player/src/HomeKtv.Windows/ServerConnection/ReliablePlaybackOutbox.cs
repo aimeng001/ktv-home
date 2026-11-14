@@ -123,39 +123,6 @@ public class ReliablePlaybackOutbox
         lock (gate) return items.ToArray();
     }
 
-    public bool TryPeekMessage(out ReliableMessage? message)
-    {
-        lock (gate)
-        {
-            message = items.Count == 0 ? null : items[0];
-            return message is not null;
-        }
-    }
-
-    public bool TryDequeueMessage(out ReliableMessage? message)
-    {
-        lock (gate)
-        {
-            if (items.Count == 0)
-            {
-                message = null;
-                return false;
-            }
-
-            message = items[0];
-            items.RemoveAt(0);
-            bufferedBytes -= message.Utf8Bytes;
-            if (!PersistUnsafe())
-            {
-                items.Insert(0, message);
-                bufferedBytes += message.Utf8Bytes;
-                message = null;
-                return false;
-            }
-            return true;
-        }
-    }
-
     public bool Acknowledge(string key, string? status)
     {
         if (string.IsNullOrWhiteSpace(key) || status is null || !TerminalStatuses.Contains(status))

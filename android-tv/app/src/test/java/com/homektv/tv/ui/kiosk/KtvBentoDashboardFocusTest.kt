@@ -54,7 +54,8 @@ class KtvBentoDashboardFocusTest {
             "video_container", "btnDockVolUp", "btnDockToneDown", "btnDockToneUp", "btnDockDownloads", "btnDockQueue",
         )
         val hiddenLegacyTargets = setOf("btnDockHome", "btnDockHistory", "btnDockMixer", "btnDockCheer")
-        val allDashboardIds = tileIds.toSet() + "tabDashboard" + visibleDockTargets
+        val topHeaderTargets = setOf("btnTopSystem", "btnTopMobileQr", "btnTopSearch", "btnTopLibraryScan")
+        val allDashboardIds = tileIds.toSet() + topHeaderTargets + visibleDockTargets
 
         tileElements.forEach { (id, tile) ->
             directions.forEach { direction ->
@@ -99,7 +100,7 @@ class KtvBentoDashboardFocusTest {
         val byId = allElements(dashboardDocument()).associateBy { it.getAttribute("android:id") }
         assertEquals("@id/tileOpera", byId.getValue("@+id/tileSinger").getAttribute("android:nextFocusRight"))
         assertEquals("@id/tileSongName", byId.getValue("@+id/tileSinger").getAttribute("android:nextFocusDown"))
-        assertEquals("@id/btnDockToneUp", byId.getValue("@+id/tileNewSongs").getAttribute("android:nextFocusDown"))
+        assertEquals("@id/tileFavorites", byId.getValue("@+id/tileNewSongs").getAttribute("android:nextFocusDown"))
         assertEquals("@id/btnDockVolDown", byId.getValue("@+id/tileSongName").getAttribute("android:nextFocusDown"))
         assertEquals("@id/video_container", byId.getValue("@+id/tileTheme").getAttribute("android:nextFocusDown"))
         assertEquals("@id/btnDockToneDown", byId.getValue("@+id/tileFavorites").getAttribute("android:nextFocusDown"))

@@ -180,7 +180,7 @@
         android:layout_width="@dimen/ktv_dashboard_pip_width"
         android:layout_height="@dimen/ktv_dashboard_pip_height"
         android:background="@drawable/bg_ktv_dock_video_frame"
-        android:clipToOutline="true"
+        android:clipToOutline="false"
         android:clickable="true"
         android:focusable="true"
         android:contentDescription="全屏播放当前 MV"
@@ -220,7 +220,7 @@
 
     <ImageView
         android:id="@+id/video_shadow_left"
-        android:layout_width="24dp"
+        android:layout_width="38dp"
         android:layout_height="0dp"
         android:contentDescription="@null"
         android:scaleType="fitXY"
@@ -231,7 +231,7 @@
 
     <ImageView
         android:id="@+id/video_shadow_right"
-        android:layout_width="24dp"
+        android:layout_width="38dp"
         android:layout_height="0dp"
         android:contentDescription="@null"
         android:scaleType="fitXY"
@@ -400,17 +400,17 @@
 
             <TextView
                 android:id="@+id/txtDockQueueCount"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
                 android:layout_gravity="top|end"
-                android:layout_marginTop="4dp"
-                android:layout_marginEnd="6dp"
+                android:layout_marginTop="16dp"
+                android:layout_marginEnd="12dp"
                 android:background="@drawable/bg_ktv_queue_badge"
                 android:gravity="center"
                 android:text="0"
                 android:contentDescription="待播歌曲数量"
                 android:textColor="@android:color/white"
-                android:textSize="11sp"
+                android:textSize="10sp"
                 android:textStyle="bold"
                 android:visibility="visible" />
         </FrameLayout>

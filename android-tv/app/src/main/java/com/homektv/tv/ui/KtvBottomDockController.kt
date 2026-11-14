@@ -50,6 +50,7 @@ class KtvBottomDockController(
     private val imgQr: ImageView? = null,
     private val actions: Actions,
     private val onFullscreenChanged: (Boolean) -> Unit,
+    private val onFullscreenClick: (() -> Unit)? = null,
 ) {
     data class Actions(
         val onHome: () -> Unit,
@@ -101,8 +102,15 @@ class KtvBottomDockController(
             val am = binding.root.context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
             am?.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_RAISE, android.media.AudioManager.FLAG_SHOW_UI)
         }
-        binding.videoContainer.setOnClickListener { toggleFullscreen() }
-        playerContainer.setOnClickListener { toggleFullscreen() }
+        val handleVideoClick = {
+            if (isFullscreen) {
+                onFullscreenClick?.invoke()
+            } else {
+                enterFullscreen()
+            }
+        }
+        binding.videoContainer.setOnClickListener { handleVideoClick() }
+        playerContainer.setOnClickListener { handleVideoClick() }
         imgQr?.setOnClickListener { actions.onQrCode() }
         playerView.useController = false
         playerView.isFocusable = false
@@ -112,7 +120,7 @@ class KtvBottomDockController(
     }
 
     private fun normalizeDockButtonIcons() {
-        val sizePx = (26 * binding.root.resources.displayMetrics.density).toInt()
+        val sizePx = (28 * binding.root.resources.displayMetrics.density).toInt()
         val buttons = listOf(
             binding.btnDockHome,
             binding.btnDockQueue,
@@ -213,7 +221,7 @@ class KtvBottomDockController(
     }
 
     fun updateFocusUpTargets(isDashboard: Boolean) {
-        val browserLeftTarget = if (isDashboard) R.id.tileTikTok else R.id.browserNavSingers
+        val browserLeftTarget = if (isDashboard) R.id.tileTikTok else R.id.browserResultsRecyclerView
         val browserCenterTarget = if (isDashboard) R.id.tileSongName else R.id.browserResultsRecyclerView
         val browserRightTarget = if (isDashboard) R.id.tileLocal else R.id.browserResultsRecyclerView
 
@@ -232,7 +240,11 @@ class KtvBottomDockController(
 
     fun toggleFullscreen() {
         if (!videoVisible || externalDisplayActive) return
-        if (isFullscreen) exitFullscreen() else enterFullscreen()
+        if (isFullscreen) {
+            onFullscreenClick?.invoke()
+        } else {
+            enterFullscreen()
+        }
     }
 
     fun enterFullscreen(): Boolean {

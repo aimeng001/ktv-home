@@ -328,12 +328,6 @@ class PlaybackSimulationInstrumentedTest {
                 kotlin.math.abs(engine.currentPositionMs - pausedPosition) <= 200L
             })
             scenario.onActivity { activity ->
-                val overlay = privateField<ViewKtvKioskOverlayBinding>(activity, "kioskOverlayBinding")
-                assertEquals(
-                    "PiP 状态描述应保留暂停状态与当前真实歌曲信息",
-                    "已暂停  合成播放测试片段 · 本地仪器夹具",
-                    overlay.txtPipLabel.text.toString(),
-                )
                 val dock = privateField<KtvBottomDockController>(activity, "bottomDockController")
                 assertTrue("the shared Dock PiP should remain visible while paused", dock.videoContainer.isShown)
                 assertEquals(android.view.View.VISIBLE, mainBinding.playerView.visibility)
@@ -357,10 +351,6 @@ class PlaybackSimulationInstrumentedTest {
                 kiosk.updateSnapshot(firstSnapshot.copy(state = "playing", vocalMode = "accompaniment"))
             }
             assertTrue("buffering should be observable after READY on the throttled local stream", bufferingAfterReady.await(20, TimeUnit.SECONDS))
-            assertTrue("PiP should show its buffering state", awaitActivityCondition(scenario, 3_000L) { activity ->
-                privateField<ViewKtvKioskOverlayBinding>(activity, "kioskOverlayBinding").txtPipLabel.text.toString() ==
-                    "缓冲中  合成播放测试片段 · 本地仪器夹具"
-            })
             assertTrue("buffering should leave the shared PiP visible", awaitActivityCondition(scenario, 3_000L) { activity ->
                 privateField<KtvBottomDockController>(activity, "bottomDockController").videoContainer.isShown &&
                     privateField<ActivityMainBinding>(activity, "binding").playerView.visibility == android.view.View.VISIBLE
@@ -390,13 +380,13 @@ class PlaybackSimulationInstrumentedTest {
                 val overlay = privateField<ViewKtvKioskOverlayBinding>(activity, "kioskOverlayBinding")
                 val dock = privateField<KtvBottomDockController>(activity, "bottomDockController")
                 val binding = privateField<ActivityMainBinding>(activity, "binding")
-                "legacyPinyinPanel=${overlay.panelPinyin.visibility}, browserKeyboardContainer=" +
+                "browserKeyboardContainer=" +
                     "${activity.findViewById<android.view.View>(R.id.browserKeyboardContainer)?.visibility}/shown=" +
                     "${activity.findViewById<android.view.View>(R.id.browserKeyboardContainer)?.isShown}, " +
                     "keyboard=${activity.findViewById<android.view.View>(R.id.kioskKeyboard)?.visibility}/shown=" +
                     "${activity.findViewById<android.view.View>(R.id.kioskKeyboard)?.isShown}, kiosk=${overlay.kioskRootOverlay.visibility}, " +
                     "dock=${dock.root.visibility}, videoContainer=${dock.videoContainer.visibility}/shown=${dock.videoContainer.isShown}, " +
-                    "player=${binding.playerView.visibility}, pipSpaceAvailable=${privateField<Boolean>(privateField(activity, "kioskController"), "pipSpaceAvailable")}"
+                    "player=${binding.playerView.visibility}"
             }
             assertTrue(
                 "commercial browser keyboard should render beside the shared Dock PiP; $keyboardAndPipState",
@@ -444,20 +434,13 @@ class PlaybackSimulationInstrumentedTest {
                 assertNotNull(externalPlayerView)
                 assertSame("external output must attach the same player", player, externalPlayerView?.player)
                 assertEquals(android.view.View.INVISIBLE, mainBinding.playerView.visibility)
-                val overlay = privateField<ViewKtvKioskOverlayBinding>(activity, "kioskOverlayBinding")
+                val dock = privateField<KtvBottomDockController>(activity, "bottomDockController")
                 val kioskExternal = privateField<Boolean>(privateField(activity, "kioskController"), "externalDisplayActive")
                 val focusController = privateField<com.homektv.tv.ui.KtvFocusController>(privateField(activity, "kioskController"), "focusController")
-                assertEquals(
+                assertFalse(
                     "HDMI should hide local PiP; activityExternal=${privateField<Boolean>(activity, "externalDisplayActive")}, " +
-                        "kioskExternal=$kioskExternal, kioskActive=${focusController.isKioskActive}, " +
-                        "label=${overlay.txtPipLabel.text}",
-                    android.view.View.GONE,
-                    overlay.pipVideoFrame.visibility,
-                )
-                assertEquals(
-                    "外接屏提示应保留播放项信息",
-                    "视频正在外接屏播放  合成播放测试片段 · 本地仪器夹具",
-                    overlay.txtPipLabel.text.toString(),
+                        "kioskExternal=$kioskExternal, kioskActive=${focusController.isKioskActive}",
+                    dock.videoContainer.isShown,
                 )
             }
             capture("07_dashboard_external_display_synthetic.png")

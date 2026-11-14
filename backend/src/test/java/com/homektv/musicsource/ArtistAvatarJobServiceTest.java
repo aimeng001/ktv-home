@@ -40,11 +40,12 @@ class ArtistAvatarJobServiceTest {
         MusicSourceConfigService config = mock(MusicSourceConfigService.class);
         when(config.getConfig()).thenReturn(new MusicSourceConfig(
                 true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95));
+        when(worker.pendingKeys()).thenReturn(List.of("周杰伦"));
         when(jdbc.batchUpdate(anyString(), any(Collection.class), anyInt(),
                 any(ParameterizedPreparedStatementSetter.class)))
                 .thenReturn(new int[][]{{1}});
 
-        new ArtistAvatarJobService(jdbc, worker, config).enqueueProfiles(Set.of("周杰伦"));
+        new ArtistAvatarJobService(jdbc, worker, config).enqueuePendingProfiles();
 
         verify(jdbc).batchUpdate(anyString(), any(Collection.class), eq(500),
                 any(ParameterizedPreparedStatementSetter.class));
@@ -56,6 +57,7 @@ class ArtistAvatarJobServiceTest {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ArtistAvatarWorker worker = mock(ArtistAvatarWorker.class);
         MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        when(worker.pendingKeys()).thenReturn(List.of("周杰伦", "林俊杰"));
         when(config.getConfig()).thenReturn(new MusicSourceConfig(
                 true, Set.of(MusicProvider.QQ, MusicProvider.NETEASE), 20, 5, 6, 1, 1500, 0.95));
         when(jdbc.batchUpdate(anyString(), any(Collection.class), anyInt(),
@@ -63,7 +65,7 @@ class ArtistAvatarJobServiceTest {
                 .thenReturn(new int[][]{{1, 1, 1, 1}});
 
         new ArtistAvatarJobService(jdbc, worker, config)
-                .enqueueProfiles(Set.of("周杰伦", "林俊杰"));
+                .enqueuePendingProfiles();
 
         verify(jdbc).batchUpdate(anyString(), any(Collection.class), eq(500),
                 any(ParameterizedPreparedStatementSetter.class));
@@ -93,22 +95,19 @@ class ArtistAvatarJobServiceTest {
     }
 
     @Test
-    void ignoresEmptyAndPlaceholderInputsAndKeepsScanningWhenConfigurationStorageIsUnavailable() {
+    void keepsScanningWhenConfigurationStorageIsUnavailable() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ArtistAvatarWorker worker = mock(ArtistAvatarWorker.class);
         MusicSourceConfigService config = mock(MusicSourceConfigService.class);
         ArtistAvatarJobService service = new ArtistAvatarJobService(jdbc, worker, config);
 
-        service.enqueueProfiles(null);
-        service.enqueueProfiles(List.of());
-        service.enqueueProfiles(List.of("", "群星", "未知歌手"));
-        verifyNoInteractions(config, jdbc, worker);
-
+        when(worker.pendingKeys()).thenReturn(List.of("zhoujielun"));
         when(config.getConfig()).thenThrow(new DataAccessResourceFailureException("configuration table unavailable"));
-        service.enqueueProfiles(List.of("周杰伦"));
+        service.enqueuePendingProfiles();
 
         verify(config).getConfig();
-        verifyNoInteractions(jdbc, worker);
+        verifyNoInteractions(jdbc);
+        verify(worker, never()).trigger();
     }
 
     @Test
@@ -135,12 +134,14 @@ class ArtistAvatarJobServiceTest {
                 new MusicSourceConfig(false, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95),
                 new MusicSourceConfig(true, null, 20, 5, 6, 1, 1500, 0.95),
                 new MusicSourceConfig(true, Set.of(), 20, 5, 6, 1, 1500, 0.95));
+        when(worker.pendingKeys()).thenReturn(List.of("zhoujielun"));
         ArtistAvatarJobService service = new ArtistAvatarJobService(jdbc, worker, config);
 
-        for (int index = 0; index < 4; index++) service.enqueueProfiles(List.of("周杰伦"));
+        for (int index = 0; index < 4; index++) service.enqueuePendingProfiles();
 
         verify(config, org.mockito.Mockito.times(4)).getConfig();
-        verifyNoInteractions(jdbc, worker);
+        verifyNoInteractions(jdbc);
+        verify(worker, never()).trigger();
     }
 
     @Test
@@ -182,13 +183,14 @@ class ArtistAvatarJobServiceTest {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ArtistAvatarWorker worker = mock(ArtistAvatarWorker.class);
         MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        when(worker.pendingKeys()).thenReturn(List.of("zhoujielun"));
         when(config.getConfig()).thenReturn(new MusicSourceConfig(
                 true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95));
         when(jdbc.batchUpdate(anyString(), any(Collection.class), anyInt(),
                 any(ParameterizedPreparedStatementSetter.class)))
                 .thenThrow(new DataAccessResourceFailureException("avatar job table unavailable"));
 
-        new ArtistAvatarJobService(jdbc, worker, config).enqueueProfiles(List.of("周杰伦"));
+        new ArtistAvatarJobService(jdbc, worker, config).enqueuePendingProfiles();
 
         verify(jdbc).batchUpdate(anyString(), any(Collection.class), eq(500),
                 any(ParameterizedPreparedStatementSetter.class));
@@ -279,10 +281,11 @@ class ArtistAvatarJobServiceTest {
                 any(ParameterizedPreparedStatementSetter.class)))
                 .thenReturn(new int[0][])
                 .thenReturn(null);
+        when(worker.pendingKeys()).thenReturn(List.of("zhoujielun"), List.of("linjunjie"));
         ArtistAvatarJobService service = new ArtistAvatarJobService(jdbc, worker, config);
 
-        service.enqueueProfiles(List.of("周杰伦"));
-        service.enqueueProfiles(List.of("林俊杰"));
+        service.enqueuePendingProfiles();
+        service.enqueuePendingProfiles();
 
         verify(jdbc, org.mockito.Mockito.times(2)).batchUpdate(anyString(), any(Collection.class), eq(500),
                 any(ParameterizedPreparedStatementSetter.class));

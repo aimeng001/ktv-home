@@ -75,6 +75,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
             ActivePlayerRegistry.Assignment assignment = playerRegistry.register(
                     session.getId(), playerHello(session));
             sendRole(session, assignment);
+            assignment.replacedSessionId().ifPresent(broadcaster::disconnect);
             if (assignment.role() == ActivePlayerRegistry.Role.STANDBY) {
                 if (!tvWasOnline) broadcastObserverSnapshot();
                 return;

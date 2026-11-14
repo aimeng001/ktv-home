@@ -34,31 +34,6 @@ class KtvDashboardLayoutContractTest {
     }
 
     @Test
-    fun dashboardKeepsSharedTopNavigationWithFocusedAndSelectedStates() {
-        val document = parse("src/main/res/layout/view_ktv_kiosk_overlay.xml")
-        val navigationIds = setOf(
-            "@+id/tabDashboard",
-            "@+id/tabPinyin",
-            "@+id/tabSingers",
-            "@+id/tabCategories",
-            "@+id/tabLanguages",
-            "@+id/tabFavorites",
-            "@+id/tabHistory",
-        )
-        val buttons = children(document, "Button").associateBy { it.getAttribute("android:id") }
-        navigationIds.forEach { id ->
-            assertEquals(id, "@drawable/bg_kiosk_nav_tab", buttons.getValue(id).getAttribute("android:background"))
-        }
-        assertTrue(parse("src/main/res/drawable/bg_kiosk_nav_tab.xml").documentElement.tagName == "selector")
-
-        val controller = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
-        assertTrue(
-            controller.contains("overlay.kioskNavTabs.visibility = View.VISIBLE") ||
-                controller.contains("overlay.kioskNavTabs.visibility = if (isThreeColumnTab) View.GONE else View.VISIBLE")
-        )
-    }
-
-    @Test
     fun openingSearchFromDashboardPlacesFocusOnSearchNavigation() {
         val controller = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
         val searchRoute = controller.substringAfter("KtvDashboardTile.SONG_NAME ->")
@@ -67,22 +42,6 @@ class KtvDashboardLayoutContractTest {
         assertTrue(searchRoute.contains("openCommercialRoute(KioskCommercialRoute.SONG_NAME)"))
         assertTrue(searchRoute.contains("browserBinding.btnTabSongName.post"))
         assertTrue(searchRoute.contains("browserBinding.btnTabSongName.requestFocus()"))
-    }
-
-    @Test
-    fun kioskNavigationTextUsesReadableFocusColorAndKeepsGoldSelection() {
-        val items = children(parse("src/main/res/color/ktv_kiosk_nav_text.xml"), "item")
-
-        assertEquals(3, items.size)
-        assertEquals("true", items[0].getAttribute("android:state_focused"))
-        assertEquals("@color/ktv_screen_bg", items[0].getAttribute("android:color"))
-        assertEquals("true", items[1].getAttribute("android:state_selected"))
-        assertEquals("@color/ktv_dashboard_gold", items[1].getAttribute("android:color"))
-        assertEquals("@color/dim", items[2].getAttribute("android:color"))
-
-        val controller = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
-        assertEquals(2, Regex("setTextColor\\(ContextCompat.getColorStateList\\(activity, R.color.ktv_kiosk_nav_text\\)\\)")
-            .findAll(controller).count())
     }
 
     @Test
@@ -139,7 +98,7 @@ class KtvDashboardLayoutContractTest {
             "tileTikTok" to "@id/btnDockVocal",
             "tileSongName" to "@id/btnDockVolDown",
             "tileTheme" to "@id/video_container",
-            "tileNewSongs" to "@id/btnDockToneUp",
+            "tileNewSongs" to "@id/tileFavorites",
             "tileFavorites" to "@id/btnDockToneDown",
             "tileLocal" to "@id/btnDockDownloads",
         )
@@ -160,35 +119,16 @@ class KtvDashboardLayoutContractTest {
     }
 
     @Test
-    fun topNavigationHidesRankingAndPlaylistsAndAddsLanguageEntry() {
-        val document = parse("src/main/res/layout/view_ktv_kiosk_overlay.xml")
-        val elements = children(document, "Button").associateBy { it.getAttribute("android:id") }
-
-        assertEquals("gone", elements.getValue("@+id/tabRankings").getAttribute("android:visibility"))
-        assertEquals("gone", elements.getValue("@+id/tabPlaylists").getAttribute("android:visibility"))
-        assertEquals("@id/tabLanguages", elements.getValue("@+id/tabCategories").getAttribute("android:nextFocusRight"))
-        assertTrue(elements.containsKey("@+id/tabLanguages"))
-    }
-
-    @Test
-    fun categoryPickerDoesNotExposeNewSongOrRankingContent() {
-        val document = parse("src/main/res/layout/view_ktv_kiosk_overlay.xml")
-        val elements = children(document, "Button").associateBy { it.getAttribute("android:id") }
-
-        assertEquals("gone", elements.getValue("@+id/btnCategoryNew").getAttribute("android:visibility"))
-        assertEquals("false", elements.getValue("@+id/btnCategoryNew").getAttribute("android:focusable"))
-    }
-
-    @Test
     fun bottomDockQueueButtonOpensTheQueueDrawer() {
-        val source = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
-        val queueClick = source.substringAfter("bottomBar.onQueueClick = {")
-            .substringBefore("bottomBar.onQrCodeClick = {")
+        val controllerSource = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+        val dockSource = locate("src/main/java/com/homektv/tv/ui/KtvBottomDockController.kt").readText()
+        val mainSource = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
 
         val dock = parse("src/main/res/layout/view_ktv_bottom_dock.xml")
         assertEquals(1, children(dock, "*").count { it.getAttribute("android:id") == "@+id/btnDockQueue" })
-        assertTrue(queueClick.contains("openQueueDrawer()"))
-        assertEquals(1, Regex("KtvQueueDrawerDialog\\(").findAll(source).count())
+        assertTrue(dockSource.contains("binding.btnDockQueue.setOnClickListener { actions.onQueue() }"))
+        assertTrue(mainSource.contains("onQueue = ::showQueueOverlay"))
+        assertEquals(1, Regex("KtvQueueDrawerDialog\\(").findAll(controllerSource).count())
     }
 
     @Test
@@ -211,10 +151,12 @@ class KtvDashboardLayoutContractTest {
         val openDrawer = source.substringAfter("fun openQueueDrawer(")
             .substringBefore("fun setCachedQrBitmap")
 
+        assertTrue(openDrawer.contains("if (queueDialog?.isShowing == true) return"))
         assertTrue(openDrawer.contains("val keyboardWasVisible = overlay.kioskKeyboard.visibility == View.VISIBLE"))
         assertTrue(openDrawer.contains("overlay.kioskKeyboard.visibility = View.INVISIBLE"))
-        assertTrue(openDrawer.contains("if (keyboardWasVisible && presentationState.currentTab.value == KioskTab.PINYIN)"))
+        assertTrue(openDrawer.contains("if (keyboardWasVisible && isSearchKeyboardShowing())"))
         assertTrue(openDrawer.contains("overlay.kioskKeyboard.visibility = View.VISIBLE"))
+        assertTrue(openDrawer.contains("applyKeyboardVisibility(isSearchKeyboardShowing())"))
         assertTrue(openDrawer.contains("overlay.kioskKeyboard.setKeyword" ).not())
         assertTrue(openDrawer.contains("overlay.kioskKeyboard.clear()").not())
     }

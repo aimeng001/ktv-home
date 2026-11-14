@@ -239,21 +239,6 @@ public sealed class MpvProcessController : IPlaybackOutput, IPlaybackOutputFence
         }, cancellationToken);
     }
 
-    /** Ensures a replacement mpv session exists after an asynchronous process exit. */
-    public async Task RecoverAsync(CancellationToken cancellationToken = default)
-    {
-        await commandLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (session?.IsAlive == true) return;
-            await StartSessionLockedAsync(cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            commandLock.Release();
-        }
-    }
-
     private async Task ExecuteWithRecoveryAsync(
         Func<IMpvSession, Task> operation,
         CancellationToken cancellationToken)

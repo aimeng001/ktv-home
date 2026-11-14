@@ -72,6 +72,13 @@ class KtvCommercialDashboardView @JvmOverloads constructor(
         KtvDashboardTile.dashboardEntries.forEach { tile ->
             val content = tileContent.getValue(tile)
             content.title.text = tile.title
+            if (content.title.layoutParams?.width == android.view.ViewGroup.LayoutParams.WRAP_CONTENT) {
+                // Italic bold glyphs overhang past measureText(); extend minWidth (not paddingEnd,
+                // which shrinks TextView's right clip rect by the same amount) so the final glyph stays unclipped.
+                val textWidthPx = kotlin.math.ceil(content.title.paint.measureText(tile.title)).toInt()
+                val overhangPx = kotlin.math.ceil(content.title.textSize * 0.55f).toInt().coerceAtLeast(8)
+                content.title.minWidth = textWidthPx + content.title.paddingLeft + content.title.paddingRight + overhangPx
+            }
             addTileArtwork(tile, content.root)
             content.root.clipToOutline = true
             content.root.background = createRoundedClipSurface()

@@ -151,6 +151,37 @@ class TranscodeServiceTest {
         verify(files, never()).save(any(SongFile.class));
     }
 
+
+    @Test
+    void mkvSourceProducesH264AppendedMkvToPreventSelfOverwrite() throws Exception {
+        Path sourcePath = temp.resolve("歌曲.mkv");
+        Files.writeString(sourcePath, "source-media");
+        SongFile source = new SongFile();
+        source.setId(10L);
+        source.setSongId(42L);
+        source.setFilePath(sourcePath.toString());
+        source.setFormat("matroska");
+        source.setPriority(1);
+
+        SongFileRepository files = mock(SongFileRepository.class);
+        when(files.findBySongIdOrderByPriorityDesc(42L)).thenReturn(List.of(source));
+        when(files.findByFilePath(sourcePath.resolveSibling("歌曲_h264.mkv").toString()))
+                .thenReturn(Optional.empty());
+        when(files.save(any(SongFile.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        AtomicReference<List<String>> command = new AtomicReference<>();
+        TranscodeService service = new TranscodeService(files, managedProperties(),
+                "configured-ffmpeg", ffmpegCommand -> {
+                    command.set(ffmpegCommand);
+                    return FakeFfmpegProcess.coverFallback(ffmpegCommand, sourcePath);
+                });
+
+        TranscodeService.Result result = service.transcodeSong(42L);
+
+        assertThat(Path.of(result.outputPath())).isEqualTo(sourcePath.resolveSibling("歌曲_h264.mkv").toRealPath());
+        assertThat(command.get()).contains("-ac", "2");
+    }
+
     private AppProperties managedProperties() {
         AppProperties props = new AppProperties();
         props.setKtvLibraryPath(temp.toString());

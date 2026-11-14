@@ -74,6 +74,7 @@ public class LocalAvatarResolver {
 
             List<ArtistProfileService.Profile> unresolved = profileService.unresolvedProfiles(50_000);
             int matched = 0;
+            Map<Path, ProcessedCover> coverCache = new HashMap<>();
 
             for (var profile : unresolved) {
                 if (profile == null || profile.artistKey() == null) continue;
@@ -84,22 +85,40 @@ public class LocalAvatarResolver {
                 if (imagePath == null && profile.displayName() != null) {
                     imagePath = imageIndex.get(ArtistCreditParser.key(profile.displayName()));
                 }
+                if (imagePath == null && profile.displayName() != null) {
+                    String leadArtist = extractLeadArtist(profile.displayName());
+                    if (!leadArtist.isBlank()) {
+                        String leadKey = ArtistCreditParser.key(leadArtist);
+                        if (!leadKey.isBlank() && !leadKey.equals(key)) {
+                            imagePath = imageIndex.get(leadKey);
+                        }
+                    }
+                }
 
                 if (isRegularNonLink(imagePath)) {
                     try {
-                        if (Files.size(imagePath) > MAX_FILE_SIZE) {
-                            log.warn("本地头像文件过大(>10MB)，跳过自动导入: {}", imagePath);
-                            continue;
-                        }
-                        byte[] bytes = readBounded(imagePath);
-                        if (bytes == null) {
-                            log.warn("本地头像文件在读取期间超过 10MB，跳过自动导入: {}", imagePath);
-                            continue;
-                        }
-                        String ext = extractExtension(imagePath);
-                        if (coverImageNormalizer != null) {
-                            bytes = coverImageNormalizer.normalize(bytes);
-                            ext = "jpg";
+                        ProcessedCover cached = coverCache.get(imagePath);
+                        byte[] bytes;
+                        String ext;
+                        if (cached != null) {
+                            bytes = cached.bytes();
+                            ext = cached.extension();
+                        } else {
+                            if (Files.size(imagePath) > MAX_FILE_SIZE) {
+                                log.warn("本地头像文件过大(>10MB)，跳过自动导入: {}", imagePath);
+                                continue;
+                            }
+                            bytes = readBounded(imagePath);
+                            if (bytes == null) {
+                                log.warn("本地头像文件在读取期间超过 10MB，跳过自动导入: {}", imagePath);
+                                continue;
+                            }
+                            ext = extractExtension(imagePath);
+                            if (coverImageNormalizer != null) {
+                                bytes = coverImageNormalizer.normalize(bytes);
+                                ext = "jpg";
+                            }
+                            coverCache.put(imagePath, new ProcessedCover(bytes, ext));
                         }
                         String relPath = assetWriter.writeArtistCover(profile.artistKey(), bytes, ext);
                         profileService.setAvatarReady(profile.artistKey(), "LOCAL_PACK", relPath);
@@ -233,4 +252,17 @@ public class LocalAvatarResolver {
         int dot = fn.lastIndexOf('.');
         return dot > 0 ? fn.substring(dot + 1).toLowerCase(Locale.ROOT) : "jpg";
     }
+
+    static String extractLeadArtist(String displayName) {
+        if (displayName == null || displayName.isBlank()) return "";
+        String[] parts = displayName.trim().split("\\s*(?:[_&＆、/／,，;；+]|\\s+)\\s*");
+        for (String part : parts) {
+            String trimmed = part.trim();
+            if (trimmed.length() >= 2 && !ArtistKindClassifier.isPlaceholder(trimmed)) {
+                return trimmed;
+            }
+        }
+        return "";
+    }
+    private record ProcessedCover(byte[] bytes, String extension) {}
 }

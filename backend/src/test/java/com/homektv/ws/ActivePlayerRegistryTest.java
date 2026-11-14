@@ -172,7 +172,6 @@ class ActivePlayerRegistryTest {
         clock.advance(Duration.ofHours(1));
 
         assertThat(registry.activeSessionId()).contains("legacy");
-        assertThat(registry.requiresQueueIdentity("legacy")).isTrue();
         assertThat(registry.authorizesUpstream("legacy", null)).isTrue();
         assertThat(registry.heartbeat("legacy", null)).contains(active);
         assertThat(registry.expireAndPromote()).isEmpty();
@@ -254,6 +253,20 @@ class ActivePlayerRegistryTest {
         assertThat(registry.connectedPlayerCount()).isEqualTo(1);
         assertThat(registry.activeSessionId()).contains("active");
         assertThat(registry.authorizesUpstream("active", active.generation())).isTrue();
+    }
+
+    @Test
+    void reconnectWithSameClientTokenReportsReplacedSessionId() {
+        ActivePlayerRegistry registry = registry();
+        ActivePlayerRegistry.Assignment first = registry.register("session-1",
+                new ActivePlayerRegistry.PlayerHello("tv-token-1", "ANDROID_TV", 2));
+        assertThat(first.replacedSessionId()).isEmpty();
+
+        ActivePlayerRegistry.Assignment second = registry.register("session-2",
+                new ActivePlayerRegistry.PlayerHello("tv-token-1", "ANDROID_TV", 2));
+        assertThat(second.replacedSessionId()).contains("session-1");
+        assertThat(registry.connectedPlayerCount()).isEqualTo(1);
+        assertThat(registry.activeSessionId()).contains("session-2");
     }
 
     private static ActivePlayerRegistry registry() {

@@ -1,5 +1,6 @@
 package com.homektv.tv.net
 
+import android.util.Log
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.JsonObject
 import okhttp3.Call
@@ -79,6 +80,7 @@ class KtvHttpTransport internal constructor(
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
+                    logTransportWarning("Request failed: ${safeHttpLogUrl(request.url.toString())}", e)
                     if (continuation.isActive) {
                         continuation.resume(
                             KtvApiResult.Failure(
@@ -119,6 +121,7 @@ class KtvHttpTransport internal constructor(
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
+                    logTransportWarning("Byte request failed: ${safeHttpLogUrl(request.url.toString())}", e)
                     if (continuation.isActive) continuation.resume(
                         KtvApiResult.Failure(
                             KtvApiError(KtvApiErrorKind.NETWORK, "NETWORK_ERROR", "无法连接点歌服务"),
@@ -194,3 +197,26 @@ internal fun serverConfigurationFailure(serverHost: String?): KtvApiResult.Failu
             ),
         )
     } else null
+
+private const val TAG = "KtvTransport"
+
+internal fun logTransportWarning(message: String, throwable: Throwable? = null) {
+    try {
+        if (throwable != null) {
+            Log.w(TAG, message, throwable)
+        } else {
+            Log.w(TAG, message)
+        }
+    } catch (_: Throwable) {
+        // Ignored in headless JVM unit tests where android.util.Log is not mocked
+    }
+}
+
+internal fun safeHttpLogUrl(url: String): String = try {
+    val uri = java.net.URI(url)
+    val query = uri.query
+    if (query == null) url
+    else "${uri.scheme}://${uri.authority}${uri.path}?<sanitized>"
+} catch (_: Exception) {
+    "<invalid-url>"
+}

@@ -59,14 +59,6 @@ public final class MediaClassifier {
         return probe != null && (probe.audioTracks() >= 2 || layout == AudioLayout.DUAL_CHANNEL);
     }
 
-    /**
-     * Whether the client can switch between original and accompaniment audio.
-     * This is intentionally separate from {@link #hasVocalTrack(MediaProbe)}:
-     * DUAL_CHANNEL has one audio stream, while DUAL_TRACK has independent tracks.
-     */
-    public static boolean supportsVocalSwitch(AudioLayout layout) {
-        return layout == AudioLayout.DUAL_TRACK || layout == AudioLayout.DUAL_CHANNEL;
-    }
 
     /**
      * 指纹：md5(lower(artist)|lower(title)|durationBucket)。

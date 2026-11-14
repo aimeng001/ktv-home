@@ -201,6 +201,73 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
                            @Param("mediaType") String mediaType,
                            Pageable pageable);
 
+    /**
+     * Single-letter search served directly from text_pattern_ops prefix indexes
+     * on lower(title_init), lower(artist_init), and song_artists.
+     * Bypasses the tens of thousands of individual 'a' tokens in song_search_terms.
+     */
+    String SINGLE_INITIAL_SEARCH_SQL = """
+            WITH candidate_ids AS (
+                SELECT s.id AS song_id, 0 AS match_priority
+                FROM songs s
+                WHERE s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                  AND lower(s.title_init) LIKE :likeKw || '%' ESCAPE '\\'
+
+                UNION
+
+                SELECT s.id, 1 AS match_priority
+                FROM songs s
+                WHERE s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                  AND lower(s.artist_init) LIKE :likeKw || '%' ESCAPE '\\'
+
+                UNION
+
+                SELECT sa.song_id, 2 AS match_priority
+                FROM song_artists sa
+                JOIN songs s ON s.id = sa.song_id
+                WHERE s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                  AND lower(sa.artist_init) LIKE :likeKw || '%' ESCAPE '\\'
+            ), unique_candidates AS (
+                SELECT c.song_id, MIN(c.match_priority) AS best_priority
+                FROM candidate_ids c
+                GROUP BY c.song_id
+            ), ranked_candidates AS (
+                SELECT u.song_id, u.best_priority
+                FROM unique_candidates u
+                JOIN songs s ON s.id = u.song_id
+                ORDER BY
+                  (LOWER(s.title) = :kw) DESC,
+                  (LOWER(s.artist) = :kw) DESC,
+                  (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
+                  u.best_priority ASC,
+                  (s.media_type = 'KTV_VIDEO') DESC,
+                  s.play_count DESC,
+                  s.id ASC
+                LIMIT 2000
+            )
+            SELECT s.*
+            FROM ranked_candidates c
+            JOIN songs s ON s.id = c.song_id
+            ORDER BY
+              (LOWER(s.title) = :kw) DESC,
+              (LOWER(s.artist) = :kw) DESC,
+              (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
+              c.best_priority ASC,
+              (s.media_type = 'KTV_VIDEO') DESC,
+              s.play_count DESC,
+              s.id ASC
+            """;
+
+    @Query(value = SINGLE_INITIAL_SEARCH_SQL, nativeQuery = true)
+    List<Song> searchSingleInitial(@Param("rawKw") String rawKeyword,
+                                   @Param("kw") String keyword,
+                                   @Param("likeKw") String likeKeyword,
+                                   @Param("mediaType") String mediaType,
+                                   Pageable pageable);
+
     /** Source-compatible overload for callers that do not need a type filter. */
     default List<Song> search(String keyword, Pageable pageable) {
         SearchKeyword normalized = SearchKeyword.of(keyword, SearchKeyword.DEFAULT_MAX_LENGTH);

@@ -124,29 +124,6 @@ public sealed class ReliablePlaybackOutboxTests
     }
 
     [Fact]
-    public void Peek_and_dequeue_preserve_fifo_order_and_adjust_buffered_bytes()
-    {
-        var outbox = new ReliablePlaybackOutbox(maxMessages: 3, maxBytes: 20);
-        Assert.False(outbox.TryPeekMessage(out var emptyPeek));
-        Assert.Null(emptyPeek);
-        Assert.False(outbox.TryDequeueMessage(out var emptyDequeue));
-        Assert.Null(emptyDequeue);
-
-        outbox.Enqueue(new("first", "中", 0));
-        outbox.Enqueue(new("second", "x", 0));
-        Assert.True(outbox.TryPeekMessage(out var peeked));
-        Assert.Equal("first", peeked!.Key);
-        Assert.Equal(4, outbox.BufferedBytes);
-
-        Assert.True(outbox.TryDequeueMessage(out var dequeued));
-        Assert.Equal("first", dequeued!.Key);
-        Assert.Equal(1, outbox.Count);
-        Assert.Equal(1, outbox.BufferedBytes);
-        Assert.True(outbox.TryPeekMessage(out peeked));
-        Assert.Equal("second", peeked!.Key);
-    }
-
-    [Fact]
     public void Acknowledge_removes_only_known_keys_with_terminal_statuses()
     {
         var outbox = new ReliablePlaybackOutbox(maxMessages: 4, maxBytes: 40);
@@ -180,7 +157,7 @@ public sealed class ReliablePlaybackOutboxTests
     }
 
     [Fact]
-    public void Failed_persistence_rolls_back_enqueue_dequeue_acknowledgement_and_remove()
+    public void Failed_persistence_rolls_back_enqueue_acknowledgement_and_remove()
     {
         var outbox = new ReliablePlaybackOutbox(
             persist: _ => throw new IOException("synthetic persistence failure"),
@@ -198,8 +175,6 @@ public sealed class ReliablePlaybackOutboxTests
         }, maxMessages: 3, maxBytes: 20);
         Assert.Equal(ReliableEnqueueResult.Enqueued, seeded.Enqueue(new("kept", "中", 0)));
 
-        Assert.False(seeded.TryDequeueMessage(out var dequeued));
-        Assert.Null(dequeued);
         Assert.False(seeded.Acknowledge("kept", "APPLIED"));
         Assert.False(seeded.Remove("kept"));
         Assert.Equal(1, seeded.Count);

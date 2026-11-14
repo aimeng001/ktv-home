@@ -118,6 +118,61 @@ class IktvSongReferenceMatcherTest {
         assertThat(result.candidate()).isNull();
     }
 
+    @Test
+    void matchesDuetArtistsWithNormalizedDelimitersAndOrder() {
+        // NAS: 林二汶_岑宁儿, IKTV: 林二汶+岑宁儿
+        IktvSongReferenceMatcher.HomeSong home1 = home("", "银发白", "林二汶_岑宁儿", "", "林二汶_岑宁儿-银发白-粤语-流行.mkv");
+        IktvSongReferenceMatcher.ReferenceSong ref1 = reference(30, "60000001", "银发白", "林二汶+岑宁儿", "MV", "粤语", "流行");
+
+        IktvSongReferenceMatcher.Result res1 = matcher.match(home1, List.of(ref1));
+        assertThat(res1.status()).isEqualTo(IktvSongReferenceMatcher.Status.MATCHED);
+        assertThat(res1.candidate()).isEqualTo(ref1);
+
+        // NAS: 蔡依林 陶喆, IKTV: 陶喆+蔡依林 (顺序调换)
+        IktvSongReferenceMatcher.HomeSong home2 = home("", "今天你要嫁给我", "蔡依林 陶喆", "", "蔡依林 陶喆-今天你要嫁给我-国语-流行.mkv");
+        IktvSongReferenceMatcher.ReferenceSong ref2 = reference(31, "60000002", "今天你要嫁给我", "陶喆+蔡依林", "MV", "国语", "流行");
+
+        IktvSongReferenceMatcher.Result res2 = matcher.match(home2, List.of(ref2));
+        assertThat(res2.status()).isEqualTo(IktvSongReferenceMatcher.Status.MATCHED);
+        assertThat(res2.candidate()).isEqualTo(ref2);
+    }
+
+    @Test
+    void disambiguatesMultipleVersionsUsingFourSegmentFilenameLanguageAndCategory() {
+        IktvSongReferenceMatcher.HomeSong home = home("", "晴天", "周杰伦", "", "T:/QBdownload/周杰伦-晴天-国语-流行.mkv");
+        IktvSongReferenceMatcher.ReferenceSong cantonese = reference(40, "10000001", "晴天", "周杰伦", "MV", "粤语", "流行");
+        IktvSongReferenceMatcher.ReferenceSong mandarin = reference(41, "10000002", "晴天", "周杰伦", "MV", "国语", "流行");
+
+        IktvSongReferenceMatcher.Result result = matcher.match(home, List.of(cantonese, mandarin));
+
+        assertThat(result.status()).isEqualTo(IktvSongReferenceMatcher.Status.MATCHED);
+        assertThat(result.candidate()).isEqualTo(mandarin);
+    }
+
+    @Test
+    void disambiguatesExcludingLiveWhenFilenameIsNonLive() {
+        IktvSongReferenceMatcher.HomeSong home = home("", "晴天", "周杰伦", "", "周杰伦-晴天-国语-流行.mkv");
+        IktvSongReferenceMatcher.ReferenceSong mv = reference(50, "10000001", "晴天", "周杰伦", "MV", "国语", "流行");
+        IktvSongReferenceMatcher.ReferenceSong live = reference(51, "10000002", "晴天", "周杰伦", "现场版", "国语", "流行");
+
+        IktvSongReferenceMatcher.Result result = matcher.match(home, List.of(mv, live));
+
+        assertThat(result.status()).isEqualTo(IktvSongReferenceMatcher.Status.MATCHED);
+        assertThat(result.candidate()).isEqualTo(mv);
+    }
+
+    @Test
+    void disambiguatesPrioritizingLiveWhenFilenameContainsLive() {
+        IktvSongReferenceMatcher.HomeSong home = home("", "晴天", "周杰伦", "", "周杰伦-晴天 (Live)-国语-流行.mkv");
+        IktvSongReferenceMatcher.ReferenceSong mv = reference(60, "10000001", "晴天", "周杰伦", "MV", "国语", "流行");
+        IktvSongReferenceMatcher.ReferenceSong live = reference(61, "10000002", "晴天", "周杰伦", "现场版", "国语", "流行");
+
+        IktvSongReferenceMatcher.Result result = matcher.match(home, List.of(mv, live));
+
+        assertThat(result.status()).isEqualTo(IktvSongReferenceMatcher.Status.MATCHED);
+        assertThat(result.candidate()).isEqualTo(live);
+    }
+
     private static IktvSongReferenceMatcher.HomeSong home(String number, String title, String artist,
                                                            String relativePath, String filePath) {
         return new IktvSongReferenceMatcher.HomeSong(number, title, artist, relativePath, filePath,
@@ -127,7 +182,14 @@ class IktvSongReferenceMatcherTest {
     private static IktvSongReferenceMatcher.ReferenceSong reference(long id, String number,
                                                                     String title, String artist,
                                                                     String edition) {
+        return reference(id, number, title, artist, edition, "", "");
+    }
+
+    private static IktvSongReferenceMatcher.ReferenceSong reference(long id, String number,
+                                                                    String title, String artist,
+                                                                    String edition, String language,
+                                                                    String category) {
         return new IktvSongReferenceMatcher.ReferenceSong(id, number, title, artist, edition,
-                "", "", "", List.of("抖音神曲"), false);
+                language, category, "", List.of("抖音神曲"), false);
     }
 }

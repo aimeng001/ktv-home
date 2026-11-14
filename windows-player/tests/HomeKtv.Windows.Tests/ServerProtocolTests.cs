@@ -166,7 +166,7 @@ public sealed class ServerProtocolTests
     [Fact]
     public void Older_snapshot_without_position_fields_remains_readable()
     {
-        var snapshot = ProtocolParser.ParseSnapshot(
+        var snapshot = ProtocolJson.Deserialize<QueueSnapshot>(
             "{\"playing\":null,\"list\":[],\"state\":\"idle\",\"volume\":60,\"muted\":false,\"vocalMode\":\"accompaniment\",\"audioLayout\":{\"layout\":\"NORMAL_STEREO\"},\"tvOnline\":false,\"connectedPhones\":0}");
 
         Assert.NotNull(snapshot);
@@ -178,32 +178,10 @@ public sealed class ServerProtocolTests
     [Fact]
     public void Revisioned_snapshot_keeps_state_revision_through_json_protocol()
     {
-        var snapshot = ProtocolParser.ParseSnapshot(
+        var snapshot = ProtocolJson.Deserialize<QueueSnapshot>(
             "{\"playing\":null,\"list\":[],\"state\":\"idle\",\"volume\":60,\"muted\":false,\"vocalMode\":\"accompaniment\",\"audioLayout\":{\"layout\":\"NORMAL_STEREO\"},\"tvOnline\":false,\"connectedPhones\":0,\"stateRevision\":42}");
 
         Assert.NotNull(snapshot);
         Assert.Equal(42, snapshot!.StateRevision);
-    }
-
-    [Fact]
-    public void Json_element_snapshot_parser_returns_null_for_null_and_undefined_payloads()
-    {
-        using var document = JsonDocument.Parse("null");
-
-        Assert.Null(ProtocolParser.ParseSnapshot(document.RootElement));
-        Assert.Null(ProtocolParser.ParseSnapshot(default(JsonElement)));
-    }
-
-    [Fact]
-    public void Json_element_snapshot_parser_deserializes_snapshot_payload()
-    {
-        using var document = JsonDocument.Parse(
-            "{\"playing\":null,\"list\":[],\"state\":\"idle\",\"volume\":60,\"muted\":false,\"vocalMode\":\"accompaniment\",\"audioLayout\":{\"layout\":\"DUAL_CHANNEL\"},\"tvOnline\":false,\"connectedPhones\":0,\"positionMs\":321}");
-
-        var snapshot = ProtocolParser.ParseSnapshot(document.RootElement);
-
-        Assert.NotNull(snapshot);
-        Assert.Equal(321, snapshot!.PositionMs);
-        Assert.Equal(AudioLayout.DUAL_CHANNEL, snapshot.AudioLayout.Layout);
     }
 }

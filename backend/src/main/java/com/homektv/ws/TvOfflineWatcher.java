@@ -30,7 +30,7 @@ public class TvOfflineWatcher {
     /** TV 离线判定窗口：超过该时长未重连即清空队列。
      *  TV offline threshold: queue is cleared if the TV stays disconnected
      *  longer than this duration. */
-    private static final long OFFLINE_CLEAR_DELAY_MS = 10_000L;
+    private static final long OFFLINE_CLEAR_DELAY_MS = 180_000L;
 
     private final WsBroadcaster broadcaster;
     private final PlaybackService playbackService;
@@ -92,7 +92,7 @@ public class TvOfflineWatcher {
     }
 
     private void clearIfStillOffline(long scheduledEpoch) {
-        if (broadcaster.isTvOnline()) {
+        if (broadcaster.isTvOnline() || broadcaster.connectedPhonesCount() > 0) {
             return;
         }
         boolean cleared;
@@ -100,7 +100,7 @@ public class TvOfflineWatcher {
             // The initial online check is intentionally repeated while holding
             // the same monitor used by connect/disconnect notifications. The
             // epoch rejects a Runnable that observed offline before reconnect.
-            if (scheduledEpoch != offlineEpoch || broadcaster.isTvOnline()) {
+            if (scheduledEpoch != offlineEpoch || broadcaster.isTvOnline() || broadcaster.connectedPhonesCount() > 0) {
                 return;
             }
             cleared = playbackService.clearOnTvOffline();

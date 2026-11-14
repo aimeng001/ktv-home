@@ -345,7 +345,7 @@ public sealed class MpvControllerTests
     }
 
     [Fact]
-    public async Task Recover_keeps_a_live_session_and_restores_projection_after_process_exit()
+    public async Task Live_session_restores_projection_after_process_exit()
     {
         const string streamUrl = "http://server/stream/10";
         var first = new FakeMpvSession();
@@ -353,19 +353,15 @@ public sealed class MpvControllerTests
         var factory = new FakeMpvSessionFactory(first, replacement);
         await using var controller = new MpvProcessController(factory);
 
-        await controller.RecoverAsync();
         await controller.LoadAsync(streamUrl, 10);
         await controller.SetVolumeAsync(62, false);
         await controller.SeekAsync(3_210);
         await controller.PlayAsync();
 
-        var liveCommandCount = first.Commands.Count;
-        await controller.RecoverAsync();
         Assert.Equal(1, factory.StartCount);
-        Assert.Equal(liveCommandCount, first.Commands.Count);
 
         await first.DisposeAsync();
-        await controller.RecoverAsync();
+        await controller.PlayAsync();
 
         Assert.Equal(2, factory.StartCount);
         Assert.Contains(replacement.Commands, command => command.SequenceEqual(MpvCommands.LoadFile(streamUrl)));

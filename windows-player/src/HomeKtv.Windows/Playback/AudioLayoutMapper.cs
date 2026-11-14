@@ -4,14 +4,6 @@ namespace HomeKtv.Windows.Playback;
 
 public static class AudioLayoutMapper
 {
-    public static int[] MapStereoFrame(int left, int right, ChannelMapMode mode) => mode switch
-    {
-        ChannelMapMode.STEREO => [left, right],
-        ChannelMapMode.LEFT_MONO => [left, left],
-        ChannelMapMode.RIGHT_MONO => [right, right],
-        _ => throw new ArgumentOutOfRangeException(nameof(mode)),
-    };
-
     public static ChannelMapMode ChannelModeFor(string? vocalMode, AudioLayoutDto layout)
     {
         if (layout.Layout != AudioLayout.DUAL_CHANNEL)

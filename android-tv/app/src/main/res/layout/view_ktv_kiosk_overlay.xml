@@ -14,722 +14,154 @@
     android:descendantFocusability="afterDescendants"
     android:orientation="vertical">
 
-        <!-- 顶部导航栏（已由 activity_main.xml 的 header_bar 统一接管，高度设为 0dp 彻底释放 1080P 视口） -->
-        <LinearLayout
-            android:layout_width="match_parent"
+    <!-- 选歌内容区 -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/kioskContentStage"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:paddingHorizontal="10dp"
+        android:paddingTop="0dp"
+        android:paddingBottom="4dp">
+
+        <!-- Short feedback floats above the page; it never reserves a full-width banner row. -->
+        <TextView
+            android:id="@+id/kioskTransientFeedback"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/bg_ktv_transient_toast"
+            android:clickable="false"
+            android:focusable="false"
+            android:gravity="center"
+            android:importantForAccessibility="yes"
+            android:accessibilityLiveRegion="polite"
+            android:maxWidth="420dp"
+            android:minHeight="32dp"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="6dp"
+            android:textColor="@color/text"
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end"
             android:visibility="gone"
-            android:gravity="center_vertical"
-            android:paddingHorizontal="32dp"
-            android:background="@android:color/transparent">
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
 
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:contentDescription="@string/kiosk_title">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/kiosk_brand_latin"
-                    android:textColor="@color/ktv_dashboard_gold"
-                    android:textSize="30sp"
-                    android:fontFamily="serif" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:text="@string/kiosk_brand_title"
-                    android:textColor="@color/text"
-                    android:textSize="22sp"
-                    android:fontFamily="serif" />
-            </LinearLayout>
-
-            <View
-                android:layout_width="1dp"
-                android:layout_height="24dp"
-                android:layout_marginStart="24dp"
-                android:layout_marginEnd="18dp"
-                android:background="@color/ktv_dashboard_card_border" />
-
-            <!-- 主导航标签组（可水平滚动，自适应不同屏幕与DPI） -->
-            <HorizontalScrollView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="0dp"
-                android:layout_marginEnd="12dp"
-                android:scrollbars="none"
-                android:fillViewport="true">
-
-                <LinearLayout
-                    android:id="@+id/kioskNavTabs"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <Button style="?android:attr/buttonBarButtonStyle"
-                        android:id="@+id/tabDashboard"
-                        android:layout_width="wrap_content"
-                        android:layout_height="42dp"
-                        android:background="@drawable/bg_kiosk_nav_tab"
-                        android:textColor="@color/gold"
-                        android:text="@string/kiosk_tab_dashboard"
-                        android:textStyle="bold"
-                        android:textSize="13sp"
-                        android:paddingHorizontal="12dp"
-                        android:minWidth="0dp"
-                        android:focusable="true"
-                        android:nextFocusRight="@id/tabPinyin" />
-
-                    <Button style="?android:attr/buttonBarButtonStyle"
-                        android:id="@+id/tabPinyin"
-                        android:layout_width="wrap_content"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:background="@drawable/bg_kiosk_nav_tab"
-                        android:textColor="@color/dim"
-                        android:text="@string/kiosk_tab_search"
-                        android:textSize="13sp"
-                        android:paddingHorizontal="12dp"
-                        android:minWidth="0dp"
-                        android:focusable="true"
-                        android:nextFocusLeft="@id/tabDashboard"
-                        android:nextFocusRight="@id/tabSingers" />
-
-                    <Button style="?android:attr/buttonBarButtonStyle"
-                        android:id="@+id/tabSingers"
-                        android:layout_width="wrap_content"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:background="@drawable/bg_kiosk_nav_tab"
-                        android:textColor="@color/dim"
-                        android:text="@string/kiosk_tab_singers"
-                        android:textSize="13sp"
-                        android:paddingHorizontal="12dp"
-                        android:minWidth="0dp"
-                        android:focusable="true"
-                        android:nextFocusLeft="@id/tabPinyin"
-                        android:nextFocusRight="@id/tabCategories" />
-
-                    <Button style="?android:attr/buttonBarButtonStyle"
-                        android:id="@+id/tabRankings"
-                        android:layout_width="wrap_content"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:background="@drawable/btn_keyboard_key"
-                        android:textColor="@color/color_keyboard_key_text"
-                        android:text="@string/kiosk_tab_rankings"
-                        android:textSize="13sp"
-                        android:paddingHorizontal="12dp"
-                        android:focusable="false"
-                        android:visibility="gone" />
-
-                    <Button style="?android:attr/buttonBarButtonStyle"
-                        android:id="@+id/tabCategories"
-                        android:layout_width="wrap_content"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:background="@drawable/bg_kiosk_nav_tab"
-                        android:textColor="@color/dim"
-                        android:text="@string/kiosk_tab_categories"
-                        android:textSize="13sp"
-                        android:paddingHorizontal="12dp"
-                        android:minWidth="0dp"
-                        android:focusable="true"
-                        android:nextFocusLeft="@id/tabSingers"
-                        android:nextFocusRight="@id/tabLanguages" />
-
-                    <Button style="?android:attr/buttonBarButtonStyle"
-                        android:id="@+id/tabLanguages"
-                        android:layout_width="wrap_content"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:background="@drawable/bg_kiosk_nav_tab"
-                        android:textColor="@color/dim"
-                        android:text="@string/kiosk_tab_languages"
-                        android:textSize="13sp"
-                        android:paddingHorizontal="12dp"
-                        android:minWidth="0dp"
-                        android:focusable="true"
-                        android:nextFocusLeft="@id/tabCategories"
-                        android:nextFocusRight="@id/tabFavorites" />
-
-                    <Button style="?android:attr/buttonBarButtonStyle"
-                        android:id="@+id/tabFavorites"
-                        android:layout_width="wrap_content"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:background="@drawable/bg_kiosk_nav_tab"
-                        android:textColor="@color/dim"
-                        android:text="@string/kiosk_tab_favorites"
-                        android:textSize="13sp"
-                        android:paddingHorizontal="12dp"
-                        android:minWidth="0dp"
-                        android:focusable="true"
-                        android:nextFocusLeft="@id/tabLanguages"
-                        android:nextFocusRight="@id/tabHistory" />
-
-                    <Button style="?android:attr/buttonBarButtonStyle"
-                        android:id="@+id/tabPlaylists"
-                        android:layout_width="wrap_content"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:background="@drawable/btn_keyboard_key"
-                        android:textColor="@color/color_keyboard_key_text"
-                        android:text="@string/kiosk_tab_playlists"
-                        android:textSize="13sp"
-                        android:paddingHorizontal="12dp"
-                        android:focusable="false"
-                        android:visibility="gone" />
-
-                    <Button style="?android:attr/buttonBarButtonStyle"
-                        android:id="@+id/tabHistory"
-                        android:layout_width="wrap_content"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:background="@drawable/bg_kiosk_nav_tab"
-                        android:textColor="@color/dim"
-                        android:text="@string/kiosk_tab_history"
-                        android:textSize="13sp"
-                        android:paddingHorizontal="12dp"
-                        android:minWidth="0dp"
-                        android:focusable="true"
-                        android:nextFocusLeft="@id/tabFavorites"
-                        android:nextFocusRight="@id/btnKioskExit" />
-                </LinearLayout>
-            </HorizontalScrollView>
-
-            <Button
-                android:id="@+id/btnKioskExit"
-                android:layout_width="wrap_content"
-                android:layout_height="38dp"
-                android:background="@android:color/transparent"
-                android:text="@string/return_to_video"
-                android:drawableStart="@drawable/ic_return_fullscreen"
-                android:drawablePadding="8dp"
-                android:textColor="@color/text"
-                android:textSize="13sp"
-                android:paddingHorizontal="10dp"
-                android:focusable="true"
-                android:visibility="gone"
-                android:nextFocusLeft="@id/tabHistory" />
-        </LinearLayout>
-
-        <!-- 选歌内容在上，小窗位于内容区中下方且不遮挡列表/键盘 -->
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/kioskContentStage"
-            android:layout_width="match_parent"
+        <!-- 核心交互区（大厅 / 三栏浏览） -->
+        <FrameLayout
+            android:id="@+id/kioskMainContent"
+            android:layout_width="0dp"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:paddingHorizontal="10dp"
-            android:paddingTop="0dp"
-            android:paddingBottom="4dp">
+            android:layout_marginBottom="10dp"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
 
-            <!-- Short feedback floats above the page; it never reserves a full-width banner row. -->
-            <TextView
-                android:id="@+id/kioskTransientFeedback"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="12dp"
-                android:layout_marginBottom="12dp"
-                android:background="@drawable/bg_ktv_transient_toast"
-                android:clickable="false"
-                android:focusable="false"
-                android:gravity="center"
-                android:importantForAccessibility="yes"
-                android:accessibilityLiveRegion="polite"
-                android:maxWidth="420dp"
-                android:minHeight="32dp"
-                android:paddingHorizontal="16dp"
-                android:paddingVertical="6dp"
-                android:textColor="@color/text"
-                android:textSize="13sp"
-                android:maxLines="1"
-                android:ellipsize="end"
-                android:visibility="gone"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent" />
+            <!-- 商业点歌机大磁贴控制台大厅 -->
+            <com.homektv.tv.ui.kiosk.KtvCommercialDashboardView
+                android:id="@+id/kioskDashboardView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_marginStart="14dp"
+                android:layout_marginTop="5dp"
+                android:layout_marginEnd="14dp"
+                android:layout_marginBottom="6dp"
+                android:visibility="visible" />
 
-            <!-- 核心交互区（键盘 / 筛选 / 列表） -->
+            <!-- 供三栏浏览器在运行时重挂载的控件暂存容器 -->
             <FrameLayout
-                android:id="@+id/kioskMainContent"
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:layout_marginBottom="10dp"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toTopOf="@id/pipVideoFrame"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintEnd_toEndOf="parent">
+                android:id="@+id/legacyReparentStaging"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone">
 
-                <!-- 商业点歌机大磁贴控制台大厅 -->
-                <com.homektv.tv.ui.kiosk.KtvCommercialDashboardView
-                    android:id="@+id/kioskDashboardView"
+                <com.homektv.tv.ui.KtvKeyboardView
+                    android:id="@+id/kioskKeyboard"
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:layout_marginStart="14dp"
-                    android:layout_marginTop="5dp"
-                    android:layout_marginEnd="14dp"
-                    android:layout_marginBottom="6dp"
-                    android:visibility="visible" />
+                    android:layout_height="match_parent" />
 
-                <!-- 拼音搜歌面板 -->
-                <androidx.constraintlayout.widget.ConstraintLayout
-                    android:id="@+id/panelPinyin"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:visibility="gone">
-
-                    <!-- 左：26 字母软键盘（按权重自适应，避免大屏空旷/小屏挤压） -->
-                    <com.homektv.tv.ui.KtvKeyboardView
-                        android:id="@+id/kioskKeyboard"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        app:layout_constraintStart_toStartOf="parent"
-                        app:layout_constraintEnd_toStartOf="@id/searchResultsPanel"
-                        app:layout_constraintTop_toTopOf="parent"
-                        app:layout_constraintBottom_toBottomOf="parent"
-                        app:layout_constraintHorizontal_weight="1"
-                        app:layout_constraintHorizontal_chainStyle="spread" />
-
-                    <!-- 右：实时搜索结果 -->
-                    <androidx.constraintlayout.widget.ConstraintLayout
-                        android:id="@+id/searchResultsPanel"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_marginStart="14dp"
-                        app:layout_constraintStart_toEndOf="@id/kioskKeyboard"
-                        app:layout_constraintEnd_toEndOf="parent"
-                        app:layout_constraintTop_toTopOf="parent"
-                        app:layout_constraintBottom_toBottomOf="parent"
-                        app:layout_constraintHorizontal_weight="1.15">
-
-                        <TextView
-                            android:id="@+id/txtSearchCount"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/kiosk_search_empty_prompt"
-                            android:textColor="@color/gold"
-                            android:textSize="14sp"
-                            android:textStyle="bold"
-                            app:layout_constraintTop_toTopOf="parent"
-                            app:layout_constraintStart_toStartOf="parent"
-                            app:layout_constraintEnd_toEndOf="parent" />
-
-                        <androidx.recyclerview.widget.RecyclerView
-                            android:id="@+id/searchRecyclerView"
-                            android:layout_width="0dp"
-                            android:layout_height="0dp"
-                            android:layout_marginTop="8dp"
-                            app:layout_constraintTop_toBottomOf="@id/txtSearchCount"
-                            app:layout_constraintBottom_toBottomOf="parent"
-                            app:layout_constraintStart_toStartOf="parent"
-                            app:layout_constraintEnd_toEndOf="parent" />
-
-                        <LinearLayout
-                            android:id="@+id/searchEmptyState"
-                            android:layout_width="0dp"
-                            android:layout_height="0dp"
-                            android:gravity="center"
-                            android:orientation="vertical"
-                            android:visibility="gone"
-                            app:layout_constraintTop_toBottomOf="@id/txtSearchCount"
-                            app:layout_constraintBottom_toBottomOf="parent"
-                            app:layout_constraintStart_toStartOf="parent"
-                            app:layout_constraintEnd_toEndOf="parent">
-
-                            <ImageView
-                                android:id="@+id/imgSearchEmptyIcon"
-                                android:layout_width="48dp"
-                                android:layout_height="48dp"
-                                android:src="@drawable/ic_pinyin"
-                                app:tint="@color/gold"
-                                android:contentDescription="@string/search_icon_accessibility" />
-
-                            <TextView
-                                android:id="@+id/txtSearchEmptyTitle"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="12dp"
-                                android:text="@string/search_empty_title"
-                                android:textColor="@color/text"
-                                android:textSize="19sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:id="@+id/txtSearchEmptyMessage"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="6dp"
-                                android:gravity="center"
-                                android:text="@string/search_empty_message"
-                                android:textColor="@color/dim"
-                                android:textSize="13sp" />
-                        </LinearLayout>
-                    </androidx.constraintlayout.widget.ConstraintLayout>
-                </androidx.constraintlayout.widget.ConstraintLayout>
-
-                <!-- 歌星面板（网格） -->
                 <LinearLayout
-                    android:id="@+id/panelSingers"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:orientation="vertical"
-                    android:visibility="gone">
-
-                    <LinearLayout
-                        android:id="@+id/singerFilterRow"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:layout_marginBottom="8dp">
-
-                        <Button style="?android:attr/buttonBarButtonStyle"
-                            android:id="@+id/btnSingerAll"
-                            android:layout_width="wrap_content"
-                            android:layout_height="40dp"
-                            android:background="@drawable/btn_gold"
-                            android:text="@string/artist_filter_all"
-                            android:textColor="#111317"
-                            android:textSize="12sp"
-                            android:focusable="true" />
-
-                        <Button style="?android:attr/buttonBarButtonStyle"
-                            android:id="@+id/btnSingerMale"
-                            android:layout_width="wrap_content"
-                            android:layout_height="40dp"
-                            android:layout_marginStart="8dp"
-                            android:background="@drawable/btn_keyboard_key"
-                            android:text="@string/artist_filter_male"
-                            android:textColor="@color/color_keyboard_key_text"
-                            android:textSize="12sp"
-                            android:focusable="true" />
-
-                        <Button style="?android:attr/buttonBarButtonStyle"
-                            android:id="@+id/btnSingerFemale"
-                            android:layout_width="wrap_content"
-                            android:layout_height="40dp"
-                            android:layout_marginStart="8dp"
-                            android:background="@drawable/btn_keyboard_key"
-                            android:text="@string/artist_filter_female"
-                            android:textColor="@color/color_keyboard_key_text"
-                            android:textSize="12sp"
-                            android:focusable="true" />
-
-                        <Button style="?android:attr/buttonBarButtonStyle"
-                            android:id="@+id/btnSingerGroup"
-                            android:layout_width="wrap_content"
-                            android:layout_height="40dp"
-                            android:layout_marginStart="8dp"
-                            android:background="@drawable/btn_keyboard_key"
-                            android:text="@string/setup_mode_combined"
-                            android:textColor="@color/color_keyboard_key_text"
-                            android:textSize="12sp"
-                            android:focusable="true" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/txtSingerStatus"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/artist_loading"
-                        android:textColor="@color/gold"
-                        android:textSize="14sp"
-                        android:textStyle="bold"
-                        android:layout_marginBottom="8dp" />
-
-                    <Button
-                        android:id="@+id/btnSingerRetry"
-                        android:layout_width="120dp"
-                        android:layout_height="42dp"
-                        android:layout_marginBottom="8dp"
-                        android:background="@drawable/btn_gold"
-                        android:focusable="true"
-                        android:text="@string/common_retry"
-                        android:textColor="#111317"
-                        android:textSize="14sp"
-                        android:visibility="gone" />
-
-                    <androidx.recyclerview.widget.RecyclerView
-                        android:id="@+id/singerRecyclerView"
-                        android:layout_width="match_parent"
-                        android:layout_height="0dp"
-                        android:layout_weight="1" />
-                </LinearLayout>
-
-                <!-- 榜单热歌面板 -->
-                <LinearLayout
-                    android:id="@+id/panelRankings"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:orientation="vertical"
-                    android:visibility="gone">
-
-                    <TextView
-                        android:id="@+id/txtRankingHeader"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/ranking_30_days_title"
-                        android:textColor="@color/gold"
-                        android:textSize="14sp"
-                        android:textStyle="bold"
-                        android:layout_marginBottom="8dp" />
-
-                    <androidx.recyclerview.widget.RecyclerView
-                        android:id="@+id/rankingRecyclerView"
-                        android:layout_width="match_parent"
-                        android:layout_height="0dp"
-                        android:layout_weight="1" />
-                </LinearLayout>
-
-                <!-- 新歌推荐面板 -->
-                <LinearLayout
-                    android:id="@+id/panelCategories"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:orientation="vertical"
-                    android:visibility="gone">
-
-                    <LinearLayout
-                        android:id="@+id/categoryFilterRow"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal">
-
-                        <Button style="?android:attr/buttonBarButtonStyle"
-                            android:id="@+id/btnCategoryNew"
-                            android:layout_width="wrap_content"
-                            android:layout_height="42dp"
-                            android:background="@drawable/btn_gold"
-                            android:text="@string/new_songs_label"
-                            android:textColor="#111317"
-                            android:textSize="12sp"
-                            android:visibility="gone"
-                            android:focusable="false" />
-
-                        <Button style="?android:attr/buttonBarButtonStyle"
-                            android:id="@+id/btnCategoryLanguages"
-                            android:layout_width="wrap_content"
-                            android:layout_height="42dp"
-                            android:layout_marginStart="8dp"
-                            android:background="@drawable/btn_keyboard_key"
-                            android:text="@string/language_label"
-                            android:textColor="@color/color_keyboard_key_text"
-                            android:textSize="12sp"
-                            android:focusable="true" />
-
-                        <Button style="?android:attr/buttonBarButtonStyle"
-                            android:id="@+id/btnCategoryTags"
-                            android:layout_width="wrap_content"
-                            android:layout_height="42dp"
-                            android:layout_marginStart="8dp"
-                            android:background="@drawable/btn_keyboard_key"
-                            android:text="@string/category_tag_label"
-                            android:textColor="@color/color_keyboard_key_text"
-                            android:textSize="12sp"
-                            android:focusable="true" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/txtCategoryHeader"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/category_select_heading"
-                        android:textColor="@color/gold"
-                        android:textSize="14sp"
-                        android:textStyle="bold"
-                        android:layout_marginBottom="8dp" />
-
-                    <FrameLayout
-                        android:id="@+id/categoryContentArea"
-                        android:layout_width="match_parent"
-                        android:layout_height="0dp"
-                        android:layout_weight="1">
-
-                        <androidx.recyclerview.widget.RecyclerView
-                            android:id="@+id/categoryRecyclerView"
-                            android:layout_width="match_parent"
-                            android:layout_height="match_parent" />
-
-                        <LinearLayout
-                            android:id="@+id/categoryErrorPanel"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:layout_marginHorizontal="24dp"
-                            android:gravity="center"
-                            android:orientation="vertical"
-                            android:padding="18dp"
-                            android:background="@drawable/bg_singer_card"
-                            android:visibility="gone">
-
-                            <TextView
-                                android:layout_width="40dp"
-                                android:layout_height="40dp"
-                                android:gravity="center"
-                                android:text="@string/catalog_error_icon"
-                                android:textColor="@color/gold"
-                                android:textSize="30sp"
-                                android:textStyle="bold"
-                                android:contentDescription="@string/catalog_error_icon_accessibility" />
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="4dp"
-                                android:text="@string/catalog_error_title"
-                                android:textColor="@color/text"
-                                android:textSize="17sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:id="@+id/txtCategoryErrorDetail"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="4dp"
-                                android:gravity="center"
-                                android:text="@string/catalog_error_message"
-                                android:textColor="@color/dim"
-                                android:textSize="13sp" />
-
-                            <Button
-                                android:id="@+id/btnCategoryRetry"
-                                android:layout_width="120dp"
-                                android:layout_height="42dp"
-                                android:layout_marginTop="12dp"
-                                android:background="@drawable/btn_gold"
-                                android:focusable="true"
-                                android:text="@string/common_retry"
-                                android:textColor="#111317"
-                                android:textSize="14sp" />
-                        </LinearLayout>
-                    </FrameLayout>
-                </LinearLayout>
-
-                <!-- 收藏、歌单与历史面板 -->
-                <LinearLayout
-                    android:id="@+id/panelPersonal"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:orientation="vertical"
-                    android:visibility="gone">
-
-                    <TextView
-                        android:id="@+id/txtPersonalHeader"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/kiosk_tab_favorites"
-                        android:textColor="@color/gold"
-                        android:textSize="14sp"
-                        android:textStyle="bold"
-                        android:layout_marginBottom="8dp" />
-
-                    <FrameLayout
-                        android:id="@+id/personalContentArea"
-                        android:layout_width="match_parent"
-                        android:layout_height="0dp"
-                        android:layout_weight="1">
-
-                        <androidx.recyclerview.widget.RecyclerView
-                            android:id="@+id/personalRecyclerView"
-                            android:layout_width="match_parent"
-                            android:layout_height="match_parent" />
-
-                        <LinearLayout
-                            android:id="@+id/personalStatusPanel"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:layout_marginHorizontal="24dp"
-                            android:gravity="center"
-                            android:orientation="vertical"
-                            android:padding="18dp"
-                            android:background="@drawable/bg_singer_card"
-                            android:visibility="gone">
-
-                            <TextView
-                                android:id="@+id/txtPersonalStatusTitle"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="@string/personal_favorites_empty_title"
-                                android:textColor="@color/text"
-                                android:textSize="18sp"
-                                android:textStyle="bold" />
-
-                            <TextView
-                                android:id="@+id/txtPersonalStatusMessage"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="6dp"
-                                android:gravity="center"
-                                android:text="@string/personal_favorites_empty_message"
-                                android:textColor="@color/dim"
-                                android:textSize="13sp" />
-
-                            <Button
-                                android:id="@+id/btnPersonalRetry"
-                                android:layout_width="120dp"
-                                android:layout_height="42dp"
-                                android:layout_marginTop="12dp"
-                                android:background="@drawable/btn_gold"
-                                android:focusable="true"
-                                android:text="@string/common_retry"
-                                android:textColor="#111317"
-                                android:textSize="14sp"
-                                android:visibility="gone" />
-                        </LinearLayout>
-                    </FrameLayout>
-                </LinearLayout>
-            </FrameLayout>
-
-        <!-- PiP 状态由主界面的常驻底栏承载；此锚点保留供旧版状态兼容，不显示重复小窗。 -->
-            <FrameLayout
-                android:id="@+id/pipVideoFrame"
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:visibility="gone"
-                android:focusable="false"
-                android:layout_marginBottom="4dp"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintWidth_default="percent"
-                app:layout_constraintWidth_percent="0.22"
-                app:layout_constraintWidth_max="340dp"
-                app:layout_constraintDimensionRatio="16:9"
-                android:background="@drawable/bg_kiosk_pip_frame">
-
-                <FrameLayout
-                    android:id="@+id/pipVideoAnchor"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:descendantFocusability="blocksDescendants" />
-
-                <TextView
-                    android:id="@+id/txtPipLabel"
+                    android:id="@+id/singerFilterRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="top"
-                    android:gravity="center_vertical"
-                    android:paddingHorizontal="8dp"
-                    android:paddingVertical="5dp"
-                    android:background="#B8000000"
-                    android:text="@string/now_playing_label"
-                    android:textColor="@color/text"
-                    android:textSize="12sp"
-                    android:singleLine="true"
-                    android:ellipsize="end" />
-            </FrameLayout>
-        </androidx.constraintlayout.widget.ConstraintLayout>
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp">
 
-    <!-- 播控已提升为 Activity 根级常驻底栏，避免点歌台内出现第二套控件。 -->
-        <com.homektv.tv.ui.KtvBottomBarView
-            android:id="@+id/kioskBottomBar"
-            android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:visibility="gone" />
+                    <Button style="?android:attr/buttonBarButtonStyle"
+                        android:id="@+id/btnSingerAll"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:background="@drawable/btn_gold"
+                        android:text="@string/artist_filter_all"
+                        android:textColor="#111317"
+                        android:textSize="12sp"
+                        android:focusable="true" />
+
+                    <Button style="?android:attr/buttonBarButtonStyle"
+                        android:id="@+id/btnSingerMale"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:text="@string/artist_filter_male"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:textSize="12sp"
+                        android:focusable="true" />
+
+                    <Button style="?android:attr/buttonBarButtonStyle"
+                        android:id="@+id/btnSingerFemale"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:text="@string/artist_filter_female"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:textSize="12sp"
+                        android:focusable="true" />
+
+                    <Button style="?android:attr/buttonBarButtonStyle"
+                        android:id="@+id/btnSingerGroup"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/btn_keyboard_key"
+                        android:text="@string/setup_mode_combined"
+                        android:textColor="@color/color_keyboard_key_text"
+                        android:textSize="12sp"
+                        android:focusable="true" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/txtSingerStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/artist_loading"
+                    android:textColor="@color/gold"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="8dp" />
+
+                <Button
+                    android:id="@+id/btnSingerRetry"
+                    android:layout_width="120dp"
+                    android:layout_height="42dp"
+                    android:layout_marginBottom="8dp"
+                    android:background="@drawable/btn_gold"
+                    android:focusable="true"
+                    android:text="@string/common_retry"
+                    android:textColor="#111317"
+                    android:textSize="14sp"
+                    android:visibility="gone" />
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/singerRecyclerView"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1" />
+            </FrameLayout>
+        </FrameLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 </LinearLayout>

@@ -56,11 +56,16 @@ public class SongSearchService {
         long started = System.nanoTime();
         try {
             PageRequest request = PageRequest.of(page, PAGE_SIZE);
-            if (searchKeyword.lower().codePointCount(0, searchKeyword.lower().length()) <= 2) {
-                return searchRepo.searchShort(searchKeyword.raw(), searchKeyword.lower(),
+            String lower = searchKeyword.lower();
+            if (lower.length() == 1 && lower.charAt(0) >= 'a' && lower.charAt(0) <= 'z') {
+                return searchRepo.searchSingleInitial(searchKeyword.raw(), lower,
                         searchKeyword.likePattern(), normalizedType, request);
             }
-            return searchRepo.search(searchKeyword.raw(), searchKeyword.lower(), searchKeyword.likePattern(),
+            if (lower.codePointCount(0, lower.length()) <= 2) {
+                return searchRepo.searchShort(searchKeyword.raw(), lower,
+                        searchKeyword.likePattern(), normalizedType, request);
+            }
+            return searchRepo.search(searchKeyword.raw(), lower, searchKeyword.likePattern(),
                     normalizedType, request);
         } finally {
             long duration = (System.nanoTime() - started) / 1_000_000L;

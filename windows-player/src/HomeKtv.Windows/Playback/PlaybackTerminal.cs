@@ -137,10 +137,6 @@ public sealed class PlaybackTerminal : IAsyncDisposable
         SendControlAsync("set_volume", new Dictionary<string, object?> { ["volume"] = volume },
             "volume_changed", cancellationToken);
 
-    public Task SetMutedAsync(bool muted, CancellationToken cancellationToken = default) =>
-        SendControlAsync("mute", new Dictionary<string, object?> { ["muted"] = muted },
-            "volume_changed", cancellationToken);
-
     public Task SetVocalModeAsync(string mode, CancellationToken cancellationToken = default) =>
         SendControlAsync("set_vocal", new Dictionary<string, object?> { ["mode"] = mode },
             "vocal_changed", cancellationToken);

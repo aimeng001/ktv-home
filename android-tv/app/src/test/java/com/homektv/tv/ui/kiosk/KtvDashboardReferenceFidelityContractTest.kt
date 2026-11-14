@@ -1,6 +1,5 @@
 package com.homektv.tv.ui.kiosk
 
-import com.homektv.tv.ui.calculatePlaybackProgress
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertEquals
@@ -50,52 +49,21 @@ class KtvDashboardReferenceFidelityContractTest {
             assertTrue("$id must remain on the active dashboard", tile.getAttribute("android:visibility") != "gone")
         }
 
-        val overlay = parse("src/main/res/layout/view_ktv_kiosk_overlay.xml")
-        val headerTabs = listOf("tabDashboard", "tabPinyin", "tabSingers", "tabCategories", "tabLanguages", "tabFavorites", "tabHistory")
-            .map { id ->
-                (0 until overlay.getElementsByTagName("Button").length)
-                    .map { overlay.getElementsByTagName("Button").item(it) as Element }
-                    .single { it.getAttribute("android:id") == "@+id/$id" }
-                    .getAttribute("android:text")
-            }
-        assertEquals(
-            listOf("首页", "搜索", "歌手", "分类", "语种", "收藏", "历史"),
-            headerTabs.map { resourceString(it) },
+        val dashboardTextViews = (0 until dashboard.getElementsByTagName("TextView").length)
+            .map { dashboard.getElementsByTagName("TextView").item(it) as Element }
+            .associateBy { it.getAttribute("android:id") }
+        listOf("@+id/txtSingerTileTitle", "@+id/txtSongNameTitle", "@+id/txtNewSongsTitle").forEach { id ->
+            assertEquals(
+                "$id must use match_parent so italic right glyph overhang is never clipped",
+                "match_parent",
+                dashboardTextViews.getValue(id).getAttribute("android:layout_width"),
+            )
+        }
+        val dashboardViewSource = locate("src/main/java/com/homektv/tv/ui/kiosk/KtvCommercialDashboardView.kt").readText()
+        assertTrue(
+            "wrap_content italic dashboard captions must expand minWidth for right glyph overhang",
+            dashboardViewSource.contains("content.title.minWidth = textWidthPx"),
         )
-    }
-
-    @Test
-    fun dashboardFooterShowsRealPlaybackProgressWithoutChangingPlayback() {
-        val footer = parse("src/main/res/layout/view_ktv_bottom_bar.xml")
-        val progress = (0 until footer.getElementsByTagName("ProgressBar").length)
-            .map { footer.getElementsByTagName("ProgressBar").item(it) as Element }
-            .single { it.getAttribute("android:id") == "@+id/playbackProgress" }
-
-        assertEquals("1000", progress.getAttribute("android:max"))
-        assertEquals(0, calculatePlaybackProgress(0L, 0L))
-        assertEquals(500, calculatePlaybackProgress(30_000L, 60_000L))
-        assertEquals(1000, calculatePlaybackProgress(80_000L, 60_000L))
-        assertEquals(0, calculatePlaybackProgress(-1L, 60_000L))
-        val bottomBar = locate("src/main/java/com/homektv/tv/ui/KtvBottomBarView.kt").readText()
-        assertTrue("bottom bar must bind normalized position and duration to its progress view", bottomBar.contains(
-            "binding.playbackProgress.progress = calculatePlaybackProgress(positionMs, durationMs)",
-        ))
-        val controller = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
-        assertTrue("snapshot position and song duration must be passed through unchanged", controller.contains(
-            "positionMs = snapshot.positionMs",
-        ) && controller.contains("durationMs = snapshot.playing?.song?.durationMs?.toLong() ?: 0L"))
-    }
-
-    @Test
-    fun footerAvatarUsesRealBitmapAndApi26CompatibleCircularClipping() {
-        val footer = parse("src/main/res/layout/view_ktv_bottom_bar.xml")
-        val avatar = (0 until footer.getElementsByTagName("ImageView").length)
-            .map { footer.getElementsByTagName("ImageView").item(it) as Element }
-            .single { it.getAttribute("android:id") == "@+id/imgNowPlayingDisc" }
-        assertEquals("@drawable/bg_avatar_circle", avatar.getAttribute("android:background"))
-        assertTrue("use the runtime API instead of the API-31-only XML attribute", !avatar.hasAttribute("android:clipToOutline"))
-        val bottomBar = locate("src/main/java/com/homektv/tv/ui/KtvBottomBarView.kt").readText()
-        assertTrue(bottomBar.contains("binding.imgNowPlayingDisc.clipToOutline = true"))
     }
 
     private fun parse(relativePath: String) =

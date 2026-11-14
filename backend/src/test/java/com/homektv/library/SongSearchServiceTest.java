@@ -65,6 +65,18 @@ class SongSearchServiceTest {
     }
 
     @Test
+    void searchRoutesSingleAsciiLetterToSingleInitialQuery() {
+        when(searchRepo.searchSingleInitial(eq("A"), eq("a"), eq("a"), eq(""), any()))
+                .thenReturn(List.of(new Song()));
+
+        service.search("A", 0);
+
+        verify(searchRepo).searchSingleInitial(eq("A"), eq("a"), eq("a"), eq(""), any(Pageable.class));
+        verify(searchRepo, never()).searchShort(any(), any(), any(), any(), any());
+        verify(searchRepo, never()).search(any(), any(), any(), any(), any());
+    }
+
+    @Test
     void searchRoutesOneOrTwoCharacterKeywordsToIndexedTermQuery() {
         when(searchRepo.searchShort(eq("天"), eq("天"), eq("天"), eq(""), any()))
                 .thenReturn(List.of(new Song()));

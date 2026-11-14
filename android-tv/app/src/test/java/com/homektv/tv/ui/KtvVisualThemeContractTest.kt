@@ -137,13 +137,7 @@ class KtvVisualThemeContractTest {
     }
 
     @Test
-    fun pipFrameKeepsVideoBlackAndDecorativeSurfacesUseThemeTokens() {
-        assertDrawableUses(
-            "bg_kiosk_pip_frame",
-            "@android:color/black",
-            "@color/ktv_dashboard_card_border",
-            "5dp",
-        )
+    fun decorativeSurfacesUseThemeTokens() {
         assertDrawableUses(
             "setup_device_icon",
             "@color/ktv_surface_tint",

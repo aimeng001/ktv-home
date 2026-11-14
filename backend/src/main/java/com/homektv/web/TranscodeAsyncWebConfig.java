@@ -23,6 +23,6 @@ public class TranscodeAsyncWebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new TranscodeAsyncLifecycleInterceptor())
-                .addPathPatterns("/api/stream/**", "/api/playback/stream/**");
+                .addPathPatterns("/api/stream/**");
     }
 }

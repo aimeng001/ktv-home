@@ -109,7 +109,7 @@ class KtvSettingsRowView(
         gravity = Gravity.CENTER_VERTICAL
         isFocusable = true
         isClickable = true
-        isFocusableInTouchMode = false
+        isFocusableInTouchMode = true
         background = ContextCompat.getDrawable(context, R.drawable.bg_ktv_settings_card)
         setPadding(dp(5), 0, dp(5), 0)
 

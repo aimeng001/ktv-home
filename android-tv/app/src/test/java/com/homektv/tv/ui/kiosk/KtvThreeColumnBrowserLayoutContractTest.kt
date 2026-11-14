@@ -103,8 +103,8 @@ class KtvThreeColumnBrowserLayoutContractTest {
             }
         }
         assertEquals("28dp", dimensions["ktv_browser_tab_height"])
-        assertEquals("6dp", dimensions["ktv_browser_tab_horizontal_padding"])
-        assertEquals("3dp", dimensions["ktv_browser_tab_gap"])
+        assertEquals("10dp", dimensions["ktv_browser_tab_horizontal_padding"])
+        assertEquals("2.5dp", dimensions["ktv_browser_tab_gap"])
         assertEquals("24dp", subcategoryRail.getAttribute("android:layout_height"))
         assertEquals("2dp", subcategoryRail.getAttribute("android:layout_marginTop"))
         assertEquals("18dp", mainStage.getAttribute("android:layout_marginTop"))
@@ -313,7 +313,7 @@ class KtvThreeColumnBrowserLayoutContractTest {
     fun kioskOverlayRoutesAllTilesCorrectly() {
         val source = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
         val tileRouting = source.substringAfter("overlay.kioskDashboardView.onTileSelected = { tile ->")
-            .substringBefore("overlay.tabPinyin.setOnClickListener")
+            .substringBefore("browserBinding.browserNavHome.setOnClickListener")
 
         assertTrue(
             "精选专区磁贴必须进入现有歌单页，主题标签入口仍留给分类浏览",

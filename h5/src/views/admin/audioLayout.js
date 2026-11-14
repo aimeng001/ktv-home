@@ -21,18 +21,6 @@ export function createAudioLayoutDraft(value = {}) {
   }
 }
 
-export function swapAudioLayout(value) {
-  const next = { ...value }
-  if (value.layout === 'DUAL_CHANNEL') {
-    next.originalChannel = value.accompanimentChannel
-    next.accompanimentChannel = value.originalChannel
-  } else if (value.layout === 'DUAL_TRACK') {
-    next.originalTrackIndex = value.accompanimentTrackIndex
-    next.accompanimentTrackIndex = value.originalTrackIndex
-  }
-  return next
-}
-
 export function audioLayoutLabel(value) {
   return AUDIO_LAYOUT_OPTIONS.find(item => item.value === value?.layout)?.label || '普通立体声'
 }

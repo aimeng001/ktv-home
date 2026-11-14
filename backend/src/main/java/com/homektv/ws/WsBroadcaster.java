@@ -127,7 +127,10 @@ public class WsBroadcaster {
      * @return true if TV is online
      */
     public boolean isTvOnline() {
-        return sessionTypes.containsValue("tv");
+        if (!sessionTypes.containsValue("tv")) {
+            return false;
+        }
+        return playerRegistry.connectedPlayerCount() == 0 || playerRegistry.activeSessionId().isPresent();
     }
 
     /** Number of connected browser H5 sessions (native controllers excluded). */

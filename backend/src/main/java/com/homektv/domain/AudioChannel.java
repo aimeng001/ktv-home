@@ -7,10 +7,6 @@ public enum AudioChannel {
     LEFT,
     RIGHT;
 
-    public AudioChannel opposite() {
-        return this == LEFT ? RIGHT : LEFT;
-    }
-
     public static AudioChannel from(String value) {
         return from(value, LEFT);
     }

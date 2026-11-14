@@ -17,7 +17,11 @@ public class ActivePlayerRegistry {
 
     public record PlayerHello(String clientToken, String platform, int protocolVersion) {}
 
-    public record Assignment(Role role, long generation, long leaseMs) {}
+    public record Assignment(Role role, long generation, long leaseMs, Optional<String> replacedSessionId) {
+        public Assignment(Role role, long generation, long leaseMs) {
+            this(role, generation, leaseMs, Optional.empty());
+        }
+    }
 
     public record Promotion(String sessionId, Assignment assignment) {}
 
@@ -57,6 +61,7 @@ public class ActivePlayerRegistry {
                 .findFirst().orElse(null);
         boolean replacesActive = stale != null && active != null
                 && active.sessionId().equals(stale.sessionId());
+        String replacedSessionId = stale != null ? stale.sessionId() : null;
         if (stale != null) {
             players.remove(stale.sessionId());
         }
@@ -66,7 +71,8 @@ public class ActivePlayerRegistry {
         if (active == null || replacesActive) {
             active = activate(player, clock.instant());
         }
-        return assignmentFor(sessionId);
+        Assignment base = assignmentFor(sessionId);
+        return new Assignment(base.role(), base.generation(), base.leaseMs(), Optional.ofNullable(replacedSessionId));
     }
 
     public synchronized int connectedPlayerCount() {
@@ -83,15 +89,6 @@ public class ActivePlayerRegistry {
             return Optional.empty();
         }
         return Optional.of(active.sessionId());
-    }
-
-    /**
-     * Every registered TV must identify the queue item its playback report
-     * came from.  This closes the legacy protocol path that could apply a
-     * delayed report from an older media item to the newly active item.
-     */
-    public synchronized boolean requiresQueueIdentity(String sessionId) {
-        return players.containsKey(sessionId);
     }
 
     public synchronized Optional<Promotion> unregister(String sessionId) {

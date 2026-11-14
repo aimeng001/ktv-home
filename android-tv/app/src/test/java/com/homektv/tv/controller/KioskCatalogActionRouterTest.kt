@@ -28,6 +28,7 @@ class KioskCatalogActionRouterTest {
             listOf(
                 "query:zjl",
                 "query:",
+                "ranking",
                 "all-songs",
                 "more-all-songs",
                 "stop-all-songs",

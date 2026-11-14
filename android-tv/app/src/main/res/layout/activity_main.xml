@@ -29,63 +29,63 @@
 
             <ImageView
                 android:id="@+id/btnTopSystem"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="15dp"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginEnd="12dp"
                 android:background="@drawable/bg_ktv_header_action"
                 android:clickable="true"
                 android:focusable="true"
-                android:padding="8dp"
+                android:padding="6dp"
                 android:contentDescription="系统信息"
                 android:src="@drawable/ic_android_system_info" />
 
             <ImageView
                 android:id="@+id/btnTopMobileQr"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="15dp"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginEnd="12dp"
                 android:background="@drawable/bg_ktv_header_action"
                 android:clickable="true"
                 android:focusable="true"
-                android:padding="8dp"
+                android:padding="6dp"
                 android:contentDescription="手机扫码点歌"
-                android:src="@drawable/ic_mobile_order" />
+                android:src="@drawable/ic_header_mobile_qr" />
 
             <ImageView
                 android:id="@+id/btnTopSettings"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="15dp"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginEnd="12dp"
                 android:background="@drawable/bg_ktv_header_action"
                 android:clickable="true"
                 android:focusable="true"
-                android:padding="8dp"
+                android:padding="6dp"
                 android:contentDescription="系统设置"
-                android:src="@drawable/ic_settings" />
+                android:src="@drawable/ic_header_settings" />
 
             <ImageView
                 android:id="@+id/btnTopSearch"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="15dp"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginEnd="12dp"
                 android:background="@drawable/bg_ktv_header_action"
                 android:clickable="true"
                 android:focusable="true"
-                android:padding="8dp"
+                android:padding="6dp"
                 android:contentDescription="搜索歌曲"
-                android:src="@drawable/ic_search" />
+                android:src="@drawable/ktv_ref_v50_settings_search" />
 
             <ImageView
                 android:id="@+id/btnTopLibraryScan"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="15dp"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginEnd="12dp"
                 android:background="@drawable/bg_ktv_header_action"
                 android:clickable="true"
                 android:focusable="true"
-                android:padding="8dp"
+                android:padding="6dp"
                 android:contentDescription="更新歌库"
-                android:src="@drawable/ic_cloud_library_scan" />
+                android:src="@drawable/ic_header_library_scan" />
         </LinearLayout>
 
         <ImageView
@@ -155,20 +155,21 @@
             android:layout_height="20dp"
             android:layout_marginEnd="8dp"
             android:contentDescription="@null"
-            android:src="@drawable/ic_wifi" />
+            android:src="@drawable/ic_header_wifi" />
 
         <TextView
             android:id="@+id/txtClock"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-light"
             android:textColor="#FFFFFF"
-            android:textSize="18sp"
-            android:textStyle="bold" />
+            android:textSize="22sp"
+            android:textStyle="normal" />
 
         <!-- 时间与日期之间的垂直分隔线：对标 IKTV 50.0.4 -->
         <View
             android:layout_width="1dp"
-            android:layout_height="20dp"
+            android:layout_height="18dp"
             android:layout_marginHorizontal="8dp"
             android:background="#55FFFFFF" />
 
@@ -367,9 +368,9 @@
         android:layout_width="@dimen/ktv_dashboard_pip_width"
         android:layout_height="@dimen/ktv_dashboard_pip_height"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="6dp"
+        android:layout_marginBottom="0dp"
         android:background="@drawable/bg_ktv_dock_video_frame"
-        android:clipToOutline="true"
+        android:clipToOutline="false"
         android:visibility="visible">
 
         <androidx.media3.ui.PlayerView

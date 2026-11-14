@@ -26,6 +26,7 @@ public class TranscodeService {
     private final String ffmpegPath;
     private final ProcessLauncher processLauncher;
     private final Duration timeout;
+    private final com.homektv.resource.ResourceBudget resourceBudget;
 
     /** Compatibility constructor for callers that use the original managed-mode service directly. */
     public TranscodeService(SongFileRepository files) {
@@ -36,9 +37,16 @@ public class TranscodeService {
     @Autowired
     public TranscodeService(SongFileRepository files, AppProperties props,
                             @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath,
-                            @Value("${app.transcode.timeout-seconds:1800}") long timeoutSeconds) {
+                            @Value("${app.transcode.timeout-seconds:1800}") long timeoutSeconds,
+                            com.homektv.resource.ResourceBudget resourceBudget) {
         this(files, props, ffmpegPath, TranscodeService::startProcess,
-                MediaProcessRunner.fromSeconds(timeoutSeconds));
+                MediaProcessRunner.fromSeconds(timeoutSeconds), resourceBudget);
+    }
+
+    public TranscodeService(SongFileRepository files, AppProperties props,
+                            String ffmpegPath, long timeoutSeconds) {
+        this(files, props, ffmpegPath, TranscodeService::startProcess,
+                MediaProcessRunner.fromSeconds(timeoutSeconds), defaultBudget());
     }
 
     public TranscodeService(SongFileRepository files, AppProperties props) {
@@ -57,11 +65,22 @@ public class TranscodeService {
 
     TranscodeService(SongFileRepository files, AppProperties props, String ffmpegPath,
                      ProcessLauncher processLauncher, Duration timeout) {
+        this(files, props, ffmpegPath, processLauncher, timeout, defaultBudget());
+    }
+
+    TranscodeService(SongFileRepository files, AppProperties props, String ffmpegPath,
+                     ProcessLauncher processLauncher, Duration timeout,
+                     com.homektv.resource.ResourceBudget resourceBudget) {
         this.files = files;
         this.props = props;
         this.ffmpegPath = ffmpegPath;
         this.processLauncher = processLauncher;
         this.timeout = timeout;
+        this.resourceBudget = resourceBudget != null ? resourceBudget : defaultBudget();
+    }
+
+    private static com.homektv.resource.ResourceBudget defaultBudget() {
+        return new com.homektv.resource.ResourceBudget(1, 1, 1, 1, 1, () -> false);
     }
 
     public Result transcodeSong(Long songId) {
@@ -76,6 +95,9 @@ public class TranscodeService {
         Path input = LibraryModePolicy.requireReadablePathInsideActiveLibrary(
                 props, Path.of(source.getFilePath()));
         Path desired = input.resolveSibling(stripExtension(input.getFileName().toString()) + ".mkv");
+        if (desired.equals(input)) {
+            desired = input.resolveSibling(stripExtension(input.getFileName().toString()) + "_h264.mkv");
+        }
         desired = LibraryModePolicy.requirePathInsideActiveLibrary(props, desired);
         SongFile existing = files.findByFilePath(desired.toString()).orElse(null);
         try {
@@ -93,10 +115,13 @@ public class TranscodeService {
         }
         boolean completed = false;
         try {
-            Process process = processLauncher.start(List.of(ffmpegPath, "-hide_banner", "-loglevel", "error", "-y",
-                    "-i", input.toString(), "-map", "0:v:0?", "-map", "0:a?",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-profile:v", "high",
-                    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-c:s", "copy", output.toString()));
+            Process process;
+            try (var permit = resourceBudget.acquireManagedTranscode()) {
+                process = processLauncher.start(List.of(ffmpegPath, "-hide_banner", "-loglevel", "error", "-y",
+                        "-i", input.toString(), "-map", "0:v:0?", "-map", "0:a?",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-profile:v", "high",
+                        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-c:s", "copy", output.toString()));
+            }
             MediaProcessRunner.Result result = MediaProcessRunner.run(process, timeout);
             if (result.timedOut()) throw new ApiException("TRANSCODE_TIMEOUT", "ffmpeg 转码超时");
             String log = result.output();

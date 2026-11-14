@@ -1,8 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="@android:color/black" />
-    <corners android:radius="@dimen/ktv_dock_video_frame_corner_radius" />
-    <stroke
-        android:width="@dimen/ktv_dock_video_frame_stroke_width"
-        android:color="@color/ktv_focus_blue" />
-</shape>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/black" />
+            <corners android:radius="@dimen/ktv_dock_video_frame_corner_radius" />
+            <stroke
+                android:width="@dimen/ktv_dock_video_frame_stroke_width"
+                android:color="@color/ktv_focus_blue" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/black" />
+            <corners android:radius="@dimen/ktv_dock_video_frame_corner_radius" />
+        </shape>
+    </item>
+</selector>

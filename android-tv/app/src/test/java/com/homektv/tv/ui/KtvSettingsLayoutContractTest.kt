@@ -62,8 +62,8 @@ class KtvSettingsLayoutContractTest {
 
         listOf("btnTopSystem", "btnTopMobileQr", "btnTopSettings", "btnTopSearch", "btnTopLibraryScan").forEach { id ->
             val action = byId.getValue("@+id/$id")
-            assertEquals("40dp", action.getAttribute("android:layout_width"))
-            assertEquals("40dp", action.getAttribute("android:layout_height"))
+            assertEquals("36dp", action.getAttribute("android:layout_width"))
+            assertEquals("36dp", action.getAttribute("android:layout_height"))
             assertEquals("true", action.getAttribute("android:focusable"))
             assertEquals("@drawable/bg_ktv_header_action", action.getAttribute("android:background"))
         }

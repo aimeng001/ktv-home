@@ -34,7 +34,6 @@ public sealed class PlaybackTerminalTests
         await terminal.ReplayAsync();
         await terminal.NextAsync();
         await terminal.SetVolumeAsync(73);
-        await terminal.SetMutedAsync(true);
         await terminal.SetVocalModeAsync("original");
         await terminal.SwapVocalTracksAsync();
         await terminal.SetDisplayAsync(-4);
@@ -45,7 +44,7 @@ public sealed class PlaybackTerminalTests
             return body.RootElement.GetProperty("action").GetString();
         });
         Assert.Equal(
-            new[] { "play", "pause", "stop", "seek", "restart", "next", "set_volume", "mute", "set_vocal", "swap_vocal_tracks" },
+            new[] { "play", "pause", "stop", "seek", "restart", "next", "set_volume", "set_vocal", "swap_vocal_tracks" },
             actions);
         using var seek = JsonDocument.Parse(requests[3].Body!);
         Assert.Equal(0, seek.RootElement.GetProperty("params").GetProperty("position_ms").GetInt64());

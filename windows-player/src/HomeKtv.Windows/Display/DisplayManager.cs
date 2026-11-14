@@ -57,13 +57,6 @@ public sealed class DisplayManager
             .ToArray();
     }
 
-    public int SafeIndex(int requestedIndex)
-    {
-        var displays = GetDisplays();
-        if (displays.Count == 0) return 0;
-        return Math.Clamp(requestedIndex, 0, displays.Count - 1);
-    }
-
     public DisplayInfo? ResolveTarget(string? savedDisplayId, int legacyIndex = 0) =>
         DisplaySelector.ResolveTarget(GetDisplays(), savedDisplayId, legacyIndex);
 }

@@ -59,6 +59,12 @@ object RegistrationReducer {
     fun canWrite(state: ControllerUiState): Boolean =
         state.registration == RegistrationStatus.REGISTERED && state.currentUser?.id ?: 0L > 0L
 
+    fun shouldRegisterOnConnect(
+        status: RegistrationStatus,
+        connected: Boolean,
+        wasConnected: Boolean?,
+    ): Boolean = connected && wasConnected != true && (status == RegistrationStatus.IDLE || status == RegistrationStatus.RETRY_REQUIRED)
+
     /** Playback controls do not change user-owned queue state and can work while identity retries. */
     fun requiresRegistration(action: String): Boolean = action !in registrationOptionalActions
 

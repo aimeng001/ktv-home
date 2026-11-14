@@ -91,6 +91,9 @@ class ControllerViewModel(
                             _state.update { ControllerStateReducer.withConnection(it, false) }
                         } else {
                             if (wasConnected != true) loadRoomHost()
+                            if (RegistrationReducer.shouldRegisterOnConnect(_state.value.registration, current.connected, wasConnected)) {
+                                registerUser()
+                            }
                             current.roomHost?.let { roomHost ->
                                 _state.update { ControllerStateReducer.withRoomHost(it, roomHost) }
                             }

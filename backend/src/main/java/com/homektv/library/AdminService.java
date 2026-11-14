@@ -56,6 +56,18 @@ public class AdminService {
     private final SongProjectionService songProjectionService;
     private ManagedLibraryDeleteService managedLibraryDeleteService;
     private CatalogRevisionService catalogRevisionService;
+    private com.homektv.queue.SnapshotService snapshotService;
+    private com.homektv.queue.PlaybackService playbackService;
+
+    @Autowired(required = false)
+    void setSnapshotService(com.homektv.queue.SnapshotService snapshotService) {
+        this.snapshotService = snapshotService;
+    }
+
+    @Autowired(required = false)
+    void setPlaybackService(com.homektv.queue.PlaybackService playbackService) {
+        this.playbackService = playbackService;
+    }
 
     @Autowired(required = false)
     void setCatalogRevisionService(CatalogRevisionService catalogRevisionService) {
@@ -417,9 +429,11 @@ public class AdminService {
         var player = managedLibraryDeleteService == null
                 ? playerRepo.getSingleton()
                 : playerRepo.getSingletonForUpdate();
-        if (queueItems.stream().anyMatch(q -> q.getId().equals(player.getCurrentQueueId()))) {
+        boolean deletedCurrent = queueItems.stream().anyMatch(q -> q.getId().equals(player.getCurrentQueueId()));
+        if (deletedCurrent) {
             player.setCurrentQueueId(null);
             player.setState("idle");
+            player.setPositionMs(0);
             if (managedLibraryDeleteService == null) {
                 playerRepo.save(player);
             } else {
@@ -433,6 +447,31 @@ public class AdminService {
         if (assetCleanupService != null) {
             assetCleanupService.afterCommitIfUnreferenced(oldCoverPath, oldLyricPath);
         }
+        if (!queueItems.isEmpty() && broadcaster != null && snapshotService != null) {
+            afterCommitBroadcast(deletedCurrent);
+        }
+    }
+
+    private void afterCommitBroadcast(boolean deletedCurrent) {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            var snapshot = snapshotService.snapshot();
+            broadcaster.broadcastPlayback(com.homektv.ws.WsEvent.of(com.homektv.ws.WsEvent.QUEUE_UPDATED, snapshot));
+            if (deletedCurrent) {
+                broadcaster.broadcastPlayback(com.homektv.ws.WsEvent.of(com.homektv.ws.WsEvent.NOW_PLAYING, snapshot));
+            }
+            return;
+        }
+        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        var snapshot = snapshotService.snapshot();
+                        broadcaster.broadcastPlayback(com.homektv.ws.WsEvent.of(com.homektv.ws.WsEvent.QUEUE_UPDATED, snapshot));
+                        if (deletedCurrent) {
+                            broadcaster.broadcastPlayback(com.homektv.ws.WsEvent.of(com.homektv.ws.WsEvent.NOW_PLAYING, snapshot));
+                        }
+                    }
+                });
     }
 
     @Transactional

@@ -3,8 +3,7 @@ import {
   AUDIO_CHANNEL_OPTIONS,
   AUDIO_LAYOUT_OPTIONS,
   audioLayoutLabel,
-  createAudioLayoutDraft,
-  swapAudioLayout
+  createAudioLayoutDraft
 } from './audioLayout'
 
 describe('audio layout contract', () => {
@@ -34,23 +33,6 @@ describe('audio layout contract', () => {
       layout: 'DUAL_TRACK', originalTrackIndex: 0, accompanimentTrackIndex: 2,
       originalChannel: 'LEFT', accompanimentChannel: 'RIGHT'
     })
-  })
-
-  it('swaps dual-track indexes without mutating the input', () => {
-    const layout = { layout: 'DUAL_TRACK', originalTrackIndex: 0, accompanimentTrackIndex: 1 }
-
-    expect(swapAudioLayout(layout)).toEqual({
-      layout: 'DUAL_TRACK', originalTrackIndex: 1, accompanimentTrackIndex: 0
-    })
-    expect(layout).toEqual({ layout: 'DUAL_TRACK', originalTrackIndex: 0, accompanimentTrackIndex: 1 })
-  })
-
-  it('swaps dual-channel roles and leaves ordinary stereo unchanged', () => {
-    expect(swapAudioLayout({ layout: 'DUAL_CHANNEL', originalChannel: 'LEFT', accompanimentChannel: 'RIGHT' }))
-      .toEqual({ layout: 'DUAL_CHANNEL', originalChannel: 'RIGHT', accompanimentChannel: 'LEFT' })
-    const stereo = { layout: 'NORMAL_STEREO', originalChannel: 'LEFT', accompanimentChannel: 'RIGHT' }
-    expect(swapAudioLayout(stereo)).toEqual(stereo)
-    expect(swapAudioLayout(stereo)).not.toBe(stereo)
   })
 
   it('returns a readable label for known and unknown layouts', () => {

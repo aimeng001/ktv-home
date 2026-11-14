@@ -67,4 +67,24 @@ class KtvGlobalSearchPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun keyboardVisibilityReconcilesAcrossQueueDrawerAndHiddenTabs() {
+        assertEquals(
+            KtvGlobalSearchPolicy.KeyboardVisibilityMode.VISIBLE,
+            KtvGlobalSearchPolicy.resolveKeyboardVisibility(shouldShowKeyboard = true, isQueueDrawerOpen = false),
+        )
+        assertEquals(
+            KtvGlobalSearchPolicy.KeyboardVisibilityMode.INVISIBLE,
+            KtvGlobalSearchPolicy.resolveKeyboardVisibility(shouldShowKeyboard = true, isQueueDrawerOpen = true),
+        )
+        assertEquals(
+            KtvGlobalSearchPolicy.KeyboardVisibilityMode.GONE,
+            KtvGlobalSearchPolicy.resolveKeyboardVisibility(shouldShowKeyboard = false, isQueueDrawerOpen = true),
+        )
+        assertEquals(
+            KtvGlobalSearchPolicy.KeyboardVisibilityMode.GONE,
+            KtvGlobalSearchPolicy.resolveKeyboardVisibility(shouldShowKeyboard = false, isQueueDrawerOpen = false),
+        )
+    }
 }

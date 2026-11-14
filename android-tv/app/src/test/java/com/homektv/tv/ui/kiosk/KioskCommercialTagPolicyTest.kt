@@ -28,4 +28,28 @@ class KioskCommercialTagPolicyTest {
 
         assertEquals(listOf("怀旧", "抖音热歌"), KioskCommercialTagPolicy.themeTags(tags).map { it.name })
     }
+
+    @Test
+    fun missingTagNoticeGuidesKeyboardSearchWhenKeyboardIsShowing() {
+        val notice = KioskCommercialTagPolicy.noticeForMissingTag("抖音神曲", keyboardShowing = true)
+        assertEquals("当前曲库没有精确的“抖音神曲”标签；可通过右侧拼音键盘检索点歌。", notice)
+    }
+
+    @Test
+    fun missingTagNoticeGuidesTagSelectionWhenKeyboardIsHidden() {
+        val notice = KioskCommercialTagPolicy.noticeForMissingTag("高清HD歌曲", keyboardShowing = false)
+        assertEquals("当前曲库没有精确的“高清HD歌曲”标签；可从现有标签中选择。", notice)
+    }
+
+    @Test
+    fun loadFailureNoticeAdaptsToKeyboardVisibility() {
+        assertEquals(
+            "标签列表加载失败，暂时无法确认对应分类；可通过拼音键盘检索点歌。",
+            KioskCommercialTagPolicy.noticeForLoadFailure(keyboardShowing = true)
+        )
+        assertEquals(
+            "标签列表加载失败，暂时无法确认对应分类；可按确定重试。",
+            KioskCommercialTagPolicy.noticeForLoadFailure(keyboardShowing = false)
+        )
+    }
 }

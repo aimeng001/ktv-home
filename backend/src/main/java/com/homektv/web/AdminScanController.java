@@ -49,6 +49,20 @@ public class AdminScanController {
     private final SongMergeService songMergeService;
     private final AppProperties props;
     private LibraryScanCoordinator scanCoordinator;
+    private com.homektv.library.SongProbeService songProbeService;
+
+    @Autowired
+    public AdminScanController(LibraryScanService scanService, LibraryWatchService libraryWatchService,
+                               AdminService adminService,
+                               MediaImportService mediaImportService,
+                               SettingService settingService, TranscodeService transcodeService,
+                               TranscodeHardwareService transcodeHardwareService, SongReparseService reparseService,
+                               SongMergeService songMergeService, AppProperties props,
+                               com.homektv.library.SongProbeService songProbeService) {
+        this(scanService, libraryWatchService, adminService, mediaImportService, settingService,
+                transcodeService, transcodeHardwareService, reparseService, songMergeService, props);
+        this.songProbeService = songProbeService;
+    }
 
     public AdminScanController(LibraryScanService scanService, LibraryWatchService libraryWatchService,
                                AdminService adminService,
@@ -514,6 +528,18 @@ public class AdminScanController {
     @PostMapping("/songs/reparse/apply")
     public SongReparseService.ApplyResult applyReparse(@RequestBody ReparseRequest request) {
         return reparseService.apply(request.songIds(), request.rule());
+    }
+
+    /**
+     * 单曲按需即时探测接口（用于打通未就绪曲目探测与调试）。
+     */
+    @PostMapping("/songs/{id}/probe")
+    public Map<String, Object> probeSong(@PathVariable("id") Long id) {
+        if (songProbeService == null) {
+            throw new ApiException("PROBE_SERVICE_UNAVAILABLE", "探测服务未就绪");
+        }
+        boolean success = songProbeService.probeAndPersist(id);
+        return Map.of("success", success, "songId", id, "playable", true);
     }
 
     public record ReparseRequest(List<Long> songIds, String rule) {}

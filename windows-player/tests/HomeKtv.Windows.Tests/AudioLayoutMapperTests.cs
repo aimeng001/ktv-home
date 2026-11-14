@@ -5,16 +5,6 @@ namespace HomeKtv.Windows.Tests;
 
 public sealed class AudioLayoutMapperTests
 {
-    [Theory]
-    [InlineData(100, 200, ChannelMapMode.STEREO, 100, 200)]
-    [InlineData(100, 200, ChannelMapMode.LEFT_MONO, 100, 100)]
-    [InlineData(100, 200, ChannelMapMode.RIGHT_MONO, 200, 200)]
-    public void Stereo_frames_are_mapped_without_swapping(int left, int right, ChannelMapMode mode,
-        int expectedLeft, int expectedRight)
-    {
-        Assert.Equal(new[] { expectedLeft, expectedRight }, AudioLayoutMapper.MapStereoFrame(left, right, mode));
-    }
-
     [Fact]
     public void Non_dual_channel_layouts_keep_stereo_output()
     {
@@ -82,12 +72,5 @@ public sealed class AudioLayoutMapperTests
             new AudioLayoutDto(AudioLayout.DUAL_TRACK));
 
         Assert.Equal(1, AudioLayoutMapper.AudioTrackIndexFor("accompaniment", file));
-    }
-
-    [Fact]
-    public void Unknown_channel_map_mode_is_rejected()
-    {
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            AudioLayoutMapper.MapStereoFrame(1, 2, (ChannelMapMode)999));
     }
 }

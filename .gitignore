@@ -46,6 +46,7 @@ __pycache__/
 sample-music/
 music/
 /source-music/
+/avatar-library/
 /postgres/
 /postgres-dev/
 backend/data/

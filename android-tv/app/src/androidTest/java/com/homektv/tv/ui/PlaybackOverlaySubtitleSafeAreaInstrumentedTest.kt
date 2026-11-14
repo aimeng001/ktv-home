@@ -63,9 +63,6 @@ class PlaybackOverlaySubtitleSafeAreaInstrumentedTest {
                 activity.findViewById<View>(R.id.ktvOverlay).visibility = View.VISIBLE
                 activity.findViewById<View>(R.id.imgMiniQr).visibility = View.VISIBLE
                 activity.findViewById<View>(R.id.txtMiniQrHint).visibility = View.VISIBLE
-                activity.findViewById<View>(R.id.kioskRootOverlay).visibility = View.VISIBLE
-                activity.findViewById<View>(R.id.pipVideoFrame).visibility = View.VISIBLE
-                activity.findViewById<TextView>(R.id.txtPipLabel).text = "正在播放  字幕安全区测试 · 本地仪器夹具"
             }
             instrumentation.waitForIdleSync()
 
@@ -85,19 +82,6 @@ class PlaybackOverlaySubtitleSafeAreaInstrumentedTest {
                 val subtitleSafeTop = playerRect.top + (playerRect.height() * 0.65f).toInt()
                 assertTrue("the QR image must stay above the lower subtitle band: qr=$qrRect safeTop=$subtitleSafeTop", qrRect.bottom <= subtitleSafeTop)
                 assertTrue("the QR label must stay above the lower subtitle band: label=$qrHintRect safeTop=$subtitleSafeTop", qrHintRect.bottom <= subtitleSafeTop)
-
-                val pipRect = visibleRect(R.id.pipVideoFrame)
-                val pipLabelRect = visibleRect(R.id.txtPipLabel)
-                val embeddedSubtitleBand = Rect(
-                    pipRect.left,
-                    pipRect.top + pipRect.height() * 2 / 3,
-                    pipRect.right,
-                    pipRect.bottom,
-                )
-                assertFalse(
-                    "the PiP caption must stay above burned-in subtitles: label=$pipLabelRect subtitleBand=$embeddedSubtitleBand",
-                    Rect.intersects(pipLabelRect, embeddedSubtitleBand),
-                )
             }
         } finally {
             scenario?.close()

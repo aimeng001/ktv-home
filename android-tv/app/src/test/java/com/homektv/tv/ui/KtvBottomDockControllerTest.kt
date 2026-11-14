@@ -75,9 +75,9 @@ class KtvBottomDockControllerTest {
     fun windowBoundsTransitionBetweenPipAndFullscreen() {
         val pipBounds = DockFullscreenPolicy.boundsFor(isFullscreen = false)
         assertFalse(pipBounds.isMatchParent)
-        assertEquals(108, pipBounds.heightDp)
-        assertEquals(192, pipBounds.widthDp)
-        assertEquals(6, pipBounds.bottomMarginDp)
+        assertEquals(104, pipBounds.heightDp)
+        assertEquals(185, pipBounds.widthDp)
+        assertEquals(0, pipBounds.bottomMarginDp)
 
         val fullscreenBounds = DockFullscreenPolicy.boundsFor(isFullscreen = true)
         assertTrue(fullscreenBounds.isMatchParent)

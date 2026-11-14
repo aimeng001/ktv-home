@@ -41,9 +41,5 @@ public final class IktvReferenceClassificationPolicy {
                 && new HashSet<>(existing).equals(new HashSet<>(desired));
     }
 
-    public static Set<String> auditedTags() {
-        return AUDITED_TAGS;
-    }
-
     public record CategoryAssignment(long referenceSongId, String category) {}
 }

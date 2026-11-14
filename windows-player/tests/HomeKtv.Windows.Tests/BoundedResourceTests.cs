@@ -22,20 +22,18 @@ public sealed class BoundedResourceTests
         Assert.Equal(
             ReliableEnqueueResult.Rejected,
             outbox.Enqueue(new ReliableMessage("overflow", "overflow", 0)));
-        Assert.True(outbox.TryDequeueMessage(out var first));
-        Assert.Equal("m-0", first!.Text);
+        var first = Assert.Single(outbox.Snapshot().Take(1));
+        Assert.Equal("m-0", first.Text);
+        Assert.True(outbox.Remove("m-0"));
         Assert.Equal(ReliablePlaybackOutbox.MaxMessages - 1, outbox.Count);
     }
 
     [Fact]
-    public void Reliable_outbox_reports_empty_reads_and_rejects_messages_over_the_utf8_limit()
+    public void Reliable_outbox_reports_empty_snapshot_and_rejects_messages_over_the_utf8_limit()
     {
         var outbox = new ReliablePlaybackOutbox();
 
-        Assert.False(outbox.TryPeekMessage(out var peeked));
-        Assert.Null(peeked);
-        Assert.False(outbox.TryDequeueMessage(out var dequeued));
-        Assert.Null(dequeued);
+        Assert.Empty(outbox.Snapshot());
         Assert.Equal(
             ReliableEnqueueResult.Rejected,
             outbox.Enqueue(new ReliableMessage(

@@ -135,4 +135,23 @@ class RegistrationStateTest {
         assertTrue(RegistrationReducer.canPerform(failed, "set_volume"))
         assertFalse(RegistrationReducer.canPerform(failed, "top"))
     }
+
+    @Test
+    fun shouldRegisterOnConnectOnlyWhenNewlyConnectedAndNotAlreadyRegistered() {
+        // Newly connected from disconnected state
+        assertTrue(RegistrationReducer.shouldRegisterOnConnect(RegistrationStatus.IDLE, connected = true, wasConnected = false))
+        assertTrue(RegistrationReducer.shouldRegisterOnConnect(RegistrationStatus.RETRY_REQUIRED, connected = true, wasConnected = false))
+        assertTrue(RegistrationReducer.shouldRegisterOnConnect(RegistrationStatus.IDLE, connected = true, wasConnected = null))
+
+        // Already registered or actively registering must not trigger duplicate registrations
+        assertFalse(RegistrationReducer.shouldRegisterOnConnect(RegistrationStatus.REGISTERED, connected = true, wasConnected = false))
+        assertFalse(RegistrationReducer.shouldRegisterOnConnect(RegistrationStatus.REGISTERING, connected = true, wasConnected = false))
+
+        // Connection unchanged (already connected)
+        assertFalse(RegistrationReducer.shouldRegisterOnConnect(RegistrationStatus.IDLE, connected = true, wasConnected = true))
+
+        // Disconnected
+        assertFalse(RegistrationReducer.shouldRegisterOnConnect(RegistrationStatus.IDLE, connected = false, wasConnected = true))
+        assertFalse(RegistrationReducer.shouldRegisterOnConnect(RegistrationStatus.IDLE, connected = false, wasConnected = false))
+    }
 }

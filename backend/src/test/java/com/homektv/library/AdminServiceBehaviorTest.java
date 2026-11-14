@@ -53,8 +53,9 @@ class AdminServiceBehaviorTest {
     private final SongProjectionService projection = mock(SongProjectionService.class);
     private final CatalogRevisionService catalogRevision = mock(CatalogRevisionService.class);
     private final AppProperties properties = new AppProperties();
+    private final WsBroadcaster broadcaster = mock(WsBroadcaster.class);
     private final AdminService service = new AdminService(songRepo, fileRepo, historyRepo,
-            mock(WsBroadcaster.class), assetWriter, queueRepo, playerRepo, properties,
+            broadcaster, assetWriter, queueRepo, playerRepo, properties,
             artistCredits, projection);
 
     @Test
@@ -242,6 +243,37 @@ class AdminServiceBehaviorTest {
         verify(queueRepo).deleteAll(List.of(current));
         verify(historyRepo).deleteBySongId(1L);
         verify(songRepo).delete(song);
+    }
+
+
+    @Test
+    void deletingPlayingSongBroadcastsQueueUpdatedAndNowPlaying() throws Exception {
+        Path root = Files.createDirectory(tempDir.resolve("delete-broadcast-library"));
+        Path media = Files.write(root.resolve("song.mp4"), new byte[]{1, 2, 3});
+        properties.setKtvLibraryPath(root.toString());
+
+        Song song = song(2L, "Title", "Artist", "ok");
+        SongFile file = file(20L, 2L, 1);
+        file.setFilePath(media.toString());
+        QueueItem current = new QueueItem();
+        current.setId(99L);
+        current.setSongId(2L);
+        current.setStatus("playing");
+        PlayerState player = new PlayerState();
+        player.setCurrentQueueId(99L);
+
+        when(songRepo.findById(2L)).thenReturn(Optional.of(song));
+        when(fileRepo.findBySongIdOrderByPriorityDesc(2L)).thenReturn(List.of(file));
+        when(queueRepo.findBySongId(2L)).thenReturn(List.of(current));
+        when(playerRepo.getSingleton()).thenReturn(player);
+
+        com.homektv.queue.SnapshotService snapshotServiceMock = mock(com.homektv.queue.SnapshotService.class);
+        service.setSnapshotService(snapshotServiceMock);
+
+        service.deleteSong(2L);
+
+        verify(broadcaster).broadcastPlayback(org.mockito.ArgumentMatchers.argThat(event -> com.homektv.ws.WsEvent.NOW_PLAYING.equals(event.type())));
+        verify(broadcaster).broadcastPlayback(org.mockito.ArgumentMatchers.argThat(event -> com.homektv.ws.WsEvent.QUEUE_UPDATED.equals(event.type())));
     }
 
     @Test

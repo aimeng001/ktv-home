@@ -425,11 +425,12 @@ public final class IktvSongMatchWorker {
         String number = clues.stream().findFirst().orElse("");
         String normalizedTitle = IktvSongReferenceMatcher.normalize(home.title());
         String normalizedArtist = IktvSongReferenceMatcher.normalize(home.artist());
+        if (number.isBlank() && normalizedTitle.isBlank()) return new CandidateSet(List.of(), 0, false);
         String where = number.isBlank()
-                ? "normalized_title = ? AND normalized_artist = ?"
+                ? "normalized_title = ?"
                 : "catalog_number = ?";
         Object[] parameters = number.isBlank()
-                ? new Object[]{snapshotVersion, normalizedTitle, normalizedArtist}
+                ? new Object[]{snapshotVersion, normalizedTitle}
                 : new Object[]{snapshotVersion, number};
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM iktv_reference_songs WHERE snapshot_version = ? AND "
                 + where, Integer.class, parameters);

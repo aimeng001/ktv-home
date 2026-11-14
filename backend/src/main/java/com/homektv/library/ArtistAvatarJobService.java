@@ -47,16 +47,6 @@ public class ArtistAvatarJobService {
         this(jdbc, worker, configService, Runnable::run);
     }
 
-    public void enqueueProfiles(Collection<String> names) {
-        if (names == null || names.isEmpty()) return;
-        List<String> keys = ArtistCreditParser.normalize(names).stream()
-                .filter(name -> !ArtistKindClassifier.isPlaceholder(name))
-                .map(ArtistCreditParser::key)
-                .filter(key -> !key.isBlank())
-                .distinct().toList();
-        enqueueKeys(keys, false);
-    }
-
     public void enqueuePendingProfiles() {
         enqueueKeys(worker.pendingKeys(), false);
     }

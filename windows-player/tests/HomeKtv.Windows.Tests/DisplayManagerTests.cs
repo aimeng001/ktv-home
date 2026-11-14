@@ -11,7 +11,7 @@ public sealed class DisplayManagerTests
     }
 
     [Fact]
-    public void Uses_the_injected_display_snapshot_and_clamps_requested_indices()
+    public void Uses_the_injected_display_snapshot()
     {
         var displays = new[]
         {
@@ -21,20 +21,15 @@ public sealed class DisplayManagerTests
         var manager = new DisplayManager(() => displays);
 
         Assert.Same(displays, manager.GetDisplays());
-        Assert.Equal(0, manager.SafeIndex(-10));
-        Assert.Equal(0, manager.SafeIndex(0));
-        Assert.Equal(1, manager.SafeIndex(1));
-        Assert.Equal(1, manager.SafeIndex(10));
     }
 
     [Fact]
-    public void Uses_primary_display_when_saved_monitor_is_missing_and_returns_zero_for_empty_topology()
+    public void Uses_primary_display_when_saved_monitor_is_missing_and_returns_null_for_empty_topology()
     {
         var primary = CreateDisplay(0, "DISPLAY-A", true);
         var manager = new DisplayManager(() => [primary]);
 
         Assert.Same(primary, manager.ResolveTarget("DISPLAY-MISSING", legacyIndex: 9));
-        Assert.Equal(0, new DisplayManager(() => Array.Empty<DisplayInfo>()).SafeIndex(9));
         Assert.Null(new DisplayManager(() => Array.Empty<DisplayInfo>()).ResolveTarget(null));
     }
 

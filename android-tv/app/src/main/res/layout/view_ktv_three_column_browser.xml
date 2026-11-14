@@ -38,7 +38,7 @@
                 android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
                 android:text="歌名点歌"
                 android:textColor="@color/color_ktv_capsule_tab_text"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnTabHd"
@@ -54,7 +54,7 @@
                 android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
                 android:text="高清专区"
                 android:textColor="@color/color_ktv_capsule_tab_text"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnTabSingers"
@@ -70,7 +70,7 @@
                 android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
                 android:text="歌手点歌"
                 android:textColor="@color/color_ktv_capsule_tab_text"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnTabHotNew"
@@ -86,7 +86,7 @@
                 android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
                 android:text="热歌新歌"
                 android:textColor="@color/color_ktv_capsule_tab_text"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnTabFeatured"
@@ -102,7 +102,7 @@
                 android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
                 android:text="精选专区"
                 android:textColor="@color/color_ktv_capsule_tab_text"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnTabLocal"
@@ -118,7 +118,7 @@
                 android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
                 android:text="本地媒体"
                 android:textColor="@color/color_ktv_capsule_tab_text"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnTabFavorites"
@@ -134,7 +134,7 @@
                 android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
                 android:text="我的收藏"
                 android:textColor="@color/color_ktv_capsule_tab_text"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnTabLanguages"
@@ -150,7 +150,7 @@
                 android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
                 android:text="语种点歌"
                 android:textColor="@color/color_ktv_capsule_tab_text"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnTabTopics"
@@ -166,7 +166,7 @@
                 android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
                 android:text="主题点歌"
                 android:textColor="@color/color_ktv_capsule_tab_text"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnTabVariety"
@@ -182,7 +182,7 @@
                 android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
                 android:text="综艺点歌"
                 android:textColor="@color/color_ktv_capsule_tab_text"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnTabTikTok"
@@ -197,7 +197,7 @@
                 android:paddingHorizontal="@dimen/ktv_browser_tab_horizontal_padding"
                 android:text="抖音神曲"
                 android:textColor="@color/color_ktv_capsule_tab_text"
-                android:textSize="14sp" />
+                android:textSize="12sp" />
         </LinearLayout>
     </HorizontalScrollView>
 
@@ -504,8 +504,9 @@
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
-                android:clipToPadding="false"
-                android:padding="2dp"
+                android:clipToPadding="true"
+                android:paddingHorizontal="2dp"
+                android:paddingVertical="0dp"
                 android:scrollbars="none" />
 
             <androidx.recyclerview.widget.RecyclerView
@@ -522,29 +523,29 @@
             <LinearLayout
                 android:id="@+id/browserPaginationBar"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
+                android:layout_height="38dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
-                android:paddingHorizontal="8dp">
+                android:paddingHorizontal="2dp">
 
                 <!-- 左侧自适应弹性占位：将分页控制组推至中偏右 -->
                 <View
                     android:layout_width="0dp"
                     android:layout_height="1dp"
-                    android:layout_weight="1.2" />
+                    android:layout_weight="1.3" />
 
                 <Button
                     android:id="@+id/btnPagePrev"
                     style="?android:attr/buttonBarButtonStyle"
                     android:layout_width="wrap_content"
-                    android:layout_height="36dp"
+                    android:layout_height="28dp"
                     android:background="@drawable/bg_ktv_page_button"
                     android:focusable="true"
                     android:minWidth="0dp"
-                    android:paddingHorizontal="16dp"
+                    android:paddingHorizontal="14dp"
                     android:text="上一页"
                     android:textColor="#FFFFFF"
-                    android:textSize="14sp" />
+                    android:textSize="12sp" />
 
                 <TextView
                     android:id="@+id/txtPageNumber"
@@ -553,40 +554,39 @@
                     android:layout_marginHorizontal="16dp"
                     android:text="1 / 1"
                     android:textColor="#FFFFFF"
-                    android:textSize="15sp"
-                    android:textStyle="bold" />
+                    android:textSize="13sp" />
 
                 <Button
                     android:id="@+id/btnPageNext"
                     style="?android:attr/buttonBarButtonStyle"
                     android:layout_width="wrap_content"
-                    android:layout_height="36dp"
+                    android:layout_height="28dp"
                     android:background="@drawable/bg_ktv_page_button"
                     android:focusable="true"
                     android:minWidth="0dp"
-                    android:paddingHorizontal="16dp"
+                    android:paddingHorizontal="14dp"
                     android:text="下一页"
                     android:textColor="#FFFFFF"
-                    android:textSize="14sp" />
+                    android:textSize="12sp" />
 
                 <!-- 中右侧弹性占位：与返回按键保持舒适间距 -->
                 <View
                     android:layout_width="0dp"
                     android:layout_height="1dp"
-                    android:layout_weight="0.8" />
+                    android:layout_weight="1.0" />
 
                 <Button
                     android:id="@+id/btnBrowserBack"
                     style="?android:attr/buttonBarButtonStyle"
                     android:layout_width="wrap_content"
-                    android:layout_height="36dp"
+                    android:layout_height="28dp"
                     android:background="@drawable/bg_ktv_page_button"
                     android:focusable="true"
                     android:minWidth="0dp"
-                    android:paddingHorizontal="20dp"
+                    android:paddingHorizontal="18dp"
                     android:text="返回"
                     android:textColor="#FFFFFF"
-                    android:textSize="14sp" />
+                    android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>
 

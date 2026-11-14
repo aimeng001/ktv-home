@@ -75,9 +75,6 @@ class PersistenceIntegrationTest {
     @Autowired
     private SongFileRepository songFileRepository;
 
-    @Autowired
-    private PlaybackVariantRepository playbackVariantRepository;
-
     @MockitoSpyBean
     private PlayerStateRepository playerStateRepository;
 
@@ -267,13 +264,6 @@ class PersistenceIntegrationTest {
             executor.awaitTermination(10, TimeUnit.SECONDS);
             jdbc.update("UPDATE player_state SET volume = ?, state = ? WHERE id = 1", originalVolume, originalState);
         }
-    }
-
-    @Test
-    void playbackVariantCreationLockExecutesAgainstPostgres() {
-        org.assertj.core.api.Assertions.assertThatCode(() ->
-                playbackVariantRepository.lockForCreation("persistence-integration-lock"))
-                .doesNotThrowAnyException();
     }
 
     @Test

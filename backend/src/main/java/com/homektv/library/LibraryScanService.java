@@ -327,7 +327,7 @@ public class LibraryScanService {
             int[] discovered = {0};
             boolean[] enumerationComplete = {true};
             String[] lastErrorMessage = {null};
-            Deque<DirectoryLyricIndex> directoryLyrics = new ArrayDeque<>();
+            Deque<DirectoryLyricHolder> directoryLyrics = new ArrayDeque<>();
             try {
                 try {
                 Files.walkFileTree(root, new SimpleFileVisitor<>() {
@@ -344,11 +344,7 @@ public class LibraryScanService {
                             log.warn("读取曲库目录受阻：{} - {}", dir, access.failureReason());
                             return FileVisitResult.SKIP_SUBTREE;
                         }
-                        DirectoryLyricIndex index = DirectoryLyricIndex.load(dir);
-                        directoryLyrics.push(index);
-                        if (!index.complete()) {
-                            enumerationComplete[0] = false;
-                        }
+                        directoryLyrics.push(new DirectoryLyricHolder(dir));
                         return FileVisitResult.CONTINUE;
                     }
 
@@ -359,8 +355,10 @@ public class LibraryScanService {
                             return FileVisitResult.CONTINUE;
                         }
                         try {
+                            DirectoryLyricHolder holder = directoryLyrics.peek();
+                            DirectoryLyricIndex lyricIndex = holder != null ? holder.getOrLoad(enumerationComplete) : null;
                             FastIndexEntry entry = fastIndex(file, attrs, artistIndex,
-                                    Map.of(), Map.of(), rootContext.configuredRoot(), directoryLyrics.peek());
+                                    Map.of(), Map.of(), rootContext.configuredRoot(), lyricIndex);
                             batch.add(entry);
                             counters.fastIndexed++;
                             discovered[0]++;
@@ -1630,6 +1628,27 @@ public class LibraryScanService {
     }
 
     private static final int LYRIC_SNAPSHOT_VERSION = 1;
+
+    private static final class DirectoryLyricHolder {
+        private final Path directory;
+        private DirectoryLyricIndex index;
+        private boolean loadAttempted = false;
+
+        DirectoryLyricHolder(Path directory) {
+            this.directory = directory;
+        }
+
+        DirectoryLyricIndex getOrLoad(boolean[] enumerationComplete) {
+            if (!loadAttempted) {
+                loadAttempted = true;
+                index = DirectoryLyricIndex.load(directory);
+                if (!index.complete()) {
+                    enumerationComplete[0] = false;
+                }
+            }
+            return index;
+        }
+    }
 
     private enum LyricRefreshOutcome { UPDATED, NEEDS_MEDIA_PROBE, UNAVAILABLE }
 

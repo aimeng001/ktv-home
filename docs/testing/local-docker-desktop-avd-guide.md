@@ -80,7 +80,7 @@ $Adb = 'K:\Android\platform-tools\adb.exe'
 
 1. **服务端地址配置**：AVD 访问宿主机服务必须使用 `10.0.2.2:<宿主机端口>`（禁止用 127.0.0.1 或容器名）。可通过首选项注入或设置页写入：
    ```powershell
-   & $Adb -s <serial> shell 'mkdir -p /data/data/com.homektv.tv.debug/shared_prefs && echo "<map><string name=\"server_url\">http://10.0.2.2:18080</string></map>" > /data/data/com.homektv.tv.debug/shared_prefs/ktv_tv.xml'
+   & $Adb -s <serial> shell 'mkdir -p /data/data/com.homektv.tv.debug/shared_prefs && echo "<map><string name=\"server_host\">10.0.2.2:18080</string></map>" > /data/data/com.homektv.tv.debug/shared_prefs/ktv_tv.xml'
    ```
 2. **模拟遥控器与触摸交互**：
    - 方向导航：`adb shell input keyevent 19`(上) / `20`(下) / `21`(左) / `22`(右) / `23`(确定) / `4`(返回)

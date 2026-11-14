@@ -85,14 +85,6 @@ class LibraryUnitTest {
         assertThat(MediaClassifier.hasVocalTrack(new MediaProbe(1, 1, 0, true, null))).isFalse();
     }
 
-    @Test
-    void vocalSwitchCapabilityFollowsAudioLayout() {
-        assertThat(MediaClassifier.supportsVocalSwitch(AudioLayout.DUAL_TRACK)).isTrue();
-        assertThat(MediaClassifier.supportsVocalSwitch(AudioLayout.DUAL_CHANNEL)).isTrue();
-        assertThat(MediaClassifier.supportsVocalSwitch(AudioLayout.NORMAL_STEREO)).isFalse();
-        assertThat(MediaClassifier.supportsVocalSwitch(null)).isFalse();
-    }
-
     // ---- P1.3 指纹去重 ----
     @Test
     void fingerprintStableWithinDurationBucket() {

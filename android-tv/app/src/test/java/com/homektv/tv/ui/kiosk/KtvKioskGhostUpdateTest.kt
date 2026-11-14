@@ -6,29 +6,12 @@ import org.junit.Test
 
 class KtvKioskGhostUpdateTest {
     @Test
-    fun observeStateDoesNotDispatchRedundantDataToInvisibleSearchAdapter() {
+    fun legacyAdaptersAndPanelsStayDeletedFromOverlayController() {
         val source = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
-        val observeStateMethod = source.substringAfter("private fun observeState()")
-            .substringBefore("renderSearchEmptyState()")
 
-        assertFalse(
-            "商业三栏点歌台已激活时，observeState 不应向旧 searchAdapter 频繁 submitList 浪费 CPU",
-            observeStateMethod.contains("searchAdapter.submitList(state.results)"),
-        )
-    }
-
-    @Test
-    fun kioskDoesNotSubmitListToDetachedAdaptersInThreeColumnMode() {
-        val source = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
-        val renderCatalog = source.substringAfter("private fun renderCatalogState(state: ControllerUiState)")
-            .substringBefore("private fun renderThreeColumnBrowser")
-
-        assertFalse(
-            "三栏模式下旧 rankingAdapter 不应再被无条件更新",
-            renderCatalog.contains("rankingAdapter.submitList(state.ranking)") &&
-                !renderCatalog.contains("if (!isThreeColumnTab") &&
-                !renderCatalog.contains("if (isThreeColumnTab"),
-        )
+        assertFalse(source.contains("KtvKioskSongAdapter"))
+        assertFalse(source.contains("panelPinyin"))
+        assertFalse(source.contains("panelCategories"))
     }
 
     @Test
@@ -39,11 +22,11 @@ class KtvKioskGhostUpdateTest {
 
         assertFalse(
             "点歌台激活时焦点不能请求不可见的旧顶栏 tabPinyin",
-            applyActiveMethod.contains("binding.kioskOverlay.tabPinyin.requestFocus()"),
+            applyActiveMethod.contains("tabPinyin"),
         )
         assertFalse(
             "点歌台激活时焦点不能请求不可见的旧顶栏 tabSingers",
-            applyActiveMethod.contains("binding.kioskOverlay.tabSingers.requestFocus()"),
+            applyActiveMethod.contains("tabSingers"),
         )
     }
 

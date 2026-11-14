@@ -447,17 +447,11 @@ class KtvCommercialUiNavigationTest {
                 val focusedName = focused?.id?.let { id ->
                     runCatching { activity.resources.getResourceEntryName(id) }.getOrDefault(id.toString())
                 }
-                val retry = activity.findViewById<View>(R.id.btnCategoryRetry)
-                val legacyCategoryPanel = activity.findViewById<View>(R.id.panelCategories)
-                "currentFocus=$focusedName, retryShown=${retry?.isShown}, " +
-                    "legacyCategoryPanelShown=${legacyCategoryPanel?.isShown}, " +
+                "currentFocus=$focusedName, " +
                     "aggregateBrowserShown=${activity.findViewById<View>(R.id.threeColumnBrowserRoot)?.isShown}"
             }
             assertTrue("the aggregate browser should remain visible after route activation", readActivity(activityScenario) {
                 it.findViewById<View>(R.id.threeColumnBrowserRoot)?.isShown == true
-            })
-            assertFalse("a hidden legacy retry button must not retain TV focus; $focusDiagnostic", readActivity(activityScenario) {
-                it.findViewById<View>(R.id.btnCategoryRetry)?.hasFocus() == true
             })
             assertEquals(
                 "confirming the HD route must leave remote focus on its selected capsule; $focusDiagnostic",

@@ -632,6 +632,25 @@ class KtvWebSocketHandlerTest {
         return session;
     }
 
+
+    @Test
+    void tvReconnectDisconnectsReplacedOldSession() throws Exception {
+        WebSocketSession oldSession = mock(WebSocketSession.class);
+        when(oldSession.getId()).thenReturn("tv-old");
+        when(oldSession.getAttributes()).thenReturn(Map.of("client_type", "tv", "client_token", "tv-box-1"));
+
+        handler.afterConnectionEstablished(oldSession);
+        verify(broadcaster).register(oldSession);
+
+        WebSocketSession newSession = mock(WebSocketSession.class);
+        when(newSession.getId()).thenReturn("tv-new");
+        when(newSession.getAttributes()).thenReturn(Map.of("client_type", "tv", "client_token", "tv-box-1"));
+
+        handler.afterConnectionEstablished(newSession);
+        verify(broadcaster).register(newSession);
+        verify(broadcaster).disconnect("tv-old");
+    }
+
     private MutableClock installShortLeaseRegistry() {
         MutableClock clock = new MutableClock(Instant.parse("2026-10-23T00:00:00Z"), ZoneId.of("UTC"));
         playerRegistry = new ActivePlayerRegistry(clock, Duration.ofSeconds(1));

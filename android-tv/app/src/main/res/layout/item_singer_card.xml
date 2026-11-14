@@ -4,19 +4,19 @@
     android:id="@+id/singerCardRoot"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="6dp"
+    android:layout_margin="4dp"
     android:background="@drawable/bg_singer_card"
     android:focusable="true"
     android:clickable="true"
     android:gravity="center_horizontal"
     android:orientation="vertical"
-    android:padding="10dp">
+    android:padding="6dp">
 
-    <!-- 头像容器：支持真图海报与首字符占位 -->
+    <!-- 头像容器：对标 IKTV 50.0.4 原版居中圆形头像（直径 96dp） -->
     <FrameLayout
-        android:layout_width="match_parent"
-        android:layout_height="130dp"
-        android:background="@drawable/bg_avatar_rect"
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:background="@drawable/bg_avatar_circle"
         android:clipToOutline="true">
 
         <TextView
@@ -25,7 +25,7 @@
             android:layout_height="match_parent"
             android:gravity="center"
             android:textColor="@color/gold"
-            android:textSize="38sp"
+            android:textSize="32sp"
             android:textStyle="bold" />
 
         <ImageView
@@ -42,13 +42,13 @@
         android:id="@+id/txtSingerName"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="6dp"
         android:gravity="center"
         android:maxLines="1"
         android:ellipsize="end"
         tools:text="歌手名称"
         android:textColor="@android:color/white"
-        android:textSize="16sp"
+        android:textSize="15sp"
         android:textStyle="bold" />
 
     <!-- 歌曲收录数（保持 ID 供 Adapter 绑定，对标原版隐藏无意义统计） -->

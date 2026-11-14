@@ -57,7 +57,7 @@ public final class IktvSongReferenceMatcher {
                 return result(Status.NUMBER_IDENTITY_MISMATCH, "CATALOG_NUMBER_TITLE_OR_ARTIST_MISMATCH",
                         Method.CATALOG_NUMBER, null, numbered.size());
             }
-            return selectUnique(identityMatches, Method.CATALOG_NUMBER);
+            return selectUnique(home, identityMatches, Method.CATALOG_NUMBER);
         }
 
         List<ReferenceSong> identityMatches = candidates.stream()
@@ -67,26 +67,169 @@ public final class IktvSongReferenceMatcher {
             return result(Status.NO_REFERENCE_CANDIDATE, "TITLE_AND_ARTIST_NOT_IN_REFERENCE",
                     Method.TITLE_AND_ARTIST, null, 0);
         }
-        return selectUnique(identityMatches, Method.TITLE_AND_ARTIST);
+        return selectUnique(home, identityMatches, Method.TITLE_AND_ARTIST);
     }
 
-    private static Result selectUnique(List<ReferenceSong> candidates, Method method) {
+    private static Result selectUnique(HomeSong home, List<ReferenceSong> candidates, Method method) {
         List<ReferenceSong> ordered = candidates.stream()
                 .sorted(Comparator.comparingLong(ReferenceSong::referenceSongId))
                 .toList();
+        if (ordered.isEmpty()) {
+            return result(Status.NO_REFERENCE_CANDIDATE, "NO_CANDIDATES", method, null, 0);
+        }
         ReferenceSong first = ordered.get(0);
         boolean equivalent = ordered.stream().allMatch(candidate -> sameVersion(first, candidate));
-        if (!equivalent) {
-            return result(Status.AMBIGUOUS_VERSION, "REFERENCE_HAS_MULTIPLE_VERSIONS", method, null,
-                    ordered.size());
+        if (equivalent) {
+            return result(Status.MATCHED, "IDENTITY_VERIFIED", method, first, ordered.size());
         }
-        return result(Status.MATCHED, "IDENTITY_VERIFIED", method, first, ordered.size());
+
+        List<ReferenceSong> disambiguated = disambiguateVersions(home, ordered);
+        if (!disambiguated.isEmpty()) {
+            ReferenceSong disambiguatedFirst = disambiguated.get(0);
+            boolean disambiguatedEquiv = disambiguated.stream().allMatch(candidate -> sameVersion(disambiguatedFirst, candidate));
+            if (disambiguatedEquiv) {
+                return result(Status.MATCHED, "IDENTITY_VERIFIED", method, disambiguatedFirst, disambiguated.size());
+            }
+        }
+
+        return result(Status.AMBIGUOUS_VERSION, "REFERENCE_HAS_MULTIPLE_VERSIONS", method, null,
+                ordered.size());
+    }
+
+    private static List<ReferenceSong> disambiguateVersions(HomeSong home, List<ReferenceSong> candidates) {
+        if (home == null || candidates == null || candidates.isEmpty()) {
+            return candidates;
+        }
+
+        String fileLanguage = "";
+        String fileCategory = "";
+        boolean isLiveFile = false;
+        boolean hasFileClues = false;
+
+        List<String> rawPaths = new ArrayList<>();
+        if (!home.relativePath().isBlank()) rawPaths.add(home.relativePath());
+        if (!home.filePath().isBlank()) rawPaths.add(home.filePath());
+        for (SourcePath source : home.sourcePaths()) {
+            if (!source.relativePath().isBlank()) rawPaths.add(source.relativePath());
+            if (!source.filePath().isBlank()) rawPaths.add(source.filePath());
+        }
+
+        for (String rawPath : rawPaths) {
+            String fileName = extractFileName(rawPath);
+            if (fileName.isBlank()) continue;
+            hasFileClues = true;
+            ParsedMeta meta = FilenameParser.parse(fileName);
+            if (fileLanguage.isBlank() && !meta.language().isBlank()) {
+                fileLanguage = meta.language();
+            }
+            if (fileCategory.isBlank() && !meta.category().isBlank()) {
+                fileCategory = meta.category();
+            }
+            if (isLiveIdentifier(fileName)) {
+                isLiveFile = true;
+            }
+        }
+
+        if (!hasFileClues && fileLanguage.isBlank() && fileCategory.isBlank()) {
+            return candidates;
+        }
+
+        List<ReferenceSong> filtered = candidates;
+
+        if (!fileLanguage.isBlank()) {
+            String normLang = normalize(fileLanguage);
+            List<ReferenceSong> byLang = filtered.stream()
+                    .filter(c -> !c.language().isBlank() && (normalize(c.language()).contains(normLang) || normLang.contains(normalize(c.language()))))
+                    .toList();
+            if (!byLang.isEmpty() && byLang.size() < filtered.size()) {
+                filtered = byLang;
+            }
+        }
+
+        if (!fileCategory.isBlank() && filtered.size() > 1) {
+            String normCat = normalize(fileCategory);
+            List<ReferenceSong> byCat = filtered.stream()
+                    .filter(c -> !c.category().isBlank() && (normalize(c.category()).contains(normCat) || normCat.contains(normalize(c.category())) || normalize(c.type()).contains(normCat)))
+                    .toList();
+            if (!byCat.isEmpty() && byCat.size() < filtered.size()) {
+                filtered = byCat;
+            }
+        }
+
+        if (filtered.size() > 1) {
+            if (!isLiveFile) {
+                List<ReferenceSong> nonLive = filtered.stream()
+                        .filter(c -> !isLiveReference(c))
+                        .toList();
+                if (!nonLive.isEmpty() && nonLive.size() < filtered.size()) {
+                    filtered = nonLive;
+                }
+            } else {
+                List<ReferenceSong> live = filtered.stream()
+                        .filter(IktvSongReferenceMatcher::isLiveReference)
+                        .toList();
+                if (!live.isEmpty() && live.size() < filtered.size()) {
+                    filtered = live;
+                }
+            }
+        }
+
+        return filtered;
+    }
+
+    private static boolean isLiveIdentifier(String text) {
+        if (text == null || text.isBlank()) return false;
+        String lower = text.toLowerCase(Locale.ROOT);
+        return lower.contains("live") || lower.contains("现场") || lower.contains("演唱会");
+    }
+
+    private static boolean isLiveReference(ReferenceSong c) {
+        return isLiveIdentifier(c.edition()) || isLiveIdentifier(c.category()) || isLiveIdentifier(c.type())
+                || c.specialTags().stream().anyMatch(IktvSongReferenceMatcher::isLiveIdentifier);
+    }
+
+    private static String extractFileName(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) return "";
+        String path = rawPath.replace('\\', '/');
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(slash + 1) : path;
+    }
+
+    private static final Pattern ARTIST_SPLIT_PATTERN =
+            Pattern.compile("\\s*(?:[_+、&＆/／,，;；]|\\s+)\\s*");
+
+    static boolean sameArtistNormalized(String homeArtist, String refArtist) {
+        String normHome = normalize(homeArtist);
+        String normRef = normalize(refArtist);
+        if (normHome.equals(normRef)) {
+            return true;
+        }
+        if (normHome.isEmpty() || normRef.isEmpty()) {
+            return false;
+        }
+        Set<String> homeParts = splitArtists(homeArtist);
+        Set<String> refParts = splitArtists(refArtist);
+        return !homeParts.isEmpty() && homeParts.equals(refParts);
+    }
+
+    private static Set<String> splitArtists(String artist) {
+        if (artist == null || artist.isBlank()) return Set.of();
+        String[] tokens = ARTIST_SPLIT_PATTERN.split(artist);
+        Set<String> result = new LinkedHashSet<>();
+        for (String token : tokens) {
+            String norm = normalize(token);
+            if (!norm.isEmpty()) {
+                result.add(norm);
+            }
+        }
+        return result;
     }
 
     private static boolean sameIdentity(HomeSong home, ReferenceSong reference) {
         return !normalize(reference.title()).isEmpty()
+                && !normalize(home.title()).isEmpty()
                 && normalize(home.title()).equals(normalize(reference.title()))
-                && normalize(home.artist()).equals(normalize(reference.artist()));
+                && sameArtistNormalized(home.artist(), reference.artist());
     }
 
     private static boolean sameVersion(ReferenceSong left, ReferenceSong right) {

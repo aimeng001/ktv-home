@@ -3,7 +3,6 @@ package com.homektv.tv.ui
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.w3c.dom.Element
@@ -48,17 +47,6 @@ class KioskPipLayoutContractTest {
         assertEquals("@dimen/ktv_dashboard_pip_height", video.getAttribute("android:layout_height"))
         assertEquals("androidx.media3.ui.PlayerView", mainById("playerView").tagName)
         assertEquals("@+id/sharedPlayerContainer", mainById("playerView").parentNode.let { (it as Element).getAttribute("android:id") })
-
-        val kioskLayout = locate("src/main/res/layout/view_ktv_kiosk_overlay.xml")
-        val kioskDocument = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(kioskLayout)
-        val kioskElements = kioskDocument.getElementsByTagName("*")
-        val legacyPip = (0 until kioskElements.length)
-            .map { kioskElements.item(it) }
-            .filterIsInstance<Element>()
-            .firstOrNull { it.getAttribute("android:id") == "@+id/pipVideoFrame" }
-            ?: error("Missing legacy PiP placeholder")
-        assertEquals("gone", legacyPip.getAttribute("android:visibility"))
-        assertNotNull(legacyPip)
     }
 
     @Test
@@ -78,7 +66,6 @@ class KioskPipLayoutContractTest {
 
         assertTrue(source.contains("Player.STATE_BUFFERING && it.playWhenReady"))
         assertTrue(source.contains("bottomDockController.setVideoVisible(state.videoVisible && !externalDisplayActive)"))
-        assertTrue(source.contains("binding.kioskOverlay.pipVideoFrame.visibility = View.GONE"))
         assertTrue(source.contains("bottomDockController.ensurePlayerInDock()"))
     }
 

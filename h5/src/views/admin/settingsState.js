@@ -1,4 +1,4 @@
-export const EDITABLE_GENERAL_KEYS = [
+const EDITABLE_GENERAL_KEYS = [
   'library_watch_enabled',
   'library_filename_metadata_preferred',
   'discovery_enabled',

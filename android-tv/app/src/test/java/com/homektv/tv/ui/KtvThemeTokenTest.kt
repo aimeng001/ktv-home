@@ -24,11 +24,9 @@ class KtvThemeTokenTest {
         }
 
         val expected = mapOf(
-            "ktv_bg_main" to "#14171D",
             "ktv_card_surface" to "#20252E",
             "ktv_focus_blue" to "#3182FB",
             "ktv_vocal_green" to "#10B981",
-            "ktv_badge_orange" to "#F59E0B",
         )
         expected.forEach { (name, value) ->
             assertEquals("$name must be defined exactly once", 1, colors.count { it.getAttribute("name") == name })
@@ -46,8 +44,6 @@ class KtvThemeTokenTest {
         assertEquals("104dp", dimensions["ktv_dashboard_bottom_dock_height"])
         assertEquals("185dp", dimensions["ktv_dashboard_pip_width"])
         assertEquals("104dp", dimensions["ktv_dashboard_pip_height"])
-        assertEquals("320dp", dimensions["ktv_dashboard_large_tile_width"])
-        assertEquals("180dp", dimensions["ktv_dashboard_large_tile_height"])
         assertEquals("12dp", dimensions["ktv_theme_card_corner_radius"])
         assertEquals("2.5dp", dimensions["ktv_theme_focus_stroke_width"])
     }
@@ -138,7 +134,6 @@ class KtvThemeTokenTest {
             .map { dimenDoc.getElementsByTagName("dimen").item(it) as Element }
             .associate { it.getAttribute("name") to it.textContent.trim() }
 
-        assertEquals("200dp", dimensions["ktv_browser_nav_rail_width"])
         assertEquals("240dp", dimensions["ktv_browser_center_col_width"])
     }
 
@@ -229,13 +224,6 @@ class KtvThemeTokenTest {
             .flatMap { file -> Regex("ktv_ref_v50_[A-Za-z0-9_]+").findAll(file.readText()).map { it.value }.toList() }
             .toSet()
         assertEquals("源码引用的 IKTV 切图也必须完全落在批准名单内", approvedCutouts, referencedCutouts)
-
-        val drawableDir = locate("src/main/res/drawable/bg_ktv_bottom_dock.xml").parentFile
-        listOf("ic_search.xml", "ic_settings.xml", "ic_server.xml", "ic_library_scan.xml", "ic_wifi.xml")
-            .forEach { assetName ->
-                val file = File(drawableDir, assetName)
-                assertTrue("Home KTV 自有图标 $assetName 必须存在", file.exists() && file.length() > 0)
-            }
     }
 
     @Test

@@ -1,6 +1,5 @@
 package com.homektv.tv.ui
 
-import com.homektv.tv.net.SongDto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -9,35 +8,23 @@ import org.junit.Test
 class KtvKioskSongAdapterTest {
 
     @Test
-    fun diffCallback_identifiesSameSongById() {
-        val s1 = SongDto(id = 100L, title = "海阔天空", artist = "Beyond")
-        val s2 = SongDto(id = 100L, title = "海阔天空 (Live)", artist = "Beyond")
-        val s3 = SongDto(id = 101L, title = "光辉岁月", artist = "Beyond")
-
-        assertTrue(KtvKioskSongAdapter.DIFF_CALLBACK.areItemsTheSame(s1, s2))
-        assertFalse(KtvKioskSongAdapter.DIFF_CALLBACK.areItemsTheSame(s1, s3))
-        assertFalse(KtvKioskSongAdapter.DIFF_CALLBACK.areContentsTheSame(s1, s2))
-        assertTrue(KtvKioskSongAdapter.DIFF_CALLBACK.areContentsTheSame(s1, s1))
-    }
-
-    @Test
     fun buttonPolicy_onSubmit_disablesButtonAndShowsSubmittingText() {
-        val orderState = KtvKioskSongAdapter.SongOrderButtonPolicy.onSubmit(isTop = false)
+        val orderState = SongOrderButtonPolicy.onSubmit(isTop = false)
         assertEquals("点歌中...", orderState.text)
         assertFalse(orderState.isEnabled)
 
-        val topState = KtvKioskSongAdapter.SongOrderButtonPolicy.onSubmit(isTop = true)
+        val topState = SongOrderButtonPolicy.onSubmit(isTop = true)
         assertEquals("插播中...", topState.text)
         assertFalse(topState.isEnabled)
     }
 
     @Test
     fun buttonPolicy_onComplete_whenSuccess_showsFinishedTextAndKeepsDisabled() {
-        val orderSuccess = KtvKioskSongAdapter.SongOrderButtonPolicy.onComplete(isTop = false, success = true)
+        val orderSuccess = SongOrderButtonPolicy.onComplete(isTop = false, success = true)
         assertEquals("已点", orderSuccess.text)
         assertFalse(orderSuccess.isEnabled)
 
-        val topSuccess = KtvKioskSongAdapter.SongOrderButtonPolicy.onComplete(isTop = true, success = true)
+        val topSuccess = SongOrderButtonPolicy.onComplete(isTop = true, success = true)
         assertEquals("已置顶", topSuccess.text)
         assertFalse(topSuccess.isEnabled)
     }
@@ -45,11 +32,11 @@ class KtvKioskSongAdapterTest {
     @Test
     fun buttonPolicy_onComplete_whenFailed_restoresInitialTextAndReEnablesButton() {
         // F-07: Rollback button state on network failure or business rejection
-        val orderFailed = KtvKioskSongAdapter.SongOrderButtonPolicy.onComplete(isTop = false, success = false)
+        val orderFailed = SongOrderButtonPolicy.onComplete(isTop = false, success = false)
         assertEquals("点歌", orderFailed.text)
         assertTrue(orderFailed.isEnabled)
 
-        val topFailed = KtvKioskSongAdapter.SongOrderButtonPolicy.onComplete(isTop = true, success = false)
+        val topFailed = SongOrderButtonPolicy.onComplete(isTop = true, success = false)
         assertEquals("优先", topFailed.text)
         assertTrue(topFailed.isEnabled)
     }
@@ -57,21 +44,21 @@ class KtvKioskSongAdapterTest {
     @Test
     fun buttonPolicy_shouldApplyResult_returnsTrueOnlyWhenTagMatchesCurrentSong() {
         val currentSongId = 88L
-        assertTrue(KtvKioskSongAdapter.SongOrderButtonPolicy.shouldApplyResult(currentSongId, 88L))
-        assertFalse(KtvKioskSongAdapter.SongOrderButtonPolicy.shouldApplyResult(currentSongId, 99L))
-        assertFalse(KtvKioskSongAdapter.SongOrderButtonPolicy.shouldApplyResult(null, 88L))
+        assertTrue(SongOrderButtonPolicy.shouldApplyResult(currentSongId, 88L))
+        assertFalse(SongOrderButtonPolicy.shouldApplyResult(currentSongId, 99L))
+        assertFalse(SongOrderButtonPolicy.shouldApplyResult(null, 88L))
     }
 
     @Test
     fun buttonPolicy_resolveStateOnBind_distinguishesInFlightAndIdle() {
-        val submittingState = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+        val submittingState = SongOrderButtonPolicy.resolveStateOnBind(
             isTop = false,
             isSubmitting = true,
         )
         assertEquals("点歌中...", submittingState.text)
         assertFalse(submittingState.isEnabled)
 
-        val idleState = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+        val idleState = SongOrderButtonPolicy.resolveStateOnBind(
             isTop = false,
             isSubmitting = false,
         )
@@ -81,7 +68,7 @@ class KtvKioskSongAdapterTest {
 
     @Test
     fun buttonPolicy_disablesSongsThatAreIndexedButNotPlayable() {
-        val pending = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+        val pending = SongOrderButtonPolicy.resolveStateOnBind(
             isTop = false,
             isSubmitting = false,
             queueState = null,
@@ -94,7 +81,7 @@ class KtvKioskSongAdapterTest {
     @Test
     fun buttonPolicy_resolveStateOnBind_retainsPlayingAndWaitingStatesAcrossRecycle() {
         // Playing song
-        val orderPlaying = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+        val orderPlaying = SongOrderButtonPolicy.resolveStateOnBind(
             isTop = false,
             isSubmitting = false,
             queueState = SongQueueState.Playing,
@@ -102,7 +89,7 @@ class KtvKioskSongAdapterTest {
         assertEquals("演唱中", orderPlaying.text)
         assertFalse(orderPlaying.isEnabled)
 
-        val topPlaying = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+        val topPlaying = SongOrderButtonPolicy.resolveStateOnBind(
             isTop = true,
             isSubmitting = false,
             queueState = SongQueueState.Playing,
@@ -111,7 +98,7 @@ class KtvKioskSongAdapterTest {
         assertFalse(topPlaying.isEnabled)
 
         // Waiting song
-        val orderWaiting = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+        val orderWaiting = SongOrderButtonPolicy.resolveStateOnBind(
             isTop = false,
             isSubmitting = false,
             queueState = SongQueueState.Waiting(3),
@@ -119,21 +106,13 @@ class KtvKioskSongAdapterTest {
         assertEquals("已点", orderWaiting.text)
         assertFalse(orderWaiting.isEnabled)
 
-        val topWaiting = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+        val topWaiting = SongOrderButtonPolicy.resolveStateOnBind(
             isTop = true,
             isSubmitting = false,
             queueState = SongQueueState.Waiting(3),
         )
         assertEquals("优先", topWaiting.text)
         assertTrue(topWaiting.isEnabled)
-    }
-
-    @Test
-    fun queueProjectionPolicy_shouldNotifyChange_onlyWhenCountGreaterThanZero() {
-        assertFalse(KtvKioskSongAdapter.QueueProjectionPolicy.shouldNotifyChange(0))
-        assertFalse(KtvKioskSongAdapter.QueueProjectionPolicy.shouldNotifyChange(-1))
-        assertTrue(KtvKioskSongAdapter.QueueProjectionPolicy.shouldNotifyChange(1))
-        assertTrue(KtvKioskSongAdapter.QueueProjectionPolicy.shouldNotifyChange(50))
     }
 
     @Test
@@ -170,7 +149,8 @@ class KtvKioskSongAdapterTest {
         assertTrue(layout.contains("android:id=\"@+id/txtBrowserSongMatch\""))
         assertTrue(layout.contains("android:ellipsize=\"end\""))
         assertTrue(layout.contains("android:maxLines=\"1\""))
-        assertTrue(adapter.contains("binding.root.contentDescription = \"${'$'}{song.title}，${'$'}{song.artist}\""))
+        assertTrue(adapter.contains("binding.root.contentDescription = \"${'$'}displayTitle，${'$'}displayArtist\""))
+        assertTrue(adapter.contains("SongDisplayFormatter.formatTitle"))
         assertTrue(adapter.contains("binding.btnBrowserSongOrder.contentDescription ="))
         assertTrue(adapter.contains("binding.btnBrowserSongOrderTop.contentDescription ="))
         assertTrue(adapter.contains("binding.btnBrowserSongFavorite.contentDescription ="))
@@ -200,8 +180,8 @@ class KtvKioskSongAdapterTest {
         ).firstOrNull(java.io.File::isFile) ?: error("Cannot locate KtvKioskBrowserSongAdapter.kt")
         val adapter = adapterFile.readText()
 
-        // 验证歌曲卡片高度设为 48dp 以保证 3 列 x 5 行满幅容纳
-        assertTrue("歌曲卡片高度应为 48dp", layout.contains("android:layout_height=\"48dp\""))
+        // 验证歌曲卡片高度设为 46dp（配合 2dp 上下间距 = 50dp 步长）以保证 3 列 x 5 行精确满幅不露第 6 行
+        assertTrue("歌曲卡片高度应为 46dp", layout.contains("android:layout_height=\"46dp\""))
         // 验证头像与紫红姓氏徽章组件
         assertTrue("卡片包含头像控件", layout.contains("android:id=\"@+id/imgBrowserSongAvatar\""))
         assertTrue("卡片包含姓氏/首字控件", layout.contains("android:id=\"@+id/txtBrowserSongIndex\""))

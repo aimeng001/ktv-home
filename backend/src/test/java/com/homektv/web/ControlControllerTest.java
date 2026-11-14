@@ -40,6 +40,42 @@ class ControlControllerTest {
         assertThat(controller.queue()).isSameAs(snapshot);
     }
 
+
+    @Test
+    void orderAndStartBuildsSnapshotOnlyOnce() {
+        java.util.concurrent.atomic.AtomicInteger snapshotCount = new java.util.concurrent.atomic.AtomicInteger();
+        QueueSnapshot snapshot = new QueueSnapshot(null, List.of(), "playing", 60, false,
+                "accompaniment", true, 1);
+        SnapshotService snapshotService = new SnapshotService(null, null, null, null, null) {
+            @Override public QueueSnapshot snapshot() {
+                snapshotCount.incrementAndGet();
+                return snapshot;
+            }
+        };
+        QueueService queueService = new QueueService(null, null, null, null) {
+            @Override public QueueItem order(Long songId, Long orderedBy, boolean force) { return null; }
+        };
+        PlaybackService playbackService = new PlaybackService(null, null, null, null, null) {
+            @Override public boolean startIfIdle() { return true; }
+        };
+        UserService userService = new UserService(null) {
+            @Override public Long resolveUserId(String clientToken) { return 42L; }
+        };
+        List<WsEvent> broadcasts = new ArrayList<>();
+        WsBroadcaster broadcaster = new WsBroadcaster(new ObjectMapper()) {
+            @Override public void broadcastPlayback(WsEvent event) { broadcasts.add(event); }
+        };
+        ControlController controller = new ControlController(
+                queueService, playbackService, snapshotService, userService, null, broadcaster, null);
+
+        QueueSnapshot result = controller.control(new ControlRequest("order", Map.of("song_id", 100L), "guest-token"));
+
+        assertThat(snapshotCount.get()).isEqualTo(1);
+        assertThat(broadcasts).extracting(WsEvent::type)
+                .containsExactly(WsEvent.QUEUE_UPDATED, WsEvent.NOW_PLAYING);
+        assertThat(result).isSameAs(snapshot);
+    }
+
     @Test
     void anyUserCanShuffleWaitingQueue() {
         AtomicBoolean shuffled = new AtomicBoolean();

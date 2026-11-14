@@ -152,7 +152,7 @@ class KtvKeyboardLayoutContractTest {
         val drawable = locate("src/main/res/drawable/bg_ktv_ime_mode_btn.xml").readText()
         assertTrue(drawable.contains("android:state_focused=\"true\""))
         assertTrue(drawable.contains("android:state_selected=\"true\""))
-        assertTrue(drawable.contains("#4A5368"))
+        assertTrue(drawable.contains("#25FFFFFF"))
     }
 
     private fun locate(relativePath: String): File {

@@ -277,21 +277,15 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             bottomDockController = bottomDockController,
             coordinator = kioskCoordinator,
             focusController = focusController,
-            effectPlayer = effectPlayer,
             controllerActions = kioskViewModel,
             catalogActions = kioskViewModel,
             personalActions = kioskViewModel,
             initialExternalDisplayActive = externalDisplayActive,
-            onTogglePlayback = { togglePlayback() },
-            onNext = { sendControl("next") },
-            onRestart = { sendControl("restart") },
-            onToggleVocal = { toggleVocal() },
             shouldExitOnBack = { tvSettingsStore.snapshot().exitOnBackEnabled },
             globalSearchEnabled = { tvSettingsStore.snapshot().globalSearchEnabled },
         )
         cachedQueueSnapshot?.let(kioskController::updateSnapshot)
         cachedKioskQrBitmap?.let(kioskController::setCachedQrBitmap)
-        artistAvatarUrl?.let { artistAvatars[it] }?.let(overlayBinding.kioskBottomBar::setArtistAvatar)
         return kioskController
     }
 
@@ -319,6 +313,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 onPitchUp = { onPitchStep(1) },
             ),
             onFullscreenChanged = ::onDockFullscreenChanged,
+            onFullscreenClick = {
+                if (::fullscreenPlaybackPanel.isInitialized) {
+                    fullscreenPlaybackPanel.showControlsFromClick()
+                }
+            },
         )
     }
 
@@ -1141,6 +1140,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             }
         }
         trackModalDialog(dialog)
+        returnFocus.clearFocus()
         if (::kioskController.isInitialized) {
             kioskController.pauseDashboardPhotoCarousel(
                 KtvDashboardPhotoCarousel.PauseReason.SETTINGS_DIALOG,
@@ -2616,7 +2616,6 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.imgPlayerArtistAvatar.visibility = View.GONE
         audioOverlayBinding?.imgAudioArtistAvatar?.setImageDrawable(null)
         audioOverlayBinding?.imgAudioArtistAvatar?.visibility = View.GONE
-        kioskOverlayBinding?.kioskBottomBar?.setArtistAvatar(null)
         if (url == null) return
 
         if (cached != null) {
@@ -2643,7 +2642,6 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.imgPlayerArtistAvatar.visibility = View.VISIBLE
         audioOverlayBinding?.imgAudioArtistAvatar?.setImageBitmap(bitmap)
         audioOverlayBinding?.imgAudioArtistAvatar?.visibility = View.VISIBLE
-        kioskOverlayBinding?.kioskBottomBar?.setArtistAvatar(bitmap)
     }
 
     private fun updateProgress(positionMs: Long) {

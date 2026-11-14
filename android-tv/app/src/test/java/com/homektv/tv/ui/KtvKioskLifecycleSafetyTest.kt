@@ -59,6 +59,5 @@ class KtvKioskLifecycleSafetyTest {
         assertTrue("singerAvatarCache must be cleared", destroy.contains("singerAvatarCache.clear()"))
         assertTrue("pendingAvatarCallbacks must be cleared", destroy.contains("pendingAvatarCallbacks.clear()"))
         assertTrue("PIP player listener must be removed", destroy.contains("pipObservedPlayer?.removeListener(pipPlaybackListener)"))
-        assertTrue("PIP layout listener must be removed", destroy.contains("removeOnLayoutChangeListener(pipLayoutChangeListener)"))
     }
 }

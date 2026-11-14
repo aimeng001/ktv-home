@@ -31,11 +31,14 @@ public class ControlController {
     private final QueueItemRepository queueRepo;
     private final WsBroadcaster broadcaster;
     private final RoomHostService roomHostService;
+    private final com.homektv.library.SongProbeService songProbeService;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public ControlController(QueueService queueService, PlaybackService playbackService,
                              SnapshotService snapshotService, UserService userService,
                              QueueItemRepository queueRepo, WsBroadcaster broadcaster,
-                             RoomHostService roomHostService) {
+                             RoomHostService roomHostService,
+                             com.homektv.library.SongProbeService songProbeService) {
         this.queueService = queueService;
         this.playbackService = playbackService;
         this.snapshotService = snapshotService;
@@ -43,6 +46,14 @@ public class ControlController {
         this.queueRepo = queueRepo;
         this.broadcaster = broadcaster;
         this.roomHostService = roomHostService;
+        this.songProbeService = songProbeService;
+    }
+
+    public ControlController(QueueService queueService, PlaybackService playbackService,
+                             SnapshotService snapshotService, UserService userService,
+                             QueueItemRepository queueRepo, WsBroadcaster broadcaster,
+                             RoomHostService roomHostService) {
+        this(queueService, playbackService, snapshotService, userService, queueRepo, broadcaster, roomHostService, null);
     }
 
     /**
@@ -76,32 +87,42 @@ public class ControlController {
                 ? userService.resolveUserId(req.clientToken())
                 : null;
 
+        QueueSnapshot snapshot;
         switch (action) {
             case "order" -> {
-                queueService.order(req.longParam("song_id"), userId, req.boolParam("force"));
+                Long songId = req.longParam("song_id");
+                if (songProbeService != null) {
+                    songProbeService.ensurePlayable(songId);
+                }
+                queueService.order(songId, userId, req.boolParam("force"));
                 boolean started = playbackService.startIfIdle();
-                broadcast(WsEvent.QUEUE_UPDATED);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.QUEUE_UPDATED, snapshot);
                 if (started) {
-                    broadcast(WsEvent.NOW_PLAYING);
+                    broadcast(WsEvent.NOW_PLAYING, snapshot);
                 }
             }
             case "shuffle" -> {
                 queueService.shuffleWaiting();
-                broadcast(WsEvent.QUEUE_UPDATED);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.QUEUE_UPDATED, snapshot);
             }
             case "top" -> {
                 requireOwnerOrHost(req.longParam("queue_id"), userId, req.clientToken(),
                         "只能置顶自己点的歌曲");
                 queueService.top(req.longParam("queue_id"));
-                broadcast(WsEvent.QUEUE_UPDATED);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.QUEUE_UPDATED, snapshot);
             }
             case "cancel" -> {
                 cancelWithPermission(req.longParam("queue_id"), userId, req.clientToken());
-                broadcast(WsEvent.QUEUE_UPDATED);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.QUEUE_UPDATED, snapshot);
             }
             case "play", "pause", "stop" -> {
                 dispatchPlayback(action);
-                broadcast(WsEvent.PLAYER_STATE);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.PLAYER_STATE, snapshot);
             }
             case "seek" -> {
                 Long positionMs = req.longParam("position_ms");
@@ -109,37 +130,47 @@ public class ControlController {
                     throw new ApiException("INVALID_ACTION", "seek 缺少 position_ms");
                 }
                 playbackService.seek(positionMs);
-                broadcast(WsEvent.PLAYBACK_SEEKED);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.PLAYBACK_SEEKED, snapshot);
             }
             case "restart" -> {
                 dispatchPlayback(action);
-                broadcast(WsEvent.PLAYBACK_RESTARTED);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.PLAYBACK_RESTARTED, snapshot);
             }
             case "next" -> {
                 dispatchPlayback(action);
-                broadcast(WsEvent.NOW_PLAYING);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.NOW_PLAYING, snapshot);
             }
             case "set_volume" -> {
                 playbackService.setVolume(req.intParam("volume", 60));
-                broadcast(WsEvent.VOLUME_CHANGED);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.VOLUME_CHANGED, snapshot);
             }
             case "mute" -> {
                 playbackService.setMuted(req.boolParam("muted"));
-                broadcast(WsEvent.VOLUME_CHANGED);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.VOLUME_CHANGED, snapshot);
             }
             case "set_vocal" -> {
                 playbackService.setVocalMode(req.strParam("mode"));
-                broadcast(WsEvent.VOCAL_CHANGED);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.VOCAL_CHANGED, snapshot);
             }
             case "swap_vocal_tracks" -> {
                 playbackService.swapVocalTracks();
-                broadcast(WsEvent.VOCAL_CHANGED);
+                snapshot = snapshotService.snapshot();
+                broadcast(WsEvent.VOCAL_CHANGED, snapshot);
             }
-            case "effect" -> broadcaster.broadcastPlayback(
-                    WsEvent.of(WsEvent.EFFECT_PLAY, java.util.Map.of("effect_id", req.strParam("effect_id"))));
+            case "effect" -> {
+                broadcaster.broadcastPlayback(
+                        WsEvent.of(WsEvent.EFFECT_PLAY, java.util.Map.of("effect_id", req.strParam("effect_id"))));
+                snapshot = snapshotService.snapshot();
+            }
             default -> throw new ApiException("INVALID_ACTION", "未知指令：" + action);
         }
-        return snapshotService.snapshot();
+        return snapshot;
     }
 
     private void dispatchPlayback(String action) {
@@ -160,8 +191,12 @@ public class ControlController {
      * 广播当前快照到所有端（详设§4.1：客户端以广播为准）。
      * Broadcasts the current snapshot to all clients (detailed design §4.1: clients rely on broadcasts).
      */
+    private void broadcast(String eventType, QueueSnapshot snapshot) {
+        broadcaster.broadcastPlayback(WsEvent.of(eventType, snapshot));
+    }
+
     private void broadcast(String eventType) {
-        broadcaster.broadcastPlayback(WsEvent.of(eventType, snapshotService.snapshot()));
+        broadcast(eventType, snapshotService.snapshot());
     }
 
     /**

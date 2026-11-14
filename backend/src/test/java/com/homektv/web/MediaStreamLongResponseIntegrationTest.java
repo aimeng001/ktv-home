@@ -56,7 +56,7 @@ class MediaStreamLongResponseIntegrationTest {
     void rangeAndLivePipeStreamsFinishAfterTheContainerDefaultAsyncTimeout() throws Exception {
         HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
         CompletableFuture<HttpResponse<byte[]>> range = sendSlowStream(client, "/api/stream/test-range");
-        CompletableFuture<HttpResponse<byte[]>> pipe = sendSlowStream(client, "/api/playback/stream/test-pipe");
+        CompletableFuture<HttpResponse<byte[]>> pipe = sendSlowStream(client, "/api/stream/test-pipe");
 
         CompletableFuture.allOf(range, pipe).get(45, TimeUnit.SECONDS);
 
@@ -91,7 +91,7 @@ class MediaStreamLongResponseIntegrationTest {
             return slowResponse();
         }
 
-        @GetMapping(value = "/api/playback/stream/test-pipe", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+        @GetMapping(value = "/api/stream/test-pipe", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
         StreamingResponseBody pipeStream() {
             return slowResponse();
         }

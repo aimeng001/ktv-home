@@ -2,8 +2,6 @@ package com.homektv.web.dto;
 
 import com.homektv.domain.AudioChannel;
 import com.homektv.domain.AudioLayout;
-import com.homektv.domain.PlaybackVariant;
-import com.homektv.domain.PlaybackVariantProfile;
 import com.homektv.domain.SongFile;
 import org.junit.jupiter.api.Test;
 
@@ -43,30 +41,6 @@ class PlaybackDescriptorTest {
         assertThat(live.streamUrl()).isEqualTo("/api/stream/42?transcode=true");
         assertThat(live.audioTracks()).isEqualTo(3);
         assertDualTrack(live.audioLayout());
-    }
-
-    @Test
-    void variantDescriptorsRepresentPreparingReadyAndFailedStates() {
-        SongFile source = source();
-        PlaybackVariant variant = new PlaybackVariant(42L, "source-hash", PlaybackVariantProfile.H264_AAC_MP4_V1);
-        variant.setId(77L);
-        variant.markReady("/data/cache/77.mp4", 1024L);
-
-        PlaybackDescriptor ready = PlaybackDescriptor.ready(source, variant);
-        variant.markPreparing("worker", java.time.OffsetDateTime.now().plusMinutes(1));
-        PlaybackDescriptor preparing = PlaybackDescriptor.preparing(source, variant);
-        variant.markFailed("ENCODE_FAILED", "synthetic failure");
-        PlaybackDescriptor failed = PlaybackDescriptor.failed(source, variant);
-
-        assertThat(ready.status()).isEqualTo("READY");
-        assertThat(ready.variantId()).isEqualTo(77L);
-        assertThat(ready.streamUrl()).isEqualTo("/api/playback/stream/77");
-        assertThat(ready.errorCode()).isNull();
-        assertThat(preparing.status()).isEqualTo("PREPARING");
-        assertThat(preparing.streamUrl()).isNull();
-        assertThat(failed.status()).isEqualTo("FAILED");
-        assertThat(failed.errorCode()).isEqualTo("ENCODE_FAILED");
-        assertThat(failed.errorMessage()).isEqualTo("synthetic failure");
     }
 
     @Test

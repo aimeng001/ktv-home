@@ -9,36 +9,6 @@ import org.w3c.dom.Element
 
 class KtvKioskCatalogErrorLayoutContractTest {
     @Test
-    fun categoryFailureUsesCenteredFocusableRetryCard() {
-        val layout = parse("src/main/res/layout/view_ktv_kiosk_overlay.xml")
-        val elements = (0 until layout.getElementsByTagName("*").length)
-            .map { layout.getElementsByTagName("*").item(it) as Element }
-        val byId = elements.associateBy { it.getAttribute("android:id") }
-
-        assertTrue(byId.containsKey("@+id/categoryErrorPanel"))
-        assertTrue(byId.containsKey("@+id/txtCategoryErrorDetail"))
-        assertTrue(byId.containsKey("@+id/btnCategoryRetry"))
-        assertEquals("@string/catalog_error_message", byId.getValue("@+id/txtCategoryErrorDetail").getAttribute("android:text"))
-        assertEquals("@string/common_retry", byId.getValue("@+id/btnCategoryRetry").getAttribute("android:text"))
-        assertTrue(locate("src/main/res/layout/view_ktv_kiosk_overlay.xml").readText().contains("@string/catalog_error_title"))
-        assertTrue(locate("src/main/res/layout/view_ktv_kiosk_overlay.xml").readText().contains("@string/catalog_error_icon_accessibility"))
-        assertEquals("true", byId.getValue("@+id/btnCategoryRetry").getAttribute("android:focusable"))
-        assertEquals("@drawable/bg_singer_card", byId.getValue("@+id/categoryErrorPanel").getAttribute("android:background"))
-    }
-
-    @Test
-    fun categoryErrorShowsRetryCardAndRetriesCurrentRealDirectory() {
-        val source = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
-
-        assertTrue(source.contains("overlay.btnCategoryRetry.setOnClickListener"))
-        assertTrue(source.contains("overlay.categoryErrorPanel.visibility ="))
-        assertTrue(source.contains("overlay.categoryRecyclerView.visibility ="))
-        assertTrue(source.contains("catalogError != null"))
-        assertTrue(source.contains("catalogActionRouter.languages()"))
-        assertTrue(source.contains("catalogActionRouter.tags()"))
-    }
-
-    @Test
     fun singerDirectoryFailureHasAnExplicitFocusableRetryAction() {
         val layout = parse("src/main/res/layout/view_ktv_kiosk_overlay.xml")
         val elements = (0 until layout.getElementsByTagName("*").length)

@@ -10,8 +10,23 @@ object KtvGlobalSearchPolicy {
         EMPTY_STATE,
     }
 
+    enum class KeyboardVisibilityMode {
+        GONE,
+        INVISIBLE,
+        VISIBLE,
+    }
+
     fun shouldShowKeyboard(tab: KioskTab, isVariety: Boolean, enabled: Boolean): Boolean =
         !isVariety && (tab == KioskTab.PINYIN || enabled)
+
+    fun resolveKeyboardVisibility(
+        shouldShowKeyboard: Boolean,
+        isQueueDrawerOpen: Boolean,
+    ): KeyboardVisibilityMode = when {
+        !shouldShowKeyboard -> KeyboardVisibilityMode.GONE
+        isQueueDrawerOpen -> KeyboardVisibilityMode.INVISIBLE
+        else -> KeyboardVisibilityMode.VISIBLE
+    }
 
     fun targetTabForQuery(currentTab: KioskTab, enabled: Boolean): KioskTab =
         if (currentTab == KioskTab.PINYIN || !enabled) currentTab else KioskTab.PINYIN

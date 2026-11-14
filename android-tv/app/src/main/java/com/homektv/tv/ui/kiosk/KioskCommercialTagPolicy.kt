@@ -36,5 +36,21 @@ object KioskCommercialTagPolicy {
         normalize(item.name) in normalizedSpecialRouteTags
     }
 
+    fun noticeForMissingTag(exactName: String, keyboardShowing: Boolean): String {
+        return if (keyboardShowing) {
+            "当前曲库没有精确的“$exactName”标签；可通过右侧拼音键盘检索点歌。"
+        } else {
+            "当前曲库没有精确的“$exactName”标签；可从现有标签中选择。"
+        }
+    }
+
+    fun noticeForLoadFailure(keyboardShowing: Boolean): String {
+        return if (keyboardShowing) {
+            "标签列表加载失败，暂时无法确认对应分类；可通过拼音键盘检索点歌。"
+        } else {
+            "标签列表加载失败，暂时无法确认对应分类；可按确定重试。"
+        }
+    }
+
     fun normalize(value: String): String = value.trim().lowercase(Locale.ROOT)
 }

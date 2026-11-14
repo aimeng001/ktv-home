@@ -399,4 +399,102 @@ class LocalAvatarResolverTest {
         assertThat(resolver.resolveAllCandidates()).isZero();
         verify(profileService, never()).setAvatarReady(any(), any(), any());
     }
+
+    @Test
+    void extractLeadArtistReturnsFirstValidNonPlaceholderArtist() {
+        assertThat(LocalAvatarResolver.extractLeadArtist("黄诗扶_妖扬")).isEqualTo("黄诗扶");
+        assertThat(LocalAvatarResolver.extractLeadArtist("蔡依林 陶喆")).isEqualTo("蔡依林");
+        assertThat(LocalAvatarResolver.extractLeadArtist("王力宏 & 陶喆")).isEqualTo("王力宏");
+        assertThat(LocalAvatarResolver.extractLeadArtist("林二汶、岑宁儿")).isEqualTo("林二汶");
+        assertThat(LocalAvatarResolver.extractLeadArtist("周杰伦")).isEqualTo("周杰伦");
+        assertThat(LocalAvatarResolver.extractLeadArtist("群星")).isEmpty();
+        assertThat(LocalAvatarResolver.extractLeadArtist("")).isEmpty();
+        assertThat(LocalAvatarResolver.extractLeadArtist(null)).isEmpty();
+    }
+
+    @Test
+    void inheritsLeadArtistAvatarWhenDuetAvatarIsMissing(@TempDir Path tempDir) throws Exception {
+        Path avatarsDir = Files.createDirectory(tempDir.resolve("avatars"));
+        // 仅有第一主唱黄诗扶的头像，没有合唱黄诗扶_妖扬的单独头像
+        Files.write(avatarsDir.resolve("黄诗扶.jpg"), new byte[]{10, 20, 30});
+
+        AppProperties props = new AppProperties();
+        props.setDataPath(tempDir.toString());
+
+        AssetWriter assetWriter = mock(AssetWriter.class);
+        when(assetWriter.writeArtistCover(eq("huangshifu_yaoyang"), any(), eq("jpg")))
+                .thenReturn("artist-covers/huangshifu_yaoyang.jpg");
+
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+        when(profileService.unresolvedProfiles(50_000)).thenReturn(List.of(
+                new ArtistProfileService.Profile("huangshifu_yaoyang", "黄诗扶_妖扬", "GROUP", null, null, null, "PENDING")
+        ));
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, assetWriter, profileService);
+        int matched = resolver.resolveAllCandidates();
+
+        assertThat(matched).isEqualTo(1);
+        verify(assetWriter).writeArtistCover(eq("huangshifu_yaoyang"), any(), eq("jpg"));
+        verify(profileService).setAvatarReady("huangshifu_yaoyang", "LOCAL_PACK", "artist-covers/huangshifu_yaoyang.jpg");
+    }
+
+    @Test
+    void prioritizesFullDuetNameOverLeadArtistAvatarWhenBothExist(@TempDir Path tempDir) throws Exception {
+        Path avatarsDir = Files.createDirectory(tempDir.resolve("avatars"));
+        Files.write(avatarsDir.resolve("黄诗扶_妖扬.jpg"), new byte[]{1, 1, 1});
+        Files.write(avatarsDir.resolve("黄诗扶.jpg"), new byte[]{2, 2, 2});
+
+        AppProperties props = new AppProperties();
+        props.setDataPath(tempDir.toString());
+
+        AssetWriter assetWriter = mock(AssetWriter.class);
+        when(assetWriter.writeArtistCover(eq("huangshifu_yaoyang"), eq(new byte[]{1, 1, 1}), eq("jpg")))
+                .thenReturn("artist-covers/full_duet.jpg");
+
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+        when(profileService.unresolvedProfiles(50_000)).thenReturn(List.of(
+                new ArtistProfileService.Profile("huangshifu_yaoyang", "黄诗扶_妖扬", "GROUP", null, null, null, "PENDING")
+        ));
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, assetWriter, profileService);
+        int matched = resolver.resolveAllCandidates();
+
+        assertThat(matched).isEqualTo(1);
+        verify(assetWriter).writeArtistCover(eq("huangshifu_yaoyang"), eq(new byte[]{1, 1, 1}), eq("jpg"));
+        verify(profileService).setAvatarReady("huangshifu_yaoyang", "LOCAL_PACK", "artist-covers/full_duet.jpg");
+    }
+
+    @Test
+    void reusesNormalizedImageCacheAcrossMultipleProfilesSharingSameAvatar(@TempDir Path tempDir) throws Exception {
+        Path avatarsDir = Files.createDirectory(tempDir.resolve("avatars"));
+        Files.write(avatarsDir.resolve("周杰伦.jpg"), new byte[]{1, 2, 3});
+
+        AppProperties props = new AppProperties();
+        props.setDataPath(tempDir.toString());
+
+        byte[] normalized = new byte[]{9, 9, 9};
+        CoverImageNormalizer normalizer = mock(CoverImageNormalizer.class);
+        when(normalizer.normalize(any(byte[].class))).thenReturn(normalized);
+
+        AssetWriter assetWriter = mock(AssetWriter.class);
+        when(assetWriter.writeArtistCover(any(), any(), any())).thenReturn("artist-covers/saved.jpg");
+
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+        when(profileService.unresolvedProfiles(50_000)).thenReturn(List.of(
+                new ArtistProfileService.Profile("zhoujielun", "周杰伦", "PERSON", null, null, null, "PENDING"),
+                new ArtistProfileService.Profile("zhoujielun_wenlan", "周杰伦_温岚", "GROUP", null, null, null, "PENDING")
+        ));
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, assetWriter, profileService);
+        resolver.setCoverImageNormalizer(normalizer);
+
+        int matched = resolver.resolveAllCandidates();
+        assertThat(matched).isEqualTo(2);
+
+        verify(normalizer, times(1)).normalize(any(byte[].class));
+        verify(assetWriter).writeArtistCover(eq("zhoujielun"), same(normalized), eq("jpg"));
+        verify(assetWriter).writeArtistCover(eq("zhoujielun_wenlan"), same(normalized), eq("jpg"));
+        verify(profileService).setAvatarReady("zhoujielun", "LOCAL_PACK", "artist-covers/saved.jpg");
+        verify(profileService).setAvatarReady("zhoujielun_wenlan", "LOCAL_PACK", "artist-covers/saved.jpg");
+    }
 }

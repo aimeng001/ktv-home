@@ -66,7 +66,7 @@ class TvOfflineWatcherTest {
         scheduler.tasks.getFirst().runNow();
 
         assertThat(scheduler.tasks).hasSize(1);
-        assertThat(scheduler.tasks.getFirst().delayMs).isEqualTo(10_000L);
+        assertThat(scheduler.tasks.getFirst().delayMs).isEqualTo(180_000L);
         assertThat(playbackService.clearCalls).isEqualTo(1);
         assertThat(broadcaster.playbackEvents)
                 .containsExactly(new WsEvent(WsEvent.QUEUE_UPDATED, snapshot));
@@ -78,6 +78,18 @@ class TvOfflineWatcherTest {
     void doesNotClearOrBroadcastIfTvReconnectsBeforeTheScheduledTaskRuns() {
         watcher.onTvDisconnected();
         broadcaster.tvOnline = true;
+        scheduler.tasks.getFirst().runNow();
+
+        assertThat(playbackService.clearCalls).isZero();
+        assertThat(snapshotService.calls).isZero();
+        assertThat(broadcaster.playbackEvents).isEmpty();
+        assertThat(broadcaster.events).isEmpty();
+    }
+
+    @Test
+    void doesNotClearQueueWhenTvDisconnectedButPhonesAreOnline() {
+        watcher.onTvDisconnected();
+        broadcaster.connectedPhones = 1L;
         scheduler.tasks.getFirst().runNow();
 
         assertThat(playbackService.clearCalls).isZero();
@@ -144,6 +156,7 @@ class TvOfflineWatcherTest {
 
     private static final class TestBroadcaster extends WsBroadcaster {
         private volatile boolean tvOnline;
+        private volatile long connectedPhones;
         private volatile boolean pauseNextCheck;
         private final CountDownLatch availabilityCheckEntered = new CountDownLatch(1);
         private final CountDownLatch releaseAvailabilityCheck = new CountDownLatch(1);
@@ -170,6 +183,11 @@ class TvOfflineWatcherTest {
                 }
             }
             return observed;
+        }
+
+        @Override
+        public long connectedPhonesCount() {
+            return connectedPhones;
         }
 
         private void pauseNextAvailabilityCheck() {

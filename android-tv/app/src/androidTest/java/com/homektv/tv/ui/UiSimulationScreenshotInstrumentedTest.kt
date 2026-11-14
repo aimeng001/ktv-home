@@ -218,8 +218,6 @@ class UiSimulationScreenshotInstrumentedTest {
                     KtvDashboardBackground.isUsingSelectedArtwork(activity.findViewById(R.id.queueOverlay)),
                 )
                 assertTrue(overlayBinding.kioskDashboardView.binding.tileHotRanking.hasFocus())
-                assertEquals("分类", overlayBinding.tabCategories.text.toString())
-                assertEquals("语种", overlayBinding.tabLanguages.text.toString())
                 val density = activity.resources.displayMetrics.density
                 val minimumTileGapPx = (10 * density).toInt()
                 val tileGapPx = overlayBinding.kioskDashboardView.binding.tileSinger.left -
@@ -228,35 +226,11 @@ class UiSimulationScreenshotInstrumentedTest {
                     "reference dashboard cards need visible horizontal gutters; actual=$tileGapPx px minimum=$minimumTileGapPx px",
                     tileGapPx >= minimumTileGapPx,
                 )
-                val avatarFixture = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
-                assertTrue(overlayBinding.kioskBottomBar.binding.imgNowPlayingDisc.clipToOutline)
-                overlayBinding.kioskBottomBar.setArtistAvatar(avatarFixture)
-                assertSame(avatarFixture, (overlayBinding.kioskBottomBar.binding.imgNowPlayingDisc.drawable as BitmapDrawable).bitmap)
-                overlayBinding.kioskBottomBar.setArtistAvatar(null)
-                assertTrue(overlayBinding.kioskBottomBar.binding.imgNowPlayingDisc.drawable !is BitmapDrawable)
-                avatarFixture.recycle()
             }
             android.os.SystemClock.sleep(2_500L)
             capture("07_dashboard_idle_layout_actual.png")
 
             scenario.onActivity { activity ->
-                val overlayBinding = MainActivity::class.java
-                    .getDeclaredField("kioskOverlayBinding")
-                    .apply { isAccessible = true }
-                    .get(activity) as com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
-                // Layout-only fixture: show the real 16:9 PlayerView frame, but never invent song/video data.
-                overlayBinding.txtPipLabel.text = ""
-                overlayBinding.pipVideoFrame.visibility = View.VISIBLE
-            }
-            instrumentation.waitForIdleSync()
-            android.os.SystemClock.sleep(4_000L)
-            capture("07_dashboard_pip_layout_fixture.png")
-
-            scenario.onActivity { activity ->
-                val overlayBinding = MainActivity::class.java
-                    .getDeclaredField("kioskOverlayBinding")
-                    .apply { isAccessible = true }
-                    .get(activity) as com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
                 val controller = MainActivity::class.java
                     .getDeclaredField("kioskController")
                     .apply { isAccessible = true }
@@ -272,10 +246,6 @@ class UiSimulationScreenshotInstrumentedTest {
             }
             instrumentation.waitForIdleSync()
             scenario.onActivity { activity ->
-                val overlayBinding = MainActivity::class.java
-                    .getDeclaredField("kioskOverlayBinding")
-                    .apply { isAccessible = true }
-                    .get(activity) as com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
                 val controller = MainActivity::class.java
                     .getDeclaredField("kioskController")
                     .apply { isAccessible = true }
@@ -285,38 +255,11 @@ class UiSimulationScreenshotInstrumentedTest {
                     .apply { isAccessible = true }
                     .get(controller) as KtvQueueDrawerDialog
                 val drawerPanel = requireNotNull(dialog.window?.decorView?.findViewById<View>(R.id.queueDrawerPanel))
-                val pipRect = android.graphics.Rect()
                 val drawerRect = android.graphics.Rect()
-                assertTrue("layout-only PiP must remain visible beside the drawer", overlayBinding.pipVideoFrame.getGlobalVisibleRect(pipRect))
-                assertTrue("queue drawer must be visible for the overlap check", drawerPanel.getGlobalVisibleRect(drawerRect))
-                assertFalse(
-                    "the queue drawer must not cover any part of the PiP frame: pip=$pipRect drawer=$drawerRect",
-                    android.graphics.Rect.intersects(pipRect, drawerRect),
-                )
-            }
-            instrumentation.waitForIdleSync()
-            capture("queue_drawer_pip_visible_area_layout_fixture.png")
-
-            scenario.onActivity { activity ->
-                val controller = MainActivity::class.java
-                    .getDeclaredField("kioskController")
-                    .apply { isAccessible = true }
-                    .get(activity) as KtvKioskOverlayController
-                val dialog = KtvKioskOverlayController::class.java
-                    .getDeclaredField("queueDialog")
-                    .apply { isAccessible = true }
-                    .get(controller) as KtvQueueDrawerDialog
+                assertTrue("queue drawer must be visible", drawerPanel.getGlobalVisibleRect(drawerRect))
                 dialog.dismiss()
             }
             instrumentation.waitForIdleSync()
-            scenario.onActivity { activity ->
-                val overlayBinding = MainActivity::class.java
-                    .getDeclaredField("kioskOverlayBinding")
-                    .apply { isAccessible = true }
-                    .get(activity) as com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
-                val layoutParams = overlayBinding.pipVideoFrame.layoutParams as androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
-                assertEquals("closing the drawer restores the centered PiP", 0.5f, layoutParams.horizontalBias, 0.001f)
-            }
 
             instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
             scenario.onActivity { activity ->
@@ -351,15 +294,6 @@ class UiSimulationScreenshotInstrumentedTest {
             scenario.onActivity { activity ->
                 assertTrue("footer focus must reach the queue action", activity.findViewById<View>(R.id.btnDockQueue).hasFocus())
             }
-            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
-            scenario.onActivity { activity ->
-                val overlayBinding = MainActivity::class.java
-                    .getDeclaredField("kioskOverlayBinding")
-                    .apply { isAccessible = true }
-                    .get(activity) as com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
-                assertTrue("legacy footer actions must remain reachable after the four primary actions", overlayBinding.kioskBottomBar.binding.btnRestart.hasFocus())
-                assertTrue(overlayBinding.kioskBottomBar.binding.footerActionScroll.scrollX > 0)
-            }
             capture("07_dashboard_footer_focus_actual.png")
 
             scenario.onActivity { activity ->
@@ -382,149 +316,6 @@ class UiSimulationScreenshotInstrumentedTest {
             capture("audio_playback_surface_empty_fixture.png")
         } finally {
             scenario?.close()
-            config.saveMode(previousMode, previousHost)
-        }
-    }
-
-    @Test
-    fun capturesEveryVisibleTvCatalogAndPersonalTabOffline() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
-        val isTelevision = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
-            (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
-            android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
-        assumeTrue("TV catalog and personal tabs require a TV layout", isTelevision)
-
-        val config = AppConfig(context)
-        val previousHost = config.serverHost
-        val previousMode = config.modeFor() ?: config.effectiveMode()
-        val localOfflineHost = "127.0.0.1:9"
-        config.serverHost = localOfflineHost
-        config.saveMode(DeviceMode.COMBINED, localOfflineHost)
-
-        var scenario: ActivityScenario<MainActivity>? = null
-        try {
-            scenario = ActivityScenario.launch(android.content.Intent(context, MainActivity::class.java))
-            instrumentation.waitForIdleSync()
-            android.os.SystemClock.sleep(400L)
-
-            val pages = listOf(
-                "08_search_empty_actual.png",
-                "10_singer_catalog_offline_actual.png",
-                "12_language_catalog_offline_actual.png",
-                "14_category_catalog_offline_actual.png",
-                "16_favorites_offline_actual.png",
-                "17_history_offline_actual.png",
-            )
-            scenario.onActivity { activity ->
-                val overlayBinding = MainActivity::class.java
-                    .getDeclaredField("kioskOverlayBinding")
-                    .apply { isAccessible = true }
-                    .get(activity) as com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
-                assertEquals(View.VISIBLE, overlayBinding.kioskRootOverlay.visibility)
-                assertTrue(KtvDashboardBackground.isUsingSelectedArtwork(overlayBinding.kioskRootOverlay))
-                val tabs = listOf(
-                    overlayBinding.tabPinyin,
-                    overlayBinding.tabSingers,
-                    overlayBinding.tabLanguages,
-                    overlayBinding.tabCategories,
-                    overlayBinding.tabFavorites,
-                    overlayBinding.tabHistory,
-                )
-                assertEquals(pages.size, tabs.size)
-            }
-
-            pages.forEachIndexed { index, fileName ->
-                scenario.onActivity { activity ->
-                    val overlayBinding = MainActivity::class.java
-                        .getDeclaredField("kioskOverlayBinding")
-                        .apply { isAccessible = true }
-                        .get(activity) as com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
-                    val tab = when (index) {
-                        0 -> overlayBinding.tabPinyin
-                        1 -> overlayBinding.tabSingers
-                        2 -> overlayBinding.tabLanguages
-                        3 -> overlayBinding.tabCategories
-                        4 -> overlayBinding.tabFavorites
-                        else -> overlayBinding.tabHistory
-                    }
-                    assertTrue("TV page tab $index must remain clickable", tab.performClick())
-                }
-                instrumentation.waitForIdleSync()
-                scenario.onActivity { activity ->
-                    val overlayBinding = MainActivity::class.java
-                        .getDeclaredField("kioskOverlayBinding")
-                        .apply { isAccessible = true }
-                        .get(activity) as com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
-                    val tab = when (index) {
-                        0 -> overlayBinding.tabPinyin
-                        1 -> overlayBinding.tabSingers
-                        2 -> overlayBinding.tabLanguages
-                        3 -> overlayBinding.tabCategories
-                        4 -> overlayBinding.tabFavorites
-                        else -> overlayBinding.tabHistory
-                    }
-                    assertTrue("TV screenshot $index must focus its selected tab", tab.requestFocusFromTouch())
-                    assertTrue("TV screenshot $index must show its focused page tab", tab.hasFocus())
-                }
-                android.os.SystemClock.sleep(350L)
-                capture(fileName)
-            }
-        } finally {
-            scenario?.close()
-            config.serverHost = previousHost
-            config.saveMode(previousMode, previousHost)
-        }
-    }
-
-    @Test
-    fun focusedSelectedKioskTabsKeepReadableTextOnTheGoldFocusSurface() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
-        val isTelevision = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
-            (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
-            android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
-        if (!isTelevision) return
-
-        val config = AppConfig(context)
-        val previousHost = config.serverHost
-        val previousMode = config.modeFor() ?: config.effectiveMode()
-        val localOfflineHost = "127.0.0.1:9"
-        config.serverHost = localOfflineHost
-        config.saveMode(DeviceMode.COMBINED, localOfflineHost)
-        var scenario: ActivityScenario<MainActivity>? = null
-        try {
-            scenario = ActivityScenario.launch(android.content.Intent(context, MainActivity::class.java))
-            instrumentation.waitForIdleSync()
-
-            scenario.onActivity { activity ->
-                val overlay = MainActivity::class.java
-                    .getDeclaredField("kioskOverlayBinding")
-                    .apply { isAccessible = true }
-                    .get(activity) as com.homektv.tv.databinding.ViewKtvKioskOverlayBinding
-                assertEquals(View.VISIBLE, overlay.kioskRootOverlay.visibility)
-
-                listOf(
-                    "搜索" to overlay.tabPinyin,
-                    "语种" to overlay.tabLanguages,
-                ).forEach { (label, tab) ->
-                    assertTrue("$label navigation action must remain available", tab.performClick())
-                    assertTrue("$label tab must retain selected state", tab.isSelected)
-                    assertTrue("$label tab must be focusable", tab.requestFocusFromTouch())
-                    assertTrue("$label tab must retain visible focus", tab.hasFocus())
-                    val backgroundColor = focusedSolidColor(tab.background)
-                    val contrast = contrastRatio(tab.currentTextColor, backgroundColor)
-                    assertTrue(
-                        "$label focused label contrast was ${"%.2f".format(Locale.US, contrast)}:1; " +
-                            "foreground=#${tab.currentTextColor.toUInt().toString(16)} " +
-                            "background=#${backgroundColor.toUInt().toString(16)}",
-                        contrast >= 4.5,
-                    )
-                }
-            }
-        } finally {
-            scenario?.close()
-            config.serverHost = previousHost
             config.saveMode(previousMode, previousHost)
         }
     }
@@ -675,9 +466,7 @@ class UiSimulationScreenshotInstrumentedTest {
                 assertEquals(View.VISIBLE, overlay.kioskRootOverlay.visibility)
                 assertTrue(overlay.kioskDashboardView.binding.tileSongName.requestFocus())
 
-                // Layout-only fixture: expose the real PiP frame without attaching a player or inventing a song.
-                overlay.txtPipLabel.text = ""
-                overlay.pipVideoFrame.visibility = View.VISIBLE
+                // Isolated banner safe-area test without inventing a song or touching Docker.
                 host = KioskTransientFeedbackHost(overlay.kioskTransientFeedback, activity.lifecycleScope)
                 host?.show("网络连接暂时失败，请检查点歌服务")
             }
@@ -700,18 +489,7 @@ class UiSimulationScreenshotInstrumentedTest {
                 }
                 val bannerRect = visibleRect(banner)
                 val contentRect = visibleRect(overlay.kioskMainContent)
-                val pipRect = visibleRect(overlay.pipVideoFrame)
-                val footerRect = visibleRect(overlay.kioskBottomBar)
-                assertFalse("the PiP fixture must have measurable bounds", pipRect.isEmpty)
                 assertTrue("banner must reserve vertical space before content", bannerRect.bottom <= contentRect.top)
-                assertFalse("banner must not cover the PiP frame", android.graphics.Rect.intersects(bannerRect, pipRect))
-                assertFalse("banner must not cover the playback bar", android.graphics.Rect.intersects(bannerRect, footerRect))
-                assertTrue(overlay.kioskBottomBar.binding.btnPlayPause.isShown)
-                assertTrue(overlay.kioskBottomBar.binding.btnNext.isShown)
-                assertTrue(overlay.kioskBottomBar.binding.btnVocalToggle.isShown)
-                assertTrue(overlay.kioskBottomBar.binding.btnQueueBadge.isShown)
-                // Re-apply the layout-only PiP fixture after the controller's state render, immediately before capture.
-                overlay.pipVideoFrame.visibility = View.VISIBLE
             }
             capture("kiosk_transient_feedback_safe_area_actual.png", delayMillis = 0L)
             holdForEvidenceExport()

@@ -46,6 +46,7 @@ class KtvKeyboardView @JvmOverloads constructor(
     private var handwritingCanvas: KtvHandwritingCanvasView? = null
     private var lastDispatchedSearchKeyword = T9PinyinSearchPolicy.normalizeSearchKeyword(session.currentKeyword)
     private var wireModeContentFocus: (() -> Unit)? = null
+    private var lastViewportHeight = 0
 
     enum class Mode {
         ABC, NUMBER, HANDWRITING, ZHUYIN, SYSTEM
@@ -63,10 +64,15 @@ class KtvKeyboardView @JvmOverloads constructor(
         renderKeys()
         setupActions()
         binding.keyboardGridScroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            when (currentInputMode) {
-                Mode.ABC, Mode.SYSTEM -> resizeGridRows(rowCount = 6)
-                Mode.NUMBER -> resizeGridRows(rowCount = 4)
-                Mode.HANDWRITING, Mode.ZHUYIN -> resizeAlternatePanel()
+            val vh = binding.keyboardGridScroll.height
+            if (vh <= 0 || vh == lastViewportHeight) return@addOnLayoutChangeListener
+            lastViewportHeight = vh
+            binding.keyboardGridScroll.post {
+                when (currentInputMode) {
+                    Mode.ABC, Mode.SYSTEM -> resizeGridRows(rowCount = 6)
+                    Mode.NUMBER -> resizeGridRows(rowCount = 4)
+                    Mode.HANDWRITING, Mode.ZHUYIN -> resizeAlternatePanel()
+                }
             }
         }
     }
@@ -200,7 +206,9 @@ class KtvKeyboardView @JvmOverloads constructor(
         val rowHeight = ((viewportHeight - verticalMargins) / rowCount)
             .coerceIn(dpToPx(17f), dpToPx(48f))
         gridButtons.forEach { button ->
-            button.layoutParams = button.layoutParams.apply { height = rowHeight }
+            if (button.layoutParams.height != rowHeight) {
+                button.layoutParams = button.layoutParams.apply { height = rowHeight }
+            }
             button.textSize = when {
                 currentInputMode == Mode.NUMBER -> 20f
                 rowHeight < dpToPx(28f) -> 11f
@@ -410,7 +418,10 @@ class KtvKeyboardView @JvmOverloads constructor(
         val panel = alternateModePanel ?: return
         val viewportHeight = binding.keyboardGridScroll.height
         if (viewportHeight <= 0) return
-        panel.layoutParams = panel.layoutParams.apply { height = maxOf(viewportHeight, dpToPx(124f)) }
+        val targetHeight = maxOf(viewportHeight, dpToPx(124f))
+        if (panel.layoutParams.height != targetHeight) {
+            panel.layoutParams = panel.layoutParams.apply { height = targetHeight }
+        }
     }
 
     private fun handwritingBorder(): android.graphics.drawable.Drawable =

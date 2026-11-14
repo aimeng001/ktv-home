@@ -60,9 +60,20 @@ internal class KtvFullscreenPlaybackPanel(
                 render()
             }
         }
+        overlay.setOnClickListener {
+            if (fullscreen && !controlsVisible) {
+                showControls(FullscreenPanelFocusTarget.PAUSE_PLAY)
+            }
+        }
         rewindButton.setOnClickListener { seekBy(-SEEK_STEP_MS) }
         forwardButton.setOnClickListener { seekBy(SEEK_STEP_MS) }
         progressBar.setOnTouchListener { _, _ -> true }
+    }
+
+    fun showControlsFromClick() {
+        if (fullscreen && !controlsVisible) {
+            showControls(FullscreenPanelFocusTarget.PAUSE_PLAY)
+        }
     }
 
     fun setFullscreen(active: Boolean) {
@@ -70,6 +81,7 @@ internal class KtvFullscreenPlaybackPanel(
         handler.removeCallbacks(autoHide)
         keyRouter.reset()
         controlsVisible = active
+        overlay.isClickable = active
         overlay.visibility = if (active) View.VISIBLE else View.GONE
         controls.visibility = if (active) View.VISIBLE else View.GONE
         if (active) {

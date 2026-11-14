@@ -68,7 +68,7 @@
         android:focusable="true"
         android:nextFocusLeft="@id/tileLocal"
         android:nextFocusRight="@id/tileSinger"
-        android:nextFocusUp="@id/tabDashboard"
+        android:nextFocusUp="@id/btnTopSystem"
         android:nextFocusDown="@id/tileTikTok"
         android:stateListAnimator="@animator/ktv_card_focus_scale"
         android:background="@drawable/bg_ktv_dashboard_card"
@@ -126,7 +126,7 @@
         android:focusable="true"
         android:nextFocusLeft="@id/tileHotRanking"
         android:nextFocusRight="@id/tileOpera"
-        android:nextFocusUp="@id/tabDashboard"
+        android:nextFocusUp="@id/btnTopMobileQr"
         android:nextFocusDown="@id/tileSongName"
         android:stateListAnimator="@animator/ktv_card_focus_scale"
         android:background="@drawable/bg_ktv_dashboard_card"
@@ -137,11 +137,12 @@
         <TextView
             android:id="@+id/txtSingerTileTitle"
             style="@style/KtvDashboardTileCaption"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|start"
             android:layout_marginStart="16dp"
             android:layout_marginBottom="12dp"
+            android:gravity="start"
             android:text="歌手点歌" />
     </FrameLayout>
 
@@ -166,11 +167,12 @@
         <TextView
             android:id="@+id/txtSongNameTitle"
             style="@style/KtvDashboardTileCaption"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|start"
             android:layout_marginStart="16dp"
             android:layout_marginBottom="12dp"
+            android:gravity="start"
             android:text="歌名点歌" />
     </FrameLayout>
 
@@ -184,7 +186,7 @@
         android:focusable="true"
         android:nextFocusLeft="@id/tileSinger"
         android:nextFocusRight="@id/tileNewSongs"
-        android:nextFocusUp="@id/tabDashboard"
+        android:nextFocusUp="@id/btnTopSearch"
         android:nextFocusDown="@id/tileLanguage"
         android:stateListAnimator="@animator/ktv_card_focus_scale"
         android:background="@drawable/bg_ktv_dashboard_card"
@@ -198,8 +200,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|end"
-            android:layout_marginEnd="12dp"
+            android:layout_marginEnd="4dp"
             android:layout_marginBottom="10dp"
+            android:gravity="start"
             android:text="综艺点歌" />
     </FrameLayout>
 
@@ -227,8 +230,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|end"
-            android:layout_marginEnd="12dp"
+            android:layout_marginEnd="4dp"
             android:layout_marginBottom="10dp"
+            android:gravity="start"
             android:text="语种点歌" />
     </FrameLayout>
 
@@ -256,8 +260,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|end"
-            android:layout_marginEnd="12dp"
+            android:layout_marginEnd="4dp"
             android:layout_marginBottom="10dp"
+            android:gravity="start"
             android:text="主题点歌" />
     </FrameLayout>
 
@@ -271,8 +276,8 @@
         android:focusable="true"
         android:nextFocusLeft="@id/tileOpera"
         android:nextFocusRight="@id/tileHotRanking"
-        android:nextFocusUp="@id/tabDashboard"
-        android:nextFocusDown="@id/btnDockToneUp"
+        android:nextFocusUp="@id/btnTopLibraryScan"
+        android:nextFocusDown="@id/tileFavorites"
         android:stateListAnimator="@animator/ktv_card_focus_scale"
         android:background="@drawable/bg_ktv_dashboard_card"
         app:layout_constraintBottom_toTopOf="@id/bentoTwoThirdHeight"
@@ -282,11 +287,12 @@
         <TextView
             android:id="@+id/txtNewSongsTitle"
             style="@style/KtvDashboardTileCaption"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|start"
             android:layout_marginStart="16dp"
             android:layout_marginBottom="12dp"
+            android:gravity="start"
             android:text="精选专区" />
     </FrameLayout>
 

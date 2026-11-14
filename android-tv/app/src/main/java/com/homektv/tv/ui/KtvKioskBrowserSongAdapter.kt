@@ -137,8 +137,10 @@ class KtvKioskBrowserSongAdapter(
 
         fun bind(song: SongDto, position: Int) {
             hasVocalTrack = song.hasVocalTrack
-            binding.root.contentDescription = "${song.title}，${song.artist}"
-            val initial = ArtistInitialResolver.resolve(song.artist)
+            val displayTitle = com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatTitle(song.title)
+            val displayArtist = com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatArtist(song.artist)
+            binding.root.contentDescription = "$displayTitle，$displayArtist"
+            val initial = ArtistInitialResolver.resolve(displayArtist)
             binding.txtBrowserSongIndex.text = initial
             binding.txtBrowserSongIndex.visibility = View.VISIBLE
             binding.imgBrowserSongAvatar.setImageDrawable(null)
@@ -156,12 +158,8 @@ class KtvKioskBrowserSongAdapter(
                 }
             }
             renderTitle(song)
-            val formatLabel = when (song.mediaType.uppercase()) {
-                "KTV_VIDEO" -> "KTV"
-                "MV" -> "MV"
-                else -> ""
-            }
-            binding.txtBrowserSongArtist.text = if (formatLabel.isNotEmpty()) "${song.artist} | $formatLabel" else song.artist
+            binding.txtBrowserSongArtist.text =
+                com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatArtistSubtitle(song.artist, song.mediaType)
             val resolution = song.resolution?.trim()?.takeIf { it.isNotEmpty() }
             binding.txtBrowserSongQuality.text = when (song.mediaType.uppercase()) {
                 "KTV_VIDEO" -> "KTV 视频 · ${resolution ?: "清晰度未标注"}"
@@ -172,7 +170,7 @@ class KtvKioskBrowserSongAdapter(
 
             val queueState = getQueueProjection()[song.id]
             val isSubmitting = submittingSongIds.contains(song.id)
-            val orderState = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+            val orderState = SongOrderButtonPolicy.resolveStateOnBind(
                 isTop = false,
                 isSubmitting = isSubmitting,
                 queueState = queueState,
@@ -182,7 +180,7 @@ class KtvKioskBrowserSongAdapter(
             binding.btnBrowserSongOrder.isEnabled = orderState.isEnabled
             binding.btnBrowserSongOrder.tag = song.id
             binding.btnBrowserSongOrder.contentDescription = "${orderState.text}：${song.title}，${song.artist}"
-            val topState = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+            val topState = SongOrderButtonPolicy.resolveStateOnBind(
                 isTop = true,
                 isSubmitting = isSubmitting,
                 queueState = queueState,
@@ -230,7 +228,7 @@ class KtvKioskBrowserSongAdapter(
         }
 
         private fun renderTitle(song: SongDto) {
-            val title = song.title
+            val title = com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatTitle(song.title)
             val keyword = getSearchKeyword()
             val matchIndex = if (keyword.isNotBlank()) title.indexOf(keyword, ignoreCase = true) else -1
             if (matchIndex >= 0) {
@@ -270,7 +268,7 @@ class KtvKioskBrowserSongAdapter(
             submittingSongIds.add(song.id)
             val targetButton = if (isTop) binding.btnBrowserSongOrderTop else binding.btnBrowserSongOrder
             val otherButton = if (isTop) binding.btnBrowserSongOrder else binding.btnBrowserSongOrderTop
-            targetButton.text = KtvKioskSongAdapter.SongOrderButtonPolicy.submittingText(isTop)
+            targetButton.text = SongOrderButtonPolicy.submittingText(isTop)
             targetButton.contentDescription = "正在处理：${song.title}，${song.artist}"
             targetButton.isEnabled = false
             otherButton.isEnabled = false
@@ -279,13 +277,13 @@ class KtvKioskBrowserSongAdapter(
                 submittingSongIds.remove(song.id)
                 if (binding.btnBrowserSongOrder.tag == song.id || binding.btnBrowserSongOrderTop.tag == song.id) {
                     val latestQueueState = getQueueProjection()[song.id] ?: queueState
-                    val orderState = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+                    val orderState = SongOrderButtonPolicy.resolveStateOnBind(
                         isTop = false,
                         isSubmitting = false,
                         queueState = latestQueueState,
                         playable = song.playable,
                     )
-                    val topState = KtvKioskSongAdapter.SongOrderButtonPolicy.resolveStateOnBind(
+                    val topState = SongOrderButtonPolicy.resolveStateOnBind(
                         isTop = true,
                         isSubmitting = false,
                         queueState = latestQueueState,

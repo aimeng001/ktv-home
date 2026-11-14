@@ -8,15 +8,32 @@ data class DockWindowBounds(
 )
 
 object DockFullscreenPolicy {
-    const val PIP_WIDTH_DP = 192
-    const val PIP_HEIGHT_DP = 108
-    const val PIP_BOTTOM_MARGIN_DP = 6
+    const val PIP_WIDTH_DP = 185
+    const val PIP_HEIGHT_DP = 104
+    const val PIP_BOTTOM_MARGIN_DP = 0
+
+    enum class VideoClickAction {
+        ENTER_FULLSCREEN,
+        SHOW_CONTROLS,
+        IGNORE,
+    }
 
     fun canEnterFullscreen(videoVisible: Boolean, externalDisplayActive: Boolean, isFullscreen: Boolean): Boolean {
         if (!videoVisible) return false
         if (externalDisplayActive) return false
         if (isFullscreen) return false
         return true
+    }
+
+    fun videoClickAction(
+        videoVisible: Boolean,
+        externalDisplayActive: Boolean,
+        isFullscreen: Boolean,
+        controlsVisible: Boolean,
+    ): VideoClickAction {
+        if (!videoVisible || externalDisplayActive) return VideoClickAction.IGNORE
+        if (!isFullscreen) return VideoClickAction.ENTER_FULLSCREEN
+        return if (!controlsVisible) VideoClickAction.SHOW_CONTROLS else VideoClickAction.IGNORE
     }
 
     fun shouldExitOnExternalDisplay(externalDisplayActive: Boolean, isFullscreen: Boolean): Boolean {
