@@ -5,6 +5,12 @@ enum class KioskBrowserBackAction {
     RETURN_TO_DASHBOARD,
 }
 
+enum class KioskBrowserReturnTarget {
+    INNER_DETAIL,
+    DASHBOARD,
+    SEARCH_ORIGIN,
+}
+
 object KioskBackNavigationPolicy {
     fun resolveBrowserBack(hasInnerDetailBack: Boolean): KioskBrowserBackAction =
         if (hasInnerDetailBack) {
@@ -12,4 +18,13 @@ object KioskBackNavigationPolicy {
         } else {
             KioskBrowserBackAction.RETURN_TO_DASHBOARD
         }
+
+    fun resolveBrowserBackTarget(
+        hasInnerDetailBack: Boolean,
+        hasPendingSearchReturnFocus: Boolean,
+    ): KioskBrowserReturnTarget = when {
+        hasInnerDetailBack -> KioskBrowserReturnTarget.INNER_DETAIL
+        hasPendingSearchReturnFocus -> KioskBrowserReturnTarget.SEARCH_ORIGIN
+        else -> KioskBrowserReturnTarget.DASHBOARD
+    }
 }

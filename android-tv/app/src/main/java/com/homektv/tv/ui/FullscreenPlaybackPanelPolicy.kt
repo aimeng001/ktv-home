@@ -24,7 +24,7 @@ enum class FullscreenPanelDirection {
 }
 
 enum class FullscreenPlaybackAction {
-    PAUSE_PLAY, VOCAL, RESTART, NEXT, VOLUME_DOWN, VOLUME_UP, MUTE, KIOSK, QUEUE, HOME,
+    PAUSE_PLAY, VOCAL, RESTART, NEXT, VOLUME_DOWN, VOLUME_UP, MUTE, KIOSK, QUEUE, HOME, PITCH,
 }
 
 data class FullscreenPanelKeyDecision(

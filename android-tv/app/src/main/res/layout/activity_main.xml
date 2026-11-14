@@ -369,7 +369,7 @@
         android:layout_height="@dimen/ktv_dashboard_pip_height"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="0dp"
-        android:background="@drawable/bg_ktv_dock_video_frame"
+        android:background="@android:color/transparent"
         android:clipToOutline="false"
         android:visibility="visible">
 

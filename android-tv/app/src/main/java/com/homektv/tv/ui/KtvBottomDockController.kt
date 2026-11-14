@@ -80,6 +80,7 @@ class KtvBottomDockController(
     private var videoVisible = false
     val isVideoVisible: Boolean get() = videoVisible
     private var cachedQrBitmap: Bitmap? = null
+    private val iconCachePolicy = BottomDockIconCachePolicy()
 
     init {
         binding.btnDockHome.setOnClickListener { actions.onHome() }
@@ -153,20 +154,24 @@ class KtvBottomDockController(
 
         binding.btnDockVocal.text = model.vocalLabel
         val vocalIconRes = if (model.vocalLabel == "伴唱") R.drawable.ic_dock_accompany else R.drawable.ic_dock_original
-        binding.btnDockVocal.setCompoundDrawablesWithIntrinsicBounds(0, vocalIconRes, 0, 0)
+        val vocalIconChanged = iconCachePolicy.shouldUpdateVocalIcon(vocalIconRes)
+        if (vocalIconChanged) {
+            binding.btnDockVocal.setCompoundDrawablesWithIntrinsicBounds(0, vocalIconRes, 0, 0)
+        }
         binding.btnDockVocal.isSelected = model.vocalGlowActive
         binding.btnDockVocal.isEnabled = model.vocalSwitchEnabled
         binding.btnDockVocal.alpha = if (model.vocalSwitchEnabled) 1f else 0.45f
         binding.btnDockVocal.contentDescription = "切换原唱或伴唱，当前${model.vocalLabel}"
 
         binding.btnDockPlayPause.text = model.playbackLabel
-        binding.btnDockPlayPause.setCompoundDrawablesRelativeWithIntrinsicBounds(
-            0,
-            if (model.isPlaying) R.drawable.ic_player_pause else R.drawable.ic_player_play,
-            0,
-            0,
-        )
-        normalizeDockButtonIcons()
+        val playPauseIconRes = if (model.isPlaying) R.drawable.ic_player_pause else R.drawable.ic_player_play
+        val playPauseIconChanged = iconCachePolicy.shouldUpdatePlayPauseIcon(playPauseIconRes)
+        if (playPauseIconChanged) {
+            binding.btnDockPlayPause.setCompoundDrawablesRelativeWithIntrinsicBounds(0, playPauseIconRes, 0, 0)
+        }
+        if (vocalIconChanged || playPauseIconChanged) {
+            normalizeDockButtonIcons()
+        }
         binding.btnDockPlayPause.contentDescription = if (model.isPlaying) "暂停播放" else "继续播放"
 
         txtNowPlaying?.text = model.nowPlayingLabel
@@ -189,9 +194,22 @@ class KtvBottomDockController(
     private fun updateContainerVisibility() {
         if (!isFullscreen) {
             val effectiveVideoVisible = videoVisible && !externalDisplayActive
+            val frameState = BottomDockVideoFramePolicy.resolve(effectiveVideoVisible)
             playerView.visibility = if (effectiveVideoVisible) View.VISIBLE else View.INVISIBLE
             val shouldShowContainer = effectiveVideoVisible
             playerContainer.visibility = if (shouldShowContainer) View.VISIBLE else View.INVISIBLE
+            playerContainer.setBackgroundResource(
+                if (effectiveVideoVisible) R.drawable.bg_ktv_dock_video_frame else android.R.color.transparent,
+            )
+            binding.videoContainer.visibility = if (frameState.containerVisible) View.VISIBLE else View.INVISIBLE
+            binding.videoContainer.setBackgroundResource(
+                if (frameState.useIdleFrame) R.drawable.bg_ktv_dock_video_frame_idle else R.drawable.bg_ktv_dock_video_frame,
+            )
+            val shadowVisibility = if (frameState.showEdgeShadows) View.VISIBLE else View.INVISIBLE
+            binding.videoShadowLeft.visibility = shadowVisibility
+            binding.videoShadowRight.visibility = shadowVisibility
+            binding.innerVideoShadowLeft.visibility = shadowVisibility
+            binding.innerVideoShadowRight.visibility = shadowVisibility
         }
     }
 
@@ -200,6 +218,7 @@ class KtvBottomDockController(
         if (DockFullscreenPolicy.shouldExitOnExternalDisplay(active, isFullscreen)) {
             exitFullscreen()
         }
+        updateContainerVisibility()
     }
 
     fun ensurePlayerInDock() {
@@ -277,6 +296,8 @@ class KtvBottomDockController(
         binding.btnDockRestart.setOnClickListener(null)
         binding.btnDockNext.setOnClickListener(null)
         binding.btnDockMixer.setOnClickListener(null)
+        binding.btnDockVolDown.setOnClickListener(null)
+        binding.btnDockVolUp.setOnClickListener(null)
         binding.btnDockDownloads.setOnClickListener(null)
         binding.btnDockToneDown.setOnClickListener(null)
         binding.btnDockToneUp.setOnClickListener(null)
@@ -299,9 +320,9 @@ class KtvBottomDockController(
             lp.height = (bounds.heightDp * density).toInt()
             lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             lp.bottomMargin = (bounds.bottomMarginDp * density).toInt()
-            playerContainer.setBackgroundResource(R.drawable.bg_ktv_dock_video_frame)
+            playerContainer.layoutParams = lp
+            updateContainerVisibility()
         }
-        playerContainer.layoutParams = lp
     }
 }
 

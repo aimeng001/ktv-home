@@ -142,4 +142,83 @@ class PlaybackEngineFallbackContractTest {
         assertEquals(2, mock.lastTrackIndex)
         assertEquals(layout, mock.lastAudioLayout)
     }
+
+    @Test
+    fun resolvePlaybackDurationMs_falls_back_to_metadata_when_engine_duration_non_positive() {
+        assertEquals(210_000L, resolvePlaybackDurationMs(engineDurationMs = 0L, metadataDurationMs = 210_000L))
+        assertEquals(210_000L, resolvePlaybackDurationMs(engineDurationMs = Long.MIN_VALUE + 1L, metadataDurationMs = 210_000L))
+        assertEquals(185_500L, resolvePlaybackDurationMs(engineDurationMs = 185_500L, metadataDurationMs = 210_000L))
+        assertEquals(0L, resolvePlaybackDurationMs(engineDurationMs = 0L, metadataDurationMs = 0L))
+        assertEquals(0L, resolvePlaybackDurationMs(engineDurationMs = -1L, metadataDurationMs = -10L))
+    }
+
+    @Test
+    fun playbackEngineReleaseAndDetachGuardLazyExoPlayerInitialization() {
+        val source = sequenceOf(
+            java.io.File("src/main/java/com/homektv/tv/player/PlaybackEngine.kt"),
+            java.io.File("android-tv/app/src/main/java/com/homektv/tv/player/PlaybackEngine.kt"),
+            java.io.File("../app/src/main/java/com/homektv/tv/player/PlaybackEngine.kt"),
+        ).firstOrNull(java.io.File::isFile)
+            ?: error("Cannot locate PlaybackEngine.kt")
+        val text = source.readText()
+        val releaseBlock = text.substringAfter("fun release()").substringBefore("private val progressTicker")
+        val detachBlock = text.substringAfter("fun detach(view: PlayerView)").substringBefore("private fun bindFallbackSurface")
+
+        assertTrue(
+            "release() must check playerDelegate.isInitialized() instead of instantiating ExoPlayer just to release it",
+            releaseBlock.contains("if (playerDelegate.isInitialized())"),
+        )
+        assertTrue(
+            "detach() must check playerDelegate.isInitialized() before touching view.player === player",
+            detachBlock.contains("if (playerDelegate.isInitialized()"),
+        )
+    }
+
+    @Test
+    fun resolvePlaybackStreamVolumePercentHandlesNonPositiveMaxWithoutDividingByZero() {
+        assertEquals(null, resolvePlaybackStreamVolumePercent(index = 5, max = 0))
+        assertEquals(null, resolvePlaybackStreamVolumePercent(index = 5, max = -1))
+        assertEquals(50, resolvePlaybackStreamVolumePercent(index = 5, max = 10))
+        assertEquals(100, resolvePlaybackStreamVolumePercent(index = 15, max = 10))
+        assertEquals(0, resolvePlaybackStreamVolumePercent(index = -2, max = 10))
+    }
+
+    @Test
+    fun playbackEngineDebugLoggerVolumeAndMicContractsHold() {
+        val engineSource = locateMain("src/main/java/com/homektv/tv/player/PlaybackEngine.kt").readText()
+        assertTrue(
+            "EventLogger must be guarded by BuildConfig.DEBUG",
+            engineSource.contains("if (BuildConfig.DEBUG)") && engineSource.contains("EventLogger()"),
+        )
+        val applyVolumeBlock = engineSource.substringAfter("fun applyVolume(").substringBefore("fun setPitchSemitones(")
+        assertTrue(
+            "applyVolume must guard playerDelegate.isInitialized()",
+            applyVolumeBlock.contains("if (playerDelegate.isInitialized())"),
+        )
+
+        val effectSource = locateMain("src/main/java/com/homektv/tv/ui/EffectOverlayView.kt").readText()
+        assertTrue(
+            "EffectOverlayView must scope software layer to Android versions below P",
+            effectSource.contains("Build.VERSION.SDK_INT < Build.VERSION_CODES.P"),
+        )
+
+        val micSource = locateMain("src/main/java/com/homektv/tv/player/MicrophoneMonitor.kt").readText()
+        val startBlock = micSource.substringAfter("fun start(): Boolean").substringBefore("private fun defaultRoutedInput()")
+        val permissionIdx = startBlock.indexOf("Manifest.permission.RECORD_AUDIO")
+        val stopIdx = startBlock.indexOf("sessionCoordinator.stop()")
+        assertTrue(
+            "MicrophoneMonitor.start() must validate permissions before stopping an active session",
+            permissionIdx >= 0 && (stopIdx < 0 || stopIdx > permissionIdx),
+        )
+        assertTrue(
+            "MicrophoneMonitor read loop must break on negative AudioRecord read error",
+            micSource.contains("if (read < 0) break"),
+        )
+    }
+
+    private fun locateMain(relativePath: String): java.io.File = sequenceOf(
+        java.io.File(relativePath),
+        java.io.File("android-tv/app/$relativePath"),
+        java.io.File("../app/$relativePath"),
+    ).firstOrNull(java.io.File::isFile) ?: error("Cannot locate $relativePath")
 }

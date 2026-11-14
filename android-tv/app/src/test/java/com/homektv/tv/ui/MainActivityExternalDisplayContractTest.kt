@@ -17,6 +17,13 @@ class MainActivityExternalDisplayContractTest {
         assertTrue(source.contains("engine?.attach(bottomDockController.playerView)"))
         assertTrue(source.contains("bottomDockController.setExternalDisplayActive(true)"))
         assertTrue(source.contains("bottomDockController.setExternalDisplayActive(false)"))
+        val disconnectBranch = source.substringAfter("KtvPresentationController(this)")
+            .substringAfter("externalDisplayActive = false")
+            .substringBefore("} else {")
+        assertTrue(
+            "Returning from external HDMI display must restore saved video scale mode",
+            disconnectBranch.contains("applyVideoScaleMode(currentVideoScaleMode)"),
+        )
     }
 
     private fun locate(name: String): File {

@@ -110,7 +110,7 @@ class KtvCommercialDashboardView @JvmOverloads constructor(
                             FrameLayout.LayoutParams.MATCH_PARENT,
                             FrameLayout.LayoutParams.MATCH_PARENT,
                         )
-                        scaleType = ImageView.ScaleType.FIT_XY
+                        scaleType = ImageView.ScaleType.CENTER_CROP
                         contentDescription = null
                         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                         isClickable = false

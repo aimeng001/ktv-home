@@ -269,8 +269,8 @@
                     android:orientation="vertical">
                     <ImageView
                         android:id="@+id/varietyVoice"
-                        android:layout_width="64dp"
-                        android:layout_height="64dp"
+                        android:layout_width="76dp"
+                        android:layout_height="76dp"
                         android:background="@drawable/bg_ktv_variety_icon_focus"
                         android:clipToOutline="true"
                         android:clickable="true"
@@ -295,8 +295,8 @@
                     android:orientation="vertical">
                     <ImageView
                         android:id="@+id/varietySong"
-                        android:layout_width="64dp"
-                        android:layout_height="64dp"
+                        android:layout_width="76dp"
+                        android:layout_height="76dp"
                         android:background="@drawable/bg_ktv_variety_icon_focus"
                         android:clipToOutline="true"
                         android:clickable="true"
@@ -321,8 +321,8 @@
                     android:orientation="vertical">
                     <ImageView
                         android:id="@+id/varietyDream"
-                        android:layout_width="64dp"
-                        android:layout_height="64dp"
+                        android:layout_width="76dp"
+                        android:layout_height="76dp"
                         android:background="@drawable/bg_ktv_variety_icon_focus"
                         android:clipToOutline="true"
                         android:clickable="true"
@@ -347,8 +347,8 @@
                     android:orientation="vertical">
                     <ImageView
                         android:id="@+id/varietyStrong"
-                        android:layout_width="64dp"
-                        android:layout_height="64dp"
+                        android:layout_width="76dp"
+                        android:layout_height="76dp"
                         android:background="@drawable/bg_ktv_variety_icon_focus"
                         android:clipToOutline="true"
                         android:clickable="true"
@@ -373,8 +373,8 @@
                     android:orientation="vertical">
                     <ImageView
                         android:id="@+id/varietyHarmony"
-                        android:layout_width="64dp"
-                        android:layout_height="64dp"
+                        android:layout_width="76dp"
+                        android:layout_height="76dp"
                         android:background="@drawable/bg_ktv_variety_icon_focus"
                         android:clipToOutline="true"
                         android:clickable="true"
@@ -399,8 +399,8 @@
                     android:orientation="vertical">
                     <ImageView
                         android:id="@+id/varietyMad"
-                        android:layout_width="64dp"
-                        android:layout_height="64dp"
+                        android:layout_width="76dp"
+                        android:layout_height="76dp"
                         android:background="@drawable/bg_ktv_variety_icon_focus"
                         android:clipToOutline="true"
                         android:clickable="true"
@@ -425,8 +425,8 @@
                     android:orientation="vertical">
                     <ImageView
                         android:id="@+id/varietySinger"
-                        android:layout_width="64dp"
-                        android:layout_height="64dp"
+                        android:layout_width="76dp"
+                        android:layout_height="76dp"
                         android:background="@drawable/bg_ktv_variety_icon_focus"
                         android:clipToOutline="true"
                         android:clickable="true"
@@ -451,8 +451,8 @@
                     android:orientation="vertical">
                     <ImageView
                         android:id="@+id/varietyStar"
-                        android:layout_width="64dp"
-                        android:layout_height="64dp"
+                        android:layout_width="76dp"
+                        android:layout_height="76dp"
                         android:background="@drawable/bg_ktv_variety_icon_focus"
                         android:clipToOutline="true"
                         android:clickable="true"
@@ -477,18 +477,6 @@
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/txtBrowserResultsStatus"
-                android:visibility="gone"
-                android:layout_width="match_parent"
-                android:layout_height="32dp"
-                android:gravity="center_vertical"
-                android:paddingHorizontal="8dp"
-                android:text="选择分类或输入歌名首字母"
-                android:textColor="@color/gold"
-                android:textSize="14sp"
-                android:textStyle="bold" />
 
                         <TextView
                 android:id="@+id/txtBrowserEmptyState"
@@ -599,18 +587,6 @@
             android:background="@android:color/transparent"
             android:orientation="vertical"
             android:padding="0dp">
-
-            <TextView
-                android:id="@+id/txtBrowserCenterTitle"
-                android:visibility="gone"
-                android:layout_width="match_parent"
-                android:layout_height="36dp"
-                android:gravity="center_vertical"
-                android:paddingHorizontal="8dp"
-                android:text="搜索与筛选"
-                android:textColor="@color/gold"
-                android:textSize="16sp"
-                android:textStyle="bold" />
 
             <FrameLayout
                 android:id="@+id/browserKeyboardContainer"

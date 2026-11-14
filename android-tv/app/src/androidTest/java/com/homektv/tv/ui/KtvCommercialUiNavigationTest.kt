@@ -252,14 +252,13 @@ class KtvCommercialUiNavigationTest {
             val browserState = if (pinyinBrowserOpened) "" else readActivity(activityScenario) { activity ->
                 val kiosk = privateField<KtvKioskOverlayController>(activity, "kioskController")
                 val presentation = privateField<KioskPresentationState>(kiosk, "presentationState")
-                val centerTitle = activity.findViewById<TextView>(R.id.txtBrowserCenterTitle)
                 val keyboard = activity.findViewById<View>(R.id.browserKeyboardContainer)
                 val results = activity.findViewById<View>(R.id.browserResultsRecyclerView)
                 val empty = activity.findViewById<View>(R.id.txtBrowserEmptyState)
                 "tab=${presentation.currentTab.value} route=${presentation.commercialRoute.value} " +
                     "focus=${activity.currentFocus?.id}:${activity.currentFocus?.javaClass?.simpleName} " +
                     "dashboard=${activity.findViewById<View>(R.id.kioskDashboardView)?.visibility} " +
-                    "title=${centerTitle?.visibility}:${centerTitle?.text} keyboard=${keyboard?.visibility} " +
+                    "keyboard=${keyboard?.visibility} " +
                     "results=${results?.visibility} empty=${empty?.visibility}"
             }
             assertTrue("Song name should open the pinyin browser; $browserState", pinyinBrowserOpened)

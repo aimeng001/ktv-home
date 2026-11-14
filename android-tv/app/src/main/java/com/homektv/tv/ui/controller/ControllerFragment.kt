@@ -103,6 +103,7 @@ class ControllerFragment : Fragment() {
     private var restoredPlaylistDetailId = 0L
     private var restoredScrollY = 0
     private var playlistCoverJob: Job? = null
+    private var renderedPlaylistHeaderKey: PlaylistHeaderRenderKey? = null
     private lateinit var panelAdapter: ControllerListAdapter<PanelRow>
     private lateinit var catalogAdapter: ControllerListAdapter<PanelRow>
     private lateinit var personalAdapter: ControllerListAdapter<PanelRow>
@@ -247,6 +248,7 @@ class ControllerFragment : Fragment() {
         seekDebounceHandler.removeCallbacksAndMessages(null)
         playlistCoverJob?.cancel()
         playlistCoverJob = null
+        renderedPlaylistHeaderKey = null
         phonePanelViews.clear()
         phoneNavButtons.clear()
         rootView = null
@@ -895,7 +897,12 @@ class ControllerFragment : Fragment() {
     }
 
     private fun renderPersonalPanel(state: ControllerUiState) {
-        personalHeaderContainer.removeAllViews()
+        val showPlaylistHeader = personalMode == PersonalMode.PLAYLISTS &&
+            !state.playlistDetailLoading &&
+            state.playlistDetail != null
+        if (!showPlaylistHeader) {
+            clearPlaylistHeader()
+        }
         val rows = when (personalMode) {
             PersonalMode.FAVORITES -> {
                 val favError = state.errorFor(UiDomain.FAVORITES)
@@ -927,9 +934,20 @@ class ControllerFragment : Fragment() {
         personalAdapter.submitList(rows)
     }
 
-    private fun renderPlaylistDetailHeader(state: ControllerUiState, detail: com.homektv.tv.net.PlaylistDetail) {
+    private fun clearPlaylistHeader() {
         playlistCoverJob?.cancel()
         playlistCoverJob = null
+        renderedPlaylistHeaderKey = null
+        personalHeaderContainer.removeAllViews()
+    }
+
+    private fun renderPlaylistDetailHeader(state: ControllerUiState, detail: com.homektv.tv.net.PlaylistDetail) {
+        val headerKey = PlaylistHeaderRenderKey.from(detail, state.playlistCoverBytes)
+        if (renderedPlaylistHeaderKey == headerKey && personalHeaderContainer.childCount > 0) {
+            return
+        }
+        clearPlaylistHeader()
+        renderedPlaylistHeaderKey = headerKey
         personalHeaderContainer.addView(button("返回主题歌单") {
             viewModel.clearPlaylistDetail()
             viewModel.loadPlaylists()
@@ -1129,4 +1147,29 @@ class ControllerFragment : Fragment() {
 
     private enum class PersonalMode { FAVORITES, PLAYLISTS, HISTORY }
     private enum class CatalogMode { RANKING, NEW, ARTISTS, LANGUAGES, TAGS }
+}
+
+internal data class PlaylistHeaderRenderKey(
+    val playlistId: Long,
+    val name: String,
+    val description: String,
+    val theme: String,
+    val coverUrl: String?,
+    val coverBytesHash: Int?,
+    val coverBytesSize: Int?,
+) {
+    companion object {
+        fun from(
+            detail: com.homektv.tv.net.PlaylistDetail,
+            coverBytes: ByteArray?,
+        ): PlaylistHeaderRenderKey = PlaylistHeaderRenderKey(
+            playlistId = detail.id,
+            name = detail.name,
+            description = detail.description,
+            theme = detail.theme,
+            coverUrl = detail.coverUrl,
+            coverBytesHash = coverBytes?.contentHashCode(),
+            coverBytesSize = coverBytes?.size,
+        )
+    }
 }

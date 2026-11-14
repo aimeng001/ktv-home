@@ -37,6 +37,8 @@ import com.homektv.tv.net.KtvApiResult
 import com.homektv.tv.net.KtvHttpTransport
 import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.SongDto
+import com.homektv.tv.ui.kiosk.BrowserRailOptionSpec
+import com.homektv.tv.ui.kiosk.BrowserRailSyncPolicy
 import com.homektv.tv.ui.kiosk.KtvSingerFilterPolicy
 import com.homektv.tv.ui.kiosk.KtvSingerRegionFilter
 import com.homektv.tv.ui.kiosk.KtvSingerRegionPolicy
@@ -145,7 +147,10 @@ class KtvKioskOverlayController(
     private var lastRequestedCategoryMode: KioskCategoryMode? = null
     private var categoryDetail = false
     private var playlistDetail = false
+    private var pendingAutoSelectFirstPlaylist = false
+    private var skipNextDashboardAutoFocus = false
     private var externalDisplayActive = initialExternalDisplayActive
+    private var activeFilterOptionsCollector: MutableList<BrowserRailOptionSpec>? = null
     private lateinit var browserBinding: ViewKtvThreeColumnBrowserBinding
 
     init {
@@ -194,7 +199,7 @@ class KtvKioskOverlayController(
                 }
             }
         }
-        browserBinding.browserSingerRecyclerView.layoutManager = GridLayoutManager(activity, 5)
+        browserBinding.browserSingerRecyclerView.layoutManager = GridLayoutManager(activity, 8)
         browserBinding.browserSingerRecyclerView.adapter = singerAdapter
         bindCommercialCapsuleDpadNavigation()
         installPaging(browserBinding.browserSingerRecyclerView) {
@@ -321,12 +326,15 @@ class KtvKioskOverlayController(
 
         // 底部分页栏与返回键绑定
         browserBinding.btnBrowserBack.setOnClickListener {
-            when (KioskBackNavigationPolicy.resolveBrowserBack(focusController.hasInnerDetailBack)) {
-                KioskBrowserBackAction.LEAVE_INNER_DETAIL -> resetInnerDetail()
-                KioskBrowserBackAction.RETURN_TO_DASHBOARD -> {
-                    showVarietyPanel(false)
-                    presentationState.selectTab(KioskTab.DASHBOARD)
-                }
+            when (
+                KioskBackNavigationPolicy.resolveBrowserBackTarget(
+                    hasInnerDetailBack = focusController.hasInnerDetailBack,
+                    hasPendingSearchReturnFocus = globalSearchReturnFocus != null,
+                )
+            ) {
+                KioskBrowserReturnTarget.INNER_DETAIL -> resetInnerDetail()
+                KioskBrowserReturnTarget.SEARCH_ORIGIN,
+                KioskBrowserReturnTarget.DASHBOARD -> returnToDashboardFromBrowser()
             }
         }
         browserBinding.btnPagePrev.setOnClickListener {
@@ -679,7 +687,8 @@ class KtvKioskOverlayController(
         browser.browserSingerPanel.visibility = View.GONE
         browser.txtBrowserCenterHint.visibility = View.GONE
         browser.browserInitialRail.visibility = View.VISIBLE
-        browser.browserFilterOptions.removeAllViews()
+        val stagedFilterOptions = mutableListOf<BrowserRailOptionSpec>()
+        activeFilterOptionsCollector = stagedFilterOptions
 
         val visibleSongs = when (tab) {
             KioskTab.PINYIN -> when {
@@ -769,23 +778,32 @@ class KtvKioskOverlayController(
                 tab == KioskTab.CATEGORIES && categoryDetail && state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null ->
                     "分类歌曲加载失败，按确定重试"
                 tab == KioskTab.CATEGORIES && !categoryDetail -> commercialRouteNotice ?: "选择一个分类查看歌曲"
+                tab == KioskTab.PLAYLISTS && (state.playlistDetailLoading ||
+                    (pendingAutoSelectFirstPlaylist && state.playlists.isNotEmpty())) -> "正在加载精选歌单…"
+                tab == KioskTab.PLAYLISTS && state.errorFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) != null ->
+                    "精选歌单加载失败，按确定重试"
+                tab == KioskTab.PLAYLISTS && state.playlists.isEmpty() -> "暂无精选歌单"
                 else -> "暂无歌曲"
             }
             val retryAllSongs = tab == KioskTab.PINYIN && browsingAllSongs &&
                 state.kioskLibraryBrowse.error != null
             val retryCategory = tab == KioskTab.CATEGORIES && categoryDetail &&
                 state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null && state.catalogValue.isNotBlank()
-            browser.txtBrowserEmptyState.isFocusable = retryAllSongs || retryCategory
+            val retryPlaylists = tab == KioskTab.PLAYLISTS &&
+                state.errorFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) != null
+            browser.txtBrowserEmptyState.isFocusable = retryAllSongs || retryCategory || retryPlaylists
             browser.txtBrowserEmptyState.setOnClickListener {
                 when {
                     retryAllSongs -> catalogActionRouter.allSongs()
                     retryCategory && categoryMode == KioskCategoryMode.LANGUAGES -> catalogActionRouter.languageSongs(state.catalogValue)
                     retryCategory -> catalogActionRouter.tagSongs(state.catalogValue)
+                    retryPlaylists -> loadPlaylists()
                 }
             }
             browser.txtBrowserEmptyState.contentDescription = when {
                 retryAllSongs -> "全曲库加载失败，按确定重试"
                 retryCategory -> "分类歌曲加载失败，按确定重试"
+                retryPlaylists -> "精选歌单加载失败，按确定重试"
                 else -> null
             }
             browser.btnPagePrev.visibility = View.INVISIBLE
@@ -835,35 +853,9 @@ class KtvKioskOverlayController(
 
         when (tab) {
             KioskTab.PINYIN -> {
-                browser.txtBrowserCenterTitle.text = if (browsingAllSongs) "全部曲库" else "拼音 / 简拼搜索"
                 browser.txtBrowserCenterHint.text = ""
-                browser.txtBrowserResultsStatus.text = when {
-                    selectedArtist != null -> "歌手「$selectedArtist」 · ${state.catalogSongs.size} 首"
-                    browsingAllSongs && state.kioskLibraryBrowse.loading -> "正在加载全曲库…"
-                    browsingAllSongs && state.kioskLibraryBrowse.error != null ->
-                        "全曲库加载失败：${ControllerStateReducer.userMessage(state.kioskLibraryBrowse.error)}"
-                    browsingAllSongs -> "全部曲库 · ${state.kioskLibraryBrowse.total} 首"
-                    state.loading && state.query.isNotBlank() -> "正在检索：${state.query}…"
-                    state.errorFor(com.homektv.tv.controller.UiDomain.SEARCH) != null ->
-                        "检索失败：${state.messageFor(com.homektv.tv.controller.UiDomain.SEARCH) ?: "请稍后重试"}"
-state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.query}"
-                    visibleSongs.isEmpty() -> "输入歌名、歌手或首字母搜索"
-                    else -> "热门推荐 · 共 ${visibleSongs.size} 首"
-                }
             }
             KioskTab.SINGERS -> {
-                browser.txtBrowserCenterTitle.text = if (selectedArtist == null) "选择歌手" else "歌手歌曲"
-                browser.txtBrowserResultsStatus.text = when {
-                    selectedArtist != null && state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null ->
-                        "歌手歌曲加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.CATALOG) ?: "请稍后重试"}"
-                    selectedArtist != null -> "歌手「$selectedArtist」 · ${state.catalogSongs.size} 首"
-                    state.catalogLoading -> "正在加载歌手列表…"
-                    state.catalogStatus.code == "ARTIST_REGION_FILTER_UNCONFIRMED" ->
-                        state.catalogStatus.message ?: "地区筛选尚未确认，未显示未过滤结果"
-                    state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null ->
-                        "歌手列表加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.CATALOG) ?: "请稍后重试"}"
-                    else -> "选择歌手开始点歌 · ${state.artists.size} 位"
-                }
                 if (selectedArtist != null) {
                     browser.browserFilterScroll.visibility = View.VISIBLE
                     addBrowserFilterOption("返回歌手列表", selected = false, onClick = ::resetToSingersTab)
@@ -877,15 +869,8 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
                 }
             }
             KioskTab.RANKINGS -> {
-                browser.txtBrowserCenterTitle.text = "榜单筛选"
-                browser.txtBrowserResultsStatus.text = when {
-                    state.catalogLoading -> "正在加载热歌榜…"
-                    state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null ->
-                        "热歌榜加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.CATALOG) ?: "请稍后重试"}"
-                    else -> "近 30 天热门歌曲 · ${state.ranking.size} 首"
-                }
                 if (state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null) {
-                    showBrowserRetry("重试热歌榜", ::loadRankings)
+                    showBrowserRetry("重试热歌榜", visibleSongs.isNotEmpty(), ::loadRankings)
                 } else {
                     showBrowserHint("近 30 天\n热歌榜")
                 }
@@ -901,14 +886,9 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
                     route == KioskCommercialRoute.VARIETY -> "综艺点歌"
                     else -> "曲风标签"
                 }
-                browser.txtBrowserCenterTitle.text = if (categoryDetail && commercialRouteNotice == null) "${label}歌曲" else "选择$label"
                 if (categoryMode == KioskCategoryMode.NEW) {
-                    browser.txtBrowserCenterTitle.text = "新歌速递"
-                    browser.txtBrowserResultsStatus.text = "最新入库歌曲 · ${state.newSongs.size} 首"
                     if (state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null) {
-                        browser.txtBrowserResultsStatus.text =
-                            "新歌加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.CATALOG) ?: "请稍后重试"}"
-                        showBrowserRetry("重试加载新歌", ::loadCategories)
+                        showBrowserRetry("重试加载新歌", visibleSongs.isNotEmpty(), ::loadCategories)
                     } else {
                         showBrowserHint("最新入库\n歌曲推荐")
                     }
@@ -934,19 +914,12 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
                             else -> state.tags
                         }
                     }
-                    browser.txtBrowserResultsStatus.text = when {
-                        commercialRouteNotice != null -> commercialRouteNotice
-                        categoryDetail -> "${label}歌曲 · ${state.catalogSongs.size} 首"
-                        state.catalogLoading -> "正在加载$label…"
-                        state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null ->
-                            "${label}加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.CATALOG) ?: "请稍后重试"}"
-                        else -> "选择$label · ${options.size} 项"
-                    }
                     if (categoryDetail && showFilterList) {
                         addBrowserFilterOption("返回${label}列表", selected = false, onClick = ::resetCategoryDetail)
                     }
                     if (state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null && !state.catalogLoading) {
-                        if (showFilterList) {
+                        if (showFilterList || visibleSongs.isNotEmpty()) {
+                            browser.browserFilterScroll.visibility = View.VISIBLE
                             addBrowserFilterOption("重试加载$label", selected = false) {
                                 if (isLanguage) catalogActionRouter.languages() else catalogActionRouter.tags()
                             }
@@ -969,58 +942,27 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
                 }
             }
             KioskTab.FAVORITES -> {
-                browser.txtBrowserCenterTitle.text = "我的收藏"
-                browser.txtBrowserResultsStatus.text = when {
-                    state.favoritesLoading -> "正在加载收藏…"
-                    state.errorFor(com.homektv.tv.controller.UiDomain.FAVORITES) != null ->
-                        "收藏暂不可用：${state.messageFor(com.homektv.tv.controller.UiDomain.FAVORITES) ?: "请稍后重试"}"
-                    else -> "我的收藏 · ${state.favorites.size} 首"
-                }
                 if (state.errorFor(com.homektv.tv.controller.UiDomain.FAVORITES) != null) {
-                    showBrowserRetry("重试加载收藏", ::loadFavorites)
+                    showBrowserRetry("重试加载收藏", visibleSongs.isNotEmpty(), ::loadFavorites)
                 } else {
                     showBrowserHint("收藏歌曲\n在此点唱")
                 }
             }
             KioskTab.PLAYLISTS -> {
-                browser.txtBrowserCenterTitle.text = if (playlistDetail) "歌单歌曲" else "精选歌单"
                 val playlists = state.playlists
-                browser.txtBrowserResultsStatus.text = when {
-                    playlistDetail -> "${state.playlistDetail?.name ?: "歌单"} · ${state.playlistDetail?.songs?.size ?: 0} 首"
-                    state.playlistDetailLoading -> "正在加载歌单详情…"
-                    state.errorFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) != null ->
-                        "歌单加载失败：${state.messageFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) ?: "请稍后重试"}"
-                    else -> "精选歌单 · ${playlists.size} 个"
+                if (pendingAutoSelectFirstPlaylist && playlists.isNotEmpty() && !state.playlistDetailLoading) {
+                    pendingAutoSelectFirstPlaylist = false
+                    openPlaylist(playlists.first())
                 }
-                browser.browserFilterScroll.visibility = View.VISIBLE
-                if (playlistDetail) {
-                    addBrowserFilterOption("返回歌单列表", selected = false) {
-                        playlistDetail = false
-                        personalActionRouter.clearPlaylistDetail()
-                        personalActionRouter.playlists()
-                    }
-                }
-                if (state.errorFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) != null && !state.playlistDetailLoading) {
-                    addBrowserFilterOption("重试加载歌单", selected = false, onClick = ::loadPlaylists)
-                }
-                playlists.forEach { item ->
-                    val countStr = "    ${item.songCount}首"
-                    addBrowserFilterOption(
-                        label = "${item.name}$countStr",
-                        selected = state.playlistDetail?.id == item.id,
-                    ) { openPlaylist(item) }
+                if (state.errorFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) != null) {
+                    showBrowserRetry("重试加载歌单", visibleSongs.isNotEmpty(), ::loadPlaylists)
+                } else {
+                    showBrowserHint("精选歌单\n点击分类切换")
                 }
             }
             KioskTab.HISTORY -> {
-                browser.txtBrowserCenterTitle.text = "已唱历史"
-                browser.txtBrowserResultsStatus.text = when {
-                    state.historyLoading -> "正在加载演唱历史…"
-                    state.errorFor(com.homektv.tv.controller.UiDomain.HISTORY) != null ->
-                        "演唱历史暂不可用：${state.messageFor(com.homektv.tv.controller.UiDomain.HISTORY) ?: "请稍后重试"}"
-                    else -> "最近唱过 · ${visibleSongs.size} 首"
-                }
                 if (state.errorFor(com.homektv.tv.controller.UiDomain.HISTORY) != null) {
-                    showBrowserRetry("重试加载历史", ::loadHistory)
+                    showBrowserRetry("重试加载历史", visibleSongs.isNotEmpty(), ::loadHistory)
                 } else {
                     showBrowserHint("最近唱过的\n歌曲")
                 }
@@ -1028,6 +970,8 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
             else -> Unit
         }
 
+        activeFilterOptionsCollector = null
+        syncBrowserOptionRail(browser.browserFilterOptions, stagedFilterOptions, FILTER_RAIL_STYLE)
         val hasKeyboard = browser.browserKeyboardContainer.visibility == View.VISIBLE
         val hasSingerPanel = browser.browserSingerPanel.visibility == View.VISIBLE
         val hasFilterOptions = browser.browserFilterScroll.visibility == View.VISIBLE && browser.browserFilterOptions.childCount > 0
@@ -1254,7 +1198,6 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
         val rail = browserBinding.browserSubCategoryRail
         val container = browserBinding.browserSubCategoryItems
         val preferredFocusLabel = (container.findFocus() as? Button)?.text?.toString()
-        container.removeAllViews()
 
         fun item(label: String, selected: Boolean = false, action: () -> Unit) = Triple(label, selected, action)
         val subcategories: List<Triple<String, Boolean, () -> Unit>> = when {
@@ -1319,10 +1262,19 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
                         })
                     }
                 }
+            tab == KioskTab.PLAYLISTS -> controllerState.playlists.map { playlist ->
+                item(
+                    label = playlist.name,
+                    selected = playlistDetail && controllerState.playlistDetail?.id == playlist.id,
+                ) {
+                    openPlaylist(playlist)
+                }
+            }
             else -> emptyList()
         }
 
         if (subcategories.isEmpty()) {
+            container.removeAllViews()
             rail.visibility = View.GONE
             for (index in 0 until browserBinding.browserCapsuleTabs.childCount) {
                 browserBinding.browserCapsuleTabs.getChildAt(index).nextFocusDownId = View.NO_ID
@@ -1332,27 +1284,50 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
 
         rail.visibility = View.VISIBLE
         val activeTopButton = commercialRouteButton(route)
+        val desiredDownId = if (tab == KioskTab.SINGERS) {
+            browserBinding.browserSingerRecyclerView.id
+        } else {
+            browserBinding.browserResultsRecyclerView.id
+        }
+        val existingLabels = (0 until container.childCount).mapNotNull {
+            (container.getChildAt(it) as? Button)?.text?.toString()
+        }
+        val canReuse = existingLabels.size == container.childCount &&
+            existingLabels == subcategories.map { it.first }
+
+        if (canReuse) {
+            subcategories.forEachIndexed { index, (_, selected, action) ->
+                val btn = container.getChildAt(index) as Button
+                btn.isSelected = selected
+                activeTopButton?.let { btn.nextFocusUpId = it.id }
+                btn.nextFocusDownId = desiredDownId
+                btn.setOnClickListener {
+                    coordinator.resetIdleTimer()
+                    action()
+                }
+                if (index == 0) activeTopButton?.nextFocusDownId = btn.id
+            }
+            return
+        }
+
+        container.removeAllViews()
         subcategories.forEachIndexed { index, (label, selected, action) ->
             val btn = Button(activity, null, android.R.attr.buttonBarButtonStyle).apply {
                 text = label
-                textSize = 13f
+                textSize = 12f
                 setTextColor(0xFFFFFFFF.toInt())
                 background = ContextCompat.getDrawable(activity, R.drawable.bg_ktv_capsule_subtab)
                 isSelected = selected
                 isFocusable = true
                 minWidth = 0
-                setPadding(dp(12), 0, dp(12), 0)
+                setPadding(dp(10), 0, dp(10), 0)
                 activeTopButton?.let { nextFocusUpId = it.id }
-                nextFocusDownId = if (tab == KioskTab.SINGERS) {
-                    browserBinding.browserSingerRecyclerView.id
-                } else {
-                    browserBinding.browserResultsRecyclerView.id
-                }
+                nextFocusDownId = desiredDownId
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
-                    dp(30),
+                    dp(28),
                 ).apply {
-                    marginEnd = dp(6)
+                    marginEnd = dp(4)
                 }
                 setOnClickListener {
                     coordinator.resetIdleTimer()
@@ -1489,9 +1464,9 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
         }
     }
 
-    private fun showBrowserRetry(label: String, retry: () -> Unit) {
+    private fun showBrowserRetry(label: String, hasVisibleResults: Boolean, retry: () -> Unit) {
         val shouldShowKeyboard = isSearchKeyboardShowing()
-        if (shouldShowKeyboard) {
+        if (shouldShowKeyboard && !hasVisibleResults) {
             browserBinding.txtBrowserEmptyState.text = "$label，按确定重试"
             browserBinding.txtBrowserEmptyState.visibility = View.VISIBLE
             browserBinding.txtBrowserEmptyState.setOnClickListener { retry() }
@@ -1504,7 +1479,6 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
 
     private fun renderSingerInitialRail(state: ControllerUiState) {
         val rail = browserBinding.browserInitialOptions
-        rail.removeAllViews()
         val availableInitials = state.artistInitials
             .map { it.trim().uppercase() }
             .filter { it.length == 1 && it[0] in 'A'..'Z' }
@@ -1514,38 +1488,22 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
         } else {
             availableInitials.ifEmpty { ('A'..'Z').map(Char::toString) }
         }
-        initials.forEach { initial ->
-            val button = Button(activity).apply {
-                text = initial
-                isFocusable = true
-                minWidth = 0
-                setPadding(0, 0, 0, 0)
-                setBackgroundResource(
-                    if (state.artistInitial.equals(initial, ignoreCase = true)) R.drawable.btn_gold
-                    else R.drawable.btn_keyboard_key,
+        val specs = initials.map { initial ->
+            BrowserRailOptionSpec(
+                label = initial,
+                selected = state.artistInitial.equals(initial, ignoreCase = true),
+            ) {
+                focusController.hasInnerDetailBack = false
+                presentationState.clearArtistSelection()
+                catalogActions.loadArtists(
+                    gender = controllerState.artistGender,
+                    initial = initial,
+                    restorePage = 0,
+                    region = controllerState.artistRegion,
                 )
-                setTextColor(
-                    if (state.artistInitial.equals(initial, ignoreCase = true)) 0xFF111317.toInt()
-                    else ContextCompat.getColor(activity, R.color.color_keyboard_key_text),
-                )
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(38),
-                ).apply { bottomMargin = dp(3) }
-                setOnClickListener {
-                    coordinator.resetIdleTimer()
-                    focusController.hasInnerDetailBack = false
-                    presentationState.clearArtistSelection()
-                    catalogActions.loadArtists(
-                        gender = controllerState.artistGender,
-                        initial = initial,
-                        restorePage = 0,
-                        region = controllerState.artistRegion,
-                    )
-                }
             }
-            rail.addView(button)
         }
+        syncBrowserOptionRail(rail, specs, INITIAL_RAIL_STYLE)
     }
 
     private fun addBrowserFilterOption(
@@ -1553,26 +1511,79 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
         selected: Boolean,
         onClick: () -> Unit,
     ) {
-        val button = Button(activity).apply {
-            text = label
-            isFocusable = true
-            minWidth = 0
-            setBackgroundResource(if (selected) R.drawable.btn_gold else R.drawable.bg_ktv_card_focused)
-            setTextColor(
-                if (selected) 0xFF111317.toInt()
-                else ContextCompat.getColor(activity, R.color.color_keyboard_key_text),
-            )
-            textSize = 14f
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(48),
-            ).apply { bottomMargin = dp(6) }
-            setOnClickListener {
-                coordinator.resetIdleTimer()
-                onClick()
-            }
+        val spec = BrowserRailOptionSpec(label = label, selected = selected, onClick = onClick)
+        val collector = activeFilterOptionsCollector
+        if (collector != null) {
+            collector += spec
+            return
         }
-        browserBinding.browserFilterOptions.addView(button)
+        syncBrowserOptionRail(browserBinding.browserFilterOptions, listOf(spec), FILTER_RAIL_STYLE)
+    }
+
+    private data class RailButtonStyle(
+        val heightDp: Int,
+        val bottomMarginDp: Int,
+        val zeroPadding: Boolean,
+        val textSizeSp: Float?,
+        val unselectedDrawableRes: Int,
+    )
+
+    private class RailOptionHolder(
+        val label: String,
+        var onClick: () -> Unit,
+    )
+
+    private fun syncBrowserOptionRail(
+        container: LinearLayout,
+        specs: List<BrowserRailOptionSpec>,
+        style: RailButtonStyle,
+    ) {
+        val existingLabels = (0 until container.childCount).map { idx ->
+            val button = container.getChildAt(idx) as? Button ?: return@map ""
+            (button.tag as? RailOptionHolder)?.label ?: button.text?.toString().orEmpty()
+        }
+        if (BrowserRailSyncPolicy.canReuseButtons(existingLabels, specs)) {
+            specs.forEachIndexed { idx, spec ->
+                val button = container.getChildAt(idx) as Button
+                (button.tag as? RailOptionHolder)?.onClick = spec.onClick
+                applyRailButtonStyle(button, spec.selected, style)
+            }
+            return
+        }
+        container.removeAllViews()
+        specs.forEach { spec ->
+            val holder = RailOptionHolder(spec.label, spec.onClick)
+            val button = Button(activity).apply {
+                tag = holder
+                text = spec.label
+                isFocusable = true
+                minWidth = 0
+                if (style.zeroPadding) setPadding(0, 0, 0, 0)
+                if (style.textSizeSp != null) textSize = style.textSizeSp
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(style.heightDp),
+                ).apply { bottomMargin = dp(style.bottomMarginDp) }
+                setOnClickListener {
+                    coordinator.resetIdleTimer()
+                    (tag as? RailOptionHolder)?.onClick?.invoke()
+                }
+            }
+            applyRailButtonStyle(button, spec.selected, style)
+            container.addView(button)
+        }
+    }
+
+    private fun applyRailButtonStyle(
+        button: Button,
+        selected: Boolean,
+        style: RailButtonStyle,
+    ) {
+        button.setBackgroundResource(if (selected) R.drawable.btn_gold else style.unselectedDrawableRes)
+        button.setTextColor(
+            if (selected) 0xFF111317.toInt()
+            else ContextCompat.getColor(activity, R.color.color_keyboard_key_text),
+        )
     }
 
     private fun dp(value: Int): Int =
@@ -1600,17 +1611,24 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
         overlay.kioskDashboardView.visibility = if (tab == KioskTab.DASHBOARD) View.VISIBLE else View.GONE
 
         if (tab == KioskTab.DASHBOARD) {
-            overlay.kioskDashboardView.requestDashboardFocus()
+            val skipAutoFocus = skipNextDashboardAutoFocus
+            skipNextDashboardAutoFocus = false
+            if (!skipAutoFocus) {
+                overlay.kioskDashboardView.requestDashboardFocus()
+            }
         }
 
         if (tab != KioskTab.CATEGORIES && categoryDetail) {
             categoryDetail = false
             focusController.hasInnerDetailBack = false
         }
-        if (tab != KioskTab.PLAYLISTS && playlistDetail) {
-            playlistDetail = false
-            personalActionRouter.clearPlaylistDetail()
-            focusController.hasInnerDetailBack = false
+        if (tab != KioskTab.PLAYLISTS) {
+            pendingAutoSelectFirstPlaylist = false
+            if (playlistDetail) {
+                playlistDetail = false
+                personalActionRouter.clearPlaylistDetail()
+                focusController.hasInnerDetailBack = false
+            }
         }
 
         if (tab != KioskTab.PINYIN) {
@@ -1637,7 +1655,10 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
                 shouldLoadCategoryRoot(categoryMode)
             ) loadCategories()
             KioskTab.FAVORITES -> loadFavorites()
-            KioskTab.PLAYLISTS -> loadPlaylists()
+            KioskTab.PLAYLISTS -> {
+                pendingAutoSelectFirstPlaylist = true
+                loadPlaylists()
+            }
             KioskTab.HISTORY -> loadHistory()
         }
         renderThreeColumnBrowser(controllerState)
@@ -1736,6 +1757,7 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
             KioskCommercialRoute.FEATURED -> {
                 leaveKioskAllSongs()
                 playlistDetail = false
+                pendingAutoSelectFirstPlaylist = true
                 presentationState.selectTab(KioskTab.PLAYLISTS)
             }
             KioskCommercialRoute.LOCAL -> {
@@ -1959,8 +1981,9 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
 
     private fun openPlaylist(playlist: com.homektv.tv.net.PlaylistSummary) {
         coordinator.resetIdleTimer()
+        pendingAutoSelectFirstPlaylist = false
         playlistDetail = true
-        focusController.hasInnerDetailBack = true
+        focusController.hasInnerDetailBack = false
         personalActionRouter.playlistDetail(playlist.id)
     }
 
@@ -2062,18 +2085,19 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
         if (snapshot != null) {
             val currentTitle = snapshot.playing?.song?.let { "${it.title} · ${it.artist}" }
                 ?: "当前暂无歌曲播放"
-            dialog.submitQueue(
-                nowPlayingText = currentTitle,
-                waitingList = snapshot.list.filter { it.status == "waiting" },
-                isPlaying = snapshot.state == "playing",
-            )
             val staleMessage = when {
                 state.queueLoading -> "正在同步队列；当前显示最后一次已同步的数据。"
                 queueError != null -> "队列刷新失败，当前显示最后一次已同步的数据：${state.messageFor(com.homektv.tv.controller.UiDomain.QUEUE) ?: "请重试"}"
                 state.connection == ControllerConnection.OFFLINE -> "点歌服务离线，当前显示最后一次已同步的数据。"
                 else -> null
             }
-            dialog.setQueueStatus(staleMessage, retryAvailable = !state.queueLoading)
+            dialog.submitQueue(
+                nowPlayingText = currentTitle,
+                waitingList = snapshot.list.filter { it.status == "waiting" },
+                isPlaying = snapshot.state == "playing",
+                statusMessage = staleMessage,
+                retryAvailable = !state.queueLoading,
+            )
         } else {
             val message = when {
                 state.queueLoading -> "正在加载队列…"
@@ -2267,8 +2291,22 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
         const val MINIMUM_PINYIN_VIEWPORT_DP = 140
         const val MINIMUM_LIST_VIEWPORT_DP = 128
         const val SONG_GRID_PAGE_SIZE = 15
-        const val SINGER_GRID_PAGE_SIZE = 10
+        const val SINGER_GRID_PAGE_SIZE = 16
         const val MAX_VISIBLE_CATALOG_ITEMS = 2000
+        private val INITIAL_RAIL_STYLE = RailButtonStyle(
+            heightDp = 38,
+            bottomMarginDp = 3,
+            zeroPadding = true,
+            textSizeSp = null,
+            unselectedDrawableRes = R.drawable.btn_keyboard_key,
+        )
+        private val FILTER_RAIL_STYLE = RailButtonStyle(
+            heightDp = 48,
+            bottomMarginDp = 6,
+            zeroPadding = false,
+            textSizeSp = 14f,
+            unselectedDrawableRes = R.drawable.bg_ktv_card_focused,
+        )
     }
 
     private fun reparentView(view: View, target: ViewGroup) {
@@ -2303,8 +2341,14 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
         binding.kioskOverlay.kioskKeyboard.clear()
         loadDefaultSongs()
         if (wasAlreadyOnSingersTab) loadArtists()
-        binding.kioskOverlay.btnSingerAll.post {
-            binding.kioskOverlay.btnSingerAll.requestFocus()
+        browserBinding.browserNavSingers.post {
+            if (presentationState.currentTab.value == KioskTab.SINGERS) {
+                if (browserBinding.browserSingerRecyclerView.isShown) {
+                    browserBinding.browserSingerRecyclerView.requestFocus()
+                } else {
+                    browserBinding.browserNavSingers.requestRemoteFocus()
+                }
+            }
         }
     }
 
@@ -2315,6 +2359,26 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
             KioskCategoryMode.LANGUAGES -> catalogActionRouter.languages()
             KioskCategoryMode.TAGS -> catalogActionRouter.tags()
             KioskCategoryMode.NEW -> loadCategories()
+        }
+    }
+
+    private fun returnToDashboardFromBrowser() {
+        showVarietyPanel(false)
+        backExitGate.reset()
+        if (globalSearchReturnFocus != null) {
+            val returnFocus = globalSearchReturnFocus
+            globalSearchReturnFocus = null
+            skipNextDashboardAutoFocus = true
+            presentationState.selectTab(KioskTab.DASHBOARD)
+            returnFocus?.post {
+                if (returnFocus.isAttachedToWindow && returnFocus.isShown) {
+                    returnFocus.requestFocus()
+                } else {
+                    binding.kioskOverlay.kioskDashboardView.requestDashboardFocus()
+                }
+            }
+        } else {
+            presentationState.selectTab(KioskTab.DASHBOARD)
         }
     }
 
@@ -2343,7 +2407,10 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
             return true
         }
         if (event.action == KeyEvent.ACTION_DOWN && coordinator.isKioskActive.value &&
-            presentationState.currentTab.value == KioskTab.PINYIN
+            presentationState.currentTab.value == KioskTab.PINYIN &&
+            isSearchKeyboardShowing() &&
+            binding.kioskOverlay.kioskKeyboard.visibility == View.VISIBLE &&
+            activity.currentFocus !is android.widget.EditText
         ) {
             val digit = when (event.keyCode) {
                 KeyEvent.KEYCODE_0, KeyEvent.KEYCODE_NUMPAD_0 -> '0'
@@ -2383,21 +2450,8 @@ state.query.isNotBlank() -> "找到 ${state.results.size} 首歌曲 · ${state.q
                     },
                     onInnerDetailBack = { resetInnerDetail() },
                     onExitKiosk = {
-                        if (globalSearchReturnFocus != null) {
-                            backExitGate.reset()
-                            val returnFocus = globalSearchReturnFocus
-                            globalSearchReturnFocus = null
-                            presentationState.selectTab(KioskTab.DASHBOARD)
-                            returnFocus?.post {
-                                if (returnFocus.isAttachedToWindow && returnFocus.isShown) {
-                                    returnFocus.requestFocus()
-                                } else {
-                                    binding.kioskOverlay.kioskDashboardView.requestDashboardFocus()
-                                }
-                            }
-                        } else if (presentationState.currentTab.value != KioskTab.DASHBOARD) {
-                            presentationState.selectTab(KioskTab.DASHBOARD)
-                            backExitGate.reset()
+                        if (globalSearchReturnFocus != null || presentationState.currentTab.value != KioskTab.DASHBOARD) {
+                            returnToDashboardFromBrowser()
                         } else {
                             val hasPlaying = currentSnapshot?.playing != null || currentSnapshot?.state == "playing"
                             val action = KioskLifecyclePolicy.resolveDashboardBackAction(hasPlaying)

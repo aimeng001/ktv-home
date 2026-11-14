@@ -324,6 +324,113 @@ class KtvThreeColumnBrowserLayoutContractTest {
         )
     }
 
+    @Test
+    fun browserBackButtonSharesReturnFocusCleanupWithSystemBack() {
+        val source = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+        val backButton = source.substringAfter("browserBinding.btnBrowserBack.setOnClickListener")
+            .substringBefore("browserBinding.btnPagePrev.setOnClickListener")
+        val exitKiosk = source.substringAfter("onExitKiosk = {")
+            .substringBefore("else -> {")
+
+        assertTrue(
+            "btnBrowserBack 返回大厅时必须统一调用 returnToDashboardFromBrowser() 消费并恢复 globalSearchReturnFocus",
+            backButton.contains("returnToDashboardFromBrowser()"),
+        )
+        assertTrue(
+            "KEYCODE_BACK 的 onExitKiosk 回大厅分支也必须复用 returnToDashboardFromBrowser()",
+            exitKiosk.contains("returnToDashboardFromBrowser()"),
+        )
+        val returnHelper = source.substringAfter("private fun returnToDashboardFromBrowser()")
+            .substringBefore("private fun ")
+        assertTrue(
+            "returnToDashboardFromBrowser 必须抑制 applyTabSelection 抢占磁贴焦点",
+            returnHelper.contains("skipNextDashboardAutoFocus = true"),
+        )
+    }
+
+    @Test
+    fun varietyIconsUseCircularFocusRingAndExpandedDiameter() {
+        val focusXml = locate("src/main/res/drawable/bg_ktv_variety_icon_focus.xml").readText()
+        val browserXml = locate("src/main/res/layout/view_ktv_three_column_browser.xml").readText()
+        val varietyPanel = browserXml.substringAfter("id=\"@+id/panelVarietyShows\"")
+            .substringBefore("</GridLayout>")
+
+        assertTrue(
+            "bg_ktv_variety_icon_focus 必须使用 android:shape=\"oval\"",
+            focusXml.contains("android:shape=\"oval\""),
+        )
+        assertFalse(
+            "bg_ktv_variety_icon_focus 不得继续使用圆角矩形 rectangle",
+            focusXml.contains("android:shape=\"rectangle\""),
+        )
+        assertEquals(
+            "8 个综艺节目图标必须统一采用 76dp 圆形直径",
+            8,
+            Regex("android:layout_width=\"76dp\"").findAll(varietyPanel).count(),
+        )
+        assertEquals(
+            "8 个综艺节目图标高度必须统一为 76dp",
+            8,
+            Regex("android:layout_height=\"76dp\"").findAll(varietyPanel).count(),
+        )
+    }
+
+    @Test
+    fun subCategoryRailReusesStableButtonsAndCompactsSpacing() {
+        val source = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+        val rail = source.substringAfter("private fun renderSubCategoryRail(")
+            .substringBefore("private fun commercialRouteButton(")
+
+        assertTrue(
+            "renderSubCategoryRail 必须先比对标签列表并在未变化时原地复用按钮避免焦点闪烁",
+            rail.contains("existingLabels") && rail.contains("marginEnd = dp(4)"),
+        )
+    }
+
+    @Test
+    fun featuredTabRendersPlaylistsInSubCategoryRailAndAutoOpensFirstOnce() {
+        val source = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+        val rail = source.substringAfter("private fun renderSubCategoryRail(")
+            .substringBefore("private fun commercialRouteButton(")
+        val playlistsBranch = source.substringAfter("KioskTab.PLAYLISTS -> {\n                val playlists")
+            .substringBefore("KioskTab.HISTORY -> {")
+        val openPlaylistMethod = source.substringAfter("private fun openPlaylist(")
+            .substringBefore("private fun orderSong(")
+
+        assertTrue(
+            "renderSubCategoryRail 必须为 KioskTab.PLAYLISTS 提供歌单胶囊条",
+            rail.contains("KioskTab.PLAYLISTS") && rail.contains("controllerState.playlists"),
+        )
+        assertTrue(
+            "必须声明 pendingAutoSelectFirstPlaylist 一次性防重标记并仅自动打开首个歌单一次",
+            source.contains("private var pendingAutoSelectFirstPlaylist = false") &&
+                playlistsBranch.contains("if (pendingAutoSelectFirstPlaylist &&") &&
+                playlistsBranch.contains("pendingAutoSelectFirstPlaylist = false") &&
+                playlistsBranch.contains("openPlaylist(playlists.first())"),
+        )
+        assertFalse(
+            "精选歌单改由顶部二级胶囊承担后，不得再向右侧 browserFilterScroll 堆砌歌单列表",
+            playlistsBranch.contains("addBrowserFilterOption("),
+        )
+        assertFalse(
+            "胶囊切换歌单不得设置 hasInnerDetailBack = true 导致按返回停留在空页面",
+            openPlaylistMethod.contains("focusController.hasInnerDetailBack = true"),
+        )
+    }
+
+    @Test
+    fun deadBrowserTitleAndStatusViewsAreRemoved() {
+        val layoutXml = locate("src/main/res/layout/view_ktv_three_column_browser.xml").readText()
+        val controller = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+        val androidTest = locate("src/androidTest/java/com/homektv/tv/ui/KtvCommercialUiNavigationTest.kt").readText()
+
+        assertFalse("view_ktv_three_column_browser.xml 不应保留死视图 txtBrowserCenterTitle", layoutXml.contains("txtBrowserCenterTitle"))
+        assertFalse("view_ktv_three_column_browser.xml 不应保留死视图 txtBrowserResultsStatus", layoutXml.contains("txtBrowserResultsStatus"))
+        assertFalse("KtvKioskOverlayController 不应再写入 txtBrowserCenterTitle", controller.contains("txtBrowserCenterTitle"))
+        assertFalse("KtvKioskOverlayController 不应再写入 txtBrowserResultsStatus", controller.contains("txtBrowserResultsStatus"))
+        assertFalse("KtvCommercialUiNavigationTest 不应引用已移除的 txtBrowserCenterTitle", androidTest.contains("txtBrowserCenterTitle"))
+    }
+
     private fun locate(relativePath: String): File {
         val workingDirectory = File(System.getProperty("user.dir").orEmpty())
         val candidates = sequence {

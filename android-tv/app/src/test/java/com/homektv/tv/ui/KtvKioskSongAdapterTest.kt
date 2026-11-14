@@ -191,4 +191,29 @@ class KtvKioskSongAdapterTest {
         // 验证适配器调用了 ArtistInitialResolver 提取姓氏
         assertTrue("适配器使用 ArtistInitialResolver 提取歌手姓氏", adapter.contains("ArtistInitialResolver.resolve"))
     }
+
+    @Test
+    fun browserAndSingerAdaptersSupportPayloadPartialBindingWithFreshListeners() {
+        val workingDirectory = java.io.File(System.getProperty("user.dir").orEmpty())
+        val songAdapter = sequenceOf(
+            workingDirectory.resolve("src/main/java/com/homektv/tv/ui/KtvKioskBrowserSongAdapter.kt"),
+            workingDirectory.resolve("app/src/main/java/com/homektv/tv/ui/KtvKioskBrowserSongAdapter.kt"),
+            workingDirectory.resolve("android-tv/app/src/main/java/com/homektv/tv/ui/KtvKioskBrowserSongAdapter.kt"),
+        ).firstOrNull(java.io.File::isFile)?.readText() ?: error("Cannot locate KtvKioskBrowserSongAdapter.kt")
+
+        assertTrue(songAdapter.contains("PAYLOAD_STATE_CHANGED"))
+        assertTrue(songAdapter.contains("notifyItemRangeChanged(0, itemCount, PAYLOAD_STATE_CHANGED)"))
+        assertTrue(songAdapter.contains("override fun onBindViewHolder(") && songAdapter.contains("payloads: MutableList<Any>"))
+        assertTrue(songAdapter.contains("private var boundSong: SongDto? = null"))
+
+        val singerAdapter = sequenceOf(
+            workingDirectory.resolve("src/main/java/com/homektv/tv/ui/SingerCardAdapter.kt"),
+            workingDirectory.resolve("app/src/main/java/com/homektv/tv/ui/SingerCardAdapter.kt"),
+            workingDirectory.resolve("android-tv/app/src/main/java/com/homektv/tv/ui/SingerCardAdapter.kt"),
+        ).firstOrNull(java.io.File::isFile)?.readText() ?: error("Cannot locate SingerCardAdapter.kt")
+
+        assertTrue(singerAdapter.contains("PAYLOAD_ARTIST_COUNTS"))
+        assertTrue(singerAdapter.contains("getChangePayload("))
+        assertTrue(singerAdapter.contains("private var boundArtist: ArtistItem? = null"))
+    }
 }

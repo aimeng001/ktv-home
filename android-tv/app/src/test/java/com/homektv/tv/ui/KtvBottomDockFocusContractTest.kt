@@ -101,6 +101,28 @@ class KtvBottomDockFocusContractTest {
         assertTrue(!overlay.contains("state.queue.takeIf { state.connection != ControllerConnection.CONNECTING }"))
     }
 
+    @Test
+    fun fullscreenPanelAndMainActivityWirePitchAndUnifiedUnavailableDialog() {
+        val fullscreenXml = locate("src/main/res/layout/view_ktv_fullscreen_playback_panel.xml").readText()
+        assertTrue(fullscreenXml.contains("android:id=\"@+id/btnFullscreenPitch\""))
+
+        val panelSource = locate("src/main/java/com/homektv/tv/ui/KtvFullscreenPlaybackPanel.kt").readText()
+        val moveFocusMethod = panelSource.substringAfter("private fun moveFocus(")
+            .substringBefore("private fun currentFocusedButton()")
+        val focusedButtonMethod = panelSource.substringAfter("private fun currentFocusedButton()")
+            .substringBefore("private fun seekBy(")
+        assertTrue(panelSource.contains("FullscreenPlaybackAction.PITCH"))
+        assertTrue(moveFocusMethod.contains("pitchButton"))
+        assertTrue(focusedButtonMethod.contains("pitchButton"))
+
+        val activitySource = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+        assertTrue(activitySource.contains("FullscreenPlaybackAction.PITCH -> openPitchFromFullscreen()"))
+        val unavailableMethod = activitySource.substringAfter("private fun showPitchUnavailable(")
+            .substringBefore("private fun showCapabilityDrawer(")
+        assertTrue("不可用状态也应使用居中 KtvPitchDialog 统一承载", unavailableMethod.contains("KtvPitchDialog("))
+        assertTrue("不可用状态不得再退回 showCapabilityDrawer", !unavailableMethod.contains("showCapabilityDrawer("))
+    }
+
     private fun locate(relativePath: String): File {
         val workingDirectory = File(System.getProperty("user.dir").orEmpty())
         val candidates = sequence {

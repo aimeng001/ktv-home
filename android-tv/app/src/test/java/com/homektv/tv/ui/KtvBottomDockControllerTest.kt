@@ -121,4 +121,33 @@ class KtvBottomDockControllerTest {
         assertTrue("伴唱状态与原唱状态必须动态切换图标", render.contains("R.drawable.ic_dock_accompany") && render.contains("R.drawable.ic_dock_original"))
         assertTrue("播放状态切换后必须重新统一图标尺寸", render.indexOf("setCompoundDrawablesRelativeWithIntrinsicBounds") < render.indexOf("normalizeDockButtonIcons()"))
     }
+
+    @Test
+    fun idleDockKeepsFocusableFrameWithoutSolidBlackBoxOrEdgeShadows() {
+        val idle = BottomDockVideoFramePolicy.resolve(effectiveVideoVisible = false)
+        assertTrue(idle.containerVisible)
+        assertTrue(idle.useIdleFrame)
+        assertFalse(idle.showEdgeShadows)
+
+        val active = BottomDockVideoFramePolicy.resolve(effectiveVideoVisible = true)
+        assertTrue(active.containerVisible)
+        assertFalse(active.useIdleFrame)
+        assertTrue(active.showEdgeShadows)
+
+        val controller = java.io.File("src/main/java/com/homektv/tv/ui/KtvBottomDockController.kt").let { file ->
+            if (file.exists()) file.readText() else java.io.File("../$file").readText()
+        }
+        val updateVisibility = controller.substringAfter("private fun updateContainerVisibility()")
+            .substringBefore("fun setExternalDisplayActive")
+        assertTrue(updateVisibility.contains("BottomDockVideoFramePolicy.resolve("))
+        assertTrue(updateVisibility.contains("bg_ktv_dock_video_frame_idle"))
+        assertTrue(updateVisibility.contains("binding.videoShadowLeft.visibility"))
+        assertTrue(updateVisibility.contains("binding.videoShadowRight.visibility"))
+
+        val applyBounds = controller.substringAfter("private fun applyWindowBounds(")
+        assertTrue(
+            "退出全屏重设底栏窗口尺寸后必须复用 updateContainerVisibility() 防止空闲黑框回弹",
+            applyBounds.contains("updateContainerVisibility()"),
+        )
+    }
 }

@@ -29,6 +29,22 @@ class KtvPitchDialogLayoutContractTest {
         }
     }
 
+    @Test
+    fun pitchDialogLayoutDisplaysNumericScaleTicks() {
+        val xml = locate("src/main/res/layout/dialog_ktv_pitch.xml").readText()
+        listOf("-5", "-4", "-3", "-2", "-1", "0", "+1", "+2", "+3", "+4", "+5").forEach { tick ->
+            assertTrue("dialog_ktv_pitch 必须包含刻度标记 $tick", xml.contains("android:text=\"$tick\""))
+        }
+    }
+
+    @Test
+    fun pitchDialogSupportsUnavailableModeDisablingControlsAndFocusingClose() {
+        val source = locate("src/main/java/com/homektv/tv/ui/KtvPitchDialog.kt").readText()
+        assertTrue(source.contains("unavailableStatus: PlaybackPitchStatus? = null"))
+        assertTrue(source.contains("btnPitchClose.requestRemoteFocus()"))
+        assertTrue(source.contains("isEnabled = false"))
+    }
+
     private fun locate(relativePath: String): File {
         val workingDirectory = File(System.getProperty("user.dir").orEmpty())
         val candidates = sequence {

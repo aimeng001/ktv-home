@@ -44,6 +44,7 @@ class SetupActivity : AppCompatActivity() {
     private val scanner = LanScanner()
     private val discovered = linkedMapOf<String, DiscoveredServer>()
     private var scanJob: Job? = null
+    private var verifyJob: Job? = null
     private var initialCredential = ""
     private var initialNickname = ""
     private var initialMode = DeviceMode.COMBINED
@@ -187,6 +188,7 @@ class SetupActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         scanJob?.cancel()
+        verifyJob?.cancel()
         if (::discovery.isInitialized) discovery.close()
         scanner.close()
         rhythmAnimators.forEach(ObjectAnimator::cancel)
@@ -315,7 +317,8 @@ class SetupActivity : AppCompatActivity() {
     private fun verifyAndConnect(server: SavedServer, button: Button) {
         button.isEnabled = false
         binding.txtScanStatus.text = getString(R.string.setup_verifying, server.hostPort)
-        lifecycleScope.launch {
+        verifyJob?.cancel()
+        verifyJob = lifecycleScope.launch {
             val confirmed = scanner.discover(server.hostPort)
                 ?.let { discovered -> SetupVerificationPolicy.confirm(server, discovered) }
             if (confirmed != null) {

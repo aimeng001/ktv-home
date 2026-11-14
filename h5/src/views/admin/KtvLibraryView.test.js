@@ -136,6 +136,21 @@ describe('KtvLibraryView', () => {
     expect(apiMock.adminSongs).toHaveBeenCalledTimes(2)
   })
 
+  it('hides the AI task panel by default and toggles it from the header button', async () => {
+    await mount()
+    expect(root.querySelector('.ai-task-panel')).toBeNull()
+
+    const aiButton = root.querySelector('.page-head button')
+    expect(aiButton.textContent).toBe('AI 任务')
+    aiButton.click()
+    await nextTick()
+    expect(root.querySelector('.ai-task-panel')).not.toBeNull()
+
+    root.querySelector('.ai-task-panel button').click()
+    await nextTick()
+    expect(root.querySelector('.ai-task-panel')).toBeNull()
+  })
+
   it('cancels deletion when confirmation is declined and adds a song to a selected playlist', async () => {
     await mount()
     confirmMock.mockResolvedValueOnce(false)

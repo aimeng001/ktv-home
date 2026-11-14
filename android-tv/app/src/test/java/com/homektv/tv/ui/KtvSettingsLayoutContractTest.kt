@@ -71,8 +71,8 @@ class KtvSettingsLayoutContractTest {
         assertTrue("The standby logo remains available", byId.containsKey("@+id/imgStandbyLogo"))
         assertTrue("Search remains visible in every device mode", activity.contains("binding.btnTopSearch.visibility = View.VISIBLE"))
         assertTrue("Global search must remember its origin", activity.contains("openGlobalSearch(binding.btnTopSearch)"))
-        assertTrue(activity.contains("setNeutralButton(\"服务与设备\")"))
-        assertTrue(activity.contains("confirmButton.nextFocusLeftId = serviceAndDeviceButton.id"))
+        assertTrue(activity.contains("KtvSystemInfoDialog("))
+        assertTrue(activity.contains("secondaryActionLabel = \"服务与设备\""))
         assertTrue(activity.contains("SetupActivity.EXTRA_RETURN_TO_CALLER"))
         assertTrue(activity.contains("KtvSettingsAction.OPEN_LIBRARY_SCAN"))
         assertTrue(activity.contains("KtvSettingsAction.OPEN_MEDIA_FEEDBACK"))
@@ -113,6 +113,35 @@ class KtvSettingsLayoutContractTest {
         }
         assertFalse("Automatic delete must never call a media mutation", activity.contains("deleteSourceMedia"))
         assertFalse("Device sync must never create a media copy", activity.contains("copyExternalMedia"))
+    }
+
+    @Test
+    fun systemAndInfoDialogsUseUnifiedGlassModalWithFocusNavigation() {
+        val dialogXml = parse("src/main/res/layout/dialog_ktv_system_info.xml")
+        val byId = elements(dialogXml, "*").associateBy { it.getAttribute("android:id") }
+
+        assertEquals("@drawable/player_glass", byId.getValue("@+id/systemInfoDialogRoot").getAttribute("android:background"))
+        assertTrue(byId.containsKey("@+id/txtSystemInfoTitle"))
+        assertTrue(byId.containsKey("@+id/txtSystemInfoMessage"))
+        val secondary = byId.getValue("@+id/btnSystemInfoSecondary")
+        val confirm = byId.getValue("@+id/btnSystemInfoConfirm")
+        assertEquals("true", secondary.getAttribute("android:focusable"))
+        assertEquals("true", confirm.getAttribute("android:focusable"))
+        assertEquals("@id/btnSystemInfoConfirm", secondary.getAttribute("android:nextFocusRight"))
+        assertEquals("@id/btnSystemInfoSecondary", confirm.getAttribute("android:nextFocusLeft"))
+
+        val dialogClass = locate("src/main/java/com/homektv/tv/ui/KtvSystemInfoDialog.kt").readText()
+        assertTrue(dialogClass.contains("class KtvSystemInfoDialog("))
+        assertTrue(dialogClass.contains("btnSystemInfoConfirm.requestRemoteFocus()"))
+
+        val activity = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+        val systemMethod = activity.substringAfter("private fun showSystemInfoDialog()")
+            .substringBefore("private fun launchServiceAndDeviceSettings()")
+        val infoMethod = activity.substringAfter("private fun showInformationalDialog(")
+            .substringBefore("private fun showLibraryScanConfirmDialog(")
+        assertFalse("系统信息与提示弹窗不得继续使用原生 AlertDialog.Builder", systemMethod.contains("AlertDialog.Builder"))
+        assertFalse("通用提示弹窗与下载说明不得继续使用原生 AlertDialog.Builder", infoMethod.contains("AlertDialog.Builder"))
+        assertTrue(activity.contains("showTrackedInfoModal("))
     }
 
     private fun parse(path: String) = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(locate(path))

@@ -74,7 +74,7 @@ public class LocalAvatarResolver {
 
             List<ArtistProfileService.Profile> unresolved = profileService.unresolvedProfiles(50_000);
             int matched = 0;
-            Map<Path, ProcessedCover> coverCache = new HashMap<>();
+            BoundedCoverCache coverCache = new BoundedCoverCache(COVER_CACHE_MAX_ENTRIES, COVER_CACHE_MAX_BYTES);
 
             for (var profile : unresolved) {
                 if (profile == null || profile.artistKey() == null) continue;
@@ -264,5 +264,60 @@ public class LocalAvatarResolver {
         }
         return "";
     }
-    private record ProcessedCover(byte[] bytes, String extension) {}
+    static final int COVER_CACHE_MAX_ENTRIES = 256;
+    static final long COVER_CACHE_MAX_BYTES = 64L * 1024 * 1024;
+
+    record ProcessedCover(byte[] bytes, String extension) {}
+
+    /** 有界 LRU 头像处理缓存，同时限制条目数与总字节数，防止单次扫描长期驻留过大内存。 */
+    static final class BoundedCoverCache {
+        private final int maxEntries;
+        private final long maxBytes;
+        private final java.util.LinkedHashMap<Path, ProcessedCover> entries;
+        private long totalBytes;
+
+        BoundedCoverCache(int maxEntries, long maxBytes) {
+            this.maxEntries = Math.max(0, maxEntries);
+            this.maxBytes = Math.max(0L, maxBytes);
+            this.entries = new java.util.LinkedHashMap<>(16, 0.75f, true);
+        }
+
+        ProcessedCover get(Path key) {
+            return entries.get(key);
+        }
+
+        void put(Path key, ProcessedCover value) {
+            if (key == null || value == null || value.bytes() == null) {
+                return;
+            }
+            long entryBytes = value.bytes().length;
+            if (maxEntries <= 0 || entryBytes > maxBytes) {
+                ProcessedCover previous = entries.remove(key);
+                if (previous != null) {
+                    totalBytes -= previous.bytes().length;
+                }
+                return;
+            }
+            ProcessedCover previous = entries.put(key, value);
+            if (previous != null) {
+                totalBytes -= previous.bytes().length;
+            }
+            totalBytes += entryBytes;
+
+            java.util.Iterator<java.util.Map.Entry<Path, ProcessedCover>> it = entries.entrySet().iterator();
+            while ((entries.size() > maxEntries || totalBytes > maxBytes) && it.hasNext()) {
+                java.util.Map.Entry<Path, ProcessedCover> eldest = it.next();
+                totalBytes -= eldest.getValue().bytes().length;
+                it.remove();
+            }
+        }
+
+        int size() {
+            return entries.size();
+        }
+
+        long totalBytes() {
+            return totalBytes;
+        }
+    }
 }

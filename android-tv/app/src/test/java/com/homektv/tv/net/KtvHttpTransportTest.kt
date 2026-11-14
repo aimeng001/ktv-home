@@ -210,6 +210,40 @@ class KtvHttpTransportTest {
         assertLateCallbackIgnored(binary = true, respond = true)
     }
 
+    @Test
+    fun resolveUrlPreservesExplicitHttpsHostScheme() {
+        assertEquals(
+            "https://ktv.local:8443/api/songs",
+            KtvHttpTransport.resolveUrl("https://ktv.local:8443", "/songs"),
+        )
+        assertEquals(
+            "https://ktv.local:8443/api/songs",
+            KtvHttpTransport.resolveUrl("https://ktv.local:8443", "/api/songs"),
+        )
+        assertEquals(
+            "http://[::1]:8080/api/songs",
+            KtvHttpTransport.resolveUrl("[::1]:8080", "/songs"),
+        )
+    }
+
+    @Test
+    fun malformedHostReturnsApiFailureInsteadOfThrowingOnRequestBuild() = runBlocking {
+        listOf("bad host", "127.0.0.1:99999", "[::1").forEach { badHost ->
+            val transport = transport { badHost }
+            try {
+                val results = listOf(
+                    transport.get("/songs"),
+                    transport.getBytes("/cover/1"),
+                    transport.post("/control", buildJsonObject { put("action", "pause") }),
+                    transport.delete("/queue/1"),
+                )
+                assertTrue("Expected failure for host=$badHost", results.all { it is KtvApiResult.Failure })
+            } finally {
+                transport.close()
+            }
+        }
+    }
+
     private fun transport(serverHost: () -> String?) = KtvHttpTransport(
         serverHost,
         OkHttpClient.Builder().callTimeout(5, TimeUnit.SECONDS).build(),

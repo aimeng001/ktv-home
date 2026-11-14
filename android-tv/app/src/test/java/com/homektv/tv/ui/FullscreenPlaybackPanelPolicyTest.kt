@@ -1,6 +1,7 @@
 package com.homektv.tv.ui
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FullscreenPlaybackPanelPolicyTest {
@@ -158,5 +159,12 @@ class FullscreenPlaybackPanelPolicyTest {
         assertEquals("00:36", FullscreenPlaybackPanelPolicy.formatTime(36_000))
         assertEquals("01:05", FullscreenPlaybackPanelPolicy.formatTime(65_000))
         assertEquals("1:00:00", FullscreenPlaybackPanelPolicy.formatTime(3_600_000))
+    }
+
+    @Test
+    fun pitchActionExistsWhilePreservingTenPrimaryBarSlots() {
+        assertTrue(FullscreenPlaybackAction.entries.contains(FullscreenPlaybackAction.PITCH))
+        assertEquals(10, FullscreenPlaybackPanelPolicy.ACTION_COUNT)
+        assertEquals(10, FullscreenPlaybackPanelPolicy.ACTION_ORDER.size)
     }
 }

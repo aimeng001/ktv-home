@@ -40,6 +40,18 @@ class KtvKioskCatalogErrorLayoutContractTest {
         assertTrue(renderMethod.contains("browser.txtBrowserEmptyState.setOnClickListener"))
         assertTrue(renderMethod.contains("browser.txtBrowserEmptyState.isFocusable = retrySingerList"))
         assertTrue(renderMethod.contains("browser.txtPageNumber.visibility = if (hasSingerRows) View.VISIBLE else View.GONE"))
+
+        val retryMethod = source.substringAfter("private fun showBrowserRetry(")
+            .substringBefore("private fun renderSingerInitialRail(")
+        assertTrue(
+            "showBrowserRetry must support non-overlapping filter rail retry when songs are already visible",
+            retryMethod.contains("hasVisibleResults: Boolean") && retryMethod.contains("shouldShowKeyboard && !hasVisibleResults"),
+        )
+        val keyMethod = source.substringAfter("fun dispatchKeyEvent(event: KeyEvent): Boolean")
+        assertTrue(
+            "remote digit dispatch must check visible keyboard and non-EditText focus",
+            keyMethod.contains("isSearchKeyboardShowing()") && keyMethod.contains("currentFocus !is android.widget.EditText"),
+        )
     }
 
     private fun parse(relativePath: String) =

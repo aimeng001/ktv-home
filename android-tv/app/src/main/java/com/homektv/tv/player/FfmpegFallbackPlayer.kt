@@ -44,6 +44,43 @@ internal data class FallbackVocalSelection(
     val audioLayout: AudioLayout,
 )
 
+internal data class FallbackChannelGains(
+    val left: Float,
+    val right: Float,
+)
+
+internal object FallbackAudioMixPolicy {
+    fun resolveGains(
+        volume: Float,
+        muted: Boolean,
+        selection: FallbackVocalSelection?,
+        channelModeOverride: String?,
+    ): FallbackChannelGains {
+        val master = if (muted) 0f else volume.coerceIn(0f, 1f)
+        if (master == 0f) return FallbackChannelGains(0f, 0f)
+        if (selection?.audioLayout?.layout.equals("DUAL_CHANNEL", ignoreCase = true)) {
+            val isAccompaniment = selection!!.mode.equals("accompaniment", ignoreCase = true)
+            val channel = if (isAccompaniment) {
+                selection.audioLayout.accompanimentChannel
+            } else {
+                selection.audioLayout.originalChannel
+            }
+            return when {
+                channel?.equals("left", ignoreCase = true) == true || channel == "0" ->
+                    FallbackChannelGains(master, 0f)
+                channel?.equals("right", ignoreCase = true) == true || channel == "1" ->
+                    FallbackChannelGains(0f, master)
+                isAccompaniment -> FallbackChannelGains(0f, master)
+                else -> FallbackChannelGains(master, 0f)
+            }
+        }
+        if (channelModeOverride.equals("accompaniment", ignoreCase = true)) {
+            return FallbackChannelGains(0f, master)
+        }
+        return FallbackChannelGains(master, master)
+    }
+}
+
 /** Defers vocal selection until MediaPlayer has audio tracks, while retaining later changes. */
 internal class FallbackVocalSelectionState {
     private var prepared = false
@@ -53,6 +90,8 @@ internal class FallbackVocalSelectionState {
         prepared = false
         requested = null
     }
+
+    fun current(): FallbackVocalSelection? = requested
 
     fun select(mode: String, trackIndex: Int?, audioLayout: AudioLayout): FallbackVocalSelection? {
         val selection = FallbackVocalSelection(mode, trackIndex, audioLayout)
@@ -156,6 +195,7 @@ class FfmpegFallbackPlayer(
     private var currentStreamUrl: String? = null
     private var currentVolume: Float = 1.0f
     private var isMuted: Boolean = false
+    private var channelModeOverride: String? = null
     private var requestedPositionMs: Long = 0L
     private val playbackIntent = FallbackPlaybackIntent()
     private val vocalSelection = FallbackVocalSelectionState()
@@ -328,14 +368,8 @@ class FfmpegFallbackPlayer(
     }
 
     override fun setChannelMode(mode: String) {
-        when (mode.lowercase()) {
-            "accompaniment" -> {
-                mediaPlayer?.setVolume(0f, currentVolume)
-            }
-            "original" -> {
-                applyCurrentVolume()
-            }
-        }
+        channelModeOverride = mode
+        applyCurrentVolume()
     }
 
     override fun setVolume(volume: Int, muted: Boolean) {
@@ -345,60 +379,46 @@ class FfmpegFallbackPlayer(
     }
 
     override fun setVocalSelection(mode: String, trackIndex: Int?, audioLayout: AudioLayout) {
+        channelModeOverride = null
         vocalSelection.select(mode, trackIndex, audioLayout)?.let { selection ->
             mediaPlayer?.let { applyVocalSelection(it, selection) }
         }
     }
 
     private fun applyVocalSelection(mp: MediaPlayer, selection: FallbackVocalSelection) {
-        val mode = selection.mode
         val trackIndex = selection.trackIndex
         val audioLayout = selection.audioLayout
         val layout = audioLayout.layout
-        if (layout.equals("DUAL_TRACK", ignoreCase = true)) {
-            if (trackIndex != null && trackIndex >= 0) {
-                try {
-                    val tracks = mp.trackInfo
-                    var audioTrackCount = 0
-                    for (i in tracks.indices) {
-                        if (tracks[i].trackType == MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) {
-                            if (audioTrackCount == trackIndex) {
-                                mp.selectTrack(i)
-                                Log.i(TAG, "Selected audio track $trackIndex (internal index $i)")
-                                break
-                            }
-                            audioTrackCount++
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "selectTrack failed: ${e.message}")
-                }
-            }
-            applyCurrentVolume()
-        } else if (layout.equals("DUAL_CHANNEL", ignoreCase = true)) {
-            val isAccompaniment = mode.equals("accompaniment", ignoreCase = true)
-            val channel = if (isAccompaniment) audioLayout.accompanimentChannel else audioLayout.originalChannel
-            val vol = if (isMuted) 0f else currentVolume
+        if (layout.equals("DUAL_TRACK", ignoreCase = true) && trackIndex != null && trackIndex >= 0) {
             try {
-                if (channel?.equals("left", ignoreCase = true) == true || channel == "0") {
-                    mediaPlayer?.setVolume(vol, 0f)
-                } else if (channel?.equals("right", ignoreCase = true) == true || channel == "1") {
-                    mediaPlayer?.setVolume(0f, vol)
-                } else {
-                    if (isAccompaniment) mediaPlayer?.setVolume(0f, vol) else mediaPlayer?.setVolume(vol, 0f)
+                val tracks = mp.trackInfo
+                var audioTrackCount = 0
+                for (i in tracks.indices) {
+                    if (tracks[i].trackType == MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) {
+                        if (audioTrackCount == trackIndex) {
+                            mp.selectTrack(i)
+                            Log.i(TAG, "Selected audio track $trackIndex (internal index $i)")
+                            break
+                        }
+                        audioTrackCount++
+                    }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "setVolume failed: ${e.message}")
+                Log.w(TAG, "selectTrack failed: ${e.message}")
             }
-        } else {
-            applyCurrentVolume()
         }
+        applyCurrentVolume()
     }
 
     private fun applyCurrentVolume() {
-        val vol = if (isMuted) 0f else currentVolume
+        val gains = FallbackAudioMixPolicy.resolveGains(
+            volume = currentVolume,
+            muted = isMuted,
+            selection = vocalSelection.current(),
+            channelModeOverride = channelModeOverride,
+        )
         try {
-            mediaPlayer?.setVolume(vol, vol)
+            mediaPlayer?.setVolume(gains.left, gains.right)
         } catch (e: Exception) {
             Log.w(TAG, "applyCurrentVolume failed: ${e.message}")
         }

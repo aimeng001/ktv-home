@@ -6,7 +6,6 @@ import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -106,7 +105,8 @@ class LanDiscovery(context: Context) : Closeable {
 
     private suspend fun discoverMdns(onFound: (DiscoveredServer) -> Unit): List<DiscoveredServer> =
         coroutineScope {
-        val nsd = appContext.getSystemService(Context.NSD_SERVICE) as NsdManager
+        val nsd = appContext.getSystemService(Context.NSD_SERVICE) as? NsdManager
+            ?: return@coroutineScope emptyList()
         val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         val multicastLock = wifi?.createMulticastLock("home-ktv-discovery")?.apply {
             setReferenceCounted(false)
@@ -114,7 +114,7 @@ class LanDiscovery(context: Context) : Closeable {
         }
         val stopped = CompletableDeferred<Unit>()
         val results = Collections.synchronizedMap(linkedMapOf<String, DiscoveredServer>())
-        val scope = CoroutineScope(coroutineContext)
+        val validationTracker = MdnsValidationTracker()
         lateinit var listener: NsdManager.DiscoveryListener
         listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) = Unit
@@ -141,7 +141,7 @@ class LanDiscovery(context: Context) : Closeable {
                             name = serviceInfo.serviceName.trim().ifEmpty { address },
                             instanceId = instanceId,
                         )
-                        scope.launch {
+                        validationTracker.track(launch {
                             val validated = validateDiscovered(server) ?: return@launch
                             if (validated.hostPort == server.hostPort) {
                                 val isNew = synchronized(results) {
@@ -152,23 +152,27 @@ class LanDiscovery(context: Context) : Closeable {
                                 }
                                 if (isNew) onFound(validated)
                             }
-                        }
+                        })
                     }
                 })
             }
         }
-        try {
+        val discoveryCompleted = try {
             nsd.discoverServices(DiscoveryProtocol.SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
             withTimeoutOrNull(MDNS_TIMEOUT_MS) { stopped.await() }
-            synchronized(results) { results.values.toList() }
+            true
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            emptyList()
+            false
         } finally {
             runCatching { nsd.stopServiceDiscovery(listener) }
-            if (multicastLock?.isHeld == true) multicastLock.release()
+            if (multicastLock?.isHeld == true) runCatching { multicastLock.release() }
         }
+        validationTracker.awaitAndCancelRemaining(
+            if (discoveryCompleted) MDNS_VALIDATION_GRACE_MS else 0L,
+        )
+        if (discoveryCompleted) synchronized(results) { results.values.toList() } else emptyList()
     }
 
     private suspend fun discoverUdp(onFound: (DiscoveredServer) -> Unit): List<DiscoveredServer> =
@@ -235,6 +239,7 @@ class LanDiscovery(context: Context) : Closeable {
 
     companion object {
         private const val MDNS_TIMEOUT_MS = 2_500L
+        private const val MDNS_VALIDATION_GRACE_MS = 500L
         private const val UDP_TIMEOUT_MS = 1_500L
     }
 }

@@ -43,6 +43,82 @@ class MainActivityLifecycleResourceContractTest {
     }
 
     @Test
+    fun burnInTickerPausesWhenStandbyIsHiddenAndSettingsTickerDefersInitialPoll() {
+        val source = locateMainActivity().readText()
+        val burnInTicker = source.substringAfter("private val burnInTicker")
+            .substringBefore("private val standbySettingsTicker")
+
+        assertTrue(
+            "burnInTicker must stop mutating translation when standbyPanel is not VISIBLE",
+            burnInTicker.contains("standbyPanel.visibility != View.VISIBLE"),
+        )
+        assertTrue(
+            "onCreate must defer first standbySettingsTicker poll instead of duplicating loadStandbyContent",
+            source.contains("binding.standbyPanel.postDelayed(standbySettingsTicker, 60_000L)") &&
+                !source.contains("binding.standbyPanel.post(standbySettingsTicker)"),
+        )
+        assertTrue(
+            "onDestroy must remove standbySettingsTicker and burnInTicker callbacks",
+            source.contains("removeCallbacks(standbySettingsTicker)") &&
+                source.contains("removeCallbacks(burnInTicker)"),
+        )
+    }
+
+    @Test
+    fun modalDialogsAreTrackedDismissedOnDestroyAndDeduplicated() {
+        val source = locateMainActivity().readText()
+        val trackMethod = source.substringAfter("private fun trackModalDialog")
+            .substringBefore("private fun untrackModalDialog")
+        val destroyMethod = source.substringAfter("override fun onDestroy()")
+            .substringBefore("/** 顶层 BACK")
+        val migrationMethod = source.substringAfter("private fun checkModeMigration()")
+            .substringBefore("override fun onDestroy()")
+        val confirmMethod = source.substringAfter("private fun confirmControl(")
+            .substringBefore("private fun sendControl(")
+        val trackedAlertHelper = source.substringAfter("private fun showTrackedAlertDialog(")
+            .substringBefore("private fun dismissActiveModalDialogs()")
+
+        assertTrue(
+            "trackModalDialog must notify kioskCoordinator that a modal is active",
+            trackMethod.contains("kioskCoordinator.setModalActive(true)"),
+        )
+        assertTrue(
+            "showTrackedAlertDialog must register and unregister modal tracking",
+            trackedAlertHelper.contains("trackModalDialog(") &&
+                trackedAlertHelper.contains("untrackModalDialog("),
+        )
+        assertTrue(
+            "onDestroy must dismiss all active modal dialogs to prevent WindowLeaked",
+            destroyMethod.contains("dismissActiveModalDialogs()"),
+        )
+        assertTrue(
+            "checkModeMigration must guard against duplicate showing dialogs and track the dialog",
+            migrationMethod.contains("modeMigrationDialog?.isShowing != true") &&
+                (migrationMethod.contains("trackModalDialog(") || migrationMethod.contains("showTrackedAlertDialog(")),
+        )
+        assertTrue(
+            "confirmControl must track its AlertDialog for BACK/idle/destroy handling",
+            (confirmMethod.contains("trackModalDialog(") && confirmMethod.contains("untrackModalDialog(")) ||
+                confirmMethod.contains("showTrackedAlertDialog("),
+        )
+    }
+
+    @Test
+    fun onStopPausesStandbyTickersInBackground() {
+        val source = locateMainActivity().readText()
+        val stopMethod = source.substringAfter("override fun onStop()")
+            .substringBefore("private fun checkSessionRestart()")
+
+        assertTrue(
+            "onStop must remove standby ticker callbacks while MainActivity is backgrounded",
+            stopMethod.contains("removeStandbyTickers()") ||
+                (stopMethod.contains("removeCallbacks(standbyTicker)") &&
+                    stopMethod.contains("removeCallbacks(burnInTicker)") &&
+                    stopMethod.contains("removeCallbacks(standbySettingsTicker)")),
+        )
+    }
+
+    @Test
     fun logoRequestUsesCancellationAndGenerationGuard() {
         val source = locateMainActivity().readText()
 

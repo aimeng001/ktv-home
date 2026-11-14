@@ -66,7 +66,6 @@ class MicrophoneMonitor(
      */
     fun start(): Boolean {
         if (sessionCoordinator.running.get() && worker?.isAlive == true) return true
-        sessionCoordinator.stop()
         if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             onStateChanged(State(false, message = "需要麦克风权限"))
             return false
@@ -175,6 +174,7 @@ class MicrophoneMonitor(
                 }
                 while (sessionCoordinator.isCurrent(session)) {
                     val read = record.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
+                    if (read < 0) break
                     if (read > 0) {
                         track.write(buffer, 0, read, AudioTrack.WRITE_BLOCKING)
                     }

@@ -58,7 +58,7 @@ class KtvKioskBrowserSongAdapter(
     private fun notifyVisibleItems() {
         if (itemCount == 0) return
         try {
-            notifyItemRangeChanged(0, itemCount)
+            notifyItemRangeChanged(0, itemCount, PAYLOAD_STATE_CHANGED)
         } catch (_: Throwable) {
             // Android's local JVM stubs may not have adapter observers initialized.
         }
@@ -82,6 +82,18 @@ class KtvKioskBrowserSongAdapter(
         holder.bind(getItem(position), position)
     }
 
+    override fun onBindViewHolder(
+        holder: SongViewHolder,
+        position: Int,
+        payloads: MutableList<Any>,
+    ) {
+        if (payloads.contains(PAYLOAD_STATE_CHANGED)) {
+            holder.bindDynamicState(getItem(position))
+        } else {
+            super.onBindViewHolder(holder, position, payloads)
+        }
+    }
+
     class SongViewHolder(
         private val binding: ItemKtvBrowserSongBinding,
         private val onOrder: (SongDto, onComplete: (Boolean) -> Unit) -> Unit,
@@ -95,6 +107,8 @@ class KtvKioskBrowserSongAdapter(
     ) : RecyclerView.ViewHolder(binding.root) {
 
         private var hasVocalTrack = false
+        private var boundSong: SongDto? = null
+        private var boundQueueState: SongQueueState? = null
 
         init {
             val focusListener = View.OnFocusChangeListener { _, _ ->
@@ -117,6 +131,19 @@ class KtvKioskBrowserSongAdapter(
             normalizeButtonCompoundDrawables(binding.btnBrowserSongOrder, 14)
             normalizeButtonCompoundDrawables(binding.btnBrowserSongOrderTop, 14)
             normalizeButtonCompoundDrawables(binding.btnBrowserSongFavorite, 14)
+
+            binding.btnBrowserSongFavorite.setOnClickListener {
+                boundSong?.let(onToggleFavorite)
+            }
+            binding.btnBrowserSongOrder.setOnClickListener {
+                boundSong?.let { song -> submitOrder(song, isTop = false, queueState = boundQueueState) }
+            }
+            binding.btnBrowserSongOrderTop.setOnClickListener {
+                boundSong?.let { song -> submitOrder(song, isTop = true, queueState = boundQueueState) }
+            }
+            binding.root.setOnClickListener {
+                if (binding.btnBrowserSongOrder.isEnabled) binding.btnBrowserSongOrder.performClick()
+            }
         }
 
         private fun normalizeButtonCompoundDrawables(button: android.widget.Button, sizeDp: Int) {
@@ -136,6 +163,7 @@ class KtvKioskBrowserSongAdapter(
         }
 
         fun bind(song: SongDto, position: Int) {
+            boundSong = song
             hasVocalTrack = song.hasVocalTrack
             val displayTitle = com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatTitle(song.title)
             val displayArtist = com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatArtist(song.artist)
@@ -157,7 +185,6 @@ class KtvKioskBrowserSongAdapter(
                     }
                 }
             }
-            renderTitle(song)
             binding.txtBrowserSongArtist.text =
                 com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatArtistSubtitle(song.artist, song.mediaType)
             val resolution = song.resolution?.trim()?.takeIf { it.isNotEmpty() }
@@ -168,7 +195,16 @@ class KtvKioskBrowserSongAdapter(
             }
             binding.txtBrowserSongVocal.visibility = View.GONE
 
+            bindDynamicState(song)
+        }
+
+        fun bindDynamicState(song: SongDto) {
+            boundSong = song
+            hasVocalTrack = song.hasVocalTrack
+            renderTitle(song)
+
             val queueState = getQueueProjection()[song.id]
+            boundQueueState = queueState
             val isSubmitting = submittingSongIds.contains(song.id)
             val orderState = SongOrderButtonPolicy.resolveStateOnBind(
                 isTop = false,
@@ -196,17 +232,6 @@ class KtvKioskBrowserSongAdapter(
             binding.btnBrowserSongFavorite.isSelected = favorite
             binding.btnBrowserSongFavorite.contentDescription =
                 if (favorite) "取消收藏：${song.title}，${song.artist}" else "收藏：${song.title}，${song.artist}"
-            binding.btnBrowserSongFavorite.setOnClickListener { onToggleFavorite(song) }
-
-            binding.btnBrowserSongOrder.setOnClickListener {
-                submitOrder(song, isTop = false, queueState = queueState)
-            }
-            binding.btnBrowserSongOrderTop.setOnClickListener {
-                submitOrder(song, isTop = true, queueState = queueState)
-            }
-            binding.root.setOnClickListener {
-                if (binding.btnBrowserSongOrder.isEnabled) binding.btnBrowserSongOrder.performClick()
-            }
 
             val hasFocus = binding.root.hasFocus() ||
                 binding.btnBrowserSongOrder.hasFocus() ||
@@ -315,6 +340,8 @@ class KtvKioskBrowserSongAdapter(
     }
 
     companion object {
+        private const val PAYLOAD_STATE_CHANGED = "state_changed"
+
         private val DIFF_CALLBACK = object : DiffUtil.ItemCallback<SongDto>() {
             override fun areItemsTheSame(oldItem: SongDto, newItem: SongDto): Boolean = oldItem.id == newItem.id
             override fun areContentsTheSame(oldItem: SongDto, newItem: SongDto): Boolean = oldItem == newItem

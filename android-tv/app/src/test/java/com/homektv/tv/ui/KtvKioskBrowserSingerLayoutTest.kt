@@ -8,19 +8,33 @@ import org.junit.Test
 class KtvKioskBrowserSingerLayoutTest {
 
     @Test
-    fun singerGridUsesFiveColumnsAndTenItemsPerPage() {
+    fun singerGridUsesEightColumnsAndSixteenItemsPerPage() {
         val controllerSource = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
 
-        // Verify span count is 5
+        // Verify span count is 8
         assertTrue(
-            "browserSingerRecyclerView must use GridLayoutManager with 5 columns",
-            controllerSource.contains("browserSingerRecyclerView.layoutManager = GridLayoutManager(activity, 5)"),
+            "browserSingerRecyclerView must use GridLayoutManager with 8 columns",
+            controllerSource.contains("browserSingerRecyclerView.layoutManager = GridLayoutManager(activity, 8)"),
         )
 
-        // Verify page size is 10 (2 rows x 5 columns)
+        // Verify page size is 16 (2 rows x 8 columns)
         assertTrue(
-            "SINGER_GRID_PAGE_SIZE must be 10 for 2x5 grid",
-            controllerSource.contains("const val SINGER_GRID_PAGE_SIZE = 10"),
+            "SINGER_GRID_PAGE_SIZE must be 16 for 2x8 grid",
+            controllerSource.contains("const val SINGER_GRID_PAGE_SIZE = 16"),
+        )
+    }
+
+    @Test
+    fun artistBatchSizeIsAlignedToSixteenForSingerPages() {
+        val vmSource = locate("src/main/java/com/homektv/tv/controller/ControllerViewModel.kt").readText()
+
+        assertTrue(
+            "ControllerViewModel must request artist batches aligned to 16 (32 = 2 pages)",
+            vmSource.contains("const val ARTIST_GRID_PAGE_SIZE = 32"),
+        )
+        assertTrue(
+            "loadArtistsPage must pass size = ARTIST_GRID_PAGE_SIZE",
+            vmSource.contains("size = ARTIST_GRID_PAGE_SIZE"),
         )
     }
 
@@ -33,12 +47,12 @@ class KtvKioskBrowserSingerLayoutTest {
             layoutSource.contains("@drawable/bg_avatar_circle"),
         )
         assertTrue(
-            "Avatar width must be 96dp",
-            layoutSource.contains("android:layout_width=\"96dp\""),
+            "Avatar width must be 72dp for 8-column grid",
+            layoutSource.contains("android:layout_width=\"72dp\""),
         )
         assertTrue(
-            "Avatar height must be 96dp",
-            layoutSource.contains("android:layout_height=\"96dp\""),
+            "Avatar height must be 72dp for 8-column grid",
+            layoutSource.contains("android:layout_height=\"72dp\""),
         )
     }
 

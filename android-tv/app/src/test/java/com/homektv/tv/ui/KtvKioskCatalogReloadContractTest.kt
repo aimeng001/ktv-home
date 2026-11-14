@@ -27,7 +27,8 @@ class KtvKioskCatalogReloadContractTest {
         assertTrue(resetToSingers.contains("wasAlreadyOnSingersTab"))
         assertTrue(resetToSingers.contains("if (wasAlreadyOnSingersTab) loadArtists()"))
         assertTrue(resetToSingers.contains("artistsLoaded = false"))
-        assertTrue(resetToSingers.contains("btnSingerAll.requestFocus()"))
+        assertTrue(resetToSingers.contains("browserBinding.browserNavSingers.post"))
+        assertTrue(!resetToSingers.contains("btnSingerAll.requestFocus()"))
     }
 
     @Test

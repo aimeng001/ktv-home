@@ -738,6 +738,7 @@ class ControllerViewModel(
     private suspend fun loadArtistsPage(page: Int, expected: CatalogQuery): Boolean {
             when (val result = songApi.browseArtistsPage(
                 page = page,
+                size = ARTIST_GRID_PAGE_SIZE,
                 gender = expected.value,
                 initial = expected.secondary,
                 region = expected.region,
@@ -1303,6 +1304,7 @@ class ControllerViewModel(
         private const val MAX_RESTORE_PAGES = 64
         private const val MAX_PERSONAL_ITEMS = 2000
         private const val MAX_ARTIST_INITIALS = 128
+        private const val ARTIST_GRID_PAGE_SIZE = 32
         private const val HOT_INITIAL = "热门"
     }
 }

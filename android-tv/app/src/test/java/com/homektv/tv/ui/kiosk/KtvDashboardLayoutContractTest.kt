@@ -196,7 +196,7 @@ class KtvDashboardLayoutContractTest {
         assertTrue("the two photo tiles share three matched pairs", dashboardView.contains("photoPairs = listOf(") &&
             dashboardView.contains("R.drawable.ktv_ref_v50_tile_singers_03") &&
             dashboardView.contains("R.drawable.ktv_ref_v50_tile_songs_03"))
-        assertTrue("the image scale mode preserves the split-art seam without independent crop", dashboardView.contains("ImageView.ScaleType.FIT_XY"))
+        assertTrue("the image scale mode avoids FIT_XY stretching across tiles", dashboardView.contains("ImageView.ScaleType.CENTER_CROP"))
         assertEquals(10_000L, KtvDashboardPhotoCarousel.INTERVAL_MS)
     }
 

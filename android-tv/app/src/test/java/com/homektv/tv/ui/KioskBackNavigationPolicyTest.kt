@@ -16,4 +16,29 @@ class KioskBackNavigationPolicyTest {
         val action = KioskBackNavigationPolicy.resolveBrowserBack(hasInnerDetailBack = false)
         assertEquals(KioskBrowserBackAction.RETURN_TO_DASHBOARD, action)
     }
+
+    @Test
+    fun resolveBrowserBackTargetPreservesSearchOriginOnlyWhenLeavingBrowser() {
+        assertEquals(
+            KioskBrowserReturnTarget.INNER_DETAIL,
+            KioskBackNavigationPolicy.resolveBrowserBackTarget(
+                hasInnerDetailBack = true,
+                hasPendingSearchReturnFocus = true,
+            ),
+        )
+        assertEquals(
+            KioskBrowserReturnTarget.SEARCH_ORIGIN,
+            KioskBackNavigationPolicy.resolveBrowserBackTarget(
+                hasInnerDetailBack = false,
+                hasPendingSearchReturnFocus = true,
+            ),
+        )
+        assertEquals(
+            KioskBrowserReturnTarget.DASHBOARD,
+            KioskBackNavigationPolicy.resolveBrowserBackTarget(
+                hasInnerDetailBack = false,
+                hasPendingSearchReturnFocus = false,
+            ),
+        )
+    }
 }

@@ -67,4 +67,15 @@ class AppConfigProtocolTest {
         assertEquals("secret", playerCredentialForTransport("https://ktv.local:443", " secret "))
         assertEquals(null, playerCredentialForTransport("", "secret"))
     }
+
+    @Test
+    fun hostNormalizationSupportsBracketedIpv6Addresses() {
+        assertEquals("[::1]:8080", AppConfig.normalizeHost("[::1]"))
+        assertEquals("https://[::1]:443", AppConfig.normalizeHost("https://[::1]/path"))
+        assertEquals("[fe80::1]:9000", AppConfig.normalizeHost("http://[fe80::1]:9000/api"))
+        assertEquals(
+            "https://[::1]:8443/api/ready",
+            buildServerHttpUrl("https://[::1]:8443", "/api/ready"),
+        )
+    }
 }

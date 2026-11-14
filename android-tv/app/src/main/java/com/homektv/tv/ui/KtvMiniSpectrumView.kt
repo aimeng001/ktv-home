@@ -30,6 +30,21 @@ class KtvMiniSpectrumView @JvmOverloads constructor(
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
     }
 
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        syncSpectrumAnimationVisibility()
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        syncSpectrumAnimationVisibility()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        syncSpectrumAnimationVisibility()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val count = 4
@@ -61,8 +76,8 @@ class KtvMiniSpectrumView @JvmOverloads constructor(
             canvas.drawRoundRect(left, top, left + barWidth, totalHeight, radius, radius, paint)
         }
 
-        // 仅在可见状态下调度下一帧动画，杜绝后台无意义消耗
-        if (visibility == VISIBLE && windowVisibility == VISIBLE) {
+        // 仅在可见且附着到窗口时调度下一帧动画，杜绝祖先视图隐藏时的后台消耗
+        if (SpectrumAnimationPolicy.shouldScheduleNextFrame(isShown, isAttachedToWindow)) {
             postInvalidateOnAnimation()
         }
     }

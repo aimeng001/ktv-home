@@ -70,7 +70,7 @@ import { createLatestRequest } from '../latestRequest'
 const songs=ref([]),total=ref(0),page=ref(0),totalPages=ref(1),selected=ref(new Set())
 const router=useRouter()
 const playlistPickerOpen=ref(false),playlistPickerSong=ref(null),playlistOptions=ref([]),playlistLoading=ref(false),playlistAddingId=ref(null)
-const showAiTaskPanel=ref(true)
+const showAiTaskPanel=ref(false)
 const songEditorOpen=ref(false),editingSong=ref(null),songSaving=ref(false)
 const editForm=reactive({title:'',artist:'',language:'',tags:''})
 const libraryMode=ref(null),loadError=ref('')

@@ -46,6 +46,11 @@ The NAS configuration keeps `/source-music` mounted read-only. Do not use the ma
 
 Library metadata does not make a media file playable by itself. Home KTV retains its own song IDs, availability rules, and playback APIs.
 
+## Recent Updates & Android TV
+
+- **Search & Playback Readiness (v1.0.34):** Fast B-Tree prefix index path for single-letter searches (`a`–`z`), on-demand FFprobe probing via `SongProbeService` (`POST /api/admin/songs/{id}/probe` and pre-order probe), zero-disk-cache `pipe:1` live fMP4 transcoding for legacy formats/decoder fallback, and read-only external artist avatar matching via `/avatar-library` (`KTV_AVATAR_LIBRARY_DIR`).
+- **Android TV KTV UI (v1.0.34):** 10-tile Bento home dashboard + unified three-column 3×5 song browser with 5-mode soft keyboard, circular artist avatar/surname initial badges with display-title cleanup (`SongDisplayFormatter`), and purged legacy single-panel UI shells across clients.
+
 ## Android TV updates
 
 Release images may include 32-bit (`armeabi-v7a`) and 64-bit (`arm64-v8a`) TV APKs. The server exposes release metadata through `GET /api/release`; a TV client checks for a newer version after connecting and lets the user download and install the matching package.

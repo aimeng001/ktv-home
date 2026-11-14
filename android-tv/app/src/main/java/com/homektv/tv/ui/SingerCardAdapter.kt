@@ -31,18 +31,48 @@ class SingerCardAdapter(
         holder.bind(getItem(position))
     }
 
+    override fun onBindViewHolder(
+        holder: SingerViewHolder,
+        position: Int,
+        payloads: MutableList<Any>,
+    ) {
+        if (payloads.contains(PAYLOAD_ARTIST_COUNTS)) {
+            holder.bindSongCount(getItem(position))
+        } else {
+            super.onBindViewHolder(holder, position, payloads)
+        }
+    }
+
     class SingerViewHolder(
         private val binding: ItemSingerCardBinding,
         private val onClick: (ArtistItem) -> Unit,
         private val imageLoader: ((url: String, callback: (android.graphics.Bitmap?) -> Unit) -> Unit)?,
     ) : RecyclerView.ViewHolder(binding.root) {
 
-        fun bind(item: ArtistItem) {
-            binding.txtSingerName.text = item.name
+        private var boundArtist: ArtistItem? = null
+
+        init {
+            binding.root.setOnClickListener {
+                boundArtist?.let(onClick)
+            }
+            binding.root.setOnFocusChangeListener { view, hasFocus ->
+                val scale = if (hasFocus) 1.06f else 1.0f
+                view.animate().scaleX(scale).scaleY(scale).setDuration(120).start()
+            }
+        }
+
+        fun bindSongCount(item: ArtistItem) {
+            boundArtist = item
             binding.txtSingerSongCount.text = binding.root.context.getString(
                 R.string.song_count_only,
                 item.songCount,
             )
+        }
+
+        fun bind(item: ArtistItem) {
+            boundArtist = item
+            binding.txtSingerName.text = item.name
+            bindSongCount(item)
             binding.txtSingerInitial.text = ArtistInitialResolver.resolve(item.name)
             binding.txtSingerInitial.visibility = View.VISIBLE
             binding.imgSingerAvatar.setImageDrawable(null)
@@ -59,26 +89,29 @@ class SingerCardAdapter(
                     }
                 }
             }
-
-            binding.root.setOnClickListener {
-                onClick(item)
-            }
-
-            // TV 焦点缩放动效
-            binding.root.setOnFocusChangeListener { view, hasFocus ->
-                val scale = if (hasFocus) 1.06f else 1.0f
-                view.animate().scaleX(scale).scaleY(scale).setDuration(120).start()
-            }
         }
     }
 
     companion object {
+        private const val PAYLOAD_ARTIST_COUNTS = "artist_counts"
+
         val DIFF_CALLBACK = object : DiffUtil.ItemCallback<ArtistItem>() {
             override fun areItemsTheSame(oldItem: ArtistItem, newItem: ArtistItem): Boolean =
                 oldItem.artistKey == newItem.artistKey
 
             override fun areContentsTheSame(oldItem: ArtistItem, newItem: ArtistItem): Boolean =
                 oldItem == newItem
+
+            override fun getChangePayload(oldItem: ArtistItem, newItem: ArtistItem): Any? =
+                if (oldItem.artistKey == newItem.artistKey &&
+                    oldItem.name == newItem.name &&
+                    oldItem.avatarUrl == newItem.avatarUrl &&
+                    oldItem.songCount != newItem.songCount
+                ) {
+                    PAYLOAD_ARTIST_COUNTS
+                } else {
+                    null
+                }
         }
     }
 }

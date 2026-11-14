@@ -133,7 +133,7 @@ class KtvQueueDrawerAdapter(
 
         fun bind(entry: QueueEntry, index: Int) {
             val qId = entry.queueId
-            val isPlaying = entry.status.equals("playing", ignoreCase = true) || index == 1
+            val isPlaying = entry.status.equals("playing", ignoreCase = true)
             if (isPlaying) {
                 binding.txtQueueIndex.visibility = View.GONE
                 binding.spectrumQueueRow.visibility = View.VISIBLE
@@ -294,6 +294,7 @@ class KtvQueueDrawerDialog(
     private lateinit var historyAdapter: KtvHistoryDrawerAdapter
     private var actionsAvailable = false
     private var hasWaitingItems = false
+    private var pendingActions: Set<ActionKey> = emptySet()
     private var selectedTab: KtvQueueDrawerTab? = null
     private var isPlaying = false
     private var returnFocus: View? = null
@@ -409,7 +410,13 @@ class KtvQueueDrawerDialog(
         suspendedBackgroundFocusability = emptyList()
     }
 
-    fun submitQueue(nowPlayingText: String, waitingList: List<QueueEntry>, isPlaying: Boolean = false) {
+    fun submitQueue(
+        nowPlayingText: String,
+        waitingList: List<QueueEntry>,
+        isPlaying: Boolean = false,
+        statusMessage: String? = null,
+        retryAvailable: Boolean = false,
+    ) {
         binding.txtDrawerTitle.text = context.getString(R.string.queue_drawer_title_count, waitingList.size)
         binding.txtDrawerNowPlaying.text = nowPlayingText
         this.isPlaying = isPlaying
@@ -420,7 +427,7 @@ class KtvQueueDrawerDialog(
         val isEmpty = waitingList.isEmpty()
         binding.txtDrawerEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
         binding.drawerRecyclerView.visibility = if (isEmpty) View.GONE else View.VISIBLE
-        setQueueStatus(message = null, retryAvailable = false)
+        setQueueStatus(message = statusMessage, retryAvailable = retryAvailable)
         binding.btnDrawerClose.nextFocusDownId = if (isEmpty) binding.btnDrawerClose.id else binding.drawerRecyclerView.id
         updateShuffleEnabled()
     }
@@ -467,7 +474,11 @@ class KtvQueueDrawerDialog(
 
     private fun updateShuffleEnabled() {
         if (!::binding.isInitialized) return
-        binding.btnDrawerShuffle.isEnabled = actionsAvailable && hasWaitingItems
+        val noShufflePending = QueueDrawerActionPolicy.isEnabled(
+            action = "control:shuffle",
+            pendingActions = pendingActions,
+        )
+        binding.btnDrawerShuffle.isEnabled = actionsAvailable && hasWaitingItems && noShufflePending
     }
 
     fun updateActor(currentUserId: Long?, isHost: Boolean) {
@@ -475,15 +486,10 @@ class KtvQueueDrawerDialog(
     }
 
     fun updatePendingActions(actions: Set<ActionKey>) {
+        pendingActions = actions
         if (::adapter.isInitialized) adapter.updatePendingActions(actions)
         if (::historyAdapter.isInitialized) historyAdapter.updatePendingActions(actions)
-        if (::binding.isInitialized) {
-            val noShufflePending = QueueDrawerActionPolicy.isEnabled(
-                action = "control:shuffle",
-                pendingActions = actions,
-            )
-            binding.btnDrawerShuffle.isEnabled = actionsAvailable && hasWaitingItems && noShufflePending
-        }
+        updateShuffleEnabled()
     }
 
     fun selectInitialTab() {

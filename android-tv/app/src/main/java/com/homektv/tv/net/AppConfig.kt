@@ -461,7 +461,18 @@ class AppConfig private constructor(
             }
             s = s.substringBefore("/")        // 去掉路径
             if (s.isEmpty()) return null
-            if (!s.contains(":")) s = "$s:${if (secure) 443 else 8080}"
+            if (s.startsWith("[")) {
+                val closeBracket = s.indexOf(']')
+                if (closeBracket <= 1) return null
+                val suffix = s.substring(closeBracket + 1)
+                if (suffix.isEmpty()) {
+                    s = "$s:${if (secure) 443 else 8080}"
+                } else if (!suffix.startsWith(":") || suffix.length == 1) {
+                    return null
+                }
+            } else if (!s.contains(":")) {
+                s = "$s:${if (secure) 443 else 8080}"
+            }
             return if (secure) "https://$s" else s
         }
     }

@@ -104,6 +104,19 @@
                 android:padding="8dp"
                 android:scaleType="fitCenter"
                 android:src="@drawable/ktv_ref_v50_player_forward" />
+
+            <ImageView
+                android:id="@+id/btnFullscreenPitch"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                android:layout_marginStart="10dp"
+                android:background="@drawable/ktv_fullscreen_focus_circle"
+                android:contentDescription="变调"
+                android:focusable="true"
+                android:focusableInTouchMode="false"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ktv_ref_v50_dock_tone_up" />
         </LinearLayout>
 
         <LinearLayout

@@ -179,7 +179,7 @@
         android:id="@+id/video_container"
         android:layout_width="@dimen/ktv_dashboard_pip_width"
         android:layout_height="@dimen/ktv_dashboard_pip_height"
-        android:background="@drawable/bg_ktv_dock_video_frame"
+        android:background="@drawable/bg_ktv_dock_video_frame_idle"
         android:clipToOutline="false"
         android:clickable="true"
         android:focusable="true"
@@ -276,7 +276,7 @@
             android:textColor="@color/text"
             android:textSize="13sp" />
 
-        <!-- 7. 降调（Home KTV 不提供变调，点击显示能力说明） -->
+        <!-- 7. 降调（呼出变调调节或提示当前线路支持状态） -->
         <TextView
             android:id="@+id/btnDockToneDown"
             android:layout_width="0dp"
@@ -300,7 +300,7 @@
             android:textColor="@color/text"
             android:textSize="13sp" />
 
-        <!-- 8. 升调（Home KTV 不提供变调，点击显示能力说明） -->
+        <!-- 8. 升调（呼出变调调节或提示当前线路支持状态） -->
         <TextView
             android:id="@+id/btnDockToneUp"
             android:layout_width="0dp"

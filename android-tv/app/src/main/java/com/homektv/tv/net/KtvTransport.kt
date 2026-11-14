@@ -35,51 +35,97 @@ interface KtvTransport {
  */
 class KtvHttpTransport internal constructor(
     private val serverHost: () -> String?,
-    private val callFactory: Call.Factory = defaultClient(),
+    private val callFactory: Call.Factory = SharedHttpClients.transportClient(),
+    private val ownsClientResources: Boolean = false,
 ) : KtvTransport, Closeable {
-    constructor(config: AppConfig, http: OkHttpClient = defaultClient()) : this({ config.serverHost }, http)
+    constructor(
+        config: AppConfig,
+        http: OkHttpClient,
+        ownsClientResources: Boolean = true,
+    ) : this({ config.serverHost }, http, ownsClientResources)
+
+    constructor(config: AppConfig) : this(
+        { config.serverHost },
+        SharedHttpClients.transportClient(),
+        ownsClientResources = false,
+    )
+
+    private val activeCalls = ActiveCallRegistry()
 
     override suspend fun get(path: String): KtvApiResult<String> {
-        val host = serverHost()
-        serverConfigurationFailure(host)?.let { return it }
-        return execute(Request.Builder().url(url(host!!, path)).get().build())
+        val request = buildRequest(path) { get() }
+        return when (request) {
+            is KtvApiResult.Success -> execute(request.value)
+            is KtvApiResult.Failure -> request
+        }
     }
 
     override suspend fun getBytes(path: String): KtvApiResult<ByteArray> {
-        val host = serverHost()
-        serverConfigurationFailure(host)?.let { return it }
-        return executeBytes(Request.Builder().url(url(host!!, path)).get().build())
+        val request = buildRequest(path) { get() }
+        return when (request) {
+            is KtvApiResult.Success -> executeBytes(request.value)
+            is KtvApiResult.Failure -> request
+        }
     }
 
     override suspend fun post(path: String, body: JsonObject): KtvApiResult<String> {
-        val host = serverHost()
-        serverConfigurationFailure(host)?.let { return it }
-        return execute(
-            Request.Builder()
-                .url(url(host!!, path))
-                .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
-                .build(),
-        )
+        val request = buildRequest(path) {
+            post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
+        }
+        return when (request) {
+            is KtvApiResult.Success -> execute(request.value)
+            is KtvApiResult.Failure -> request
+        }
     }
 
     override suspend fun delete(path: String): KtvApiResult<String> {
+        val request = buildRequest(path) { delete() }
+        return when (request) {
+            is KtvApiResult.Success -> execute(request.value)
+            is KtvApiResult.Failure -> request
+        }
+    }
+
+    private fun buildRequest(
+        path: String,
+        configure: Request.Builder.() -> Unit,
+    ): KtvApiResult<Request> {
         val host = serverHost()
         serverConfigurationFailure(host)?.let { return it }
-        return execute(Request.Builder().url(url(host!!, path)).delete().build())
+        return try {
+            KtvApiResult.Success(
+                Request.Builder()
+                    .url(url(host!!, path))
+                    .apply(configure)
+                    .build(),
+            )
+        } catch (error: IllegalArgumentException) {
+            logTransportWarning("Invalid request URL for path=$path", error)
+            KtvApiResult.Failure(
+                KtvApiError(KtvApiErrorKind.NETWORK, "INVALID_SERVER_URL", "服务器地址格式无效"),
+            )
+        }
     }
 
     override fun close() {
-        (callFactory as? OkHttpClient)?.closeResources()
+        activeCalls.cancelAll()
+        if (ownsClientResources) {
+            (callFactory as? OkHttpClient)?.closeResources()
+        }
     }
 
     private fun url(host: String, path: String): String = resolveUrl(host, path)
 
     private suspend fun execute(request: Request): KtvApiResult<String> =
         suspendCancellableCoroutine { continuation ->
-            val call = callFactory.newCall(request)
-            continuation.invokeOnCancellation { call.cancel() }
+            val call = activeCalls.register(callFactory.newCall(request))
+            continuation.invokeOnCancellation {
+                call.cancel()
+                activeCalls.unregister(call)
+            }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
+                    activeCalls.unregister(call)
                     logTransportWarning("Request failed: ${safeHttpLogUrl(request.url.toString())}", e)
                     if (continuation.isActive) {
                         continuation.resume(
@@ -95,6 +141,7 @@ class KtvHttpTransport internal constructor(
                 }
 
                 override fun onResponse(call: Call, response: Response) {
+                    activeCalls.unregister(call)
                     val result = response.use { current ->
                         val body = ResponseBodyReader.readText(current.body)
                         if (body == null) {
@@ -117,10 +164,14 @@ class KtvHttpTransport internal constructor(
 
     private suspend fun executeBytes(request: Request): KtvApiResult<ByteArray> =
         suspendCancellableCoroutine { continuation ->
-            val call = callFactory.newCall(request)
-            continuation.invokeOnCancellation { call.cancel() }
+            val call = activeCalls.register(callFactory.newCall(request))
+            continuation.invokeOnCancellation {
+                call.cancel()
+                activeCalls.unregister(call)
+            }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
+                    activeCalls.unregister(call)
                     logTransportWarning("Byte request failed: ${safeHttpLogUrl(request.url.toString())}", e)
                     if (continuation.isActive) continuation.resume(
                         KtvApiResult.Failure(
@@ -130,6 +181,7 @@ class KtvHttpTransport internal constructor(
                 }
 
                 override fun onResponse(call: Call, response: Response) {
+                    activeCalls.unregister(call)
                     val result = response.use { current ->
                         val bytes = if (current.isSuccessful) {
                             ResponseBodyReader.readBytes(current.body)
@@ -177,11 +229,12 @@ class KtvHttpTransport internal constructor(
                 return trimmed
             }
             val cleanPath = trimmed.removePrefix("/")
-            return if (cleanPath.startsWith("api/", ignoreCase = true)) {
-                "http://$host/$cleanPath"
+            val apiPath = if (cleanPath.startsWith("api/", ignoreCase = true)) {
+                cleanPath
             } else {
-                "http://$host/api/$cleanPath"
+                "api/$cleanPath"
             }
+            return buildServerHttpUrl(host, apiPath)
         }
     }
 }

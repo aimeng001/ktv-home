@@ -64,6 +64,11 @@ class KtvDashboardReferenceFidelityContractTest {
             "wrap_content italic dashboard captions must expand minWidth for right glyph overhang",
             dashboardViewSource.contains("content.title.minWidth = textWidthPx"),
         )
+        assertTrue(
+            "dashboard photo carousel must use CENTER_CROP instead of FIT_XY to avoid squashing 560x360 portraits",
+            !dashboardViewSource.contains("ScaleType.FIT_XY") &&
+                dashboardViewSource.contains("scaleType = ImageView.ScaleType.CENTER_CROP"),
+        )
     }
 
     private fun parse(relativePath: String) =

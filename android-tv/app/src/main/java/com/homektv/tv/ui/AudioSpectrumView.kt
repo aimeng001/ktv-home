@@ -31,6 +31,21 @@ class AudioSpectrumView @JvmOverloads constructor(
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
     }
 
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        syncSpectrumAnimationVisibility()
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        syncSpectrumAnimationVisibility()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        syncSpectrumAnimationVisibility()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val count = 96
@@ -45,6 +60,8 @@ class AudioSpectrumView @JvmOverloads constructor(
             val top = (height - barHeight) / 2f
             canvas.drawRoundRect(left, top, left + barWidth, top + barHeight, barWidth / 2f, barWidth / 2f, paint)
         }
-        if (visibility == VISIBLE && windowVisibility == VISIBLE) postInvalidateOnAnimation()
+        if (SpectrumAnimationPolicy.shouldScheduleNextFrame(isShown, isAttachedToWindow)) {
+            postInvalidateOnAnimation()
+        }
     }
 }

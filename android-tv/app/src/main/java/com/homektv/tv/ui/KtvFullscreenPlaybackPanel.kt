@@ -30,6 +30,7 @@ internal class KtvFullscreenPlaybackPanel(
     private val actionRow = root.findViewById<LinearLayout>(R.id.fullscreenActionRow)
     private val rewindButton = root.findViewById<ImageView>(R.id.btnFullscreenRewind)
     private val forwardButton = root.findViewById<ImageView>(R.id.btnFullscreenForward)
+    private val pitchButton = root.findViewById<ImageView>(R.id.btnFullscreenPitch)
     private val currentTime = root.findViewById<TextView>(R.id.txtFullscreenCurrentTime)
     private val durationText = root.findViewById<TextView>(R.id.txtFullscreenDuration)
     private val progressBar = root.findViewById<SeekBar>(R.id.seekFullscreenProgress)
@@ -67,6 +68,10 @@ internal class KtvFullscreenPlaybackPanel(
         }
         rewindButton.setOnClickListener { seekBy(-SEEK_STEP_MS) }
         forwardButton.setOnClickListener { seekBy(SEEK_STEP_MS) }
+        pitchButton.setOnClickListener {
+            onAction(FullscreenPlaybackAction.PITCH)
+            resetAutoHide()
+        }
         progressBar.setOnTouchListener { _, _ -> true }
     }
 
@@ -171,6 +176,7 @@ internal class KtvFullscreenPlaybackPanel(
         actionButtons.forEach { it.root.setOnClickListener(null) }
         rewindButton.setOnClickListener(null)
         forwardButton.setOnClickListener(null)
+        pitchButton.setOnClickListener(null)
     }
 
     private fun onExitFullscreen() {
@@ -235,9 +241,11 @@ internal class KtvFullscreenPlaybackPanel(
         }
         rewindButton.isFocusable = true
         forwardButton.isFocusable = true
+        pitchButton.isFocusable = true
         rewindButton.isSelected = false
         forwardButton.isSelected = false
-        listOf(rewindButton, forwardButton).forEach { button ->
+        pitchButton.isSelected = false
+        listOf(rewindButton, forwardButton, pitchButton).forEach { button ->
             button.setOnFocusChangeListener { view, focused ->
                 view.isSelected = focused
                 if (focused) resetAutoHide()
@@ -249,7 +257,12 @@ internal class KtvFullscreenPlaybackPanel(
             item.root.nextFocusUpId = if (index < actionButtons.size / 2) R.id.btnFullscreenRewind else R.id.btnFullscreenForward
         }
         rewindButton.nextFocusDownId = actionButtons.first().spec.id
+        rewindButton.nextFocusRightId = R.id.btnFullscreenForward
         forwardButton.nextFocusDownId = actionButtons.last().spec.id
+        forwardButton.nextFocusLeftId = R.id.btnFullscreenRewind
+        forwardButton.nextFocusRightId = R.id.btnFullscreenPitch
+        pitchButton.nextFocusDownId = actionButtons.last().spec.id
+        pitchButton.nextFocusLeftId = R.id.btnFullscreenForward
     }
 
     private fun configureMetrics() {
@@ -283,10 +296,11 @@ internal class KtvFullscreenPlaybackPanel(
         }
         progressBar.setPadding(px(30), progressBar.paddingTop, px(30), progressBar.paddingBottom)
         progressBar.thumbOffset = metrics.progressButtonSizePx / 2
-        listOf(rewindButton, forwardButton).forEach { button ->
+        listOf(rewindButton, forwardButton, pitchButton).forEach { button ->
             button.layoutParams = (button.layoutParams as LinearLayout.LayoutParams).apply {
                 width = metrics.progressButtonSizePx
                 height = metrics.progressButtonSizePx
+                if (button === pitchButton) marginStart = px(10)
             }
             button.setPadding(px(8), px(8), px(8), px(8))
         }
@@ -360,9 +374,13 @@ internal class KtvFullscreenPlaybackPanel(
         val focused = currentFocusedButton() ?: actionButtons.firstOrNull()?.root ?: return
         when (direction) {
             FullscreenPanelDirection.LEFT, FullscreenPanelDirection.RIGHT -> {
-                if (focused === rewindButton || focused === forwardButton) {
-                    if (focused === rewindButton && direction == FullscreenPanelDirection.RIGHT) forwardButton.requestFocus()
-                    else if (focused === forwardButton && direction == FullscreenPanelDirection.LEFT) rewindButton.requestFocus()
+                if (focused === rewindButton || focused === forwardButton || focused === pitchButton) {
+                    when {
+                        focused === rewindButton && direction == FullscreenPanelDirection.RIGHT -> forwardButton.requestFocus()
+                        focused === forwardButton && direction == FullscreenPanelDirection.LEFT -> rewindButton.requestFocus()
+                        focused === forwardButton && direction == FullscreenPanelDirection.RIGHT -> pitchButton.requestFocus()
+                        focused === pitchButton && direction == FullscreenPanelDirection.LEFT -> forwardButton.requestFocus()
+                    }
                     return
                 }
                 val index = actionButtons.indexOfFirst { it.root === focused }.coerceAtLeast(0)
@@ -376,7 +394,7 @@ internal class KtvFullscreenPlaybackPanel(
             FullscreenPanelDirection.DOWN -> {
                 when {
                     focused === rewindButton -> actionButtons.firstOrNull()?.root?.requestFocus()
-                    focused === forwardButton -> actionButtons.lastOrNull()?.root?.requestFocus()
+                    focused === forwardButton || focused === pitchButton -> actionButtons.lastOrNull()?.root?.requestFocus()
                 }
             }
             null -> Unit
@@ -387,6 +405,7 @@ internal class KtvFullscreenPlaybackPanel(
         actionButtons.firstOrNull { it.root.hasFocus() }?.root
             ?: rewindButton.takeIf { it.hasFocus() }
             ?: forwardButton.takeIf { it.hasFocus() }
+            ?: pitchButton.takeIf { it.hasFocus() }
 
     private fun seekBy(deltaMs: Long) {
         if (!seekAvailable || durationMs <= 0L) return

@@ -65,6 +65,7 @@ import com.homektv.tv.net.QueueSnapshot
 import com.homektv.tv.net.SnapshotRevisionPolicy
 import com.homektv.tv.net.StandbyContent
 import com.homektv.tv.player.PlaybackEngine
+import com.homektv.tv.player.PlaybackPitchResult
 import com.homektv.tv.player.PlaybackPitchStatus
 import com.homektv.tv.player.EffectPlayer
 import com.homektv.tv.player.LrcParser
@@ -209,6 +210,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
     private val burnInTicker = object : Runnable {
         override fun run() {
+            if (!::binding.isInitialized || binding.standbyPanel.visibility != View.VISIBLE) return
             if (antiBurnEnabled) {
                 val step = if (binding.standbyPanel.translationX >= 1f) -1f else 1f
                 binding.standbyPanel.translationX = step
@@ -239,6 +241,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var pitchDialog: KtvPitchDialog? = null
     private var queueOverlayDismiss: (() -> Unit)? = null
     private var topBarQrDialog: KtvQrDialog? = null
+    private var modeMigrationDialog: AlertDialog? = null
     private val activeModalDialogs = mutableListOf<Dialog>()
     private var qrLoadJob: Job? = null
     private var libraryScanRequestInFlight = false
@@ -391,6 +394,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                         showQueueOverlay { fullscreenPlaybackPanel.resumeAutoHide() }
                     }
                     FullscreenPlaybackAction.HOME -> showHomePage()
+                    FullscreenPlaybackAction.PITCH -> openPitchFromFullscreen()
                 }
             },
             onSeekBy = { positionMs -> sendControl("seek", "{\"position_ms\":$positionMs}") },
@@ -512,7 +516,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         startStandbyMotion()
         binding.standbyPanel.post(standbyTicker)
         binding.standbyPanel.postDelayed(burnInTicker, 60_000L)
-        binding.standbyPanel.post(standbySettingsTicker)
+        scheduleStandbySettingsTicker()
         engine = PlaybackEngine(
             context = this,
             onProgress = { pos, queueId ->
@@ -575,6 +579,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 attachedExternalPlayerView = null
                 engine?.detach(bottomDockController.playerView)
                 engine?.attach(bottomDockController.playerView)
+                applyVideoScaleMode(currentVideoScaleMode)
                 cachedQueueSnapshot?.let(::renderBottomDock)
             } else {
                 externalDisplayActive = true
@@ -669,10 +674,15 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     override fun onStart() {
         super.onStart()
         if (::fullscreenPlaybackPanel.isInitialized) fullscreenPlaybackPanel.onStart()
+        if (::binding.isInitialized) {
+            if (binding.standbyPanel.visibility == View.VISIBLE) resumeStandbyTickers()
+            scheduleStandbySettingsTicker()
+        }
     }
 
     override fun onStop() {
         if (::fullscreenPlaybackPanel.isInitialized) fullscreenPlaybackPanel.onStop()
+        removeStandbyTickers()
         super.onStop()
     }
 
@@ -703,9 +713,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             migrationVersion = config.getModeMigrationVersion(),
         )
         if (action == DeviceModeMigrationPolicy.Action.PROMPT_COMBINED &&
+            modeMigrationDialog?.isShowing != true &&
             AndroidUpdatePolicy.isHostActivityAlive(isFinishing, isDestroyed)
         ) {
-            AlertDialog.Builder(this)
+            val dialog = AlertDialog.Builder(this)
                 .setTitle("新功能提示")
                 .setMessage("新版本已支持电视大屏直接点歌（播放+点歌台合一）。\n推荐切换为“播放+点歌”模式，您也可以随时在遥控菜单“服务器/模式”中更改。")
                 .setPositiveButton("切换为播放+点歌") { _, _ ->
@@ -719,11 +730,16 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 .setOnCancelListener {
                     config.setModeMigrationVersion(DeviceModeMigrationPolicy.CURRENT_VERSION)
                 }
-                .show()
+                .create()
+            modeMigrationDialog = dialog
+            showTrackedAlertDialog(dialog) {
+                if (modeMigrationDialog === dialog) modeMigrationDialog = null
+            }
         }
     }
 
     override fun onDestroy() {
+        dismissActiveModalDialogs()
         pitchDialog?.dismiss()
         pitchDialog = null
         standbyMotionAnimators.forEach(ObjectAnimator::cancel)
@@ -1184,25 +1200,13 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 "客户端版本: " + BuildConfig.VERSION_NAME + "\n" +
                 "播放器: AndroidX Media3\n" +
                 "播放控制长连接: " + (if (playerConnected) "已连接" else "未连接")
-        val dialog = AlertDialog.Builder(this, R.style.Theme_HomeKtvTv_UpdateDialog)
-            .setTitle("系统信息")
-            .setMessage(info)
-            .setNeutralButton("服务与设备") { _, _ -> launchServiceAndDeviceSettings() }
-            .setPositiveButton("确定", null)
-            .create()
-        dialog.setOnDismissListener {
-            untrackModalDialog(dialog)
-            restoreFocus(binding.btnTopSystem)
-        }
-        trackModalDialog(dialog)
-        dialog.show()
-        val confirmButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-        val serviceAndDeviceButton = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
-        confirmButton.nextFocusLeftId = serviceAndDeviceButton.id
-        serviceAndDeviceButton.nextFocusRightId = confirmButton.id
-        confirmButton.post {
-            confirmButton.requestRemoteFocus()
-        }
+        showTrackedInfoModal(
+            title = "系统信息",
+            message = info,
+            returnFocus = binding.btnTopSystem,
+            secondaryActionLabel = "服务与设备",
+            onSecondaryAction = ::launchServiceAndDeviceSettings,
+        )
     }
 
     private fun launchServiceAndDeviceSettings() {
@@ -1213,51 +1217,46 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun showInformationalDialog(title: String, message: String, returnFocus: View) {
-        val dialog = AlertDialog.Builder(this, R.style.Theme_HomeKtvTv_UpdateDialog)
-            .setTitle(title)
-            .setMessage(message)
-            .setPositiveButton("确定", null)
-            .create()
-        dialog.setOnDismissListener {
-            untrackModalDialog(dialog)
-            restoreFocus(returnFocus)
-        }
-        trackModalDialog(dialog)
-        dialog.show()
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.let { button ->
-            button.post { button.requestRemoteFocus() }
-        }
+        showTrackedInfoModal(
+            title = title,
+            message = message,
+            returnFocus = returnFocus,
+        )
     }
 
     private fun showDownloadServerDialog(title: String, message: String, returnFocus: View) {
-        var navigateToSystemInfo = false
-        val dialog = AlertDialog.Builder(this, R.style.Theme_HomeKtvTv_UpdateDialog)
-            .setTitle(title)
-            .setMessage(message)
-            .setNeutralButton("查看系统信息") { _, _ ->
-                navigateToSystemInfo = true
-            }
-            .setPositiveButton("确定", null)
-            .create()
+        showTrackedInfoModal(
+            title = title,
+            message = message,
+            returnFocus = returnFocus,
+            secondaryActionLabel = "查看系统信息",
+            onSecondaryAction = ::showSystemInfoDialog,
+        )
+    }
+
+    private fun showTrackedInfoModal(
+        title: String,
+        message: String,
+        returnFocus: View,
+        secondaryActionLabel: String? = null,
+        onSecondaryAction: (() -> Unit)? = null,
+    ) {
+        val dialog = KtvSystemInfoDialog(
+            context = this,
+            title = title,
+            message = message,
+            secondaryActionLabel = secondaryActionLabel,
+        )
         dialog.setOnDismissListener {
             untrackModalDialog(dialog)
-            if (navigateToSystemInfo) {
-                showSystemInfoDialog()
+            if (dialog.wasSecondaryActionTriggered) {
+                onSecondaryAction?.invoke()
             } else {
                 restoreFocus(returnFocus)
             }
         }
         trackModalDialog(dialog)
         dialog.show()
-        val confirmButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-        val systemInfoButton = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
-        if (confirmButton != null && systemInfoButton != null) {
-            confirmButton.nextFocusLeftId = systemInfoButton.id
-            systemInfoButton.nextFocusRightId = confirmButton.id
-        }
-        confirmButton?.post {
-            confirmButton.requestRemoteFocus()
-        }
     }
 
     private fun showLibraryScanConfirmDialog(returnFocus: View = binding.btnTopLibraryScan) {
@@ -1394,6 +1393,26 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         kioskCoordinator.setModalActive(activeModalDialogs.any { it.isShowing })
     }
 
+    private fun showTrackedAlertDialog(dialog: AlertDialog, onDismiss: (() -> Unit)? = null) {
+        dialog.setOnDismissListener {
+            untrackModalDialog(dialog)
+            onDismiss?.invoke()
+        }
+        trackModalDialog(dialog)
+        dialog.show()
+    }
+
+    private fun dismissActiveModalDialogs() {
+        val dialogs = activeModalDialogs.toList()
+        activeModalDialogs.clear()
+        dialogs.forEach { dialog -> runCatching { dialog.dismiss() } }
+        modeMigrationDialog = null
+        capabilityDrawer = null
+        topBarQrDialog = null
+        pitchDialog = null
+        kioskCoordinator.setModalActive(false)
+    }
+
     private fun consumeActiveModalDialogBack(event: KeyEvent): Boolean {
         if (event.keyCode != KeyEvent.KEYCODE_BACK) return false
         val activeDialog = activeModalDialogs.lastOrNull { it.isShowing } ?: return false
@@ -1513,7 +1532,10 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         remoteMenuBinding?.remoteMicrophone?.text = if (microphoneActive) "麦克风：开" else "麦克风：关"
     }
 
+    private var currentVideoScaleMode: String = "zoom"
+
     private fun applyVideoScaleMode(mode: String) {
+        currentVideoScaleMode = mode
         bottomDockController.playerView.resizeMode = when (mode) {
             "fit" -> AspectRatioFrameLayout.RESIZE_MODE_FIT
             "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
@@ -1602,6 +1624,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         } else {
             if (::kioskController.isInitialized) kioskController.toggleKiosk(false)
             binding.standbyPanel.visibility = View.VISIBLE
+            resumeStandbyTickers()
         }
         if (!modeCapabilities.canOpenKiosk) bottomDockController.focusHome()
     }
@@ -1667,6 +1690,21 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         )
     }
 
+    private fun openPitchFromFullscreen() {
+        val returnFocus = currentFocus ?: binding.root.findViewById(R.id.btnFullscreenPitch)
+        val activeEngine = engine
+        if (activeEngine == null) {
+            showPitchUnavailable(returnFocus, PlaybackPitchStatus.NO_MEDIA)
+            return
+        }
+        val currentResult = activeEngine.setPitchSemitones(activeEngine.pitchSemitones)
+        if (!currentResult.applied) {
+            showPitchUnavailable(returnFocus, currentResult.status)
+            return
+        }
+        showPitchDialog(returnFocus, activeEngine, currentResult.semitones)
+    }
+
     private fun onPitchStep(delta: Int) {
         val returnFocus = currentFocus ?: if (delta < 0) {
             binding.root.findViewById(R.id.btnDockToneDown)
@@ -1675,12 +1713,12 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         }
         val activeEngine = engine
         if (activeEngine == null) {
-            showPitchUnavailable(PlaybackPitchStatus.NO_MEDIA)
+            showPitchUnavailable(returnFocus, PlaybackPitchStatus.NO_MEDIA)
             return
         }
         val result = activeEngine.setPitchSemitones(activeEngine.pitchSemitones + delta)
         if (!result.applied) {
-            showPitchUnavailable(result.status)
+            showPitchUnavailable(returnFocus, result.status)
             return
         }
         showPitchDialog(returnFocus, activeEngine, result.semitones)
@@ -1691,35 +1729,40 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         activeEngine: PlaybackEngine,
         initialSemitones: Int,
     ) {
-        pitchDialog?.takeIf { it.isShowing }?.dismiss()
-        val dialog = KtvPitchDialog(
-            context = this,
-            initialSemitones = initialSemitones,
-            setPitch = activeEngine::setPitchSemitones,
+        showPitchModal(
+            returnFocus = returnFocus,
+            dialog = KtvPitchDialog(
+                context = this,
+                initialSemitones = initialSemitones,
+                setPitch = activeEngine::setPitchSemitones,
+            ),
         )
+    }
+
+    private fun showPitchUnavailable(returnFocus: View, status: PlaybackPitchStatus) {
+        showPitchModal(
+            returnFocus = returnFocus,
+            dialog = KtvPitchDialog(
+                context = this,
+                initialSemitones = 0,
+                setPitch = { PlaybackPitchResult(status = status, semitones = 0, pitch = 1.0f) },
+                unavailableStatus = status,
+            ),
+        )
+    }
+
+    private fun showPitchModal(returnFocus: View, dialog: KtvPitchDialog) {
+        pitchDialog?.takeIf { it.isShowing }?.dismiss()
         pitchDialog = dialog
+        if (bottomDockController.isFullscreen) fullscreenPlaybackPanel.suspendAutoHide()
         dialog.setOnDismissListener {
             if (pitchDialog === dialog) pitchDialog = null
             untrackModalDialog(dialog)
+            if (bottomDockController.isFullscreen) fullscreenPlaybackPanel.resumeAutoHide()
             restoreFocus(returnFocus)
         }
         trackModalDialog(dialog)
         dialog.show()
-    }
-
-    private fun showPitchUnavailable(status: PlaybackPitchStatus) {
-        val state = when (status) {
-            PlaybackPitchStatus.APPLIED -> "当前调值已应用"
-            PlaybackPitchStatus.NO_MEDIA -> "未在播放"
-            PlaybackPitchStatus.NOT_READY -> "播放器尚未就绪"
-            PlaybackPitchStatus.UNSUPPORTED_ENGINE -> "当前播放线路不支持变调"
-            PlaybackPitchStatus.PARAMETER_REJECTED -> "播放器未接受此调值"
-        }
-        showCapabilityDrawer(
-            title = "音调",
-            status = state,
-            description = if (status == PlaybackPitchStatus.PARAMETER_REJECTED) "调值保持不变。" else "",
-        )
     }
 
     private fun showCapabilityDrawer(title: String, status: String, description: String) {
@@ -1802,12 +1845,14 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun confirmControl(title: String, message: String, action: String, params: String = "{}") {
-        AlertDialog.Builder(this)
+        if (!AndroidUpdatePolicy.isHostActivityAlive(isFinishing, isDestroyed)) return
+        val dialog = AlertDialog.Builder(this)
             .setTitle(title)
             .setMessage(message)
             .setNegativeButton("取消", null)
             .setPositiveButton("确定") { _, _ -> sendControl(action, params) }
-            .show()
+            .create()
+        showTrackedAlertDialog(dialog)
     }
 
     private fun sendControl(action: String, params: String = "{}") {
@@ -2518,6 +2563,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     private fun showStandby() {
         binding.standbyPanel.removeCallbacks(standbyTicker)
+        binding.standbyPanel.removeCallbacks(burnInTicker)
         if (bottomDockController.isFullscreen) bottomDockController.exitFullscreen()
         bottomDockController.setVideoVisible(false)
         binding.ktvOverlay.visibility = View.GONE
@@ -2529,8 +2575,27 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             ensureKioskController().toggleKiosk(true)
         } else {
             binding.standbyPanel.visibility = View.VISIBLE
-            binding.standbyPanel.post(standbyTicker)
+            resumeStandbyTickers()
         }
+    }
+
+    private fun resumeStandbyTickers() {
+        binding.standbyPanel.removeCallbacks(standbyTicker)
+        binding.standbyPanel.removeCallbacks(burnInTicker)
+        binding.standbyPanel.post(standbyTicker)
+        binding.standbyPanel.postDelayed(burnInTicker, 60_000L)
+    }
+
+    private fun scheduleStandbySettingsTicker() {
+        binding.standbyPanel.removeCallbacks(standbySettingsTicker)
+        binding.standbyPanel.postDelayed(standbySettingsTicker, 60_000L)
+    }
+
+    private fun removeStandbyTickers() {
+        if (!::binding.isInitialized) return
+        binding.standbyPanel.removeCallbacks(standbyTicker)
+        binding.standbyPanel.removeCallbacks(burnInTicker)
+        binding.standbyPanel.removeCallbacks(standbySettingsTicker)
     }
 
     private fun showPlaybackProgress() {

@@ -50,6 +50,34 @@ class ControllerPhoneMyLayoutContractTest {
         assertEquals("服务离线", ControllerConnectionSummaryPolicy.label(ControllerConnection.OFFLINE, tvOnline = false))
     }
 
+    @Test
+    fun playlistHeaderRenderKeySkipsUnchangedRebuildsAndDetectsAsyncCoverBytes() {
+        val detail = com.homektv.tv.net.PlaylistDetail(
+            id = 7L,
+            name = "怀旧金曲",
+            description = "经典合集",
+            theme = "经典",
+            coverUrl = "/api/cover/7",
+            songs = emptyList(),
+        )
+        val withoutBytes = PlaylistHeaderRenderKey.from(detail, null)
+        val withBytesA = PlaylistHeaderRenderKey.from(detail, byteArrayOf(1, 2, 3))
+        val withBytesASameContent = PlaylistHeaderRenderKey.from(detail, byteArrayOf(1, 2, 3))
+        val withBytesB = PlaylistHeaderRenderKey.from(detail, byteArrayOf(1, 2, 4))
+
+        assertEquals(withBytesA, withBytesASameContent)
+        assertFalse(withoutBytes == withBytesA)
+        assertFalse(withBytesA == withBytesB)
+
+        val source = locate("src/main/java/com/homektv/tv/ui/controller/ControllerFragment.kt").readText()
+        assertTrue(source.contains("renderedPlaylistHeaderKey"))
+        assertTrue(source.contains("PlaylistHeaderRenderKey.from("))
+        val personalPanel = source.substringAfter("private fun renderPersonalPanel(")
+            .substringBefore("private fun renderPlaylistDetailHeader(")
+        assertTrue(personalPanel.contains("clearPlaylistHeader()"))
+        assertTrue(source.contains("playlistCoverJob?.cancel()"))
+    }
+
     private fun locate(relativePath: String): File {
         val workingDirectory = File(System.getProperty("user.dir").orEmpty())
         return sequenceOf(

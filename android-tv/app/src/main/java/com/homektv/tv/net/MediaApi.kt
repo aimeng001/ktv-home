@@ -33,22 +33,28 @@ import kotlin.coroutines.resumeWithException
  */
 class MediaApi(
     private val config: AppConfig,
-    private val detailTransport: KtvTransport = KtvHttpTransport(config),
+    private val detailTransport: KtvTransport = KtvHttpTransport(
+        config,
+        SharedHttpClients.transportClient(),
+        ownsClientResources = false,
+    ),
+    private val ownsClientResources: Boolean = false,
 ) : Closeable {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .build()
+    private val http: OkHttpClient = SharedHttpClients.apiClient()
+    private val activeCalls = ActiveCallRegistry()
     private val fileSourceResolver = FileSourceResolver(detailTransport, json)
     private val playbackResolver = PlaybackResolver(detailTransport, json, { config.apiBase() }, fileSourceResolver)
     private val closed = AtomicBoolean(false)
 
     override fun close() {
         if (closed.compareAndSet(false, true)) {
-            http.closeResources()
+            activeCalls.cancelAll()
+            if (ownsClientResources) {
+                http.closeResources()
+            }
             (detailTransport as? Closeable)?.close()
         }
     }
@@ -258,14 +264,16 @@ class MediaApi(
 
     private suspend fun execute(request: Request): Response =
         suspendCancellableCoroutine { continuation ->
-            val call = http.newCall(request)
+            val call = activeCalls.register(http.newCall(request))
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
+                    activeCalls.unregister(call)
                     if (continuation.isActive) continuation.resumeWithException(e)
                 }
 
                 override fun onResponse(call: Call, response: Response) {
+                    activeCalls.unregister(call)
                     if (continuation.isActive) {
                         continuation.resume(response)
                     } else {

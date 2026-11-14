@@ -30,8 +30,14 @@ public class SongProbeService {
     private final MediaProbeStage mediaProbeStage;
     private final SongAvailabilityPolicy availabilityPolicy;
 
-    // Single-flight 并发探测锁，防止并发点播同一首歌曲发起重复的 FFprobe 进程
-    private final ConcurrentHashMap<Long, Object> probeLocks = new ConcurrentHashMap<>();
+    private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+
+    // Single-flight 并发探测锁（带等待计数），防止并发探测同一首歌曲以及失败退锁时丢锁
+    private final ConcurrentHashMap<Long, LockEntry> probeLocks = new ConcurrentHashMap<>();
+
+    private static final class LockEntry {
+        int waiters = 0;
+    }
 
     public SongProbeService(SongRepository songRepo,
                             SongFileRepository fileRepo,
@@ -41,6 +47,29 @@ public class SongProbeService {
         this.fileRepo = fileRepo;
         this.mediaProbeStage = mediaProbeStage;
         this.availabilityPolicy = availabilityPolicy;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setTransactionTemplate(org.springframework.transaction.support.TransactionTemplate transactionTemplate) {
+        this.transactionTemplate = transactionTemplate;
+    }
+
+    private LockEntry acquireLock(Long songId) {
+        return probeLocks.compute(songId, (k, existing) -> {
+            LockEntry entry = existing != null ? existing : new LockEntry();
+            entry.waiters++;
+            return entry;
+        });
+    }
+
+    private void releaseLock(Long songId, LockEntry entry) {
+        probeLocks.computeIfPresent(songId, (k, existing) -> {
+            if (existing != entry) {
+                return existing;
+            }
+            existing.waiters--;
+            return existing.waiters <= 0 ? null : existing;
+        });
     }
 
     /**
@@ -58,17 +87,18 @@ public class SongProbeService {
             return;
         }
 
-        Object lock = probeLocks.computeIfAbsent(songId, k -> new Object());
-        synchronized (lock) {
-            try {
+        LockEntry lock = acquireLock(songId);
+        try {
+            synchronized (lock) {
                 // 双重检查
-                if (availabilityPolicy.isPlayable(song)) {
+                Song current = songRepo.findById(songId).orElse(song);
+                if (availabilityPolicy.isPlayable(current)) {
                     return;
                 }
-                probeAndPersist(song);
-            } finally {
-                probeLocks.remove(songId);
+                probeAndPersistInternal(current);
             }
+        } finally {
+            releaseLock(songId, lock);
         }
     }
 
@@ -79,15 +109,36 @@ public class SongProbeService {
         if (songId == null) {
             throw new ApiException("INVALID_ARGUMENT", "歌曲ID不能为空");
         }
-        Song song = songRepo.findById(songId)
-                .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在: " + songId));
-        return probeAndPersist(song);
+        LockEntry lock = acquireLock(songId);
+        try {
+            synchronized (lock) {
+                Song song = songRepo.findById(songId)
+                        .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在: " + songId));
+                return probeAndPersistInternal(song);
+            }
+        } finally {
+            releaseLock(songId, lock);
+        }
     }
 
     /**
      * 即时执行探测并持久化，供管理端点显式触发。
      */
     public boolean probeAndPersist(Song song) {
+        if (song == null || song.getId() == null) {
+            throw new ApiException("INVALID_ARGUMENT", "歌曲ID不能为空");
+        }
+        LockEntry lock = acquireLock(song.getId());
+        try {
+            synchronized (lock) {
+                return probeAndPersistInternal(song);
+            }
+        } finally {
+            releaseLock(song.getId(), lock);
+        }
+    }
+
+    private boolean probeAndPersistInternal(Song song) {
         Long songId = song.getId();
         List<SongFile> files = fileRepo.findBySongIdOrderByPriorityDesc(songId);
         if (files.isEmpty()) {
@@ -114,25 +165,42 @@ public class SongProbeService {
         }
 
         MediaProbe probe = result.probe();
-        applyProbeToSongFile(targetFile, probe);
-        fileRepo.save(targetFile);
-
-        applyProbeToSong(song, targetFile, probe);
-        songRepo.save(song);
+        persistProbeResult(song, targetFile, probe);
 
         log.info("按需即时探测成功并持久化: songId={}, format={}, mediaType={}, durationMs={}, audioLayout={}",
                 songId, targetFile.getFormat(), targetFile.getMediaType(), probe.durationMs(), targetFile.getAudioLayout());
         return true;
     }
 
+    private void persistProbeResult(Song fallbackSong, SongFile fallbackFile, MediaProbe probe) {
+        Runnable writeAction = () -> {
+            SongFile latestFile = fallbackFile.getId() != null
+                    ? fileRepo.findById(fallbackFile.getId()).orElse(fallbackFile)
+                    : fallbackFile;
+            applyProbeToSongFile(latestFile, probe);
+            fileRepo.save(latestFile);
+
+            Song latestSong = fallbackSong.getId() != null
+                    ? songRepo.findById(fallbackSong.getId()).orElse(fallbackSong)
+                    : fallbackSong;
+            applyProbeToSong(latestSong, latestFile, probe);
+            songRepo.save(latestSong);
+        };
+        if (transactionTemplate != null) {
+            transactionTemplate.executeWithoutResult(status -> writeAction.run());
+        } else {
+            writeAction.run();
+        }
+    }
+
     private void applyProbeToSongFile(SongFile sf, MediaProbe probe) {
-        String mediaType = MediaClassifier.classify(probe);
-        sf.setMediaType(mediaType);
-        sf.setResolution(probe.resolution());
-        sf.setAudioTracks(probe.audioTracks());
         if (probe.audioTracks() >= 2) {
             sf.setAudioLayout(AudioLayout.DUAL_TRACK);
         }
+        String mediaType = MediaClassifier.classify(probe, sf.getAudioLayout());
+        sf.setMediaType(mediaType);
+        sf.setResolution(probe.resolution());
+        sf.setAudioTracks(probe.audioTracks());
         sf.setProbePending(false);
         sf.setValid(true);
     }
@@ -144,7 +212,7 @@ public class SongProbeService {
         if (song.getMediaType() == null || "pending_probe".equalsIgnoreCase(song.getMediaType()) || song.getMediaType().isBlank()) {
             song.setMediaType(sf.getMediaType());
         }
-        boolean hasVocal = probe.audioTracks() >= 2 || (sf.getAudioLayout() != null && !sf.getAudioLayout().equals(AudioLayout.NORMAL_STEREO.name()));
+        boolean hasVocal = MediaClassifier.hasVocalTrack(probe, sf.getAudioLayout());
         song.setHasVocalTrack(hasVocal);
     }
 }

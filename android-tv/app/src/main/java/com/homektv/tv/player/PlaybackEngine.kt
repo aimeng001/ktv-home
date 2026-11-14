@@ -33,6 +33,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.video.VideoRendererEventListener
 import androidx.media3.ui.PlayerView
+import com.homektv.tv.BuildConfig
 import com.homektv.tv.net.AudioLayout
 import com.homektv.tv.net.closeResources
 import com.homektv.tv.net.PlaybackErrorContext
@@ -204,9 +205,9 @@ class PlaybackEngine(
             if (applyingSystemVolume) return
             val max = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
             val idx = audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+            val percent = resolvePlaybackStreamVolumePercent(idx, max) ?: return
             if (idx == lastAppliedStreamIdx) return
             lastAppliedStreamIdx = idx
-            val percent = (idx * 100 + max / 2) / max
             Log.d(TAG, "system volume changed externally: idx=$idx/$max -> $percent%")
             onExternalVolumeChange?.invoke(percent)
         }
@@ -217,14 +218,22 @@ class PlaybackEngine(
             android.provider.Settings.System.CONTENT_URI, true, systemVolumeObserver)
     }
 
+    private val sessionMetadata = PlaybackSessionMetadata()
+
     /** 当前正在播放的 fileId，用于避免同一首重复 setMediaItem 打断播放。 */
-    private var currentFileId: Long? = null
+    private var currentFileId: Long?
+        get() = sessionMetadata.currentFileId
+        set(value) { sessionMetadata.currentFileId = value }
     private var currentPitchSemitones: Int = 0
     val pitchSemitones: Int get() = currentPitchSemitones
     /** 与当前媒体一起捕获的 queueId，避免迟到错误使用后来切歌后的队列状态。 */
-    private var currentQueueId: Long? = null
+    private var currentQueueId: Long?
+        get() = sessionMetadata.currentQueueId
+        set(value) { sessionMetadata.currentQueueId = value }
     /** 只有同一队列中的同一文件才允许复用已加载的媒体。 */
-    private var currentRequest: PlaybackRequestIdentity? = null
+    private var currentRequest: PlaybackRequestIdentity?
+        get() = sessionMetadata.currentRequest
+        set(value) { sessionMetadata.currentRequest = value }
     /** Invalidates delayed transient-error retries when a new request replaces the media. */
     private val retryGate = PlaybackRetryGate()
     private var currentRetryTicket: PlaybackRetryTicket? = null
@@ -262,17 +271,33 @@ class PlaybackEngine(
 
     private var activeEngineType: PlaybackEngineType = PlaybackEngineType.PRIMARY_MEDIA3
     private var attachedPlayerView: PlayerView? = null
-    private var currentHasVideoDeclared: Boolean = false
-    private var currentFormat: String? = null
-    private var currentStreamUrl: String? = null
-    private var currentStreamOffsetMs: Long = 0L
-    private var currentIsLiveTranscode: Boolean = false
+    private var currentHasVideoDeclared: Boolean
+        get() = sessionMetadata.currentHasVideoDeclared
+        set(value) { sessionMetadata.currentHasVideoDeclared = value }
+    private var currentFormat: String?
+        get() = sessionMetadata.currentFormat
+        set(value) { sessionMetadata.currentFormat = value }
+    private var currentStreamUrl: String?
+        get() = sessionMetadata.currentStreamUrl
+        set(value) { sessionMetadata.currentStreamUrl = value }
+    private var currentStreamOffsetMs: Long
+        get() = sessionMetadata.currentStreamOffsetMs
+        set(value) { sessionMetadata.currentStreamOffsetMs = value }
+    private var currentIsLiveTranscode: Boolean
+        get() = sessionMetadata.currentIsLiveTranscode
+        set(value) { sessionMetadata.currentIsLiveTranscode = value }
     private var fallbackPlaybackToken: Long = 0L
     /** A generic platform error may be decoder-related only when Media3 already proved that for this attempt. */
-    private var fallbackFollowedMedia3DecoderFailure = false
+    private var fallbackFollowedMedia3DecoderFailure: Boolean
+        get() = sessionMetadata.fallbackFollowedMedia3DecoderFailure
+        set(value) { sessionMetadata.fallbackFollowedMedia3DecoderFailure = value }
     /** Prevents a missing/unsupported video track from being reported repeatedly. */
-    private var videoFailureReportedFileId: Long? = null
-    private var resolutionRequestedFileId: Long? = null
+    private var videoFailureReportedFileId: Long?
+        get() = sessionMetadata.videoFailureReportedFileId
+        set(value) { sessionMetadata.videoFailureReportedFileId = value }
+    private var resolutionRequestedFileId: Long?
+        get() = sessionMetadata.resolutionRequestedFileId
+        set(value) { sessionMetadata.resolutionRequestedFileId = value }
 
     private val fallbackSurfaceCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {
@@ -456,7 +481,9 @@ class PlaybackEngine(
                         )
                     }
                 })
-                it.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
+                if (BuildConfig.DEBUG) {
+                    it.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
+                }
                 // 视频帧看门狗（P1.35 腾讯极光等盒子实测）：部分机顶盒的 MPEG-2 硬解
                 // 在暂停/恢复后会停止出帧，音频照常走、画面定格。记录每帧上屏时间，
                 // 由 progressTicker 检测并就地 seek 强制 flush 解码器恢复。
@@ -482,7 +509,7 @@ class PlaybackEngine(
             (view.videoSurfaceView as? SurfaceView)?.holder?.removeCallback(fallbackSurfaceCallback)
             attachedPlayerView = null
         }
-        if (view.player === player) view.player = null
+        if (playerDelegate.isInitialized() && view.player === player) view.player = null
         if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
             fallbackPlayer.setSurface(null)
         }
@@ -539,29 +566,38 @@ class PlaybackEngine(
         videoCodec: String? = null,
         songDurationMs: Long = 0L,
     ) {
-        val continuesSameQueueItem = currentFileId == fileId && currentQueueId == queueId
-        currentSongDurationMs = songDurationMs
-        currentHasVideoDeclared = hasVideoDeclared
-        currentFormat = format
-        currentStreamUrl = streamUrl
-        currentIsLiveTranscode = LiveTranscodeStreamUrl.isLiveTranscode(streamUrl)
-        currentStreamOffsetMs = LiveTranscodeStreamUrl.startPositionMs(streamUrl)
-        videoFailureReportedFileId = null
-        resolutionRequestedFileId = null
-        fallbackFollowedMedia3DecoderFailure = false
-
         val engineChoice = playbackRouter.selectEngine(videoCodec, format)
-        if (engineChoice == PlaybackEngineType.RESOLVE_REQUIRED || engineChoice == PlaybackEngineType.UNSUPPORTED) {
-            if (!requestPlaybackResolution(queueId, fileId, initialPositionMs, playWhenReady)) {
-                reportPlaybackFailure("PLAYBACK_DECODER_UNSUPPORTED", queueId, fileId)
+        val prepareOutcome = sessionMetadata.preparePlay(
+            queueId = queueId,
+            fileId = fileId,
+            streamUrl = streamUrl,
+            hasVideoDeclared = hasVideoDeclared,
+            format = format,
+            songDurationMs = songDurationMs,
+            engineChoice = engineChoice,
+            activeEngineType = activeEngineType,
+            primaryPlaybackState = if (playerDelegate.isInitialized()) player.playbackState else Player.STATE_IDLE,
+        )
+        when (prepareOutcome.action) {
+            PlaybackPrepareAction.REUSE_ACTIVE -> {
+                retryState.setPlayWhenReady(playWhenReady)
+                if (!playWhenReady) cancelRetry()
+                player.playWhenReady = playWhenReady
+                return
             }
-            return
-        }
-        if (engineChoice == PlaybackEngineType.FALLBACK_FFMPEG) {
-            retryState.start(initialPositionMs, playWhenReady)
-            val localPositionMs = LiveTranscodePosition.pipePositionMs(initialPositionMs, currentStreamOffsetMs)
-            switchToFallbackEngine(fileId, streamUrl, queueId, playWhenReady, localPositionMs)
-            return
+            PlaybackPrepareAction.RESOLVE_REQUIRED -> {
+                if (!requestPlaybackResolution(queueId, fileId, initialPositionMs, playWhenReady)) {
+                    reportPlaybackFailure("PLAYBACK_DECODER_UNSUPPORTED", queueId, fileId)
+                }
+                return
+            }
+            PlaybackPrepareAction.FALLBACK -> {
+                retryState.start(initialPositionMs, playWhenReady)
+                val localPositionMs = LiveTranscodePosition.pipePositionMs(initialPositionMs, currentStreamOffsetMs)
+                switchToFallbackEngine(fileId, streamUrl, queueId, playWhenReady, localPositionMs)
+                return
+            }
+            PlaybackPrepareAction.START_PRIMARY -> Unit
         }
 
         if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
@@ -573,13 +609,8 @@ class PlaybackEngine(
             }
         }
 
-        val requested = PlaybackRequestIdentity(queueId = queueId, fileId = fileId)
-        if (shouldReusePlaybackRequest(currentRequest, requested, player.playbackState)) {
-            retryState.setPlayWhenReady(playWhenReady)
-            if (!playWhenReady) cancelRetry()
-            player.playWhenReady = playWhenReady
-            return
-        }
+        val continuesSameQueueItem = prepareOutcome.continuesSameQueueItem
+        val requested = prepareOutcome.requested
         if (!continuesSameQueueItem) resetPitchForMediaChange()
         cancelRetry()
         Log.d(TAG, "play fileId=$fileId url=$streamUrl")
@@ -589,8 +620,6 @@ class PlaybackEngine(
         currentRequest = requested
         currentRetryTicket = retryGate.begin(requested)
         retryState.start(initialPositionMs, playWhenReady)
-        currentQueueId = queueId
-        currentFileId = fileId
         identityGate.begin(
             PlaybackIdentity(
                 queueId = queueId,
@@ -792,6 +821,7 @@ class PlaybackEngine(
         videoGeneration = videoWatchdog.onMediaChanged()
         identityGate.invalidate()
         playRequestAt = 0L
+        currentSongDurationMs = 0L
         awaitingTracks = false
         appliedSelectionFileId = null
         appliedSelectionMode = null
@@ -807,11 +837,13 @@ class PlaybackEngine(
             }
         }
 
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
-            .build()
-        player.stop()
-        player.clearMediaItems()
+        if (playerDelegate.isInitialized()) {
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                .build()
+            player.stop()
+            player.clearMediaItems()
+        }
         stopProgressTicker()
     }
 
@@ -820,19 +852,23 @@ class PlaybackEngine(
      *  无法在 App 内恢复（音量键被 App 接管），因此直接联动系统音量。 */
     fun applyVolume(volume: Int, muted: Boolean) {
         val max = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
-        val target = volume.coerceIn(0, 100) * max / 100
-        if (!muted) {
-            if (audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) != target) {
-                applyingSystemVolume = true
-                try {
-                    audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, target, 0)
-                } finally {
-                    applyingSystemVolume = false
+        if (max > 0) {
+            val target = volume.coerceIn(0, 100) * max / 100
+            if (!muted) {
+                if (audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) != target) {
+                    applyingSystemVolume = true
+                    try {
+                        audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, target, 0)
+                    } finally {
+                        applyingSystemVolume = false
+                    }
                 }
+                lastAppliedStreamIdx = target
             }
-            lastAppliedStreamIdx = target
         }
-        player.volume = if (muted) 0f else 1f
+        if (playerDelegate.isInitialized()) {
+            player.volume = if (muted) 0f else 1f
+        }
         if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
             fallbackPlayer.setVolume(volume, muted)
         }
@@ -1018,15 +1054,20 @@ class PlaybackEngine(
         Log.d(TAG, "vocal mode=${requestedVocalMode.wireValue} track=$index groupTrack=$localIndex groups=${audioGroups.map { it.length }} applied in ${elapsed}ms")
     }
 
-    var currentSongDurationMs: Long = 0L
+    var currentSongDurationMs: Long
+        get() = sessionMetadata.currentSongDurationMs
+        set(value) { sessionMetadata.currentSongDurationMs = value }
 
     /** 当前媒体时长，供 TV-02 进度条展示。若管道流本身未提供时长则使用歌曲元数据兜底。 */
     val durationMs: Long
-        get() = if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
-            fallbackPlayer.durationMs
-        } else {
-            player.duration.takeIf { it > 0 } ?: currentSongDurationMs.takeIf { it > 0 } ?: 0L
-        }
+        get() = resolvePlaybackDurationMs(
+            engineDurationMs = if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
+                fallbackPlayer.durationMs
+            } else {
+                player.duration
+            },
+            metadataDurationMs = currentSongDurationMs,
+        )
 
     val currentPositionMs: Long
         get() = if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
@@ -1040,9 +1081,10 @@ class PlaybackEngine(
         retryState.beginReplacement()
         stopProgressTicker()
         identityGate.invalidate()
+        attachedPlayerView?.let { detach(it) }
         appContext.contentResolver.unregisterContentObserver(systemVolumeObserver)
         fallbackPlayer.release()
-        player.release()
+        if (playerDelegate.isInitialized()) player.release()
         httpClient.closeResources()
     }
 
@@ -1110,9 +1152,11 @@ class PlaybackEngine(
         resolutionRequestedFileId = fileId
         stopProgressTicker()
         if (activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
-            player.playWhenReady = false
-            player.stop()
-            player.clearMediaItems()
+            if (playerDelegate.isInitialized()) {
+                player.playWhenReady = false
+                player.stop()
+                player.clearMediaItems()
+            }
         } else {
             restorePrimaryAfterFallback()
         }
@@ -1172,10 +1216,12 @@ class PlaybackEngine(
         if (videoFailureReportedFileId == fileId && fileId != null) return
         videoFailureReportedFileId = fileId
         stopProgressTicker()
-        player.playWhenReady = false
-        if (activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
-            player.stop()
-            player.clearMediaItems()
+        if (playerDelegate.isInitialized()) {
+            player.playWhenReady = false
+            if (activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
+                player.stop()
+                player.clearMediaItems()
+            }
         }
         identityGate.invalidate()
         onError(message, PlaybackErrorContext.forPlayback(queueId, fileId))
@@ -1349,6 +1395,12 @@ class PlaybackEngine(
     }
 
 }
+
+internal fun resolvePlaybackDurationMs(engineDurationMs: Long, metadataDurationMs: Long): Long =
+    engineDurationMs.takeIf { it > 0L } ?: metadataDurationMs.takeIf { it > 0L } ?: 0L
+
+internal fun resolvePlaybackStreamVolumePercent(index: Int, max: Int): Int? =
+    if (max <= 0) null else (index.coerceIn(0, max) * 100 + max / 2) / max
 
 
 

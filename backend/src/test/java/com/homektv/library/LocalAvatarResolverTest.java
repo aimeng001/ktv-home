@@ -497,4 +497,71 @@ class LocalAvatarResolverTest {
         verify(profileService).setAvatarReady("zhoujielun", "LOCAL_PACK", "artist-covers/saved.jpg");
         verify(profileService).setAvatarReady("zhoujielun_wenlan", "LOCAL_PACK", "artist-covers/saved.jpg");
     }
+
+    @Test
+    void boundedCoverCacheEvictsLeastRecentlyUsedByEntryCountAndByteBudget(@TempDir Path tempDir) {
+        LocalAvatarResolver.BoundedCoverCache entryCache = new LocalAvatarResolver.BoundedCoverCache(2, 1024);
+        Path p1 = tempDir.resolve("p1.jpg");
+        Path p2 = tempDir.resolve("p2.jpg");
+        Path p3 = tempDir.resolve("p3.jpg");
+
+        entryCache.put(p1, new LocalAvatarResolver.ProcessedCover(new byte[]{1, 2}, "jpg"));
+        entryCache.put(p2, new LocalAvatarResolver.ProcessedCover(new byte[]{3, 4}, "jpg"));
+        assertThat(entryCache.get(p1)).isNotNull();
+        entryCache.put(p3, new LocalAvatarResolver.ProcessedCover(new byte[]{5, 6}, "jpg"));
+
+        assertThat(entryCache.size()).isEqualTo(2);
+        assertThat(entryCache.totalBytes()).isEqualTo(4L);
+        assertThat(entryCache.get(p2)).isNull();
+        assertThat(entryCache.get(p1)).isNotNull();
+        assertThat(entryCache.get(p3)).isNotNull();
+
+        LocalAvatarResolver.BoundedCoverCache byteCache = new LocalAvatarResolver.BoundedCoverCache(10, 10);
+        Path p4 = tempDir.resolve("p4.jpg");
+        byteCache.put(p1, new LocalAvatarResolver.ProcessedCover(new byte[4], "jpg"));
+        byteCache.put(p2, new LocalAvatarResolver.ProcessedCover(new byte[4], "jpg"));
+        byteCache.put(p3, new LocalAvatarResolver.ProcessedCover(new byte[5], "jpg"));
+
+        assertThat(byteCache.size()).isEqualTo(2);
+        assertThat(byteCache.totalBytes()).isEqualTo(9L);
+        assertThat(byteCache.get(p1)).isNull();
+        assertThat(byteCache.get(p2)).isNotNull();
+        assertThat(byteCache.get(p3)).isNotNull();
+
+        byteCache.put(p4, new LocalAvatarResolver.ProcessedCover(new byte[11], "jpg"));
+        assertThat(byteCache.get(p4)).isNull();
+        assertThat(byteCache.totalBytes()).isLessThanOrEqualTo(10L);
+    }
+
+    @Test
+    void resolveAllCandidatesEvictsCoverCacheBeyondMaxEntries(@TempDir Path tempDir) throws Exception {
+        Path avatarsDir = Files.createDirectory(tempDir.resolve("avatars"));
+        int distinctArtists = 257;
+        java.util.List<ArtistProfileService.Profile> profiles = new java.util.ArrayList<>(distinctArtists + 1);
+        for (int i = 0; i < distinctArtists; i++) {
+            String name = "歌手" + i;
+            Files.write(avatarsDir.resolve(name + ".jpg"), new byte[]{(byte) (i & 0xFF), 2, 3});
+            profiles.add(new ArtistProfileService.Profile("p" + i, name, "PERSON", null, null, null, "PENDING"));
+        }
+        profiles.add(new ArtistProfileService.Profile("p0_dup", "歌手0", "PERSON", null, null, null, "PENDING"));
+
+        AppProperties props = new AppProperties();
+        props.setDataPath(tempDir.toString());
+
+        CoverImageNormalizer normalizer = mock(CoverImageNormalizer.class);
+        when(normalizer.normalize(any(byte[].class))).thenReturn(new byte[]{9, 9, 9});
+
+        AssetWriter assetWriter = mock(AssetWriter.class);
+        when(assetWriter.writeArtistCover(any(), any(), any())).thenReturn("artist-covers/saved.jpg");
+
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+        when(profileService.unresolvedProfiles(50_000)).thenReturn(profiles);
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, assetWriter, profileService);
+        resolver.setCoverImageNormalizer(normalizer);
+
+        int matched = resolver.resolveAllCandidates();
+        assertThat(matched).isEqualTo(distinctArtists + 1);
+        verify(normalizer, times(distinctArtists + 1)).normalize(any(byte[].class));
+    }
 }

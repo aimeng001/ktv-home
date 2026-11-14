@@ -49,7 +49,8 @@ public class DiscoveryController {
      */
     @GetMapping("/ranking")
     public List<SongDto> ranking(@RequestParam(defaultValue = "30") int days) {
-        OffsetDateTime since = OffsetDateTime.now().minusDays(days);
+        int safeDays = Math.clamp(days, 1, 3650);
+        OffsetDateTime since = OffsetDateTime.now().minusDays(safeDays);
         List<Object[]> rows = historyRepo.ranking(since, 20);
         List<Long> songIds = rows.stream()
                 .map(row -> ((Number) row[0]).longValue())

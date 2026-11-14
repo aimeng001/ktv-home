@@ -34,4 +34,36 @@ class FallbackVocalSelectionStateTest {
 
         assertEquals(requested, state.select("accompaniment", 1, layout))
     }
+
+    @Test
+    fun dualChannelSelectionPreservesChannelMaskAcrossVolumeAndMuteUpdates() {
+        val layout = AudioLayout(
+            layout = "DUAL_CHANNEL",
+            originalChannel = "LEFT",
+            accompanimentChannel = "RIGHT",
+        )
+        val accompaniment = FallbackVocalSelection("accompaniment", null, layout)
+
+        assertEquals(
+            FallbackChannelGains(left = 0f, right = 0.6f),
+            FallbackAudioMixPolicy.resolveGains(0.6f, muted = false, accompaniment, channelModeOverride = null),
+        )
+        assertEquals(
+            FallbackChannelGains(left = 0f, right = 0f),
+            FallbackAudioMixPolicy.resolveGains(0.6f, muted = true, accompaniment, channelModeOverride = null),
+        )
+        assertEquals(
+            FallbackChannelGains(left = 0.4f, right = 0.4f),
+            FallbackAudioMixPolicy.resolveGains(
+                0.4f,
+                muted = false,
+                FallbackVocalSelection("accompaniment", 1, AudioLayout("DUAL_TRACK", 1)),
+                channelModeOverride = null,
+            ),
+        )
+        assertEquals(
+            FallbackChannelGains(left = 0f, right = 0f),
+            FallbackAudioMixPolicy.resolveGains(0.5f, muted = true, selection = null, channelModeOverride = "accompaniment"),
+        )
+    }
 }

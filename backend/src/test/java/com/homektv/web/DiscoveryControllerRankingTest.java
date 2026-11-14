@@ -60,4 +60,29 @@ class DiscoveryControllerRankingTest {
         verify(songRepo, times(1)).findAllById(List.of(101L, 102L));
         verify(songRepo, never()).findById(anyLong());
     }
+
+    @Test
+    void ranking_clampsDaysToSafeRangeBetweenOneAnd3650() {
+        when(historyRepo.ranking(any(OffsetDateTime.class), eq(20))).thenReturn(List.of());
+
+        OffsetDateTime beforeNegative = OffsetDateTime.now();
+        controller.ranking(-5);
+        OffsetDateTime afterNegative = OffsetDateTime.now();
+
+        controller.ranking(0);
+        controller.ranking(3650);
+
+        OffsetDateTime beforeHuge = OffsetDateTime.now();
+        controller.ranking(99999);
+        OffsetDateTime afterHuge = OffsetDateTime.now();
+
+        org.mockito.ArgumentCaptor<OffsetDateTime> captor = org.mockito.ArgumentCaptor.forClass(OffsetDateTime.class);
+        verify(historyRepo, times(4)).ranking(captor.capture(), eq(20));
+
+        List<OffsetDateTime> captured = captor.getAllValues();
+        assertThat(captured.get(0)).isBetween(beforeNegative.minusDays(1).minusSeconds(2), afterNegative.minusDays(1).plusSeconds(2));
+        assertThat(captured.get(1)).isBetween(beforeNegative.minusDays(1).minusSeconds(5), afterHuge.minusDays(1).plusSeconds(2));
+        assertThat(captured.get(2)).isBetween(beforeNegative.minusDays(3650).minusSeconds(5), afterHuge.minusDays(3650).plusSeconds(2));
+        assertThat(captured.get(3)).isBetween(beforeHuge.minusDays(3650).minusSeconds(2), afterHuge.minusDays(3650).plusSeconds(2));
+    }
 }
