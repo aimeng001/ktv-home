@@ -19,6 +19,12 @@ class KioskCatalogActionRouter(
 
     fun artists() = actions.loadArtists(gender = "", initial = "", restorePage = 0)
 
+    fun searchArtists(gender: String, initial: String, region: String = "", keyword: String) =
+        actions.searchArtists(gender = gender, initial = initial, region = region, keyword = keyword)
+
+    fun searchArtistSongs(artistKey: String, keyword: String) =
+        actions.searchArtistSongs(artistKey = artistKey, keyword = keyword)
+
     fun rankings() = actions.loadRanking()
 
     fun newSongs() = actions.loadNewSongs()

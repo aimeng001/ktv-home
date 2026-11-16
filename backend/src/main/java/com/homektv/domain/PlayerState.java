@@ -31,7 +31,7 @@ public class PlayerState {
     private String state = "idle";
 
     @Column(nullable = false)
-    private int volume = 60;
+    private int volume = 100;
 
     @Column(nullable = false)
     private boolean muted = false;

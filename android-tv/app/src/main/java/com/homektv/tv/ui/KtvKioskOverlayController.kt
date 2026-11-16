@@ -113,6 +113,7 @@ class KtvKioskOverlayController(
         onToggleFavorite = personalActionRouter::toggleFavorite,
         imageLoader = ::loadSingerAvatar,
         onBottomRowDown = ::focusPaginationBarFromSongGrid,
+        onShowActions = ::showSongActionsDialog,
     )
     private val singerAvatarCache = WeightedLruCache<String, android.graphics.Bitmap>(
         capacity = 128,
@@ -130,9 +131,8 @@ class KtvKioskOverlayController(
     private var controllerState = ControllerUiState()
     private var lastControllerFeedback: String? = null
     private var queueDialog: KtvQueueDrawerDialog? = null
-    private var qrDialog: KtvQrDialog? = null
+    private var songActionsDialog: androidx.appcompat.app.AlertDialog? = null
     private var cachedQrBitmap: Bitmap? = null
-    private var qrLoadJob: Job? = null
     private var artistsLoaded = false
     private var rankingsLoaded = false
     private var browsingAllSongs = false
@@ -1507,11 +1507,6 @@ class KtvKioskOverlayController(
         browserBinding.browserResultsRecyclerView.requestFocus()
     }
 
-    private fun selectQuickTag(tag: String) {
-        val actualTag = controllerState.tags.firstOrNull { it.name == tag } ?: return
-        selectCommercialTag(actualTag)
-    }
-
     private fun selectCommercialTag(actualTag: com.homektv.tv.net.NamedCount) {
         categoryMode = KioskCategoryMode.TAGS
         categoryDetail = true
@@ -1800,6 +1795,37 @@ class KtvKioskOverlayController(
 
         leaveKioskAllSongs()
         val normalizedKeyword = T9PinyinSearchPolicy.normalizeSearchKeyword(keyword)
+        if (currentTab == KioskTab.SINGERS) {
+            val selectedArtist = presentationState.selectedArtist.value
+            if (selectedArtist == null) {
+                browserSongAdapter.setSearchKeyword("")
+                if (normalizedKeyword.isBlank()) {
+                    catalogActions.loadArtists(
+                        gender = controllerState.artistGender,
+                        initial = controllerState.artistInitial,
+                        restorePage = 0,
+                        region = controllerState.artistRegion,
+                    )
+                } else {
+                    catalogActionRouter.searchArtists(
+                        gender = controllerState.artistGender,
+                        initial = controllerState.artistInitial,
+                        region = controllerState.artistRegion,
+                        keyword = normalizedKeyword,
+                    )
+                }
+            } else {
+                browserSongAdapter.setSearchKeyword(normalizedKeyword)
+                val artistKey = controllerState.catalogValue.ifBlank { selectedArtist }
+                if (normalizedKeyword.isBlank()) {
+                    catalogActionRouter.artistSongs(artistKey)
+                } else {
+                    catalogActionRouter.searchArtistSongs(artistKey, normalizedKeyword)
+                }
+            }
+            return
+        }
+
         browserSongAdapter.setSearchKeyword(normalizedKeyword)
         if (normalizedKeyword.isBlank()) {
             if (currentTab != KioskTab.PINYIN) return
@@ -1917,19 +1943,22 @@ class KtvKioskOverlayController(
             else -> return
         }
         val exactTag = KioskCommercialTagPolicy.findExactTag(controllerState.tags, exactName)
-        if (exactTag == null && controllerState.tags.isEmpty()) {
-            pendingCommercialTagRoute = route
-            val sameRootRequestInFlight = presentationState.currentTab.value == KioskTab.CATEGORIES &&
-                categoryMode == KioskCategoryMode.TAGS && controllerState.catalogLoading &&
-                lastRequestedCategoryMode == KioskCategoryMode.TAGS
-            pendingCommercialTagRevision = controllerState.tagRootRequestRevision + if (sameRootRequestInFlight) 0 else 1
-        }
-        openCategoryRoot(KioskCategoryMode.TAGS, route)
+        leaveKioskAllSongs()
+        showVarietyPanel(false)
+        categoryMode = KioskCategoryMode.TAGS
+        categoryDetail = true
+        focusController.hasInnerDetailBack = false
+        commercialRouteNotice = null
+        presentationState.selectTab(KioskTab.CATEGORIES, route)
         if (exactTag != null) {
             selectCommercialTag(exactTag)
-        } else if (controllerState.tags.isNotEmpty()) {
-            commercialRouteNotice = KioskCommercialTagPolicy.noticeForMissingTag(exactName, isSearchKeyboardShowing())
-            renderThreeColumnBrowser(controllerState)
+        } else {
+            // Directly load tag songs without blocking on full /browse/tags aggregation.
+            catalogActions.setQuery("")
+            catalogActionRouter.tagSongs(exactName)
+            if (controllerState.tags.isEmpty()) {
+                catalogActionRouter.tags()
+            }
         }
     }
 
@@ -2118,6 +2147,77 @@ class KtvKioskOverlayController(
         queueActionRouter.orderTop(song, onComplete)
     }
 
+    private fun showSongActionsDialog(
+        song: SongDto,
+        queueState: SongQueueState?,
+        isFavorite: Boolean,
+    ) {
+        if (songActionsDialog?.isShowing == true) return
+        coordinator.resetIdleTimer()
+        val initiatingFocus = activity.currentFocus
+        val orderState = SongOrderButtonPolicy.resolveStateOnBind(
+            isTop = false,
+            isSubmitting = false,
+            queueState = queueState,
+            playable = song.playable,
+        )
+        val topState = SongOrderButtonPolicy.resolveStateOnBind(
+            isTop = true,
+            isSubmitting = false,
+            queueState = queueState,
+            playable = song.playable,
+        )
+
+        val entries = mutableListOf<Pair<String, () -> Unit>>()
+        if (orderState.isEnabled) {
+            entries.add("点歌" to { orderSong(song) })
+        }
+        if (topState.isEnabled) {
+            entries.add("置顶插播" to { orderSongTop(song) })
+        }
+        entries.add(
+            (if (isFavorite) "取消收藏" else "收藏歌曲") to {
+                coordinator.resetIdleTimer()
+                personalActionRouter.toggleFavorite(song)
+            },
+        )
+
+        val labels = entries.map { it.first }.toTypedArray()
+        val displayTitle = com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatTitle(song.title)
+        val displayArtist = com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatArtist(song.artist)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(
+            activity,
+            R.style.Theme_HomeKtvTv_UpdateDialog,
+        )
+            .setTitle("$displayTitle · $displayArtist")
+            .setItems(labels) { d, which ->
+                entries.getOrNull(which)?.second?.invoke()
+                d.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .create()
+
+        val cleanup = {
+            songActionsDialog = null
+            coordinator.setModalActive(false)
+            initiatingFocus?.post {
+                if (initiatingFocus.isAttachedToWindow && initiatingFocus.isShown) {
+                    initiatingFocus.requestRemoteFocus()
+                }
+            }
+            Unit
+        }
+        songActionsDialog = dialog
+        coordinator.setModalActive(true)
+        val hostActivity = activity as? MainActivity
+        if (hostActivity != null) {
+            hostActivity.showTrackedAlertDialog(dialog) { cleanup() }
+        } else {
+            dialog.setOnDismissListener { cleanup() }
+            dialog.show()
+        }
+    }
+
     fun openQueueDrawer(
         onDismiss: (() -> Unit)? = null,
         initialTab: KtvQueueDrawerTab = KtvQueueDrawerTab.QUEUE,
@@ -2232,54 +2332,6 @@ class KtvKioskOverlayController(
 
     fun setCachedQrBitmap(bitmap: Bitmap) {
         cachedQrBitmap = bitmap
-        qrDialog?.updateQrBitmap(bitmap)
-    }
-
-    fun openQrDialog() {
-        val portalUrl = KtvQrPolicy.formatPortalUrl(config.serverHost)
-        val dialog = KtvQrDialog(
-            context = activity,
-            portalUrl = portalUrl,
-            qrBitmap = cachedQrBitmap,
-            coordinator = coordinator,
-        )
-        dialog.onDismissQr = {
-            if (qrDialog === dialog) {
-                qrDialog = null
-            }
-        }
-        qrDialog = dialog
-        dialog.show()
-
-        if (cachedQrBitmap == null && qrLoadJob?.isActive != true) {
-            qrLoadJob = activity.lifecycleScope.launch {
-                try {
-                    val qrUrl = KtvQrPolicy.buildQrUrl(config.apiBase(), 540)
-                    val bytes = withContext(Dispatchers.IO) {
-                        val res = transport.getBytes(qrUrl)
-                        (res as? KtvApiResult.Success)?.value
-                    }
-                    val bmp = bytes?.let {
-                        withContext(Dispatchers.Default) {
-                            ArtworkDecoder.decode(it, ArtworkProfile.QR)
-                        }
-                    }
-                    if (bmp != null) {
-                        cachedQrBitmap = bmp
-                        if (qrDialog?.isShowing == true) {
-                            qrDialog?.updateQrBitmap(bmp)
-                        }
-                    } else if (qrDialog?.isShowing == true) {
-                        qrDialog?.showLoadError(
-                            "二维码暂不可用，请检查 Home KTV 服务连接后重新打开。",
-                            retryable = false,
-                        )
-                    }
-                } finally {
-                    qrLoadJob = null
-                }
-            }
-        }
     }
 
     fun updateSnapshot(
@@ -2381,10 +2433,8 @@ class KtvKioskOverlayController(
         pipObservedPlayer?.removeListener(pipPlaybackListener)
         queueDialog?.dismiss()
         queueDialog = null
-        qrDialog?.dismiss()
-        qrDialog = null
-        qrLoadJob?.cancel()
-        qrLoadJob = null
+        songActionsDialog?.dismiss()
+        songActionsDialog = null
         cachedQrBitmap = null
         coordinator.destroy()
         pendingAvatarCallbacks.clear()
@@ -2409,8 +2459,6 @@ class KtvKioskOverlayController(
     }
 
     private companion object {
-        const val MINIMUM_PINYIN_VIEWPORT_DP = 140
-        const val MINIMUM_LIST_VIEWPORT_DP = 128
         const val SONG_GRID_PAGE_SIZE = 15
         const val SINGER_GRID_PAGE_SIZE = 16
         const val MAX_VISIBLE_CATALOG_ITEMS = 2000
@@ -2517,10 +2565,6 @@ class KtvKioskOverlayController(
 
     fun dispatchKeyEvent(event: KeyEvent): Boolean {
         coordinator.resetIdleTimer()
-        if (event.keyCode == KeyEvent.KEYCODE_BACK && qrDialog?.isShowing == true) {
-            if (event.action == KeyEvent.ACTION_UP) qrDialog?.dismiss()
-            return true
-        }
         if (event.keyCode == KeyEvent.KEYCODE_BACK &&
             binding.kioskOverlay.kioskKeyboard.consumeBackForActiveDrawing(event.action)
         ) {

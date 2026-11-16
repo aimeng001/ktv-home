@@ -38,12 +38,10 @@ class MainActivityModalBackDispatchContractTest {
     @Test
     fun modalInitialFocusIsRequestedAfterWindowShowAndSupportsTouchMode() {
         val qrDialog = locate("src/main/java/com/homektv/tv/ui/KtvQrDialog.kt").readText()
-        val capabilityDialog = locate("src/main/java/com/homektv/tv/ui/KtvCapabilityDrawerDialog.kt").readText()
         val queueDialog = locate("src/main/java/com/homektv/tv/ui/KtvQueueDrawerDialog.kt").readText()
         val focusHelper = locate("src/main/java/com/homektv/tv/ui/KtvFocusController.kt").readText()
 
         assertTrue(qrDialog.contains("binding.btnQrClose.post { binding.btnQrClose.requestRemoteFocus() }"))
-        assertTrue(capabilityDialog.contains("binding.btnCapabilityClose.post { binding.btnCapabilityClose.requestRemoteFocus() }"))
         assertTrue(queueDialog.contains("binding.btnDrawerClose.post {"))
         assertTrue(queueDialog.contains("suspendBackgroundFocus"))
         assertTrue(queueDialog.contains("binding.btnDrawerClose.requestRemoteFocus()"))

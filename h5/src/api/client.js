@@ -114,7 +114,6 @@ export const api = {
   playlists: () => request('/playlists'),
   playlistDetail: (id, options = {}) => request(`/playlists/${id}`, options),
   orderPlaylist: (id, clientToken) => request(`/playlists/${id}/order`, { method: 'POST', body: JSON.stringify({ clientToken }) }),
-  browseArtists: () => request('/browse/artists'),
   browseArtistPage: (params = {}) => request('/browse/artists/page?' + new URLSearchParams(
     Object.entries(params).filter(([, value]) => value !== '' && value != null)
   ).toString()),
@@ -123,7 +122,6 @@ export const api = {
   ).toString()),
   browseLanguages: () => request('/browse/languages'),
   browseTags: () => request('/browse/tags'),
-  browseSongs: (params = {}) => request('/browse/songs?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString()),
   browseSongPage: (params = {}) => request('/browse/songs/page?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString()),
   addWish: (keyword, clientToken) =>
     request('/wishes', { method: 'POST', body: JSON.stringify({ keyword, client_token: clientToken }) }),
@@ -149,9 +147,6 @@ export const api = {
   adminDeleteSong: (id) => request(`/admin/songs/${id}`, { method: 'DELETE' }),
   adminDeleteSongs: (ids) => request('/admin/songs', { method: 'DELETE', body: JSON.stringify({ ids }) }),
   adminMergeSong: (keepSongId, sourceSongId) => request(`/admin/songs/${keepSongId}/merge`, { method: 'POST', body: JSON.stringify({ sourceSongId }) }),
-  adminTranscodeSong: (id) => request(`/admin/songs/${id}/transcode`, { method: 'POST' }),
-  adminImports: (action = '', page = 0, size = 20) => request(`/admin/imports?action=${encodeURIComponent(action)}&page=${page}&size=${size}`),
-  adminDeleteImportSource: (id) => request(`/admin/imports/${id}/source`, { method: 'DELETE' }),
   adminSourceLibrary: (params = {}, options = {}) => request('/admin/source-library?' + new URLSearchParams(
     Object.entries(params).filter(([, value]) => value !== '' && value != null)
   ).toString(), options),
@@ -162,9 +157,6 @@ export const api = {
   adminDeleteSources: (ids = [], filters = {}) => request('/admin/source-library', {
     method: 'DELETE', body: JSON.stringify({ ids, ...filters })
   }),
-  adminPreviewReparse: (songIds, rule) => request('/admin/songs/reparse/preview', { method: 'POST', body: JSON.stringify({ songIds, rule }) }),
-  adminApplyReparse: (songIds, rule) => request('/admin/songs/reparse/apply', { method: 'POST', body: JSON.stringify({ songIds, rule }) }),
-  adminScan: () => request('/admin/scan', { method: 'POST' }),
   adminStartScan: () => request('/admin/scan/start', { method: 'POST' }),
   adminScanProgress: () => request('/admin/scan/progress'),
   adminDiagnostics: () => request('/admin/diagnostics'),
@@ -181,7 +173,6 @@ export const api = {
     ...(keyword ? [['keyword', keyword]] : []),
     ...providers.map(provider => ['providers', provider])
   ]).toString()),
-  adminBatchSongExternalMatches: (songIds) => request('/admin/songs/external-matches/batch', { method: 'POST', body: JSON.stringify({ songIds }) }),
   adminApplyExternalMatch: (songId, provider, externalId, fields, overrides = {}) => request(`/admin/songs/${songId}/external-matches/${encodeURIComponent(provider)}/${encodeURIComponent(externalId)}/apply`, { method: 'POST', body: JSON.stringify({ fields, overrides }) }),
   adminApplyManualMetadata: (songId, fields, overrides) => request(`/admin/songs/${songId}/metadata/manual`, { method: 'POST', body: JSON.stringify({ fields, overrides }) }),
   adminStartMetadataScrape: (body) => request('/admin/metadata-scrapes', { method: 'POST', body: JSON.stringify(body) }),
@@ -208,7 +199,6 @@ export const api = {
   // ADM-04 AI song library and themed playlists
   adminAiTasks: () => request('/admin/ai/tasks'),
   adminAiCreateTask: (songId) => request('/admin/ai/tasks', { method: 'POST', body: JSON.stringify({ songId }) }),
-  adminAiCreateImportTask: (recordId) => request('/admin/ai/tasks/import-records', { method: 'POST', body: JSON.stringify({ recordId }) }),
   adminAiCreateUnclassified: (limit = 50) => request('/admin/ai/tasks/unclassified', { method: 'POST', body: JSON.stringify({ limit }) }),
   adminAiRetryTask: (id) => request(`/admin/ai/tasks/${id}/retry`, { method: 'POST' }),
   adminAiApplyTask: (id, result) => request(`/admin/ai/tasks/${id}/apply`, { method: 'POST', body: JSON.stringify(result) }),
@@ -218,12 +208,10 @@ export const api = {
   adminAiSavePlaylistPreview: (body) => request('/admin/ai/playlists/from-preview', { method: 'POST', body: JSON.stringify(body) }),
   adminAiUpdatePlaylist: (id, body) => request(`/admin/ai/playlists/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   adminAiDeletePlaylist: (id) => request(`/admin/ai/playlists/${id}`, { method: 'DELETE' }),
-  adminAiGeneratePlaylist: (body) => request('/admin/ai/playlists/generate', { method: 'POST', body: JSON.stringify(body) }),
   adminAiPreviewPlaylist: (body) => request('/admin/ai/playlists/preview', { method: 'POST', body: JSON.stringify(body) }),
   adminAiConfig: () => request('/admin/ai/config'),
   adminAiPutConfig: (body) => request('/admin/ai/config', { method: 'PUT', body: JSON.stringify(body) }),
   adminAiModels: () => request('/admin/ai/config/models'),
-  adminArtists: (params = {}) => request('/admin/artists?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString()),
   adminArtistPage: (params = {}, options = {}) => request('/admin/artists/page?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString(), options),
   adminScanLocalAvatars: () => request('/admin/artists/local-avatars/scan', { method: 'POST' }),
   adminRetryMissingAvatars: (options = {}) => request('/admin/artists/avatars/retry', { method: 'POST', ...options }),
@@ -280,7 +268,6 @@ export function makeControls(clientToken, { onResponse } = {}) {
     next: () => c('next', {}),
     restart: () => c('restart', {}),
     setVolume: (volume) => c('set_volume', { volume }),
-    mute: (muted) => c('mute', { muted }),
     setVocal: (mode) => c('set_vocal', { mode }),
     swapVocalTracks: () => c('swap_vocal_tracks', {}),
     effect: (effectId) => c('effect', { effect_id: effectId })

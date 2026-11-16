@@ -591,11 +591,6 @@ class KtvKeyboardView @JvmOverloads constructor(
         }
     }
 
-    fun measureNaturalContentHeightPx(availableWidthPx: Int): Int {
-        if (availableWidthPx <= 0 || binding.keyboardContentRoot.measuredWidth != availableWidthPx) return 0
-        return binding.keyboardContentRoot.measuredHeight
-    }
-
     private fun updateDisplay() {
         binding.txtKeywordDisplay.text = session.currentKeyword
         renderPendingBopomofo()

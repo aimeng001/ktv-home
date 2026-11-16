@@ -310,15 +310,6 @@ class KtvBottomDockController(
         }
     }
 
-    fun toggleFullscreen() {
-        if (!videoVisible || externalDisplayActive) return
-        if (isFullscreen) {
-            onFullscreenClick?.invoke()
-        } else {
-            enterFullscreen()
-        }
-    }
-
     fun enterFullscreen(): Boolean {
         if (!DockFullscreenPolicy.canEnterFullscreen(videoVisible, externalDisplayActive, isFullscreen)) return false
         isFullscreen = true

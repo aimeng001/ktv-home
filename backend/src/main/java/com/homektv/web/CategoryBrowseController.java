@@ -29,9 +29,13 @@ public class CategoryBrowseController {
             @RequestParam(required = false) String gender,
             @RequestParam(required = false) String initial,
             @RequestParam(required = false) String region,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "30") int size) {
-        return service.artistsPage(gender, initial, region, page, size);
+        if (keyword == null || keyword.isBlank()) {
+            return service.artistsPage(gender, initial, region, page, size);
+        }
+        return service.artistsPage(gender, initial, region, keyword, page, size);
     }
 
     @GetMapping("/artists/initials")
@@ -70,6 +74,18 @@ public class CategoryBrowseController {
         return service.songs(artist, artistGender, language, tag, vocalForm, sort, limit);
     }
 
+    public CategoryBrowseService.SongPage songPage(String artist,
+                                                   String artistKey,
+                                                   String artistGender,
+                                                   String language,
+                                                   String tag,
+                                                   String vocalForm,
+                                                   String sort,
+                                                   int page,
+                                                   int size) {
+        return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, sort, page, size);
+    }
+
     @GetMapping("/songs/page")
     public CategoryBrowseService.SongPage songPage(@RequestParam(required = false) String artist,
                                                    @RequestParam(required = false) String artistKey,
@@ -77,9 +93,13 @@ public class CategoryBrowseController {
                                                    @RequestParam(required = false) String language,
                                                    @RequestParam(required = false) String tag,
                                                    @RequestParam(required = false) String vocalForm,
+                                                   @RequestParam(required = false) String keyword,
                                                    @RequestParam(defaultValue = "hot") String sort,
                                                    @RequestParam(defaultValue = "0") int page,
                                                    @RequestParam(defaultValue = "50") int size) {
-        return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, sort, page, size);
+        if (keyword == null || keyword.isBlank()) {
+            return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, sort, page, size);
+        }
+        return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, keyword, sort, page, size);
     }
 }

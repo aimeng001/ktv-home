@@ -24,6 +24,7 @@ class KtvKioskBrowserSongAdapter(
     private val onToggleFavorite: (SongDto) -> Unit,
     private val imageLoader: ((url: String, callback: (Bitmap?) -> Unit) -> Unit)? = null,
     private val onBottomRowDown: (() -> Boolean)? = null,
+    private val onShowActions: ((SongDto, SongQueueState?, Boolean) -> Unit)? = null,
 ) : ListAdapter<SongDto, KtvKioskBrowserSongAdapter.SongViewHolder>(DIFF_CALLBACK) {
 
     private val submittingSongIds = mutableSetOf<Long>()
@@ -81,6 +82,7 @@ class KtvKioskBrowserSongAdapter(
         getSearchKeyword = { searchKeyword },
         getItemCount = { itemCount },
         onBottomRowDown = onBottomRowDown,
+        onShowActions = onShowActions,
     )
 
     override fun onBindViewHolder(holder: SongViewHolder, position: Int) {
@@ -111,6 +113,7 @@ class KtvKioskBrowserSongAdapter(
         private val getSearchKeyword: () -> String,
         private val getItemCount: () -> Int,
         private val onBottomRowDown: (() -> Boolean)?,
+        private val onShowActions: ((SongDto, SongQueueState?, Boolean) -> Unit)?,
     ) : RecyclerView.ViewHolder(binding.root) {
 
         private var hasVocalTrack = false
@@ -118,13 +121,16 @@ class KtvKioskBrowserSongAdapter(
         private var boundQueueState: SongQueueState? = null
 
         init {
-            val focusListener = View.OnFocusChangeListener { _, _ ->
+            binding.btnBrowserSongOrder.isFocusable = false
+            binding.btnBrowserSongOrderTop.isFocusable = false
+            binding.btnBrowserSongFavorite.isFocusable = false
+            binding.btnBrowserSongOrder.isFocusableInTouchMode = false
+            binding.btnBrowserSongOrderTop.isFocusableInTouchMode = false
+            binding.btnBrowserSongFavorite.isFocusableInTouchMode = false
+
+            binding.root.onFocusChangeListener = View.OnFocusChangeListener { _, _ ->
                 syncActionFocusState()
             }
-            binding.btnBrowserSongOrder.onFocusChangeListener = focusListener
-            binding.btnBrowserSongOrderTop.onFocusChangeListener = focusListener
-            binding.btnBrowserSongFavorite.onFocusChangeListener = focusListener
-            binding.root.onFocusChangeListener = focusListener
 
             normalizeButtonCompoundDrawables(binding.btnBrowserSongOrder, 14)
             normalizeButtonCompoundDrawables(binding.btnBrowserSongOrderTop, 14)
@@ -140,10 +146,21 @@ class KtvKioskBrowserSongAdapter(
                 boundSong?.let { song -> submitOrder(song, isTop = true, queueState = boundQueueState) }
             }
             binding.root.setOnClickListener {
-                if (binding.btnBrowserSongOrder.isEnabled) binding.btnBrowserSongOrder.performClick()
+                if (binding.btnBrowserSongOrder.isEnabled) {
+                    binding.btnBrowserSongOrder.performClick()
+                } else {
+                    openActionsPopup()
+                }
             }
-            val bottomRowDownListener = View.OnKeyListener { _, keyCode, event ->
-                if (event.action == KeyEvent.ACTION_DOWN &&
+            binding.root.setOnLongClickListener {
+                openActionsPopup()
+                true
+            }
+            val cardKeyListener = View.OnKeyListener { _, keyCode, event ->
+                if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_MENU) {
+                    openActionsPopup()
+                    true
+                } else if (event.action == KeyEvent.ACTION_DOWN &&
                     keyCode == KeyEvent.KEYCODE_DPAD_DOWN &&
                     KioskSongGridPaginationPolicy.isBottomRowIndex(
                         adapterPosition = bindingAdapterPosition,
@@ -155,10 +172,13 @@ class KtvKioskBrowserSongAdapter(
                     false
                 }
             }
-            binding.root.setOnKeyListener(bottomRowDownListener)
-            binding.btnBrowserSongOrder.setOnKeyListener(bottomRowDownListener)
-            binding.btnBrowserSongOrderTop.setOnKeyListener(bottomRowDownListener)
-            binding.btnBrowserSongFavorite.setOnKeyListener(bottomRowDownListener)
+            binding.root.setOnKeyListener(cardKeyListener)
+        }
+
+        private fun openActionsPopup() {
+            val song = boundSong ?: return
+            val isFavorite = getFavoriteIds().contains(song.id)
+            onShowActions?.invoke(song, boundQueueState, isFavorite)
         }
 
         private fun normalizeButtonCompoundDrawables(button: android.widget.Button, sizeDp: Int) {
@@ -251,45 +271,15 @@ class KtvKioskBrowserSongAdapter(
             syncActionFocusState()
         }
 
-        private fun hasCardOrActionFocus(): Boolean = binding.root.hasFocus() ||
-            binding.btnBrowserSongOrder.hasFocus() ||
-            binding.btnBrowserSongOrderTop.hasFocus() ||
-            binding.btnBrowserSongFavorite.hasFocus()
-
-        private fun viewForSlot(slot: SongCardActionSlot): View = when (slot) {
-            SongCardActionSlot.ORDER -> binding.btnBrowserSongOrder
-            SongCardActionSlot.ORDER_TOP -> binding.btnBrowserSongOrderTop
-            SongCardActionSlot.FAVORITE -> binding.btnBrowserSongFavorite
-        }
-
         private fun syncActionFocusState() {
-            val hasFocus = hasCardOrActionFocus()
+            val hasFocus = binding.root.hasFocus()
             binding.root.isSelected = hasFocus
             binding.panelBrowserSongActions.visibility = if (hasFocus) View.VISIBLE else View.GONE
             binding.txtBrowserSongVocal.visibility = if (hasFocus && hasVocalTrack) View.VISIBLE else View.GONE
-            binding.btnBrowserSongOrder.isFocusable = hasFocus && binding.btnBrowserSongOrder.isEnabled
-            binding.btnBrowserSongOrderTop.isFocusable = hasFocus && binding.btnBrowserSongOrderTop.isEnabled
-            binding.btnBrowserSongFavorite.isFocusable = hasFocus && binding.btnBrowserSongFavorite.isEnabled
-
-            val chain = SongCardFocusChainPolicy.resolveChain(
-                orderEnabled = binding.btnBrowserSongOrder.isEnabled,
-                topEnabled = binding.btnBrowserSongOrderTop.isEnabled,
-                favoriteEnabled = binding.btnBrowserSongFavorite.isEnabled,
-            )
-            binding.root.nextFocusRightId = if (binding.root.hasFocus()) {
-                chain.entrySlot?.let { viewForSlot(it).id } ?: View.NO_ID
-            } else {
-                View.NO_ID
-            }
-            SongCardActionSlot.entries.forEach { slot ->
-                val button = viewForSlot(slot)
-                button.nextFocusRightId = chain.nextRightBySlot[slot]?.let { viewForSlot(it).id } ?: View.NO_ID
-                button.nextFocusLeftId = if (button.isFocusable) {
-                    chain.nextLeftBySlot[slot]?.let { viewForSlot(it).id } ?: binding.root.id
-                } else {
-                    View.NO_ID
-                }
-            }
+            binding.btnBrowserSongOrder.isFocusable = false
+            binding.btnBrowserSongOrderTop.isFocusable = false
+            binding.btnBrowserSongFavorite.isFocusable = false
+            binding.root.nextFocusRightId = View.NO_ID
         }
 
         private fun compactOrderMark(playable: Boolean, submitting: Boolean, enabled: Boolean): String = when {
@@ -317,22 +307,6 @@ class KtvKioskBrowserSongAdapter(
             }
 
             binding.txtBrowserSongMatch.visibility = View.GONE
-        }
-
-        private fun highlightedMatch(label: String, value: String, keyword: String): SpannableString {
-            val text = "$label$value"
-            val styled = SpannableString(text)
-            val matchIndex = value.indexOf(keyword, ignoreCase = true)
-            if (matchIndex >= 0) {
-                val start = label.length + matchIndex
-                styled.setSpan(
-                    ForegroundColorSpan(ContextCompat.getColor(binding.root.context, R.color.gold)),
-                    start,
-                    start + keyword.length,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-                )
-            }
-            return styled
         }
 
         private fun submitOrder(song: SongDto, isTop: Boolean, queueState: SongQueueState?) {
@@ -382,17 +356,6 @@ class KtvKioskBrowserSongAdapter(
                         if (success && isTop) "已置顶：${song.title}，${song.artist}"
                         else "${topState.text}：${song.title}，${song.artist}"
                     syncActionFocusState()
-                    if (targetButton.hasFocus() && !targetButton.isEnabled) {
-                        val disabledSlot = if (isTop) SongCardActionSlot.ORDER_TOP else SongCardActionSlot.ORDER
-                        val fallbackSlot = SongCardFocusChainPolicy.nextFallbackAfterDisable(
-                            disabledSlot = disabledSlot,
-                            orderEnabled = binding.btnBrowserSongOrder.isEnabled,
-                            topEnabled = binding.btnBrowserSongOrderTop.isEnabled,
-                            favoriteEnabled = binding.btnBrowserSongFavorite.isEnabled,
-                        )
-                        val fallbackView = fallbackSlot?.let(::viewForSlot) ?: binding.root
-                        fallbackView.requestRemoteFocus()
-                    }
                 }
             }
         }

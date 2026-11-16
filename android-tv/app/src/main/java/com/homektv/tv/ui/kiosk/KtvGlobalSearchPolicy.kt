@@ -29,7 +29,11 @@ object KtvGlobalSearchPolicy {
     }
 
     fun targetTabForQuery(currentTab: KioskTab, enabled: Boolean): KioskTab =
-        if (currentTab == KioskTab.PINYIN || !enabled) currentTab else KioskTab.PINYIN
+        if (currentTab == KioskTab.PINYIN || currentTab == KioskTab.SINGERS || !enabled) {
+            currentTab
+        } else {
+            KioskTab.PINYIN
+        }
 
     fun keyboardContentTarget(
         tab: KioskTab,

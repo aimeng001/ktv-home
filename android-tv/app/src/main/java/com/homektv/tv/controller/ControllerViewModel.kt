@@ -17,7 +17,6 @@ import com.homektv.tv.net.RoomHostApi
 import com.homektv.tv.net.SongApi
 import com.homektv.tv.net.SongDto
 import com.homektv.tv.net.UserApi
-import com.homektv.tv.net.WishApi
 import com.homektv.tv.ui.OrderTopOutcome
 import com.homektv.tv.ui.QueueOrderTopPolicy
 import com.homektv.tv.ui.kiosk.T9PinyinSearchPolicy
@@ -48,7 +47,6 @@ class ControllerViewModel(
     private val playlistApi = PlaylistApi(transport, config.userToken)
     private val historyApi = RecentHistoryApi(transport, config.userToken)
     private val roomHostApi = RoomHostApi(transport, config.userToken)
-    private val wishApi = WishApi(transport, config.userToken)
     private val libraryApi = LibraryApi(transport)
     private val actions = ActionCoordinator()
     private var searchJob: Job? = null
@@ -109,11 +107,6 @@ class ControllerViewModel(
         refreshQueue()
         if (config.isConfigured) refreshCatalogStatus()
         registerUser()
-    }
-
-    /** Retry identity registration explicitly or after a socket reconnect. */
-    fun retryRegistration() {
-        registerUser(force = true)
     }
 
     /** Starts/ends catalog status polling with the owning screen lifecycle. */
@@ -388,6 +381,69 @@ class ControllerViewModel(
 
     fun loadArtists() = loadArtists(gender = "", initial = "", restorePage = 0)
 
+    override fun searchArtists(gender: String, initial: String, region: String, keyword: String) {
+        setCatalogVisible(true)
+        catalogRoot = CatalogRoot.NONE
+        val safeGender = gender.trim().take(MAX_FILTER_LENGTH)
+        val safeInitial = initial.trim().take(MAX_FILTER_LENGTH)
+        val safeRegion = region.trim().take(MAX_FILTER_LENGTH)
+        val safeKeyword = keyword.trim().take(MAX_QUERY_LENGTH)
+        catalogQuery = CatalogQuery(CatalogKind.ARTISTS, safeGender, safeInitial, safeRegion, safeKeyword)
+        _state.update {
+            it.copy(
+                artistGender = safeGender,
+                artistInitial = safeInitial,
+                artistRegion = safeRegion,
+                artists = emptyList(),
+                catalogSongs = emptyList(),
+                catalogPage = 0,
+                catalogTotal = 0,
+                catalogHasMore = false,
+                catalogLoadingMore = false,
+                catalogLoading = true,
+                catalogDetail = false,
+                catalogValue = "",
+                error = null,
+                message = null,
+            )
+        }
+        val expected = catalogQuery
+        catalogRequests.launch {
+            loadCatalogPages(
+                0,
+                expected,
+                loadPage = { page -> loadArtistsPage(page, expected) },
+            )
+        }
+    }
+
+    override fun searchArtistSongs(artistKey: String, keyword: String) {
+        setCatalogVisible(true)
+        catalogRoot = CatalogRoot.NONE
+        val safeArtistKey = artistKey.trim().take(MAX_FILTER_LENGTH)
+        val safeKeyword = keyword.trim().take(MAX_QUERY_LENGTH)
+        catalogQuery = CatalogQuery(CatalogKind.ARTIST_SONGS, safeArtistKey, keyword = safeKeyword)
+        _state.update {
+            it.copy(
+                artists = emptyList(),
+                catalogSongs = emptyList(),
+                catalogPage = 0,
+                catalogTotal = 0,
+                catalogHasMore = false,
+                catalogLoadingMore = false,
+                catalogLoading = true,
+                catalogDetail = true,
+                catalogValue = safeArtistKey,
+                error = null,
+                message = null,
+            )
+        }
+        val expected = catalogQuery
+        catalogRequests.launch {
+            loadCatalogPages(0, expected, loadPage = { page -> loadSongCatalogPage(page, expected) })
+        }
+    }
+
     override fun loadArtistSongs(artistKey: String, restorePage: Int) {
         setCatalogVisible(true)
         catalogRoot = CatalogRoot.NONE
@@ -469,24 +525,6 @@ class ControllerViewModel(
     }
 
     fun loadTagSongs(tag: String) = loadTagSongs(tag, restorePage = 0)
-
-    fun loadArtistsWithGender(gender: String) {
-        loadArtists(
-            gender = gender,
-            initial = "",
-            restorePage = 0,
-            region = _state.value.artistRegion,
-        )
-    }
-
-    fun loadArtistsWithInitial(initial: String) {
-        loadArtists(
-            gender = _state.value.artistGender,
-            initial = initial.takeUnless { it == HOT_INITIAL }.orEmpty(),
-            restorePage = 0,
-            region = _state.value.artistRegion,
-        )
-    }
 
     private suspend fun loadArtistInitials(gender: String, region: String, expected: CatalogQuery) {
             when (val result = songApi.artistInitials(gender, region)) {
@@ -735,6 +773,7 @@ class ControllerViewModel(
                 gender = expected.value,
                 initial = expected.secondary,
                 region = expected.region,
+                keyword = expected.keyword,
             )) {
                 is KtvApiResult.Success -> {
                     if (catalogQuery != expected) return false
@@ -796,7 +835,12 @@ class ControllerViewModel(
 
     private suspend fun loadSongCatalogPage(page: Int, expected: CatalogQuery) {
             val result = when (expected.kind) {
-                CatalogKind.ARTIST_SONGS -> songApi.browseSongPage(page = page, size = SONG_CATALOG_PAGE_SIZE, artistKey = expected.value)
+                CatalogKind.ARTIST_SONGS -> songApi.browseSongPage(
+                    page = page,
+                    size = SONG_CATALOG_PAGE_SIZE,
+                    artistKey = expected.value,
+                    keyword = expected.keyword,
+                )
                 CatalogKind.LANGUAGE_SONGS -> songApi.browseSongPage(page = page, size = SONG_CATALOG_PAGE_SIZE, language = expected.value)
                 CatalogKind.TAG_SONGS -> songApi.browseSongPage(page = page, size = SONG_CATALOG_PAGE_SIZE, tag = expected.value)
                 CatalogKind.ARTISTS, CatalogKind.NONE -> return
@@ -1125,16 +1169,6 @@ class ControllerViewModel(
         )
     }
 
-    fun submitWish(keyword: String) {
-        val value = keyword.trim().take(MAX_WISH_LENGTH)
-        if (value.isBlank()) return
-        launchWrite(
-            ActionKey("wish", value.hashCode().toLong()),
-            operation = { wishApi.add(value) },
-            onSuccess = { _state.update { it.copy(message = "已提交点歌心愿") } },
-        )
-    }
-
     override fun loadRoomHost() {
         roomHostRequests.launch {
             when (val result = roomHostApi.status()) {
@@ -1147,30 +1181,6 @@ class ControllerViewModel(
                 is KtvApiResult.Failure -> _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.ROOM_HOST, result.error) }
             }
         }
-    }
-
-    fun claimRoomHost() {
-        launchWrite(
-            ActionKey("room_host_claim"),
-            operation = { roomHostApi.claim() },
-            onSuccess = { status -> _state.update {
-                ControllerStateReducer.withRoomHost(it, status).copy(message = "已成为房主")
-            } },
-        )
-    }
-
-    fun releaseRoomHost() {
-        launchWrite(
-            ActionKey("room_host_release"),
-            operation = { roomHostApi.release() },
-            onSuccess = { status -> _state.update {
-                ControllerStateReducer.withRoomHost(it, status).copy(message = "已释放房主身份")
-            } },
-        )
-    }
-
-    fun clearMessage() {
-        _state.update { it.copy(message = null, error = null) }
     }
 
     private fun write(
@@ -1303,4 +1313,5 @@ private data class CatalogQuery(
     val value: String = "",
     val secondary: String = "",
     val region: String = "",
+    val keyword: String = "",
 )

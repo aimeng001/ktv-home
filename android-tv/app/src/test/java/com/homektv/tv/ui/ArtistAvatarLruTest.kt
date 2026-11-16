@@ -11,7 +11,7 @@ class ArtistAvatarLruTest {
 
     @Test
     fun boundedLru_enforcesByteCapacity() {
-        val cache = RecommendationCoverCache<ByteArray>(
+        val cache = WeightedLruCache<Long, ByteArray>(
             capacity = 10,
             maxBytes = 300L,
             weight = { it.size.toLong() },
@@ -25,20 +25,20 @@ class ArtistAvatarLruTest {
         cache.complete(1L, item1)
         cache.complete(2L, item2)
         cache.complete(3L, item3)
-        assertEquals(300L, cache.byteSize())
+        assertEquals(300L, cache.byteSize)
 
         // Adding 4th item should evict oldest (item 1)
         cache.complete(4L, item4)
-        assertEquals(300L, cache.byteSize())
-        assertNull(cache.get(1L))
-        assertNotNull(cache.get(2L))
-        assertNotNull(cache.get(3L))
-        assertNotNull(cache.get(4L))
+        assertEquals(300L, cache.byteSize)
+        assertNull(cache[1L])
+        assertNotNull(cache[2L])
+        assertNotNull(cache[3L])
+        assertNotNull(cache[4L])
     }
 
     @Test
     fun clear_resetsAllEntriesAndBytes() {
-        val cache = RecommendationCoverCache<ByteArray>(
+        val cache = WeightedLruCache<Long, ByteArray>(
             capacity = 10,
             maxBytes = 1000L,
             weight = { it.size.toLong() },
@@ -47,9 +47,9 @@ class ArtistAvatarLruTest {
         cache.complete(2L, ByteArray(300))
         cache.clear()
 
-        assertEquals(0, cache.size())
-        assertEquals(0L, cache.byteSize())
-        assertNull(cache.get(1L))
+        assertEquals(0, cache.size)
+        assertEquals(0L, cache.byteSize)
+        assertNull(cache[1L])
     }
 
     @Test

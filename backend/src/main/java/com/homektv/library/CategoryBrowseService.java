@@ -77,12 +77,17 @@ public class CategoryBrowseService {
     }
 
     public ArtistPage artistsPage(String gender, String initial, String region, int page, int size) {
+        return artistsPage(gender, initial, region, "", page, size);
+    }
+
+    public ArtistPage artistsPage(String gender, String initial, String region, String keyword, int page, int size) {
         int safePage = Math.max(0, page);
         int safeSize = Math.max(1, Math.min(size <= 0 ? PUBLIC_ARTIST_PAGE_SIZE : size,
                 MAX_PUBLIC_ARTIST_PAGE_SIZE));
         String safeGender = normalize(gender);
         String safeInitial = normalize(initial).toUpperCase(Locale.ROOT);
         String safeRegion = normalize(region);
+        String safeKeyword = normalize(keyword);
         if (!SUPPORTED_ARTIST_REGIONS.contains(safeRegion)) {
             throw new com.homektv.web.ApiException("INVALID_ARTIST_REGION", "歌手地区筛选值无效");
         }
@@ -92,8 +97,9 @@ public class CategoryBrowseService {
                 ? artistDirectoryProjection.hasRegionReference()
                 : songRepository.hasActiveIktvArtistRegionReference();
         if (artistDirectoryProjection != null) {
-            Optional<ArtistDirectoryProjectionService.ProjectionPage> projected =
-                    artistDirectoryProjection.page(safeGender, safeInitial, safeRegion, safePage, safeSize);
+            Optional<ArtistDirectoryProjectionService.ProjectionPage> projected = safeKeyword.isEmpty()
+                    ? artistDirectoryProjection.page(safeGender, safeInitial, safeRegion, safePage, safeSize)
+                    : artistDirectoryProjection.page(safeGender, safeInitial, safeRegion, safeKeyword, safePage, safeSize);
             if (projected.isPresent()) {
                 ArtistDirectoryProjectionService.ProjectionPage pageData = projected.get();
                 List<Map<String, Object>> items = pageData.rows().stream()
@@ -104,8 +110,11 @@ public class CategoryBrowseService {
             }
         }
 
-        Page<SongRepository.PublicArtistDirectoryProjection> rows = songRepository.pagePublicArtistDirectory(
-                "ok", safeGender, safeInitial, safeRegion, PageRequest.of(safePage, safeSize));
+        Page<SongRepository.PublicArtistDirectoryProjection> rows = safeKeyword.isEmpty()
+                ? songRepository.pagePublicArtistDirectory(
+                        "ok", safeGender, safeInitial, safeRegion, PageRequest.of(safePage, safeSize))
+                : songRepository.pagePublicArtistDirectory(
+                        "ok", safeGender, safeInitial, safeRegion, safeKeyword, PageRequest.of(safePage, safeSize));
         List<SongRepository.PublicArtistDirectoryProjection> content = rows == null || rows.getContent() == null
                 ? List.of() : rows.getContent();
         List<Map<String, Object>> items = content.stream()
@@ -150,10 +159,23 @@ public class CategoryBrowseService {
                 .toList();
     }
 
+    private volatile CachedTags cachedTags;
+
+    private record CachedTags(List<Map<String, Object>> items, long expiresAtNanos) {}
+
     public List<Map<String, Object>> tags() {
-        return songRepository.aggregateTagsByStatusOk().stream()
+        CachedTags snapshot = cachedTags;
+        long now = System.nanoTime();
+        if (snapshot != null && now < snapshot.expiresAtNanos()) {
+            return snapshot.items();
+        }
+        List<Map<String, Object>> loaded = songRepository.aggregateIndexedTagsByStatusOk().stream()
                 .map(item -> Map.<String, Object>of("name", item.getName(), "songCount", item.getSongCount()))
                 .toList();
+        if (!loaded.isEmpty()) {
+            cachedTags = new CachedTags(loaded, now + 5_000_000_000L);
+        }
+        return loaded;
     }
 
     public List<SongDto> songs(String artist, String artistGender, String language, String tag, String vocalForm, String sort, int limit) {
@@ -180,18 +202,33 @@ public class CategoryBrowseService {
     public SongPage songsPage(String artist, String artistKey, String artistGender, String language,
                               String tag, String vocalForm, String sort,
                               int page, int size) {
+        return songsPage(artist, artistKey, artistGender, language, tag, vocalForm, "", sort, page, size);
+    }
+
+    public SongPage songsPage(String artist, String artistKey, String artistGender, String language,
+                              String tag, String vocalForm, String keyword, String sort,
+                              int page, int size) {
         int safePage = Math.max(0, page);
         int safeSize = Math.max(1, Math.min(
                 size <= 0 ? PUBLIC_SONG_PAGE_SIZE : size, MAX_PUBLIC_SONG_PAGE_SIZE));
         PageRequest request = PageRequest.of(safePage, safeSize, songSort(sort));
         String normalizedKey = ArtistCreditParser.key(artistKey);
+        String safeKeyword = normalize(keyword);
         Page<Song> rows = normalizedKey.isBlank()
-                ? songRepository.browseCategorySongs(
-                        normalize(artist), normalize(artistGender), normalize(language),
-                        normalize(tag), normalize(vocalForm), request)
-                : songRepository.browseCategorySongsByArtistKey(
-                        normalizedKey, normalize(artistGender), normalize(language),
-                        normalize(tag), normalize(vocalForm), request);
+                ? (safeKeyword.isEmpty()
+                        ? songRepository.browseCategorySongs(
+                                normalize(artist), normalize(artistGender), normalize(language),
+                                normalize(tag), normalize(vocalForm), request)
+                        : songRepository.browseCategorySongs(
+                                normalize(artist), normalize(artistGender), normalize(language),
+                                normalize(tag), normalize(vocalForm), safeKeyword, request))
+                : (safeKeyword.isEmpty()
+                        ? songRepository.browseCategorySongsByArtistKey(
+                                normalizedKey, normalize(artistGender), normalize(language),
+                                normalize(tag), normalize(vocalForm), request)
+                        : songRepository.browseCategorySongsByArtistKey(
+                                normalizedKey, normalize(artistGender), normalize(language),
+                                normalize(tag), normalize(vocalForm), safeKeyword, request));
         List<SongDto> items = rows == null || rows.getContent() == null
                 ? List.of() : toSongDtos(rows.getContent());
         return new SongPage(items, rows == null ? 0 : rows.getTotalElements(), safePage, safeSize);

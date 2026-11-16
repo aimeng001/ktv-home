@@ -116,7 +116,7 @@ class PersistenceIntegrationTest {
         PlayerState ps = playerStateRepository.getSingleton();
         assertThat(ps.getId()).isEqualTo(PlayerState.SINGLETON_ID);
         assertThat(ps.getState()).isEqualTo("idle");
-        assertThat(ps.getVolume()).isEqualTo(60);
+        assertThat(ps.getVolume()).isEqualTo(100);
         assertThat(ps.getVocalMode()).isEqualTo("accompaniment");
     }
 

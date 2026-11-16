@@ -36,11 +36,13 @@ class SongApi(
         gender: String = "",
         initial: String = "",
         region: String = "",
+        keyword: String = "",
     ): KtvApiResult<ArtistPage> {
         val query = buildList {
             add("gender" to gender.trim())
             add("initial" to initial.trim())
             if (region.isNotBlank()) add("region" to region.trim())
+            if (keyword.isNotBlank()) add("keyword" to keyword.trim())
             add("page" to page.coerceIn(0, MAX_PAGE).toString())
             add("size" to size.coerceIn(1, 100).toString())
         }.joinToString("&") { (key, value) -> "$key=${encodeQueryComponent(value)}" }
@@ -69,18 +71,20 @@ class SongApi(
         artistGender: String = "",
         language: String = "",
         tag: String = "",
+        keyword: String = "",
         sort: String = "hot",
     ): KtvApiResult<SongPage> {
-        val query = listOf(
-            "artist" to artist,
-            "artistKey" to artistKey,
-            "artistGender" to artistGender,
-            "language" to language,
-            "tag" to tag,
-            "sort" to sort,
-            "page" to page.coerceIn(0, MAX_PAGE).toString(),
-            "size" to size.coerceIn(1, 100).toString(),
-        ).joinToString("&") { (key, value) -> "$key=${encodeQueryComponent(value.trim())}" }
+        val query = buildList {
+            add("artist" to artist)
+            add("artistKey" to artistKey)
+            add("artistGender" to artistGender)
+            add("language" to language)
+            add("tag" to tag)
+            if (keyword.isNotBlank()) add("keyword" to keyword)
+            add("sort" to sort)
+            add("page" to page.coerceIn(0, MAX_PAGE).toString())
+            add("size" to size.coerceIn(1, 100).toString())
+        }.joinToString("&") { (key, value) -> "$key=${encodeQueryComponent(value.trim())}" }
         return getDecoded("/browse/songs/page?$query", SongPage.serializer())
     }
 

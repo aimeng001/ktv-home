@@ -406,7 +406,7 @@ class CategoryBrowseServiceTest {
         when(p1.getName()).thenReturn("流行");
         when(p1.getSongCount()).thenReturn(200L);
 
-        when(repository.aggregateTagsByStatusOk()).thenReturn(List.of(p1));
+        when(repository.aggregateIndexedTagsByStatusOk()).thenReturn(List.of(p1));
 
         List<Map<String, Object>> result = new CategoryBrowseService(repository).tags();
         assertThat(result).hasSize(1);

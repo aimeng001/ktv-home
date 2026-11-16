@@ -112,19 +112,4 @@ internal class PlaybackSessionMetadata {
             requested = requested,
         )
     }
-
-    fun resetAll() {
-        currentRequest = null
-        currentQueueId = null
-        currentFileId = null
-        currentHasVideoDeclared = false
-        currentFormat = null
-        currentStreamUrl = null
-        currentStreamOffsetMs = 0L
-        currentIsLiveTranscode = false
-        currentSongDurationMs = 0L
-        videoFailureReportedFileId = null
-        resolutionRequestedFileId = null
-        fallbackFollowedMedia3DecoderFailure = false
-    }
 }

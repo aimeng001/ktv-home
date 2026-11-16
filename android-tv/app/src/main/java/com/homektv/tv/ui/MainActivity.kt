@@ -1418,7 +1418,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         }
     }
 
-    private var currentVolume = 60
+    private var currentVolume = 100
     private var currentMuted = false
     private var currentVocalMode = "accompaniment"
     private var currentAudioLayout = AudioLayout.normalStereo()

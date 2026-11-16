@@ -53,8 +53,6 @@ class KtvKioskLifecycleSafetyTest {
 
         assertTrue("queueDialog must be dismissed in destroy()", destroy.contains("queueDialog?.dismiss()"))
         assertTrue("queueDialog reference must be cleared", destroy.contains("queueDialog = null"))
-        assertTrue("qrDialog must be dismissed in destroy()", destroy.contains("qrDialog?.dismiss()"))
-        assertTrue("qrDialog reference must be cleared", destroy.contains("qrDialog = null"))
         assertTrue("cachedQrBitmap reference must be cleared", destroy.contains("cachedQrBitmap = null"))
         assertTrue("singerAvatarCache must be cleared", destroy.contains("singerAvatarCache.clear()"))
         assertTrue("pendingAvatarCallbacks must be cleared", destroy.contains("pendingAvatarCallbacks.clear()"))

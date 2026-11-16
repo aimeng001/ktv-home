@@ -150,5 +150,4 @@ final class MusicSourceHttp {
         return out.toString();
     }
 
-    static Map<String, String> stringMap() { return new LinkedHashMap<>(); }
 }

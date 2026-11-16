@@ -27,8 +27,12 @@ class KtvGlobalSearchPolicyTest {
         assertFalse(KtvGlobalSearchPolicy.shouldShowKeyboard(KioskTab.SINGERS, false, false))
         assertFalse(KtvGlobalSearchPolicy.shouldShowKeyboard(KioskTab.CATEGORIES, false, false))
         assertEquals(
-            KioskTab.PINYIN,
+            KioskTab.SINGERS,
             KtvGlobalSearchPolicy.targetTabForQuery(KioskTab.SINGERS, enabled = true),
+        )
+        assertEquals(
+            KioskTab.PINYIN,
+            KtvGlobalSearchPolicy.targetTabForQuery(KioskTab.CATEGORIES, enabled = true),
         )
         assertEquals(
             KioskTab.SINGERS,

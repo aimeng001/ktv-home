@@ -218,61 +218,7 @@ class KtvKioskSongAdapterTest {
     }
 
     @Test
-    fun songCardFocusChainSkipsDisabledActionButtonsAndHighlightsMatchInGold() {
-        val allEnabled = SongCardFocusChainPolicy.resolveChain(
-            orderEnabled = true,
-            topEnabled = true,
-            favoriteEnabled = true,
-        )
-        assertEquals(SongCardActionSlot.ORDER, allEnabled.entrySlot)
-        assertEquals(SongCardActionSlot.ORDER_TOP, allEnabled.nextRightBySlot[SongCardActionSlot.ORDER])
-        assertEquals(SongCardActionSlot.FAVORITE, allEnabled.nextRightBySlot[SongCardActionSlot.ORDER_TOP])
-        assertEquals(null, allEnabled.nextRightBySlot[SongCardActionSlot.FAVORITE])
-        assertEquals(null, allEnabled.nextLeftBySlot[SongCardActionSlot.ORDER])
-        assertEquals(SongCardActionSlot.ORDER, allEnabled.nextLeftBySlot[SongCardActionSlot.ORDER_TOP])
-
-        val alreadyOrdered = SongCardFocusChainPolicy.resolveChain(
-            orderEnabled = false,
-            topEnabled = true,
-            favoriteEnabled = true,
-        )
-        assertEquals(SongCardActionSlot.ORDER_TOP, alreadyOrdered.entrySlot)
-        assertEquals(SongCardActionSlot.FAVORITE, alreadyOrdered.nextRightBySlot[SongCardActionSlot.ORDER_TOP])
-
-        val playing = SongCardFocusChainPolicy.resolveChain(
-            orderEnabled = false,
-            topEnabled = false,
-            favoriteEnabled = true,
-        )
-        assertEquals(SongCardActionSlot.FAVORITE, playing.entrySlot)
-        assertEquals(null, playing.nextRightBySlot[SongCardActionSlot.FAVORITE])
-
-        val noneEnabled = SongCardFocusChainPolicy.resolveChain(
-            orderEnabled = false,
-            topEnabled = false,
-            favoriteEnabled = false,
-        )
-        assertEquals(null, noneEnabled.entrySlot)
-
-        assertEquals(
-            SongCardActionSlot.ORDER_TOP,
-            SongCardFocusChainPolicy.nextFallbackAfterDisable(
-                SongCardActionSlot.ORDER,
-                orderEnabled = false,
-                topEnabled = true,
-                favoriteEnabled = true,
-            ),
-        )
-        assertEquals(
-            SongCardActionSlot.FAVORITE,
-            SongCardFocusChainPolicy.nextFallbackAfterDisable(
-                SongCardActionSlot.ORDER,
-                orderEnabled = false,
-                topEnabled = false,
-                favoriteEnabled = true,
-            ),
-        )
-
+    fun songCardKeepsSingleFocusForFreeGridNavigationAndSupportsPopupActions() {
         val workingDirectory = java.io.File(System.getProperty("user.dir").orEmpty())
         val adapter = sequenceOf(
             workingDirectory.resolve("src/main/java/com/homektv/tv/ui/KtvKioskBrowserSongAdapter.kt"),
@@ -281,7 +227,8 @@ class KtvKioskSongAdapterTest {
         ).firstOrNull(java.io.File::isFile)?.readText() ?: error("Cannot locate KtvKioskBrowserSongAdapter.kt")
         assertTrue("高亮匹配词必须使用高对比度金色 R.color.gold", adapter.contains("R.color.gold"))
         assertFalse("高亮匹配词不得使用会与选中蓝色背景融为一体的 R.color.ktv_focus_blue", adapter.contains("R.color.ktv_focus_blue"))
-        assertTrue("禁用按钮不得参与卡片内遥控器聚焦", adapter.contains("binding.btnBrowserSongOrder.isEnabled"))
-        assertTrue("卡片内动作按钮链必须经由 SongCardFocusChainPolicy 动态计算", adapter.contains("SongCardFocusChainPolicy.resolveChain"))
+        assertTrue("卡片内小按钮不得劫持遥控器焦点", adapter.contains("binding.btnBrowserSongOrder.isFocusable = false"))
+        assertTrue("卡片右键必须交由网格自由移动，不得劫持到内部按钮", adapter.contains("binding.root.nextFocusRightId = View.NO_ID"))
+        assertTrue("长按确定键或菜单键应弹出操作浮层", adapter.contains("setOnLongClickListener") && adapter.contains("KEYCODE_MENU"))
     }
 }

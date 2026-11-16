@@ -114,49 +114,6 @@ class MediaApi(
         } catch (_: Exception) { false }
     }
 
-    suspend fun fetchRecommendations(): List<SongDto> = withContext(Dispatchers.IO) {
-        suspend fun fetch(path: String): List<SongDto> {
-            return try {
-                execute(Request.Builder().url("${config.apiBase()}$path").build()).use { resp ->
-                    if (!resp.isSuccessful) {
-                        Log.w(TAG, "recommendations $path http ${resp.code}")
-                        return emptyList()
-                    }
-                    json.decodeFromString(
-                        kotlinx.serialization.builtins.ListSerializer(SongDto.serializer()),
-                        ResponseBodyReader.readText(resp.body).orEmpty(),
-                    )
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (e: Exception) {
-                Log.w(TAG, "recommendations $path failed: ${e.message}")
-                emptyList()
-            }
-        }
-
-        val ranked = fetch("/ranking?days=3650").take(MAX_RECOMMENDATIONS)
-        val newest = fetch("/songs/new").take(MAX_RECOMMENDATIONS)
-        (ranked + newest).distinctBy { it.id }.take(MAX_RECOMMENDATIONS)
-    }
-
-    suspend fun fetchLibraryCount(): Long? = withContext(Dispatchers.IO) {
-        try {
-            execute(Request.Builder().url("${config.apiBase()}/library/status").build()).use { resp ->
-                if (!resp.isSuccessful) {
-                    Log.w(TAG, "library status http ${resp.code}")
-                    return@withContext null
-                }
-                json.decodeFromString(LibraryStatus.serializer(), ResponseBodyReader.readText(resp.body).orEmpty()).totalSongs
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (e: Exception) {
-            Log.w(TAG, "library status failed: ${e.message}")
-            null
-        }
-    }
-
     suspend fun fetchStandbyContent(): StandbyContent? = withContext(Dispatchers.IO) {
         try {
             execute(Request.Builder().url("${config.apiBase()}/standby/content").build()).use { resp ->
@@ -285,7 +242,6 @@ class MediaApi(
 
     companion object {
         private const val TAG = "MediaApi"
-        private const val MAX_RECOMMENDATIONS = 100
     }
 }
 

@@ -185,7 +185,8 @@ public interface SongRepository extends JpaRepository<Song, Long> {
     @Query(value = """
             WITH credits AS (
                 SELECT s.id AS song_id, sa.artist_key, sa.artist_name,
-                       COALESCE(NULLIF(sa.artist_init, ''), s.artist_init) AS artist_init
+                       COALESCE(NULLIF(sa.artist_init, ''), s.artist_init) AS artist_init,
+                       COALESCE(NULLIF(sa.artist_py, ''), s.artist_py) AS artist_py
                 FROM songs s
                 JOIN song_artists sa ON sa.song_id = s.id
                 WHERE s.status = :status AND trim(sa.artist_name) <> ''
@@ -193,7 +194,8 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                 SELECT s.id AS song_id,
                        lower(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) AS artist_key,
                        trim(s.artist) AS artist_name,
-                       s.artist_init AS artist_init
+                       s.artist_init AS artist_init,
+                       s.artist_py AS artist_py
                 FROM songs s
                 WHERE s.status = :status
                   AND s.artist IS NOT NULL AND trim(s.artist) <> ''
@@ -202,6 +204,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                 SELECT artist_key,
                        min(artist_name) AS name,
                        min(NULLIF(artist_init, '')) AS artist_init,
+                       min(NULLIF(artist_py, '')) AS artist_py,
                        COUNT(DISTINCT song_id) AS song_count
                 FROM credits
                 GROUP BY artist_key
@@ -228,12 +231,19 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                     OR (:initial = '#' AND COALESCE(a.artist_init, '') = '')
                     OR (:initial <> '#' AND upper(COALESCE(a.artist_init, '')) LIKE upper(:initial) || '%')
               )
+              AND (
+                    :keyword = ''
+                    OR LOWER(a.name) LIKE '%' || LOWER(:keyword) || '%'
+                    OR LOWER(COALESCE(a.artist_init, '')) LIKE LOWER(:keyword) || '%'
+                    OR LOWER(COALESCE(a.artist_py, '')) LIKE LOWER(:keyword) || '%'
+              )
             ORDER BY a.song_count DESC, a.name ASC, a.artist_key ASC
             """,
             countQuery = """
             WITH credits AS (
                 SELECT s.id AS song_id, sa.artist_key, sa.artist_name,
-                       COALESCE(NULLIF(sa.artist_init, ''), s.artist_init) AS artist_init
+                       COALESCE(NULLIF(sa.artist_init, ''), s.artist_init) AS artist_init,
+                       COALESCE(NULLIF(sa.artist_py, ''), s.artist_py) AS artist_py
                 FROM songs s
                 JOIN song_artists sa ON sa.song_id = s.id
                 WHERE s.status = :status AND trim(sa.artist_name) <> ''
@@ -241,7 +251,8 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                 SELECT s.id AS song_id,
                        lower(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) AS artist_key,
                        trim(s.artist) AS artist_name,
-                       s.artist_init AS artist_init
+                       s.artist_init AS artist_init,
+                       s.artist_py AS artist_py
                 FROM songs s
                 WHERE s.status = :status
                   AND s.artist IS NOT NULL AND trim(s.artist) <> ''
@@ -249,7 +260,8 @@ public interface SongRepository extends JpaRepository<Song, Long> {
             ), aggregates AS (
                 SELECT artist_key,
                        min(artist_name) AS name,
-                       min(NULLIF(artist_init, '')) AS artist_init
+                       min(NULLIF(artist_init, '')) AS artist_init,
+                       min(NULLIF(artist_py, '')) AS artist_py
                 FROM credits
                 GROUP BY artist_key
             )
@@ -264,16 +276,28 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                     OR (:initial = '#' AND COALESCE(a.artist_init, '') = '')
                     OR (:initial <> '#' AND upper(COALESCE(a.artist_init, '')) LIKE upper(:initial) || '%')
               )
+              AND (
+                    :keyword = ''
+                    OR LOWER(a.name) LIKE '%' || LOWER(:keyword) || '%'
+                    OR LOWER(COALESCE(a.artist_init, '')) LIKE LOWER(:keyword) || '%'
+                    OR LOWER(COALESCE(a.artist_py, '')) LIKE LOWER(:keyword) || '%'
+              )
             """, nativeQuery = true)
     Page<PublicArtistDirectoryProjection> pagePublicArtistDirectory(@Param("status") String status,
                                                                      @Param("gender") String gender,
                                                                      @Param("initial") String initial,
                                                                      @Param("region") String region,
+                                                                     @Param("keyword") String keyword,
                                                                      Pageable pageable);
 
     default Page<PublicArtistDirectoryProjection> pagePublicArtistDirectory(
+            String status, String gender, String initial, String region, Pageable pageable) {
+        return pagePublicArtistDirectory(status, gender, initial, region, "", pageable);
+    }
+
+    default Page<PublicArtistDirectoryProjection> pagePublicArtistDirectory(
             String status, String gender, String initial, Pageable pageable) {
-        return pagePublicArtistDirectory(status, gender, initial, "", pageable);
+        return pagePublicArtistDirectory(status, gender, initial, "", "", pageable);
     }
 
     @Query(value = """
@@ -389,6 +413,15 @@ public interface SongRepository extends JpaRepository<Song, Long> {
     List<TagCountProjection> aggregateTagsByStatusOk();
 
     @Query(value = """
+            SELECT MIN(sti.display_tag) AS name, COUNT(*) AS songCount
+            FROM song_tag_index sti
+            GROUP BY sti.tag_lower
+            ORDER BY COUNT(*) DESC, MIN(sti.display_tag) ASC
+            LIMIT 100
+            """, nativeQuery = true)
+    List<TagCountProjection> aggregateIndexedTagsByStatusOk();
+
+    @Query(value = """
             SELECT * FROM songs s
             WHERE s.status = 'ok'
               AND (:artist = '' OR LOWER(s.artist) = LOWER(:artist)
@@ -413,18 +446,16 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
               AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
-              AND (:tag = ''
-                   OR EXISTS (SELECT 1 FROM unnest(s.tags) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_genres) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (
-                       SELECT 1 FROM iktv_song_categories reference_category
-                       JOIN iktv_reference_snapshots reference_snapshot
-                         ON reference_snapshot.snapshot_version = reference_category.snapshot_version
-                        AND reference_snapshot.status = 'ACTIVE'
-                       WHERE reference_category.song_id = s.id
-                         AND LOWER(reference_category.category) = LOWER(:tag)
-                   ))
+              AND (:tag = '' OR EXISTS (
+                  SELECT 1 FROM song_tag_index sti
+                  WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
+              ))
+              AND (
+                  :keyword = ''
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
+                  OR LOWER(COALESCE(s.title_init, '')) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(COALESCE(s.title_py, '')) LIKE LOWER(:keyword) || '%'
+              )
             """,
             countQuery = """
             SELECT COUNT(*) FROM songs s
@@ -451,18 +482,16 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
               AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
-              AND (:tag = ''
-                   OR EXISTS (SELECT 1 FROM unnest(s.tags) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_genres) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (
-                       SELECT 1 FROM iktv_song_categories reference_category
-                       JOIN iktv_reference_snapshots reference_snapshot
-                         ON reference_snapshot.snapshot_version = reference_category.snapshot_version
-                        AND reference_snapshot.status = 'ACTIVE'
-                       WHERE reference_category.song_id = s.id
-                         AND LOWER(reference_category.category) = LOWER(:tag)
-                   ))
+              AND (:tag = '' OR EXISTS (
+                  SELECT 1 FROM song_tag_index sti
+                  WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
+              ))
+              AND (
+                  :keyword = ''
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
+                  OR LOWER(COALESCE(s.title_init, '')) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(COALESCE(s.title_py, '')) LIKE LOWER(:keyword) || '%'
+              )
             """,
             nativeQuery = true)
     Page<Song> browseCategorySongs(@Param("artist") String artist,
@@ -470,7 +499,13 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                    @Param("language") String language,
                                    @Param("tag") String tag,
                                    @Param("vocalForm") String vocalForm,
+                                   @Param("keyword") String keyword,
                                    Pageable pageable);
+
+    default Page<Song> browseCategorySongs(String artist, String artistGender, String language,
+                                           String tag, String vocalForm, Pageable pageable) {
+        return browseCategorySongs(artist, artistGender, language, tag, vocalForm, "", pageable);
+    }
 
     /** Public browse variant that follows the canonical song_artists identity key. */
     @Query(value = """
@@ -505,18 +540,16 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
               AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
-              AND (:tag = ''
-                   OR EXISTS (SELECT 1 FROM unnest(s.tags) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_genres) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (
-                       SELECT 1 FROM iktv_song_categories reference_category
-                       JOIN iktv_reference_snapshots reference_snapshot
-                         ON reference_snapshot.snapshot_version = reference_category.snapshot_version
-                        AND reference_snapshot.status = 'ACTIVE'
-                       WHERE reference_category.song_id = s.id
-                         AND LOWER(reference_category.category) = LOWER(:tag)
-                   ))
+              AND (:tag = '' OR EXISTS (
+                  SELECT 1 FROM song_tag_index sti
+                  WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
+              ))
+              AND (
+                  :keyword = ''
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
+                  OR LOWER(COALESCE(s.title_init, '')) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(COALESCE(s.title_py, '')) LIKE LOWER(:keyword) || '%'
+              )
             """,
             countQuery = """
             SELECT COUNT(*) FROM songs s
@@ -550,18 +583,16 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
               AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
-              AND (:tag = ''
-                   OR EXISTS (SELECT 1 FROM unnest(s.tags) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_genres) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (SELECT 1 FROM unnest(s.ai_themes) value WHERE LOWER(value) = LOWER(:tag))
-                   OR EXISTS (
-                       SELECT 1 FROM iktv_song_categories reference_category
-                       JOIN iktv_reference_snapshots reference_snapshot
-                         ON reference_snapshot.snapshot_version = reference_category.snapshot_version
-                        AND reference_snapshot.status = 'ACTIVE'
-                       WHERE reference_category.song_id = s.id
-                         AND LOWER(reference_category.category) = LOWER(:tag)
-                   ))
+              AND (:tag = '' OR EXISTS (
+                  SELECT 1 FROM song_tag_index sti
+                  WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
+              ))
+              AND (
+                  :keyword = ''
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
+                  OR LOWER(COALESCE(s.title_init, '')) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(COALESCE(s.title_py, '')) LIKE LOWER(:keyword) || '%'
+              )
             """,
             nativeQuery = true)
     Page<Song> browseCategorySongsByArtistKey(@Param("artistKey") String artistKey,
@@ -569,7 +600,13 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                               @Param("language") String language,
                                               @Param("tag") String tag,
                                               @Param("vocalForm") String vocalForm,
+                                              @Param("keyword") String keyword,
                                               Pageable pageable);
+
+    default Page<Song> browseCategorySongsByArtistKey(String artistKey, String artistGender, String language,
+                                                      String tag, String vocalForm, Pageable pageable) {
+        return browseCategorySongsByArtistKey(artistKey, artistGender, language, tag, vocalForm, "", pageable);
+    }
 
     @Query(value = """
             SELECT sa.artist_name

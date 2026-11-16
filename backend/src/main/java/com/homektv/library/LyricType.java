@@ -9,7 +9,6 @@ public final class LyricType {
 
     public static final String WORD = "word";   // 逐字（KSC / 增强 LRC 带内联时间标签）
     public static final String LINE = "line";   // 逐行 LRC
-    public static final String SUB = "sub";     // 字幕流
     public static final String NONE = "none";
 
     // 行首时间标签 [mm:ss.xx]
