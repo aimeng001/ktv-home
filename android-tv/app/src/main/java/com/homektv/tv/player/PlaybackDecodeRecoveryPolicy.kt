@@ -1,6 +1,8 @@
 package com.homektv.tv.player
 
+import androidx.annotation.OptIn
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.util.UnstableApi
 
 internal enum class PlaybackStallAction {
     NONE,
@@ -55,6 +57,7 @@ internal object PlaybackTransientRetryPolicy {
         RETRY_DELAYS_MS[attemptIndex.coerceIn(0, RETRY_DELAYS_MS.lastIndex)]
 }
 
+@OptIn(UnstableApi::class)
 internal object PlaybackDecodeErrorPolicy {
     fun isCodecLevelError(errorCode: Int): Boolean = when (errorCode) {
         PlaybackException.ERROR_CODE_DECODING_FAILED,
