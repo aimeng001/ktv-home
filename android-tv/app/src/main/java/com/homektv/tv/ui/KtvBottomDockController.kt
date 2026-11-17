@@ -97,8 +97,8 @@ class KtvBottomDockController(
         binding.btnDockDownloads.setOnClickListener { actions.onDownloads() }
         binding.btnDockToneDown.setOnClickListener { actions.onPitchDown() }
         binding.btnDockToneUp.setOnClickListener { actions.onPitchUp() }
-        binding.btnDockVolDown.setOnClickListener { actions.onVolumeDelta(-5) }
-        binding.btnDockVolUp.setOnClickListener { actions.onVolumeDelta(5) }
+        binding.btnDockVolDown.setOnClickListener { actions.onVolumeDelta(-10) }
+        binding.btnDockVolUp.setOnClickListener { actions.onVolumeDelta(10) }
         val handleVideoClick = {
             if (isFullscreen) {
                 onFullscreenClick?.invoke()

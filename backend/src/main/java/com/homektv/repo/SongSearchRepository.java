@@ -31,29 +31,90 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
      * heap scans even when the short-term branch is selective.
      */
     String SHORT_SEARCH_SQL = """
-            WITH candidate_ids AS (
+            WITH prefix_candidates AS (
+                SELECT s.id AS song_id,
+                       CASE WHEN LOWER(s.title_init) = :kw THEN 0 ELSE 1 END AS term_rank
+                FROM songs s
+                WHERE s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                  AND LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\'
+
+                UNION ALL
+
+                SELECT s.id AS song_id, 2 AS term_rank
+                FROM songs s
+                WHERE s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                  AND LOWER(s.title_py) LIKE :likeKw || '%' ESCAPE '\\'
+
+                UNION ALL
+
+                SELECT s.id AS song_id,
+                       CASE WHEN LOWER(s.artist_init) = :kw THEN 3 ELSE 4 END AS term_rank
+                FROM songs s
+                WHERE s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                  AND LOWER(s.artist_init) LIKE :likeKw || '%' ESCAPE '\\'
+
+                UNION ALL
+
+                SELECT s.id AS song_id, 5 AS term_rank
+                FROM songs s
+                WHERE s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                  AND LOWER(s.artist_py) LIKE :likeKw || '%' ESCAPE '\\'
+
+                UNION ALL
+
+                SELECT sa.song_id, 6 AS term_rank
+                FROM song_artists sa
+                JOIN songs s ON s.id = sa.song_id
+                WHERE s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                  AND LOWER(sa.artist_init) LIKE :likeKw || '%' ESCAPE '\\'
+
+                UNION ALL
+
+                SELECT sa.song_id, 7 AS term_rank
+                FROM song_artists sa
+                JOIN songs s ON s.id = sa.song_id
+                WHERE s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                  AND LOWER(sa.artist_py) LIKE :likeKw || '%' ESCAPE '\\'
+            ), term_candidates AS (
                 SELECT term.song_id,
-                       MIN(CASE
-                           WHEN term.kind IN ('TITLE', 'TITLE_PY', 'TITLE_INIT') THEN 0
+                       CASE
+                           WHEN term.kind IN ('TITLE', 'TITLE_PY', 'TITLE_INIT') THEN 10
                            WHEN term.kind IN ('ARTIST', 'ARTIST_PY', 'ARTIST_INIT',
-                                               'ARTIST_CREDIT', 'ARTIST_CREDIT_PY', 'ARTIST_CREDIT_INIT') THEN 1
-                           WHEN term.kind = 'LANGUAGE' THEN 2
-                           ELSE 3
-                       END) AS term_rank
+                                               'ARTIST_CREDIT', 'ARTIST_CREDIT_PY', 'ARTIST_CREDIT_INIT') THEN 11
+                           WHEN term.kind = 'LANGUAGE' THEN 12
+                           ELSE 13
+                       END AS term_rank
                 FROM song_search_terms term
                 JOIN songs s ON s.id = term.song_id
                 WHERE term.value_lower = :kw
                   AND s.status = 'ok'
                   AND (:mediaType = '' OR s.media_type = :mediaType)
-                GROUP BY term.song_id
+            ), candidate_ids AS (
+                SELECT song_id, MIN(term_rank) AS term_rank
+                FROM (
+                    SELECT song_id, term_rank FROM prefix_candidates
+                    UNION ALL
+                    SELECT song_id, term_rank FROM term_candidates
+                ) combined
+                GROUP BY song_id
             ), ranked_candidates AS (
                 SELECT c.song_id, c.term_rank
                 FROM candidate_ids c
                 JOIN songs s ON s.id = c.song_id
                 ORDER BY
                   (LOWER(s.title) = :kw) DESC,
+                  (LOWER(s.title_init) = :kw) DESC,
                   (LOWER(s.artist) = :kw) DESC,
+                  (LOWER(s.artist_init) = :kw) DESC,
                   (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
+                  (LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\') DESC,
+                  (LOWER(s.title_py) LIKE :likeKw || '%' ESCAPE '\\') DESC,
                   c.term_rank ASC,
                   (s.media_type = 'KTV_VIDEO') DESC,
                   s.play_count DESC,
@@ -65,8 +126,12 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
             JOIN songs s ON s.id = c.song_id
             ORDER BY
               (LOWER(s.title) = :kw) DESC,
+              (LOWER(s.title_init) = :kw) DESC,
               (LOWER(s.artist) = :kw) DESC,
+              (LOWER(s.artist_init) = :kw) DESC,
               (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
+              (LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\') DESC,
+              (LOWER(s.title_py) LIKE :likeKw || '%' ESCAPE '\\') DESC,
               c.term_rank ASC,
               (s.media_type = 'KTV_VIDEO') DESC,
               s.play_count DESC,
@@ -160,8 +225,11 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
               (s.title = :rawKw) DESC,
               (s.artist = :rawKw) DESC,
               (LOWER(s.title) = :kw) DESC,
+              (LOWER(s.title_init) = :kw) DESC,
               (LOWER(s.artist) = :kw) DESC,
+              (LOWER(s.artist_init) = :kw) DESC,
               (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
+              (LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\') DESC,
               (s.media_type = 'KTV_VIDEO') DESC,
               similarity(LOWER(s.title), :kw) DESC,
               s.play_count DESC,
@@ -240,8 +308,11 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
                 JOIN songs s ON s.id = u.song_id
                 ORDER BY
                   (LOWER(s.title) = :kw) DESC,
+                  (LOWER(s.title_init) = :kw) DESC,
                   (LOWER(s.artist) = :kw) DESC,
+                  (LOWER(s.artist_init) = :kw) DESC,
                   (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
+                  (LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\') DESC,
                   u.best_priority ASC,
                   (s.media_type = 'KTV_VIDEO') DESC,
                   s.play_count DESC,
@@ -253,8 +324,11 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
             JOIN songs s ON s.id = c.song_id
             ORDER BY
               (LOWER(s.title) = :kw) DESC,
+              (LOWER(s.title_init) = :kw) DESC,
               (LOWER(s.artist) = :kw) DESC,
+              (LOWER(s.artist_init) = :kw) DESC,
               (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
+              (LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\') DESC,
               c.best_priority ASC,
               (s.media_type = 'KTV_VIDEO') DESC,
               s.play_count DESC,

@@ -298,6 +298,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         sessionFingerprint = DeviceSessionFingerprint(
             serverHost = config.serverHost,
             instanceId = config.serverForHost(config.serverHost)?.instanceId,
+            credentialHash = DeviceSessionChangePolicy.fingerprintCredential(config.playerCredential),
         )
         val audioPreview = intent.action == "com.homektv.tv.action.AUDIO_PREVIEW" ||
             intent.getBooleanExtra("audio_preview", false)
@@ -415,7 +416,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 if (playbackCoordinator.isCurrent(token)) onToast("正在准备 MV，请稍候")
             },
             onWaitingForSource = { token, _ ->
-                if (playbackCoordinator.isCurrent(token)) onToast(getString(R.string.play_waiting_network))
+                if (playbackCoordinator.isCurrent(token) && !token.request.forceTranscode) {
+                    onToast(getString(R.string.play_waiting_network))
+                }
             },
             onSourceFailure = { token, error ->
                 if (playbackCoordinator.isCurrent(token)) {
@@ -623,6 +626,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         val current = DeviceSessionFingerprint(
             serverHost = currentConfig.serverHost,
             instanceId = currentConfig.serverForHost(currentConfig.serverHost)?.instanceId,
+            credentialHash = DeviceSessionChangePolicy.fingerprintCredential(currentConfig.playerCredential),
         )
         if (DeviceSessionChangePolicy.requiresRestart(previous, current)) {
             recreate()
@@ -800,6 +804,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             binding.btnTopSettings,
             binding.btnTopSearch,
             binding.btnTopLibraryScan,
+            binding.btnTopMixer,
         )
         if (kioskActive) {
             topButtons.forEach { it.nextFocusDownId = View.NO_ID }
@@ -898,6 +903,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         menu.remoteOrder.visibility = View.VISIBLE
         menu.remoteMicrophone.setOnClickListener { toggleMicrophoneMonitor() }
         updateMicrophoneButton()
+        menu.remoteCheer.setOnClickListener { onEffect("cheer") }
         menu.remoteSettings.setOnClickListener {
             menu.root.visibility = View.GONE
             settingsLauncher.launch(Intent(this, SetupActivity::class.java).apply {
@@ -908,7 +914,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun setupPersistentOverlayActions() {
-        // 顶栏 5 大快捷图标事件
+        // 顶栏 6 大快捷图标事件
         binding.btnTopSystem.setOnClickListener { showSystemInfoDialog() }
         binding.btnTopMobileQr.setOnClickListener { showQrCode() }
         binding.btnTopSettings.setOnClickListener { showKtvSettingsDialog() }
@@ -919,6 +925,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         }
         binding.btnTopLibraryScan.contentDescription = "请求服务端扫描曲库"
         binding.btnTopLibraryScan.setOnClickListener { showLibraryScanConfirmDialog() }
+        binding.btnTopMixer.contentDescription = "调音与麦克风"
+        binding.btnTopMixer.setOnClickListener { showMixerPanel() }
     }
 
     private fun showKtvSettingsDialog() {
@@ -1484,6 +1492,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private fun showMixerPanel() {
         remoteMenuReturnFocus = currentFocus
         val menu = ensureRemoteMenuBinding()
+        updateMicrophoneButton()
         menu.root.visibility = View.VISIBLE
         menu.root.bringToFront()
         menu.remotePlay.requestRemoteFocus()
@@ -2350,6 +2359,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     /** 播放失败：通知服务端推进队列，不将一次客户端播放失败视为源文件失效。 */
     private fun onPlayError(context: PlaybackErrorContext) {
+        if (playbackReplacementJob?.isActive == true) return
         Toast.makeText(this, R.string.play_error, Toast.LENGTH_SHORT).show()
         socket?.sendPlayError("media playback failed", context.fileId, context.queueId)
     }

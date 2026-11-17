@@ -35,5 +35,6 @@
         <Button android:id="@+id/remoteOrder" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/kiosk_label" />
         <Button android:id="@+id/remoteMicrophone" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/microphone_off" />
         <Button android:id="@+id/remoteSettings" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="@string/server_mode_label" />
+        <Button android:id="@+id/remoteCheer" android:layout_width="0dp" android:layout_height="58dp" android:layout_columnWeight="1" android:text="喝彩" />
     </GridLayout>
 </LinearLayout>

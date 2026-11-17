@@ -1,5 +1,7 @@
 package com.homektv.tv.player
 
+import androidx.media3.common.PlaybackException
+
 internal enum class PlaybackStallAction {
     NONE,
     IN_PLACE_SEEK,
@@ -51,4 +53,35 @@ internal object PlaybackTransientRetryPolicy {
 
     fun delayForAttempt(attemptIndex: Int): Long =
         RETRY_DELAYS_MS[attemptIndex.coerceIn(0, RETRY_DELAYS_MS.lastIndex)]
+}
+
+internal object PlaybackDecodeErrorPolicy {
+    fun isCodecLevelError(errorCode: Int): Boolean = when (errorCode) {
+        PlaybackException.ERROR_CODE_DECODING_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+        PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED,
+        PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED -> true
+        else -> false
+    }
+
+    fun isDecoderOrFormatError(errorCode: Int): Boolean = when (errorCode) {
+        PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED,
+        PlaybackException.ERROR_CODE_TIMEOUT -> true
+        else -> isCodecLevelError(errorCode)
+    }
+
+    fun isTransientIoError(errorCode: Int): Boolean = when (errorCode) {
+        PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+        PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+        PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE -> true
+        else -> false
+    }
 }

@@ -140,6 +140,8 @@ class KtvKioskOverlayController(
     private var lastSongListResetSignature = ""
     private var currentLoadedSongs: List<SongDto> = emptyList()
     private var pendingBrowserPageTarget: Int? = null
+    private var currentSingerPageIndex = 0
+    private var lastSingerListResetSignature = ""
     private var pendingSingerPageTarget: Int? = null
     private var pendingCommercialTagRoute: KioskCommercialRoute? = null
     private var pendingCommercialTagRevision: Long? = null
@@ -611,17 +613,42 @@ class KtvKioskOverlayController(
         ) {
             browserBinding.browserSingerRecyclerView.visibility = View.VISIBLE
         }
-        singerAdapter.submitList(state.artists) {
-            val pendingTarget = pendingSingerPageTarget
-            if (pendingTarget != null && pendingTarget < state.artists.size) {
+        val singerResetSignature = buildString {
+            append(state.artistGender).append('|')
+            append(state.artistInitial).append('|')
+            append(state.artistRegion).append('|')
+            append(if (presentationState.currentTab.value == KioskTab.SINGERS && selectedArtist == null) state.query else "")
+        }
+        if (singerResetSignature != lastSingerListResetSignature) {
+            lastSingerListResetSignature = singerResetSignature
+            currentSingerPageIndex = 0
+            pendingSingerPageTarget = null
+        }
+        val pendingSingerTarget = pendingSingerPageTarget
+        val singerLoadingMore = state.catalogLoading || state.catalogLoadingMore
+        if (pendingSingerTarget != null) {
+            if (pendingSingerTarget < state.artists.size) {
+                currentSingerPageIndex = pendingSingerTarget / SINGER_GRID_PAGE_SIZE
                 pendingSingerPageTarget = null
-                browserBinding.browserSingerRecyclerView.scrollToPosition(pendingTarget)
-                updatePageIndicator(state)
+            } else if (!state.catalogHasMore && !singerLoadingMore) {
+                pendingSingerPageTarget = null
             }
+        }
+        val singerPageSlice = KioskSongGridPaginationPolicy.slicePage(
+            items = state.artists,
+            requestedPageIndex = currentSingerPageIndex,
+            reportedTotal = state.catalogTotal.coerceAtMost(MAX_VISIBLE_CATALOG_ITEMS.toLong()),
+            hasMore = state.catalogHasMore,
+            pageSize = SINGER_GRID_PAGE_SIZE,
+        )
+        currentSingerPageIndex = singerPageSlice.pageIndex
+        singerAdapter.submitList(singerPageSlice.items) {
             if (browserBinding.browserSingerRecyclerView.visibility == View.VISIBLE) {
+                browserBinding.browserSingerRecyclerView.scrollToPosition(0)
                 browserBinding.browserSingerRecyclerView.requestLayout()
                 browserBinding.browserSingerRecyclerView.invalidate()
             }
+            updatePageIndicator(state)
         }
         overlay.txtSingerStatus.text = when {
             state.catalogLoading -> "正在加载歌星..."
@@ -641,15 +668,7 @@ class KtvKioskOverlayController(
                 com.homektv.tv.controller.CatalogLoadState.ROOT_UNAVAILABLE,
                 com.homektv.tv.controller.CatalogLoadState.PARTIAL_FAILURE,
             )
-        val wasSingerRetryVisible = overlay.btnSingerRetry.visibility == View.VISIBLE
         overlay.btnSingerRetry.visibility = if (!state.catalogLoading && singerFailure) View.VISIBLE else View.GONE
-        if (!wasSingerRetryVisible && overlay.btnSingerRetry.visibility == View.VISIBLE) {
-            overlay.btnSingerRetry.post {
-                if (presentationState.currentTab.value == KioskTab.SINGERS &&
-                    overlay.btnSingerRetry.visibility == View.VISIBLE
-                ) overlay.btnSingerRetry.requestFocus()
-            }
-        }
         updateSingerFilterButtons(state.artistGender)
         if (state.artists.isNotEmpty()) {
             artistsLoaded = true
@@ -1183,17 +1202,25 @@ class KtvKioskOverlayController(
         if (presentationState.currentTab.value == KioskTab.SINGERS &&
             presentationState.selectedArtist.value == null
         ) {
-            val rv = browserBinding.browserSingerRecyclerView
-            val lm = rv.layoutManager as? GridLayoutManager ?: return
-            val first = lm.findFirstVisibleItemPosition().coerceAtLeast(0)
-            val currentPageStart = (first / SINGER_GRID_PAGE_SIZE) * SINGER_GRID_PAGE_SIZE
-            val target = if (delta > 0) currentPageStart + SINGER_GRID_PAGE_SIZE
-                else maxOf(0, currentPageStart - SINGER_GRID_PAGE_SIZE)
-            if (target >= singerAdapter.itemCount && delta > 0 && state.catalogHasMore) {
-                pendingSingerPageTarget = target
-                catalogActions.loadMoreCatalog()
-            } else if (singerAdapter.itemCount > 0) {
-                rv.smoothScrollToPosition(target.coerceAtMost(singerAdapter.itemCount - 1))
+            val action = KioskSongGridPaginationPolicy.resolveTurnPage(
+                currentPageIndex = currentSingerPageIndex,
+                delta = delta,
+                loadedCount = state.artists.size,
+                hasMore = state.catalogHasMore,
+                pageSize = SINGER_GRID_PAGE_SIZE,
+            )
+            when (action) {
+                is KioskSongGridPaginationPolicy.TurnPageAction.ShowPage -> {
+                    currentSingerPageIndex = action.targetPageIndex
+                    pendingSingerPageTarget = null
+                    renderCatalogState(state)
+                    browserBinding.browserSingerRecyclerView.scrollToPosition(0)
+                }
+                is KioskSongGridPaginationPolicy.TurnPageAction.LoadMoreForPage -> {
+                    pendingSingerPageTarget = action.targetPageIndex * SINGER_GRID_PAGE_SIZE
+                    catalogActions.loadMoreCatalog()
+                }
+                KioskSongGridPaginationPolicy.TurnPageAction.Stay -> Unit
             }
             updatePageIndicator(state)
             return
@@ -1282,13 +1309,15 @@ class KtvKioskOverlayController(
         browserBinding.btnBrowserBack.nextFocusUpId = upGridId
 
         if (isSingerRoot) {
-            val rv = browserBinding.browserSingerRecyclerView
-            val lm = rv.layoutManager as? GridLayoutManager ?: return
-            val first = lm.findFirstVisibleItemPosition().coerceAtLeast(0)
-            val total = state.catalogTotal.coerceAtMost(MAX_VISIBLE_CATALOG_ITEMS.toLong())
-            val currentPage = (first / SINGER_GRID_PAGE_SIZE) + 1
-            val totalPages = ((total + SINGER_GRID_PAGE_SIZE - 1) / SINGER_GRID_PAGE_SIZE).toInt().coerceAtLeast(1)
-            browserBinding.txtPageNumber.text = "$currentPage / $totalPages"
+            val slice = KioskSongGridPaginationPolicy.slicePage(
+                items = state.artists,
+                requestedPageIndex = currentSingerPageIndex,
+                reportedTotal = state.catalogTotal.coerceAtMost(MAX_VISIBLE_CATALOG_ITEMS.toLong()),
+                hasMore = state.catalogHasMore,
+                pageSize = SINGER_GRID_PAGE_SIZE,
+            )
+            currentSingerPageIndex = slice.pageIndex
+            browserBinding.txtPageNumber.text = slice.pageLabel
             return
         }
 
@@ -1415,7 +1444,11 @@ class KtvKioskOverlayController(
                     coordinator.resetIdleTimer()
                     action()
                 }
-                if (index == 0) activeTopButton?.nextFocusDownId = btn.id
+                if (index == 0) {
+                    for (tabIndex in 0 until browserBinding.browserCapsuleTabs.childCount) {
+                        browserBinding.browserCapsuleTabs.getChildAt(tabIndex).nextFocusDownId = btn.id
+                    }
+                }
             }
             return
         }
@@ -1423,6 +1456,7 @@ class KtvKioskOverlayController(
         container.removeAllViews()
         subcategories.forEachIndexed { index, (label, selected, action) ->
             val btn = Button(activity, null, android.R.attr.buttonBarButtonStyle).apply {
+                id = View.generateViewId()
                 text = label
                 textSize = 12f
                 setTextColor(0xFFFFFFFF.toInt())
@@ -1444,7 +1478,11 @@ class KtvKioskOverlayController(
                     action()
                 }
             }
-            if (index == 0) activeTopButton?.nextFocusDownId = btn.id
+            if (index == 0) {
+                for (tabIndex in 0 until browserBinding.browserCapsuleTabs.childCount) {
+                    browserBinding.browserCapsuleTabs.getChildAt(tabIndex).nextFocusDownId = btn.id
+                }
+            }
             container.addView(btn)
             if (label == preferredFocusLabel) {
                 btn.post {
@@ -1750,7 +1788,10 @@ class KtvKioskOverlayController(
                 loadDefaultSongs()
             }
         }
-        if (tab != KioskTab.SINGERS) pendingSingerPageTarget = null
+        if (tab != KioskTab.SINGERS) {
+            pendingSingerPageTarget = null
+            currentSingerPageIndex = 0
+        }
 
         (catalogActions as? ControllerCatalogVisibility)?.setCatalogVisible(tab != KioskTab.DASHBOARD)
         when (tab) {
@@ -2012,6 +2053,7 @@ class KtvKioskOverlayController(
     private fun loadSingerGender(gender: String, requestLegacyFocus: Boolean = true) {
         coordinator.resetIdleTimer()
         pendingSingerPageTarget = null
+        currentSingerPageIndex = 0
         focusController.hasInnerDetailBack = false
         presentationState.clearArtistSelection()
         catalogActions.loadArtists(gender = gender, initial = "", restorePage = 0)
@@ -2021,6 +2063,7 @@ class KtvKioskOverlayController(
     private fun loadSingerRegion(filter: KtvSingerRegionFilter) {
         coordinator.resetIdleTimer()
         pendingSingerPageTarget = null
+        currentSingerPageIndex = 0
         focusController.hasInnerDetailBack = false
         presentationState.clearArtistSelection()
         catalogActions.loadArtists(
@@ -2503,6 +2546,7 @@ class KtvKioskOverlayController(
     private fun resetToSingersTab() {
         val wasAlreadyOnSingersTab = presentationState.currentTab.value == KioskTab.SINGERS
         pendingSingerPageTarget = null
+        currentSingerPageIndex = 0
         artistsLoaded = false
         focusController.hasInnerDetailBack = false
         presentationState.clearArtistSelection()

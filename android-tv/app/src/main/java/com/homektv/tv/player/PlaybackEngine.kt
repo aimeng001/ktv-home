@@ -251,7 +251,7 @@ class PlaybackEngine(
     private var playRequestAt: Long = 0L
     private var awaitingTracks = false
     /** Monotonic, generation-bound watchdog for selected video tracks. */
-    private val videoWatchdog = VideoPlaybackWatchdog(timeoutMs = 6_000L, maxRecoveries = 3)
+    private val videoWatchdog = VideoPlaybackWatchdog(timeoutMs = 3_500L, maxRecoveries = 1)
     @Volatile
     private var videoGeneration: Long = 0L
     private var appliedSelectionFileId: Long? = null
@@ -810,6 +810,11 @@ class PlaybackEngine(
         val queueId = currentQueueId
         val currentUrl = currentStreamUrl ?: return
         val streamUrl = LiveTranscodeStreamUrl.withStart(currentUrl, positionMs)
+        if (activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3 && playerDelegate.isInitialized()) {
+            player.playWhenReady = false
+            player.stop()
+            player.clearMediaItems()
+        }
         currentRequest = null
         play(
             fileId = fileId,
@@ -1232,13 +1237,7 @@ class PlaybackEngine(
 
     private fun reportVideoTimeoutFailure() {
         Log.w(TAG, "video frame watchdog exhausted; reporting playback error")
-        stopProgressTicker()
-        identityGate.invalidate()
-        cancelRetry()
-        onError(
-            "VIDEO_FIRST_FRAME_TIMEOUT",
-            PlaybackErrorContext.forPlayback(currentQueueId, currentFileId),
-        )
+        reportPlaybackFailure("VIDEO_FIRST_FRAME_TIMEOUT", currentQueueId, currentFileId)
     }
 
     private fun startProgressTicker() {
@@ -1330,6 +1329,7 @@ class PlaybackEngine(
     private fun reportPlaybackFailure(message: String, queueId: Long?, fileId: Long?) {
         if (videoFailureReportedFileId == fileId && fileId != null) return
         videoFailureReportedFileId = fileId
+        cancelRetry()
         stopProgressTicker()
         if (playerDelegate.isInitialized()) {
             player.playWhenReady = false
@@ -1498,37 +1498,18 @@ class PlaybackEngine(
                 return
             }
             transientRetryCount = 0
-            stopProgressTicker()
-            identityGate.invalidate()
             cancelRetry()
-            onError(error.errorCodeName, PlaybackErrorContext.forPlayback(currentQueueId, currentFileId))
+            reportPlaybackFailure(error.errorCodeName, currentQueueId, currentFileId)
         }
 
-        private fun isDecoderOrFormatError(error: PlaybackException): Boolean = when (error.errorCode) {
-            PlaybackException.ERROR_CODE_DECODING_FAILED,
-            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
-            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
-            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
-            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
-            PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED -> true
-            else -> false
-        }
+        private fun isDecoderOrFormatError(error: PlaybackException): Boolean =
+            PlaybackDecodeErrorPolicy.isDecoderOrFormatError(error.errorCode)
 
-        private fun isCodecLevelError(error: PlaybackException): Boolean = when (error.errorCode) {
-            PlaybackException.ERROR_CODE_DECODING_FAILED,
-            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
-            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
-            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED -> true
-            else -> false
-        }
+        private fun isCodecLevelError(error: PlaybackException): Boolean =
+            PlaybackDecodeErrorPolicy.isCodecLevelError(error.errorCode)
 
-        private fun isTransient(error: PlaybackException): Boolean = when (error.errorCode) {
-            PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
-            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
-            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
-            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> true
-            else -> false
-        }
+        private fun isTransient(error: PlaybackException): Boolean =
+            PlaybackDecodeErrorPolicy.isTransientIoError(error.errorCode)
     }
 
     companion object {

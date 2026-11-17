@@ -31,4 +31,18 @@ class DeviceSessionChangePolicyTest {
 
         assertTrue(DeviceSessionChangePolicy.requiresRestart(old, current))
     }
+
+    @Test
+    fun credentialChange_requiresSessionRestartEvenWhenServerIsUnchanged() {
+        val old = DeviceSessionFingerprint(
+            "nas:8080",
+            instanceId = "550e8400-e29b-41d4-a716-446655440000",
+            credentialHash = DeviceSessionChangePolicy.fingerprintCredential("old-pass"),
+        )
+        val current = old.copy(
+            credentialHash = DeviceSessionChangePolicy.fingerprintCredential("new-pass"),
+        )
+
+        assertTrue(DeviceSessionChangePolicy.requiresRestart(old, current))
+    }
 }

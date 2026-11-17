@@ -1,5 +1,6 @@
 package com.homektv.tv.player
 
+import androidx.media3.common.PlaybackException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -103,5 +104,19 @@ class PlaybackDecodeRecoveryPolicyTest {
         assertEquals(2_500L, PlaybackTransientRetryPolicy.delayForAttempt(2))
         assertEquals(3_500L, PlaybackTransientRetryPolicy.delayForAttempt(3))
         assertEquals(3_500L, PlaybackTransientRetryPolicy.delayForAttempt(10))
+    }
+
+    @Test
+    fun decodeErrorPolicyCoversDecoderQueryTimeoutAndAudioTrackInitFailures() {
+        assertTrue(PlaybackDecodeErrorPolicy.isCodecLevelError(PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED))
+        assertTrue(PlaybackDecodeErrorPolicy.isCodecLevelError(PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED))
+        assertTrue(PlaybackDecodeErrorPolicy.isCodecLevelError(PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED))
+        assertTrue(PlaybackDecodeErrorPolicy.isDecoderOrFormatError(PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED))
+        assertTrue(PlaybackDecodeErrorPolicy.isDecoderOrFormatError(PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED))
+        assertTrue(PlaybackDecodeErrorPolicy.isDecoderOrFormatError(PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED))
+        assertTrue(PlaybackDecodeErrorPolicy.isDecoderOrFormatError(PlaybackException.ERROR_CODE_TIMEOUT))
+        assertFalse(PlaybackDecodeErrorPolicy.isCodecLevelError(PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED))
+        assertFalse(PlaybackDecodeErrorPolicy.isCodecLevelError(PlaybackException.ERROR_CODE_TIMEOUT))
+        assertTrue(PlaybackDecodeErrorPolicy.isTransientIoError(PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE))
     }
 }

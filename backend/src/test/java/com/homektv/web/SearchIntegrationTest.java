@@ -265,4 +265,19 @@ class SearchIntegrationTest {
         assertThat(searchService.search("", 0)).isEmpty();
         assertThat(searchService.search("   ", 0)).isEmpty();
     }
+
+    @Test
+    void shortSearchPrioritizesExactTitleInitialOverEarlierSubstringMatches() {
+        for (int i = 0; i < 60; i++) {
+            save("陪在我身边的第" + i + "天", "测试歌手" + i, "KTV_VIDEO", 10);
+        }
+        save("知我", "国风堂", "KTV_VIDEO", 0);
+
+        List<Song> zwResults = searchService.search("ZW", 0);
+        List<Song> gftResults = searchService.search("GFT", 0);
+
+        assertThat(zwResults).isNotEmpty();
+        assertThat(zwResults.get(0).getTitle()).isEqualTo("知我");
+        assertThat(gftResults).extracting(Song::getTitle).contains("知我");
+    }
 }

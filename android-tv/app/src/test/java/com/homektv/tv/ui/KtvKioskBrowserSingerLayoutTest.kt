@@ -73,7 +73,12 @@ class KtvKioskBrowserSingerLayoutTest {
         assertTrue(
             "提交歌星列表前须先确保 browserSingerRecyclerView 可见并在回调中触发重排",
             renderCatalogFn.indexOf("browserBinding.browserSingerRecyclerView.visibility = View.VISIBLE") in
-                0 until renderCatalogFn.indexOf("singerAdapter.submitList(state.artists)"),
+                0 until renderCatalogFn.indexOf("singerAdapter.submitList(singerPageSlice.items)"),
+        )
+        assertTrue(
+            "歌星网格须按 SINGER_GRID_PAGE_SIZE 硬分页切片提交列表，避免一屏展示多行导致下一页无效",
+            renderCatalogFn.contains("KioskSongGridPaginationPolicy.slicePage") &&
+                renderCatalogFn.contains("pageSize = SINGER_GRID_PAGE_SIZE"),
         )
         assertTrue(
             "提交歌星列表回调须请求 requestLayout 兜底刷新网格",

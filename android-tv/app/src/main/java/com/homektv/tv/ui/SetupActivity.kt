@@ -88,6 +88,19 @@ class SetupActivity : AppCompatActivity() {
             ?.let { runCatching { SetupPage.valueOf(it) }.getOrNull() }
             ?: SetupPage.DISCOVERY
         showSetupPage(setupPage, requestFocus = false)
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    if (setupPage == SetupPage.MANUAL) {
+                        showSetupPage(SetupPage.DISCOVERY)
+                    } else {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                }
+            },
+        )
         renderHistory()
         if (SetupAutoScanPolicy.shouldAutoScan(config.savedServers.isEmpty())) {
             startScan()
@@ -345,28 +358,38 @@ class SetupActivity : AppCompatActivity() {
     }
 
     private fun rebuildFocusChain() {
-        val focusables = mutableListOf<View>()
+        val rows = mutableListOf<List<View>>()
         if (setupPage == SetupPage.DISCOVERY) {
             binding.historyContainer.children.forEach { row ->
-                focusables += (row as ViewGroup).descendants.filterIsInstance<Button>().toList()
+                val buttons = (row as ViewGroup).descendants.filterIsInstance<Button>().toList()
+                if (buttons.isNotEmpty()) rows += buttons
             }
-            focusables += binding.btnRefresh
+            rows += listOf(binding.btnRefresh)
             binding.lanContainer.children.forEach { row ->
-                focusables += (row as ViewGroup).descendants.filterIsInstance<Button>().toList()
+                val buttons = (row as ViewGroup).descendants.filterIsInstance<Button>().toList()
+                if (buttons.isNotEmpty()) rows += buttons
             }
-            focusables += binding.btnOpenManualSetup
+            rows += listOf(binding.btnOpenManualSetup)
         } else {
+            val focusables = mutableListOf<View>()
             focusables += binding.btnSetupBackToDiscovery
             focusables += binding.inputHost
             focusables += binding.inputCredential
             focusables += binding.btnConnect
+            focusables.forEach { rows += listOf(it) }
         }
 
-        focusables.forEachIndexed { index, view ->
-            view.nextFocusUpId = focusables.getOrNull(index - 1)?.id ?: view.id
-            view.nextFocusDownId = focusables.getOrNull(index + 1)?.id ?: view.id
-            view.setOnFocusChangeListener { focused, hasFocus ->
-                if (hasFocus) scrollIntoView(focused)
+        rows.forEachIndexed { rowIndex, rowViews ->
+            val prevRow = rows.getOrNull(rowIndex - 1)
+            val nextRow = rows.getOrNull(rowIndex + 1)
+            rowViews.forEachIndexed { colIndex, view ->
+                view.nextFocusLeftId = rowViews.getOrNull(colIndex - 1)?.id ?: view.id
+                view.nextFocusRightId = rowViews.getOrNull(colIndex + 1)?.id ?: view.id
+                view.nextFocusUpId = prevRow?.let { it.getOrNull(colIndex) ?: it.firstOrNull() }?.id ?: view.id
+                view.nextFocusDownId = nextRow?.let { it.getOrNull(colIndex) ?: it.firstOrNull() }?.id ?: view.id
+                view.setOnFocusChangeListener { focused, hasFocus ->
+                    if (hasFocus) scrollIntoView(focused)
+                }
             }
         }
     }
