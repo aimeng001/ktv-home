@@ -60,6 +60,7 @@ class KtvPresentationController(
             },
         )?.let { chosen -> displayManager.getDisplay(chosen.id) }
         if (display?.displayId == activeDisplayId && presentation?.isShowing == true) return
+        if (display == null && presentation == null && activeDisplayId == null) return
 
         detachPresentation()
         if (display == null) return
@@ -86,11 +87,14 @@ class KtvPresentationController(
     }
 
     private fun detachPresentation() {
-        onPlayerViewChanged(null)
+        val hadPresentation = presentation != null || activeDisplayId != null
         presentation?.setOnDismissListener(null)
         presentation?.dismiss()
         presentation = null
         activeDisplayId = null
+        if (hadPresentation) {
+            onPlayerViewChanged(null)
+        }
     }
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)

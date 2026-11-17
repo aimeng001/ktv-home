@@ -86,4 +86,26 @@ class VideoPlaybackWatchdogTest {
         // Stalls if 3000ms pass since last frame (13_000 + 3_000 = 16_000L)
         assertEquals(VideoPlaybackWatchdog.Decision.RECOVER, watchdog.poll(16_000L))
     }
+
+    @Test
+    fun frameMetadataAfterRecoveryResetsRecoveryCounter() {
+        val watchdog = VideoPlaybackWatchdog(timeoutMs = 3_000L, maxRecoveries = 2)
+        val generation = watchdog.onMediaChanged()
+        watchdog.onTracksChanged(selectedVideo = true, nowMs = 0L)
+        watchdog.onPlayingChanged(playing = true, nowMs = 0L)
+        watchdog.onRenderedFirstFrame(generation, 100L)
+
+        // First stall triggers RECOVER, then new frame arrives -> counter resets
+        assertEquals(VideoPlaybackWatchdog.Decision.RECOVER, watchdog.poll(3_100L))
+        watchdog.onFrameMetadata(generation, 3_200L)
+
+        // Second isolated stall triggers RECOVER again, then recovers
+        assertEquals(VideoPlaybackWatchdog.Decision.RECOVER, watchdog.poll(6_200L))
+        watchdog.onFrameMetadata(generation, 6_300L)
+
+        // Third isolated stall must still RECOVER instead of exhausting
+        assertEquals(VideoPlaybackWatchdog.Decision.RECOVER, watchdog.poll(9_300L))
+        assertEquals(VideoPlaybackWatchdog.Decision.RECOVER, watchdog.poll(12_300L))
+        assertEquals(VideoPlaybackWatchdog.Decision.EXHAUSTED, watchdog.poll(15_300L))
+    }
 }

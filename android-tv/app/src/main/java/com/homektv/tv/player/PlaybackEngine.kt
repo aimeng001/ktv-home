@@ -251,7 +251,8 @@ class PlaybackEngine(
     private var playRequestAt: Long = 0L
     private var awaitingTracks = false
     /** Monotonic, generation-bound watchdog for selected video tracks. */
-    private val videoWatchdog = VideoPlaybackWatchdog()
+    private val videoWatchdog = VideoPlaybackWatchdog(timeoutMs = 6_000L, maxRecoveries = 3)
+    @Volatile
     private var videoGeneration: Long = 0L
     private var appliedSelectionFileId: Long? = null
     private var appliedSelectionMode: VocalMode? = null
@@ -271,6 +272,7 @@ class PlaybackEngine(
 
     private var activeEngineType: PlaybackEngineType = PlaybackEngineType.PRIMARY_MEDIA3
     private var attachedPlayerView: PlayerView? = null
+    private var hasRenderSurface: Boolean = true
     private var currentHasVideoDeclared: Boolean
         get() = sessionMetadata.currentHasVideoDeclared
         set(value) { sessionMetadata.currentHasVideoDeclared = value }
@@ -298,6 +300,12 @@ class PlaybackEngine(
     private var resolutionRequestedFileId: Long?
         get() = sessionMetadata.resolutionRequestedFileId
         set(value) { sessionMetadata.resolutionRequestedFileId = value }
+    /** Survives engine.stop() during playbackCoordinator.replace() so a single file cannot loop recovery. */
+    private var lastResolutionRequestedFileId: Long? = null
+    private val prioritizedCodecSelector = PrioritizedMediaCodecSelector()
+    private var softwareDecoderAttemptedFileId: Long? = null
+    @Volatile
+    private var firstFrameRenderedForCurrentMedia: Boolean = false
 
     private val fallbackSurfaceCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {
@@ -452,6 +460,7 @@ class PlaybackEngine(
                 .setAudioProcessors(arrayOf<AudioProcessor>(channelAudioProcessor))
                 .build()
         }
+            .setMediaCodecSelector(prioritizedCodecSelector)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             .setEnableDecoderFallback(true)
         return ExoPlayer.Builder(appContext)
@@ -497,7 +506,12 @@ class PlaybackEngine(
 
     /** 绑定/解绑显示层（切到播放页时绑，回待机时解绑）。 */
     fun attach(view: PlayerView) {
+        val previous = attachedPlayerView
+        if (previous != null && previous !== view) {
+            detach(previous)
+        }
         attachedPlayerView = view
+        hasRenderSurface = true
         if (activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
             view.player = player
         } else {
@@ -617,6 +631,7 @@ class PlaybackEngine(
         cancelRetry()
         Log.d(TAG, "play fileId=$fileId url=$streamUrl")
         transientRetryCount = 0
+        firstFrameRenderedForCurrentMedia = false
         videoGeneration = videoWatchdog.onMediaChanged()
         playRequestAt = SystemClock.elapsedRealtime()
         currentRequest = requested
@@ -640,17 +655,26 @@ class PlaybackEngine(
         stopProgressTicker()
         // Load the replacement silently; the caller applies the latest server state before
         // allowing playback to start. This prevents a stale playing snapshot from winning.
+        if (lastResolutionRequestedFileId != fileId) {
+            lastResolutionRequestedFileId = null
+        }
+        if (softwareDecoderAttemptedFileId != fileId) {
+            softwareDecoderAttemptedFileId = null
+            prioritizedCodecSelector.preferSoftware = false
+        }
         player.playWhenReady = false
         primeChannelMixingForPlayback()
-        player.setMediaItem(
-            MediaItem.Builder()
-                .setMediaId(fileId.toString())
-                .setUri(streamUrl)
-                .build(),
-        )
-        player.prepare()
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(fileId.toString())
+            .setUri(streamUrl)
+            .build()
         val localInitialPositionMs = LiveTranscodePosition.pipePositionMs(initialPositionMs, currentStreamOffsetMs)
-        if (localInitialPositionMs > 0L) player.seekTo(localInitialPositionMs)
+        if (localInitialPositionMs > 0L) {
+            player.setMediaItem(mediaItem, localInitialPositionMs)
+        } else {
+            player.setMediaItem(mediaItem)
+        }
+        player.prepare()
         player.playWhenReady = playWhenReady
     }
 
@@ -824,6 +848,7 @@ class PlaybackEngine(
         videoFailureReportedFileId = null
         resolutionRequestedFileId = null
         fallbackFollowedMedia3DecoderFailure = false
+        firstFrameRenderedForCurrentMedia = false
         videoGeneration = videoWatchdog.onMediaChanged()
         identityGate.invalidate()
         playRequestAt = 0L
@@ -1112,14 +1137,15 @@ class PlaybackEngine(
         }
     }
 
-    /** 播放中视频帧卡顿看门狗：非转码流就地 seek 冲刷，耗尽后优先降级服务端实时转码。 */
+    /** 播放中视频帧卡顿看门狗：仅监控起播首帧，首帧无画面时先切本机软解、再降级服务端实时转码。 */
     private fun checkVideoStall() {
+        if (!hasRenderSurface || firstFrameRenderedForCurrentMedia) return
         val action = PlaybackStallRecoveryPolicy.resolve(
             decision = videoWatchdog.poll(SystemClock.elapsedRealtime()),
             isVideo = currentHasVideoDeclared,
             isLiveTranscode = currentIsLiveTranscode,
             fileId = currentFileId,
-            requestedFileId = resolutionRequestedFileId,
+            requestedFileId = resolutionRequestedFileId ?: lastResolutionRequestedFileId,
         )
         when (action) {
             PlaybackStallAction.NONE -> Unit
@@ -1132,11 +1158,15 @@ class PlaybackEngine(
                 player.seekTo(position)
             }
             PlaybackStallAction.REQUEST_LIVE_TRANSCODE -> {
+                val retryPosition = retryState.positionForRetry(currentPositionMs)
+                if (trySwitchToLocalSoftwareDecoder(retryPosition, retryState.playWhenReady)) {
+                    return
+                }
                 Log.w(TAG, "video frame watchdog exhausted; escalating fileId=$currentFileId to live transcode")
                 if (!requestPlaybackResolution(
                         queueId = currentQueueId,
                         fileId = currentFileId,
-                        positionMs = retryState.positionForRetry(currentPositionMs),
+                        positionMs = retryPosition,
                         playWhenReady = retryState.playWhenReady,
                     )
                 ) {
@@ -1144,9 +1174,60 @@ class PlaybackEngine(
                 }
             }
             PlaybackStallAction.REPORT_ERROR -> {
+                val retryPosition = retryState.positionForRetry(currentPositionMs)
+                if (trySwitchToLocalSoftwareDecoder(retryPosition, retryState.playWhenReady)) {
+                    return
+                }
+                if (currentIsLiveTranscode && player.isPlaying) {
+                    Log.w(TAG, "live transcode video frame delayed while audio is playing; keeping playback alive fileId=$currentFileId")
+                    return
+                }
                 reportVideoTimeoutFailure()
             }
         }
+    }
+
+    /**
+     * Switches the active Media3 pipeline from hardware-preferred to local software
+     * MediaCodec (`c2.android.*` / `OMX.google.*`) once per file before escalating to
+     * server-side live transcoding.
+     */
+    private fun trySwitchToLocalSoftwareDecoder(positionMs: Long, playWhenReady: Boolean): Boolean {
+        val fileId = currentFileId ?: return false
+        val streamUrl = currentStreamUrl ?: return false
+        if (fallbackPlayerFactoryInjected ||
+            !currentHasVideoDeclared ||
+            prioritizedCodecSelector.preferSoftware ||
+            softwareDecoderAttemptedFileId == fileId
+        ) {
+            return false
+        }
+        softwareDecoderAttemptedFileId = fileId
+        prioritizedCodecSelector.preferSoftware = true
+        Log.w(TAG, "switching fileId=$fileId to local software MediaCodec at positionMs=$positionMs")
+        if (currentIsLiveTranscode) {
+            reloadLiveTranscodeAt(positionMs.coerceAtLeast(0L), playWhenReady)
+            return true
+        }
+        firstFrameRenderedForCurrentMedia = false
+        videoGeneration = videoWatchdog.onMediaChanged()
+        awaitingTracks = true
+        stopProgressTicker()
+        player.playWhenReady = false
+        player.stop()
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(fileId.toString())
+            .setUri(streamUrl)
+            .build()
+        val localPositionMs = LiveTranscodePosition.pipePositionMs(positionMs, currentStreamOffsetMs)
+        if (localPositionMs > 0L) {
+            player.setMediaItem(mediaItem, localPositionMs)
+        } else {
+            player.setMediaItem(mediaItem)
+        }
+        player.prepare()
+        player.playWhenReady = playWhenReady
+        return true
     }
 
     private fun reportVideoTimeoutFailure() {
@@ -1179,10 +1260,11 @@ class PlaybackEngine(
                 isVideo = currentHasVideoDeclared,
                 isAlreadyLiveTranscoded = currentIsLiveTranscode,
                 fileId = fileId,
-                requestedFileId = resolutionRequestedFileId,
+                requestedFileId = resolutionRequestedFileId ?: lastResolutionRequestedFileId,
             )
         ) return false
         resolutionRequestedFileId = fileId
+        lastResolutionRequestedFileId = fileId
         stopProgressTicker()
         if (activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
             if (playerDelegate.isInitialized()) {
@@ -1221,7 +1303,7 @@ class PlaybackEngine(
             isVideo = currentHasVideoDeclared,
             isAlreadyLiveTranscoded = currentIsLiveTranscode,
             fileId = currentFileId,
-            requestedFileId = resolutionRequestedFileId,
+            requestedFileId = resolutionRequestedFileId ?: lastResolutionRequestedFileId,
         )
         if (canRecoverWithLivePipe && requestPlaybackResolution(
                 queueId = currentQueueId,
@@ -1304,7 +1386,13 @@ class PlaybackEngine(
             applyVocalSelection()
         }
 
+        override fun onSurfaceSizeChanged(width: Int, height: Int) {
+            hasRenderSurface = width > 0 && height > 0
+        }
+
         override fun onRenderedFirstFrame() {
+            hasRenderSurface = true
+            firstFrameRenderedForCurrentMedia = true
             Log.d(TAG, "onRenderedFirstFrame generation=$videoGeneration engine=$activeEngineType fileId=$currentFileId")
             videoWatchdog.onRenderedFirstFrame(videoGeneration, SystemClock.elapsedRealtime())
         }
@@ -1319,7 +1407,9 @@ class PlaybackEngine(
                     }
                 }
                 Player.STATE_READY -> {
-                    handleTracksChanged(player.currentTracks)
+                    if (awaitingTracks) {
+                        handleTracksChanged(player.currentTracks)
+                    }
                     if (activeEngineType != PlaybackEngineType.PRIMARY_MEDIA3) return
                     val mediaId = player.currentMediaItem?.mediaId
                     if (mediaId != null) {
@@ -1335,6 +1425,9 @@ class PlaybackEngine(
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             videoWatchdog.onPlayingChanged(isPlaying, SystemClock.elapsedRealtime())
+            if (isPlaying) {
+                transientRetryCount = 0
+            }
             if (!isPlaying || playRequestAt == 0L) return
             val elapsed = SystemClock.elapsedRealtime() - playRequestAt
             Log.i(TAG, "playback started fileId=$currentFileId in ${elapsed}ms")
@@ -1344,6 +1437,10 @@ class PlaybackEngine(
         override fun onPlayerError(error: PlaybackException) {
             Log.w(TAG, "player error: ${error.errorCodeName} ${error.message}")
             if (isDecoderOrFormatError(error) && activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
+                val retryPosition = retryState.positionForRetry(currentPositionMs)
+                if (isCodecLevelError(error) && trySwitchToLocalSoftwareDecoder(retryPosition, retryState.playWhenReady)) {
+                    return
+                }
                 if (currentIsLiveTranscode) {
                     reportPlaybackFailure("LIVE_TRANSCODE_${error.errorCodeName}", currentQueueId, currentFileId)
                     return
@@ -1353,7 +1450,7 @@ class PlaybackEngine(
                     requestPlaybackResolution(
                         currentQueueId,
                         currentFileId,
-                        retryState.positionForRetry(currentPositionMs),
+                        retryPosition,
                         retryState.playWhenReady,
                     )
                 ) {
@@ -1363,7 +1460,7 @@ class PlaybackEngine(
                 if (!requestPlaybackResolution(
                         currentQueueId,
                         currentFileId,
-                        retryState.positionForRetry(currentPositionMs),
+                        retryPosition,
                         retryState.playWhenReady,
                     )
                 ) {
@@ -1386,10 +1483,14 @@ class PlaybackEngine(
                     if (retryGate.isCurrent(retryTicket, currentRequest)
                         && currentFileId == retryFileId
                         && player.currentMediaItem?.mediaId == retryFileId.toString()) {
-                        player.prepare()
-                        player.seekTo(LiveTranscodePosition.pipePositionMs(position, currentStreamOffsetMs))
-                        player.playWhenReady = retryState.playWhenReady
-                        if (retryState.playWhenReady) startProgressTicker() else stopProgressTicker()
+                        if (currentIsLiveTranscode) {
+                            reloadLiveTranscodeAt(position, retryState.playWhenReady)
+                        } else {
+                            player.prepare()
+                            player.seekTo(LiveTranscodePosition.pipePositionMs(position, currentStreamOffsetMs))
+                            player.playWhenReady = retryState.playWhenReady
+                            if (retryState.playWhenReady) startProgressTicker() else stopProgressTicker()
+                        }
                     }
                 }
                 retryRunnable = runnable
@@ -1410,6 +1511,14 @@ class PlaybackEngine(
             PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
             PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
             PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED -> true
+            else -> false
+        }
+
+        private fun isCodecLevelError(error: PlaybackException): Boolean = when (error.errorCode) {
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED -> true
             else -> false
         }
 

@@ -10,6 +10,7 @@ internal class VideoPlaybackWatchdog(
 ) {
     enum class Decision { NONE, RECOVER, EXHAUSTED }
 
+    private val lock = Any()
     private var generation = 0L
     private var selectedVideo = false
     private var playing = false
@@ -19,7 +20,7 @@ internal class VideoPlaybackWatchdog(
     private var exhaustedReported = false
     private var firstFrameRendered = false
 
-    fun onMediaChanged(): Long {
+    fun onMediaChanged(): Long = synchronized(lock) {
         generation += 1
         selectedVideo = false
         playing = false
@@ -28,10 +29,10 @@ internal class VideoPlaybackWatchdog(
         recoveries = 0
         exhaustedReported = false
         firstFrameRendered = false
-        return generation
+        generation
     }
 
-    fun onTracksChanged(selectedVideo: Boolean, nowMs: Long) {
+    fun onTracksChanged(selectedVideo: Boolean, nowMs: Long) = synchronized(lock) {
         this.selectedVideo = selectedVideo
         if (!selectedVideo) {
             waitingSinceMs = null
@@ -45,12 +46,12 @@ internal class VideoPlaybackWatchdog(
         }
     }
 
-    fun onPlayingChanged(playing: Boolean, nowMs: Long) {
+    fun onPlayingChanged(playing: Boolean, nowMs: Long) = synchronized(lock) {
         this.playing = playing
         if (!playing || !selectedVideo) {
             waitingSinceMs = null
             lastFrameAtMs = null
-            return
+            return@synchronized
         }
         if (firstFrameRendered) {
             lastFrameAtMs = nowMs
@@ -61,8 +62,8 @@ internal class VideoPlaybackWatchdog(
         }
     }
 
-    fun onRenderedFirstFrame(frameGeneration: Long, nowMs: Long) {
-        if (frameGeneration != generation || !selectedVideo) return
+    fun onRenderedFirstFrame(frameGeneration: Long, nowMs: Long) = synchronized(lock) {
+        if (frameGeneration != generation || !selectedVideo) return@synchronized
         firstFrameRendered = true
         waitingSinceMs = null
         lastFrameAtMs = nowMs
@@ -70,27 +71,30 @@ internal class VideoPlaybackWatchdog(
         exhaustedReported = false
     }
 
-    fun onFrameMetadata(frameGeneration: Long, nowMs: Long) {
-        if (frameGeneration != generation || !selectedVideo) return
+    fun onFrameMetadata(frameGeneration: Long, nowMs: Long) = synchronized(lock) {
+        if (frameGeneration != generation || !selectedVideo) return@synchronized
         if (firstFrameRendered || lastFrameAtMs != null) {
             lastFrameAtMs = nowMs
+            // 只要视频帧重新上屏，说明此前的短暂卡顿已恢复，清零恢复计数避免整首歌累计误切转码。
+            recoveries = 0
+            exhaustedReported = false
         }
     }
 
-    fun poll(nowMs: Long): Decision {
-        if (!playing || !selectedVideo) return Decision.NONE
-        val baseline = lastFrameAtMs ?: waitingSinceMs ?: return Decision.NONE
-        if (nowMs - baseline < timeoutMs) return Decision.NONE
+    fun poll(nowMs: Long): Decision = synchronized(lock) {
+        if (!playing || !selectedVideo) return@synchronized Decision.NONE
+        val baseline = lastFrameAtMs ?: waitingSinceMs ?: return@synchronized Decision.NONE
+        if (nowMs - baseline < timeoutMs) return@synchronized Decision.NONE
         if (recoveries < maxRecoveries) {
             recoveries++
             lastFrameAtMs = nowMs
             waitingSinceMs = nowMs
-            return Decision.RECOVER
+            return@synchronized Decision.RECOVER
         }
         if (!exhaustedReported) {
             exhaustedReported = true
-            return Decision.EXHAUSTED
+            return@synchronized Decision.EXHAUSTED
         }
-        return Decision.NONE
+        Decision.NONE
     }
 }

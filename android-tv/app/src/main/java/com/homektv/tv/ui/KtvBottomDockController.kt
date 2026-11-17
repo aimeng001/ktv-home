@@ -359,6 +359,7 @@ class KtvBottomDockController(
             lp.height = FrameLayout.LayoutParams.MATCH_PARENT
             lp.gravity = Gravity.NO_GRAVITY
             lp.bottomMargin = 0
+            playerContainer.layoutParams = lp
             playerContainer.background = null
         } else {
             val density = playerContainer.resources.displayMetrics.density

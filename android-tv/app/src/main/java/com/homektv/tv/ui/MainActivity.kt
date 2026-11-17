@@ -505,6 +505,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         }
         presentationController = KtvPresentationController(this) { externalPlayerView ->
             if (externalPlayerView == null) {
+                if (!externalDisplayActive && attachedExternalPlayerView == null) {
+                    return@KtvPresentationController
+                }
                 externalDisplayActive = false
                 bottomDockController.setExternalDisplayActive(false)
                 if (::kioskController.isInitialized) kioskController.updateExternalDisplay(false)
