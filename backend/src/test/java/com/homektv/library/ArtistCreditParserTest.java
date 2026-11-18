@@ -58,8 +58,31 @@ class ArtistCreditParserTest {
     void splitsAStandalonePlusButKeepsProgrammingLanguageNames() {
         assertThat(ArtistCreditParser.parse("周杰伦+林俊杰"))
                 .containsExactly("周杰伦", "林俊杰");
+        assertThat(ArtistCreditParser.parse("周杰伦＋林俊杰"))
+                .containsExactly("周杰伦", "林俊杰");
+        assertThat(ArtistCreditParser.parse("周杰伦 feat. 林俊杰"))
+                .containsExactly("周杰伦", "林俊杰");
+        assertThat(ArtistCreditParser.parse("周杰伦 × 林俊杰"))
+                .containsExactly("周杰伦", "林俊杰");
         assertThat(ArtistCreditParser.parse("C++"))
                 .containsExactly("C++");
+        assertThat(ArtistCreditParser.parse("C＋＋"))
+                .containsExactly("C＋＋");
+    }
+
+    @Test
+    void legacyCombinedEntryInKnownArtistsNeverBlocksExplicitSeparatorSplitting() {
+        List<String> poisonedKnownArtists = List.of("A+B", "A＋B", "周杰伦+林俊杰", "D.N.A 张艺兴");
+        assertThat(ArtistCreditParser.parse("A+B", poisonedKnownArtists))
+                .containsExactly("A", "B");
+        assertThat(ArtistCreditParser.parse("A + B", poisonedKnownArtists))
+                .containsExactly("A", "B");
+        assertThat(ArtistCreditParser.parse("A＋B", poisonedKnownArtists))
+                .containsExactly("A", "B");
+        assertThat(ArtistCreditParser.parse("周杰伦+林俊杰", poisonedKnownArtists))
+                .containsExactly("周杰伦", "林俊杰");
+        assertThat(ArtistCreditParser.parse("D.N.A 张艺兴", poisonedKnownArtists))
+                .containsExactly("D.N.A 张艺兴");
     }
 
     @Test

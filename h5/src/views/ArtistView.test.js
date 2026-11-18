@@ -237,6 +237,23 @@ describe('ArtistView', () => {
     expect(toastMock).toHaveBeenCalledWith('点歌失败')
   })
 
+  it('syncs sort and artistGender filters to route query without duplicate reloads', async () => {
+    await mountAt('/artist/all?mode=all')
+    apiMock.browseSongPage.mockClear()
+
+    clickText('.sorts button', '按歌名')
+    await flushUi()
+    clickText('.gender-filter button', '女歌手')
+    await flushUi()
+
+    expect(router.currentRoute.value.query).toEqual({
+      mode: 'all',
+      sort: 'title',
+      artistGender: '女歌手'
+    })
+    expect(apiMock.browseSongPage).toHaveBeenCalledTimes(2)
+  })
+
   async function mountAt(path) {
     app?.unmount()
     root?.remove()

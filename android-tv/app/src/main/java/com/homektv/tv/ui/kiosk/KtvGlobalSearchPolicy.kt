@@ -10,10 +10,22 @@ object KtvGlobalSearchPolicy {
         EMPTY_STATE,
     }
 
+    enum class KeyboardSearchScope {
+        GLOBAL_SONGS,
+        SINGER_DIRECTORY,
+        ARTIST_SONGS,
+    }
+
     enum class KeyboardVisibilityMode {
         GONE,
         INVISIBLE,
         VISIBLE,
+    }
+
+    fun resolveSearchScope(tab: KioskTab, selectedArtist: String?): KeyboardSearchScope = when {
+        !selectedArtist.isNullOrBlank() -> KeyboardSearchScope.ARTIST_SONGS
+        tab == KioskTab.SINGERS -> KeyboardSearchScope.SINGER_DIRECTORY
+        else -> KeyboardSearchScope.GLOBAL_SONGS
     }
 
     fun shouldShowKeyboard(tab: KioskTab, isVariety: Boolean, enabled: Boolean): Boolean =

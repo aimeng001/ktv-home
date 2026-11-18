@@ -25,13 +25,24 @@ import java.util.List;
 public interface SongSearchRepository extends JpaRepository<Song, Long> {
 
     /**
-     * One/two-character search is served from the materialized term projection.
-     * Keeping this query separate is intentional: the general search query has
-     * trigram, array and pinyin branches which PostgreSQL may still plan as
-     * heap scans even when the short-term branch is selective.
+     * One/two-character search served without artificial candidate truncation.
+     * Combines partial functional prefix scans and the covering term projection
+     * so PostgreSQL executes a single-pass top-N sort for the requested page.
      */
     String SHORT_SEARCH_SQL = """
             WITH prefix_candidates AS (
+                SELECT s.id AS song_id,
+                       CASE
+                           WHEN LOWER(s.title) = :kw OR LOWER(s.title_init) = :kw THEN 0
+                           ELSE 1
+                       END AS term_rank
+                FROM songs s
+                WHERE s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                  AND LOWER(s.title) LIKE :likeKw || '%' ESCAPE '\\'
+
+                UNION ALL
+
                 SELECT s.id AS song_id,
                        CASE WHEN LOWER(s.title_init) = :kw THEN 0 ELSE 1 END AS term_rank
                 FROM songs s
@@ -103,36 +114,20 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
                     SELECT song_id, term_rank FROM term_candidates
                 ) combined
                 GROUP BY song_id
-            ), ranked_candidates AS (
-                SELECT c.song_id, c.term_rank
-                FROM candidate_ids c
-                JOIN songs s ON s.id = c.song_id
-                ORDER BY
-                  (LOWER(s.title) = :kw) DESC,
-                  (LOWER(s.title_init) = :kw) DESC,
-                  (LOWER(s.artist) = :kw) DESC,
-                  (LOWER(s.artist_init) = :kw) DESC,
-                  (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
-                  (LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\') DESC,
-                  (LOWER(s.title_py) LIKE :likeKw || '%' ESCAPE '\\') DESC,
-                  c.term_rank ASC,
-                  (s.media_type = 'KTV_VIDEO') DESC,
-                  s.play_count DESC,
-                  s.id ASC
-                LIMIT 2000
             )
             SELECT s.*
-            FROM ranked_candidates c
+            FROM candidate_ids c
             JOIN songs s ON s.id = c.song_id
             ORDER BY
               (LOWER(s.title) = :kw) DESC,
               (LOWER(s.title_init) = :kw) DESC,
-              (LOWER(s.artist) = :kw) DESC,
-              (LOWER(s.artist_init) = :kw) DESC,
               (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
               (LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\') DESC,
               (LOWER(s.title_py) LIKE :likeKw || '%' ESCAPE '\\') DESC,
+              (LOWER(s.artist) = :kw) DESC,
+              (LOWER(s.artist_init) = :kw) DESC,
               c.term_rank ASC,
+              CHAR_LENGTH(s.title) ASC,
               (s.media_type = 'KTV_VIDEO') DESC,
               s.play_count DESC,
               s.id ASC
@@ -140,83 +135,129 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
     /** Shared native SQL used by the repository and opt-in PostgreSQL plan tests. */
     String SEARCH_SQL = """
             WITH candidate_ids AS (
-                -- 1. 歌名与主要歌手 Trigram 模糊检索（>=3字符走 GIN 索引）
-                SELECT s.id AS song_id
-                FROM songs s
-                WHERE s.status = 'ok'
-                  AND (:mediaType = '' OR s.media_type = :mediaType)
-                  AND (
-                       (char_length(:kw) > 2 AND (
-                            s.title ILIKE '%' || :likeKw || '%' ESCAPE '\\'
-                         OR s.artist ILIKE '%' || :likeKw || '%' ESCAPE '\\'
-                       ))
-                  )
+                SELECT song_id
+                FROM (
+                    -- 1a. 歌名 Trigram 模糊检索（>=3字符走 GIN 索引）
+                    SELECT s.id AS song_id
+                    FROM songs s
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND char_length(:kw) > 2
+                      AND s.title ILIKE '%' || :likeKw || '%' ESCAPE '\\'
 
-                UNION
+                    UNION ALL
 
-                -- 2. 歌名/歌手的拼音与首字母匹配（走 text_pattern_ops B-Tree 索引）
-                SELECT s.id
-                FROM songs s
-                WHERE s.status = 'ok'
-                  AND (:mediaType = '' OR s.media_type = :mediaType)
-                  AND (
-                       s.title_init = :kw
-                    OR LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\'
-                    OR LOWER(s.title_py) LIKE :likeKw || '%' ESCAPE '\\'
-                    OR s.artist_init = :kw
-                    OR LOWER(s.artist_init) LIKE :likeKw || '%' ESCAPE '\\'
-                    OR LOWER(s.artist_py) LIKE :likeKw || '%' ESCAPE '\\'
-                  )
+                    -- 1b. 主歌手 Trigram 模糊检索（>=3字符走 GIN 索引）
+                    SELECT s.id AS song_id
+                    FROM songs s
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND char_length(:kw) > 2
+                      AND s.artist ILIKE '%' || :likeKw || '%' ESCAPE '\\'
 
-                UNION
+                    UNION ALL
 
-                -- 3. 多歌手关联表（解决合唱歌曲副歌手检索，走 song_artists 索引）
-                SELECT sa.song_id
-                FROM song_artists sa
-                JOIN songs s ON s.id = sa.song_id
-                WHERE s.status = 'ok'
-                  AND (:mediaType = '' OR s.media_type = :mediaType)
-                  AND (
-                       (char_length(:kw) > 2
-                            AND sa.artist_name ILIKE '%' || :likeKw || '%' ESCAPE '\\')
-                    OR LOWER(sa.artist_init) LIKE :likeKw || '%' ESCAPE '\\'
-                    OR LOWER(sa.artist_py) LIKE :likeKw || '%' ESCAPE '\\'
-                  )
+                    -- 2a. 歌名首字母前缀（走 V61/V40 LOWER(title_init) B-Tree 索引）
+                    SELECT s.id AS song_id
+                    FROM songs s
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\'
 
-                UNION
+                    UNION ALL
 
-                -- 4. 语种前缀匹配（如 '粤' 匹配 '粤语'，走 text_pattern_ops 索引）
-                SELECT s.id
-                FROM songs s
-                WHERE s.status = 'ok'
-                  AND (:mediaType = '' OR s.media_type = :mediaType)
-                  AND LOWER(s.language) LIKE :likeKw || '%' ESCAPE '\\'
+                    -- 2b. 歌名全拼前缀（走 text_pattern_ops B-Tree 索引）
+                    SELECT s.id AS song_id
+                    FROM songs s
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND LOWER(s.title_py) LIKE :likeKw || '%' ESCAPE '\\'
 
-                UNION
+                    UNION ALL
 
-                -- 5. 保留历史的大小写不敏感标签子串语义，但从维护型
-                -- projection 读取完整标签值，避免热路径逐行 unnest。
-                SELECT term.song_id
-                FROM song_search_terms term
-                JOIN songs s ON s.id = term.song_id
-                WHERE s.status = 'ok'
-                  AND (:mediaType = '' OR s.media_type = :mediaType)
-                  AND term.kind = 'TAG'
-                  AND char_length(:kw) > 2
-                  AND term.value_lower LIKE '%' || :likeKw || '%' ESCAPE '\\'
+                    -- 2c. 主歌手首字母前缀
+                    SELECT s.id AS song_id
+                    FROM songs s
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND LOWER(s.artist_init) LIKE :likeKw || '%' ESCAPE '\\'
 
-                UNION
+                    UNION ALL
 
-                -- 6. 一/二字符原文子串由维护型 gram 表命中，避免扫描
-                -- songs 并避免对 tags 做逐行 unnest。
-                SELECT term.song_id
-                FROM song_search_terms term
-                JOIN songs s ON s.id = term.song_id
-                WHERE char_length(:kw) BETWEEN 1 AND 2
-                  AND term.value_lower = :kw
-                  AND term.kind IN ('TITLE', 'ARTIST', 'LANGUAGE', 'TAG', 'ARTIST_CREDIT')
-                  AND s.status = 'ok'
-                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                    -- 2d. 主歌手全拼前缀
+                    SELECT s.id AS song_id
+                    FROM songs s
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND LOWER(s.artist_py) LIKE :likeKw || '%' ESCAPE '\\'
+
+                    UNION ALL
+
+                    -- 3a. 多歌手关联表歌手名 Trigram（>=3字符）
+                    SELECT sa.song_id
+                    FROM song_artists sa
+                    JOIN songs s ON s.id = sa.song_id
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND char_length(:kw) > 2
+                      AND sa.artist_name ILIKE '%' || :likeKw || '%' ESCAPE '\\'
+
+                    UNION ALL
+
+                    -- 3b. 多歌手关联表歌手首字母前缀
+                    SELECT sa.song_id
+                    FROM song_artists sa
+                    JOIN songs s ON s.id = sa.song_id
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND LOWER(sa.artist_init) LIKE :likeKw || '%' ESCAPE '\\'
+
+                    UNION ALL
+
+                    -- 3c. 多歌手关联表歌手全拼前缀
+                    SELECT sa.song_id
+                    FROM song_artists sa
+                    JOIN songs s ON s.id = sa.song_id
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND LOWER(sa.artist_py) LIKE :likeKw || '%' ESCAPE '\\'
+
+                    UNION ALL
+
+                    -- 4. 语种前缀匹配（如 '粤' 匹配 '粤语'，走 text_pattern_ops 索引）
+                    SELECT s.id AS song_id
+                    FROM songs s
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND LOWER(s.language) LIKE :likeKw || '%' ESCAPE '\\'
+
+                    UNION ALL
+
+                    -- 5. 保留历史的大小写不敏感标签子串语义，但从维护型
+                    -- projection 读取完整标签值，避免热路径逐行 unnest。
+                    SELECT term.song_id
+                    FROM song_search_terms term
+                    JOIN songs s ON s.id = term.song_id
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND term.kind = 'TAG'
+                      AND char_length(:kw) > 2
+                      AND term.value_lower LIKE '%' || :likeKw || '%' ESCAPE '\\'
+
+                    UNION ALL
+
+                    -- 6. 一/二字符原文子串由维护型 gram 表命中，避免扫描
+                    -- songs 并避免对 tags 做逐行 unnest。
+                    SELECT term.song_id
+                    FROM song_search_terms term
+                    JOIN songs s ON s.id = term.song_id
+                    WHERE char_length(:kw) BETWEEN 1 AND 2
+                      AND term.value_lower = :kw
+                      AND term.kind IN ('TITLE', 'ARTIST', 'LANGUAGE', 'TAG', 'ARTIST_CREDIT')
+                      AND s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                ) raw_candidates
+                GROUP BY song_id
             )
             SELECT s.*
             FROM candidate_ids c
@@ -226,12 +267,14 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
               (s.artist = :rawKw) DESC,
               (LOWER(s.title) = :kw) DESC,
               (LOWER(s.title_init) = :kw) DESC,
-              (LOWER(s.artist) = :kw) DESC,
-              (LOWER(s.artist_init) = :kw) DESC,
               (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
               (LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\') DESC,
+              (LOWER(s.title_py) LIKE :likeKw || '%' ESCAPE '\\') DESC,
+              (LOWER(s.artist) = :kw) DESC,
+              (LOWER(s.artist_init) = :kw) DESC,
+              CHAR_LENGTH(s.title) ASC,
               (s.media_type = 'KTV_VIDEO') DESC,
-              similarity(LOWER(s.title), :kw) DESC,
+              CASE WHEN :kw ~ '^[a-z0-9]+$' THEN 0::real ELSE similarity(LOWER(s.title), :kw) END DESC,
               s.play_count DESC,
               s.id ASC
             """;
@@ -302,34 +345,19 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
                 SELECT c.song_id, MIN(c.match_priority) AS best_priority
                 FROM candidate_ids c
                 GROUP BY c.song_id
-            ), ranked_candidates AS (
-                SELECT u.song_id, u.best_priority
-                FROM unique_candidates u
-                JOIN songs s ON s.id = u.song_id
-                ORDER BY
-                  (LOWER(s.title) = :kw) DESC,
-                  (LOWER(s.title_init) = :kw) DESC,
-                  (LOWER(s.artist) = :kw) DESC,
-                  (LOWER(s.artist_init) = :kw) DESC,
-                  (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
-                  (LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\') DESC,
-                  u.best_priority ASC,
-                  (s.media_type = 'KTV_VIDEO') DESC,
-                  s.play_count DESC,
-                  s.id ASC
-                LIMIT 2000
             )
             SELECT s.*
-            FROM ranked_candidates c
+            FROM unique_candidates c
             JOIN songs s ON s.id = c.song_id
             ORDER BY
               (LOWER(s.title) = :kw) DESC,
               (LOWER(s.title_init) = :kw) DESC,
-              (LOWER(s.artist) = :kw) DESC,
-              (LOWER(s.artist_init) = :kw) DESC,
               (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
               (LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\') DESC,
+              (LOWER(s.artist) = :kw) DESC,
+              (LOWER(s.artist_init) = :kw) DESC,
               c.best_priority ASC,
+              CHAR_LENGTH(s.title) ASC,
               (s.media_type = 'KTV_VIDEO') DESC,
               s.play_count DESC,
               s.id ASC

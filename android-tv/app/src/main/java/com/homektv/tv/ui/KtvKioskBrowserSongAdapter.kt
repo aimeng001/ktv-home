@@ -43,11 +43,13 @@ class KtvKioskBrowserSongAdapter(
     override fun getItemId(position: Int): Long = getItem(position).id
 
     fun updateQueueProjection(projection: Map<Long, SongQueueState>) {
+        if (queueProjection == projection) return
         queueProjection = projection
         notifyVisibleItems()
     }
 
     fun updateFavoriteIds(ids: Set<Long>) {
+        if (favoriteIds == ids) return
         favoriteIds = ids
         notifyVisibleItems()
     }

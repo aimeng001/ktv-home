@@ -202,8 +202,8 @@ public class ArtistDirectoryProjectionService {
                 + "AND (? = '' OR COALESCE(reference_artist.region, '') = ?)";
         if (!safeKeyword.isEmpty()) {
             where += " AND (LOWER(directory.name) LIKE '%' || LOWER(?) || '%' "
-                    + "OR LOWER(COALESCE(directory.artist_init, '')) LIKE LOWER(?) || '%' "
-                    + "OR LOWER(COALESCE(directory.artist_py, '')) LIKE LOWER(?) || '%')";
+                    + "OR LOWER(directory.artist_init) LIKE LOWER(?) || '%' "
+                    + "OR LOWER(directory.artist_py) LIKE LOWER(?) || '%')";
         }
         Long total = safeKeyword.isEmpty()
                 ? jdbc.queryForObject(

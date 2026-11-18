@@ -246,6 +246,41 @@ describe('CategoryBrowseView', () => {
     expect(root.querySelector('.retry')).not.toBeNull()
   })
 
+  it('persists artist gender, letter, and tab selections in route query and restores on remount', async () => {
+    apiMock.browseArtistPage.mockResolvedValue({
+      items: [{ name: '周杰伦', artistKey: 'ZHOU_JIE_LUN', songCount: 20 }],
+      total: 1
+    })
+    apiMock.browseArtistInitials.mockResolvedValue(['热门', 'Z'])
+    await mountBrowse('artists')
+
+    clickText('.gender-filter button', '男歌手')
+    await flushUi()
+    clickText('.letters button', 'Z')
+    await flushUi()
+    expect(router.currentRoute.value.query).toEqual({ gender: '男歌手', letter: 'Z' })
+
+    // Simulate returning to /browse with those preserved query params.
+    const savedPath = router.currentRoute.value.fullPath
+    app.unmount()
+    root.remove()
+    apiMock.browseArtistPage.mockClear()
+    await router.push(savedPath)
+    root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp({ render: () => h(RouterView) })
+    app.use(router)
+    app.mount(root)
+    await flushUi()
+
+    expect(apiMock.browseArtistPage).toHaveBeenCalledWith({
+      gender: '男歌手',
+      initial: 'Z',
+      page: 0,
+      size: 30
+    })
+  })
+
   async function mountBrowse(tab = 'artists') {
     router = createRouter({
       history: createMemoryHistory(),

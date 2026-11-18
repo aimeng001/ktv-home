@@ -2,6 +2,7 @@ package com.homektv.web;
 
 import com.homektv.config.AppProperties;
 import com.homektv.domain.Song;
+import com.homektv.domain.SongFile;
 import com.homektv.library.AssetWriter;
 import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.library.SongSearchService;
@@ -28,6 +29,8 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -201,6 +204,35 @@ class SongControllerSecurityTest {
         assertThat(results).extracting(SongDto::playable).containsExactly(true, false);
         assertThat(results.get(0).unavailableReason()).isNull();
         assertThat(results.get(1).unavailableReason()).isEqualTo(SongAvailabilityPolicy.SONG_NOT_READY);
+    }
+
+    @Test
+    void searchReusesPreloadedFilesForPlayabilityWithoutSecondReadinessQuery() {
+        Song playable = song(70L, null, null);
+        Song unready = song(71L, null, null);
+        SongFile readyFile = new SongFile();
+        readyFile.setSongId(70L);
+        readyFile.setValid(true);
+        readyFile.setProbePending(false);
+        readyFile.setMediaType("KTV_VIDEO");
+        readyFile.setResolution("1920x1080");
+        SongFile pendingFile = new SongFile();
+        pendingFile.setSongId(71L);
+        pendingFile.setValid(true);
+        pendingFile.setProbePending(true);
+        pendingFile.setMediaType("KTV_VIDEO");
+        SongAvailabilityPolicy policy = new SongAvailabilityPolicy(fileRepo);
+        controller.setAvailabilityPolicy(policy);
+        when(searchService.search("zw", "", 0)).thenReturn(List.of(playable, unready));
+        when(fileRepo.findBySongIdInAndValidTrueOrderByPriorityDesc(Set.of(70L, 71L)))
+                .thenReturn(List.of(readyFile, pendingFile));
+
+        List<SongDto> results = controller.search("zw", "", 0);
+
+        assertThat(results).extracting(SongDto::playable).containsExactly(true, false);
+        assertThat(results.get(0).resolution()).isEqualTo("1920x1080");
+        assertThat(results.get(1).unavailableReason()).isEqualTo(SongAvailabilityPolicy.SONG_NOT_READY);
+        verify(fileRepo, never()).findSongIdsWithReadyFile(Set.of(70L, 71L));
     }
 
     @Test

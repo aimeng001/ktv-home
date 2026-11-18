@@ -52,6 +52,7 @@ class ControllerViewModel(
     private var searchJob: Job? = null
     private var searchMoreJob: Job? = null
     private val searchRequestGate = SearchRequestGate()
+    private val searchCache = SearchResultLruCache(clockMs = { SystemClock.elapsedRealtime() })
     private val queueRequests = LatestRequestScope(viewModelScope)
     private val catalogRequests = LatestRequestScope(viewModelScope)
     private val kioskLibraryRequests = LatestRequestScope(viewModelScope)
@@ -152,6 +153,7 @@ class ControllerViewModel(
                     next.revision > current.catalogStatusRevision
                 _state.update { it.copy(catalogStatus = next, catalogStatusRevision = next.revision) }
                 if (becameReady || revisionChanged) {
+                    searchCache.clear()
                     reloadCurrentCatalog()
                     if (kioskLibraryActive) reloadKioskAllSongs()
                 }
@@ -206,27 +208,101 @@ class ControllerViewModel(
     }
 
     override fun setQuery(value: String) {
+        executeSearch(value, restorePage = 0, debounce = true)
+    }
+
+    override fun restoreSearch(query: String, restorePage: Int) {
+        executeSearch(query, restorePage = restorePage, debounce = false)
+    }
+
+    private fun executeSearch(value: String, restorePage: Int, debounce: Boolean) {
         val query = T9PinyinSearchPolicy.normalizeSearchKeyword(value).take(MAX_QUERY_LENGTH)
         val changedAtMs = SystemClock.elapsedRealtime()
         val request = searchRequestGate.begin(query)
         searchJob?.cancel()
         searchMoreJob?.cancel()
-        _state.update { ControllerStateReducer.withSearchStarted(it, query) }
-        if (query.isBlank()) return
+        if (query.isBlank()) {
+            _state.update { ControllerStateReducer.withSearchStarted(it, query) }
+            return
+        }
 
+        val targetPage = if (restorePage > 0) {
+            restorePage.coerceIn(0, MAX_RESTORE_PAGES)
+        } else if (query.codePointCount(0, query.length) <= 2) {
+            1
+        } else {
+            0
+        }
+        val revision = _state.value.catalogStatusRevision
+        val cached = searchCache.getSongs(query, revision)
+        if (cached != null && (cached.lastPage >= targetPage || !cached.hasMore)) {
+            _state.update { state ->
+                val nextDomainErrors = state.domainErrors - UiDomain.SEARCH
+                state.copy(
+                    query = query,
+                    results = cached.songs,
+                    searchPage = cached.lastPage,
+                    searchHasMore = cached.hasMore,
+                    searchLoadingMore = false,
+                    loading = false,
+                    error = nextDomainErrors.values.firstOrNull(),
+                    domainErrors = nextDomainErrors,
+                    message = null,
+                )
+            }
+            return
+        }
+
+        val startPage = if (cached != null && cached.hasMore) cached.lastPage + 1 else 0
+        if (cached != null) {
+            _state.update { state ->
+                val nextDomainErrors = state.domainErrors - UiDomain.SEARCH
+                state.copy(
+                    query = query,
+                    results = cached.songs,
+                    searchPage = cached.lastPage,
+                    searchHasMore = cached.hasMore,
+                    searchLoadingMore = true,
+                    loading = false,
+                    error = nextDomainErrors.values.firstOrNull(),
+                    domainErrors = nextDomainErrors,
+                    message = null,
+                )
+            }
+        } else {
+            _state.update { ControllerStateReducer.withSearchStarted(it, query) }
+        }
         searchJob = viewModelScope.launch {
-            delay(T9PinyinSearchPolicy.remainingDebounceMs(SystemClock.elapsedRealtime() - changedAtMs))
-            when (val result = searchSongs(query, page = 0)) {
-                is KtvApiResult.Success -> {
-                    if (searchRequestGate.isCurrent(request)) {
+            if (debounce && startPage == 0) {
+                delay(T9PinyinSearchPolicy.remainingDebounceMs(SystemClock.elapsedRealtime() - changedAtMs))
+            }
+            var page = startPage
+            while (page <= targetPage && searchRequestGate.isCurrent(request)) {
+                when (val result = searchSongs(query, page = page)) {
+                    is KtvApiResult.Success -> {
+                        if (!searchRequestGate.isCurrent(request)) return@launch
+                        var updatedState: ControllerUiState? = null
                         _state.update {
-                            ControllerStateReducer.withSearchResults(it, query, result.value, page = 0)
+                            ControllerStateReducer.withSearchResults(it, query, result.value, page = page)
+                                .also { next -> updatedState = next }
                         }
+                        updatedState?.let { next ->
+                            searchCache.putSongs(
+                                query = query,
+                                catalogRevision = next.catalogStatusRevision,
+                                songs = next.results,
+                                lastPage = next.searchPage,
+                                hasMore = next.searchHasMore,
+                            )
+                        }
+                        if (!_state.value.searchHasMore) break
+                        page++
                     }
-                }
-                is KtvApiResult.Failure -> {
-                    if (searchRequestGate.isCurrent(request)) {
-                        _state.update { ControllerStateReducer.withSearchFailure(it, result.error) }
+                    is KtvApiResult.Failure -> {
+                        if (searchRequestGate.isCurrent(request)) {
+                            _state.update { ControllerStateReducer.withSearchFailure(it, result.error) }
+                        }
+                        return@launch
                     }
                 }
             }
@@ -246,12 +322,22 @@ class ControllerViewModel(
             when (val result = searchSongs(query, page = page)) {
                 is KtvApiResult.Success -> {
                     if (searchRequestGate.isCurrent(request)) {
+                        var updatedState: ControllerUiState? = null
                         _state.update {
                             ControllerStateReducer.withSearchResults(
                                 it,
                                 query,
                                 result.value,
                                 page = page,
+                            ).also { next -> updatedState = next }
+                        }
+                        updatedState?.let { next ->
+                            searchCache.putSongs(
+                                query = query,
+                                catalogRevision = next.catalogStatusRevision,
+                                songs = next.results,
+                                lastPage = next.searchPage,
+                                hasMore = next.searchHasMore,
                             )
                         }
                     }
@@ -382,65 +468,196 @@ class ControllerViewModel(
     fun loadArtists() = loadArtists(gender = "", initial = "", restorePage = 0)
 
     override fun searchArtists(gender: String, initial: String, region: String, keyword: String) {
+        executeArtistsSearch(gender, initial, region, keyword, restorePage = 0, debounce = true)
+    }
+
+    override fun restoreArtistsSearch(
+        gender: String,
+        initial: String,
+        region: String,
+        keyword: String,
+        restorePage: Int,
+    ) {
+        executeArtistsSearch(gender, initial, region, keyword, restorePage = restorePage, debounce = false)
+    }
+
+    private fun executeArtistsSearch(
+        gender: String,
+        initial: String,
+        region: String,
+        keyword: String,
+        restorePage: Int,
+        debounce: Boolean,
+    ) {
         setCatalogVisible(true)
         catalogRoot = CatalogRoot.NONE
+        val changedAtMs = SystemClock.elapsedRealtime()
         val safeGender = gender.trim().take(MAX_FILTER_LENGTH)
         val safeInitial = initial.trim().take(MAX_FILTER_LENGTH)
         val safeRegion = region.trim().take(MAX_FILTER_LENGTH)
         val safeKeyword = keyword.trim().take(MAX_QUERY_LENGTH)
         catalogQuery = CatalogQuery(CatalogKind.ARTISTS, safeGender, safeInitial, safeRegion, safeKeyword)
+        val expected = catalogQuery
+        val targetPage = restorePage.coerceIn(0, MAX_RESTORE_PAGES)
+        val revision = _state.value.catalogStatusRevision
+        val cached = searchCache.getArtists(safeGender, safeInitial, safeRegion, safeKeyword, revision)
+        if (cached != null && (cached.lastPage >= targetPage || !cached.hasMore)) {
+            catalogRequests.cancel()
+            _state.update {
+                ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
+                    artistGender = safeGender,
+                    artistInitial = safeInitial,
+                    artistRegion = safeRegion,
+                    artists = cached.artists,
+                    catalogSongs = emptyList(),
+                    catalogPage = cached.lastPage,
+                    catalogTotal = cached.total,
+                    catalogHasMore = cached.hasMore,
+                    catalogLoadingMore = false,
+                    catalogLoading = false,
+                    catalogDetail = false,
+                    catalogValue = "",
+                    message = null,
+                )
+            }
+            if (_state.value.artistInitials.isEmpty()) {
+                catalogRequests.launch { loadArtistInitials(safeGender, safeRegion, expected) }
+            }
+            return
+        }
+
+        val preserveArtists = cached == null && _state.value.let {
+            !it.catalogDetail &&
+                it.artists.isNotEmpty() &&
+                it.artistGender == safeGender &&
+                it.artistInitial == safeInitial &&
+                it.artistRegion == safeRegion
+        }
         _state.update {
             it.copy(
                 artistGender = safeGender,
                 artistInitial = safeInitial,
                 artistRegion = safeRegion,
-                artists = emptyList(),
+                artists = cached?.artists ?: if (preserveArtists) it.artists else emptyList(),
                 catalogSongs = emptyList(),
-                catalogPage = 0,
-                catalogTotal = 0,
-                catalogHasMore = false,
-                catalogLoadingMore = false,
-                catalogLoading = true,
+                catalogPage = cached?.lastPage ?: 0,
+                catalogTotal = cached?.total ?: 0,
+                catalogHasMore = cached?.hasMore ?: false,
+                catalogLoadingMore = cached != null,
+                catalogLoading = cached == null,
                 catalogDetail = false,
                 catalogValue = "",
                 error = null,
                 message = null,
             )
         }
-        val expected = catalogQuery
         catalogRequests.launch {
-            loadCatalogPages(
-                0,
-                expected,
-                loadPage = { page -> loadArtistsPage(page, expected) },
-            )
+            if (debounce && cached == null) {
+                delay(T9PinyinSearchPolicy.remainingDebounceMs(SystemClock.elapsedRealtime() - changedAtMs))
+            }
+            if (_state.value.artistInitials.isEmpty()) {
+                launch { loadArtistInitials(safeGender, safeRegion, expected) }
+            }
+            if (cached != null) {
+                var page = cached.lastPage
+                while (
+                    page < targetPage &&
+                    catalogQuery == expected &&
+                    _state.value.catalogHasMore &&
+                    _state.value.errorFor(UiDomain.CATALOG) == null
+                ) {
+                    page++
+                    loadArtistsPage(page, expected)
+                }
+            } else {
+                loadCatalogPages(
+                    restorePage,
+                    expected,
+                    loadPage = { page -> loadArtistsPage(page, expected) },
+                )
+            }
         }
     }
 
     override fun searchArtistSongs(artistKey: String, keyword: String) {
+        executeArtistSongsSearch(artistKey, keyword, restorePage = 0, debounce = true)
+    }
+
+    override fun restoreArtistSongsSearch(artistKey: String, keyword: String, restorePage: Int) {
+        executeArtistSongsSearch(artistKey, keyword, restorePage = restorePage, debounce = false)
+    }
+
+    private fun executeArtistSongsSearch(
+        artistKey: String,
+        keyword: String,
+        restorePage: Int,
+        debounce: Boolean,
+    ) {
         setCatalogVisible(true)
         catalogRoot = CatalogRoot.NONE
+        val changedAtMs = SystemClock.elapsedRealtime()
         val safeArtistKey = artistKey.trim().take(MAX_FILTER_LENGTH)
         val safeKeyword = keyword.trim().take(MAX_QUERY_LENGTH)
         catalogQuery = CatalogQuery(CatalogKind.ARTIST_SONGS, safeArtistKey, keyword = safeKeyword)
+        val expected = catalogQuery
+        val targetPage = restorePage.coerceIn(0, MAX_RESTORE_PAGES)
+        val revision = _state.value.catalogStatusRevision
+        val cached = searchCache.getArtistSongs(safeArtistKey, safeKeyword, revision)
+        if (cached != null && (cached.lastPage >= targetPage || !cached.hasMore)) {
+            catalogRequests.cancel()
+            _state.update {
+                ControllerStateReducer.withSuccessfulRead(it, UiDomain.CATALOG).copy(
+                    artists = emptyList(),
+                    catalogSongs = cached.songs,
+                    catalogPage = cached.lastPage,
+                    catalogTotal = cached.total,
+                    catalogHasMore = cached.hasMore,
+                    catalogLoadingMore = false,
+                    catalogLoading = false,
+                    catalogDetail = true,
+                    catalogValue = safeArtistKey,
+                    message = null,
+                )
+            }
+            return
+        }
+
+        val preserveSongs = cached == null && _state.value.let {
+            it.catalogDetail && it.catalogValue == safeArtistKey && it.catalogSongs.isNotEmpty()
+        }
         _state.update {
             it.copy(
                 artists = emptyList(),
-                catalogSongs = emptyList(),
-                catalogPage = 0,
-                catalogTotal = 0,
-                catalogHasMore = false,
-                catalogLoadingMore = false,
-                catalogLoading = true,
+                catalogSongs = cached?.songs ?: if (preserveSongs) it.catalogSongs else emptyList(),
+                catalogPage = cached?.lastPage ?: 0,
+                catalogTotal = cached?.total ?: 0,
+                catalogHasMore = cached?.hasMore ?: false,
+                catalogLoadingMore = cached != null,
+                catalogLoading = cached == null,
                 catalogDetail = true,
                 catalogValue = safeArtistKey,
                 error = null,
                 message = null,
             )
         }
-        val expected = catalogQuery
         catalogRequests.launch {
-            loadCatalogPages(0, expected, loadPage = { page -> loadSongCatalogPage(page, expected) })
+            if (debounce && cached == null) {
+                delay(T9PinyinSearchPolicy.remainingDebounceMs(SystemClock.elapsedRealtime() - changedAtMs))
+            }
+            if (cached != null) {
+                var page = cached.lastPage
+                while (
+                    page < targetPage &&
+                    catalogQuery == expected &&
+                    _state.value.catalogHasMore &&
+                    _state.value.errorFor(UiDomain.CATALOG) == null
+                ) {
+                    page++
+                    loadSongCatalogPage(page, expected)
+                }
+            } else {
+                loadCatalogPages(restorePage, expected, loadPage = { page -> loadSongCatalogPage(page, expected) })
+            }
         }
     }
 
@@ -663,17 +880,30 @@ class ControllerViewModel(
 
     /** Loads the full Home KTV library on a TV-only state/request path. */
     override fun loadKioskAllSongs() {
-        setCatalogVisible(true)
-        kioskLibraryActive = true
-        reloadKioskAllSongs()
+        restoreKioskAllSongs(restorePage = 0)
     }
 
-    private fun reloadKioskAllSongs() {
+    override fun restoreKioskAllSongs(restorePage: Int) {
+        setCatalogVisible(true)
+        kioskLibraryActive = true
+        reloadKioskAllSongs(restorePage)
+    }
+
+    private fun reloadKioskAllSongs(restorePage: Int = 0) {
         val requestId = ++kioskLibraryRequestId
+        val targetPage = restorePage.coerceIn(0, MAX_RESTORE_PAGES)
         _state.update {
             it.copy(kioskLibraryBrowse = KioskLibraryBrowseReducer.started(requestId))
         }
-        kioskLibraryRequests.launch { loadKioskAllSongsPage(page = 0, requestId = requestId) }
+        kioskLibraryRequests.launch {
+            var page = 0
+            while (page <= targetPage && kioskLibraryActive && kioskLibraryRequestId == requestId) {
+                loadKioskAllSongsPage(page = page, requestId = requestId)
+                val browse = _state.value.kioskLibraryBrowse
+                if (browse.requestId != requestId || browse.error != null || !browse.hasMore) break
+                page++
+            }
+        }
     }
 
     override fun loadMoreKioskAllSongs() {
@@ -801,6 +1031,7 @@ class ControllerViewModel(
                         }
                         return false
                     }
+                    var updatedState: ControllerUiState? = null
                     _state.update { state ->
                         val artists = (if (page == 0) result.value.items
                         else (state.artists + result.value.items).distinctBy { it.artistKey })
@@ -820,13 +1051,30 @@ class ControllerViewModel(
                             ),
                             catalogLoadingMore = false,
                             catalogLoading = false,
+                        ).also { updatedState = it }
+                    }
+                    updatedState?.let { next ->
+                        searchCache.putArtists(
+                            gender = expected.value,
+                            initial = expected.secondary,
+                            region = expected.region,
+                            keyword = expected.keyword,
+                            catalogRevision = next.catalogStatusRevision,
+                            artists = next.artists,
+                            lastPage = next.catalogPage,
+                            total = next.catalogTotal,
+                            hasMore = next.catalogHasMore,
                         )
                     }
                     return true
                 }
                 is KtvApiResult.Failure -> {
                     if (catalogQuery == expected) {
-                        _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error) }
+                        _state.update { state ->
+                            val wasInitialLoading = state.catalogLoading && !state.catalogLoadingMore
+                            ControllerStateReducer.withDomainFailure(state, UiDomain.CATALOG, result.error)
+                                .let { failed -> if (wasInitialLoading) failed.copy(artists = emptyList()) else failed }
+                        }
                     }
                     return false
                 }
@@ -848,6 +1096,7 @@ class ControllerViewModel(
             when (result) {
                 is KtvApiResult.Success -> {
                     if (catalogQuery != expected) return
+                    var updatedState: ControllerUiState? = null
                     _state.update { state ->
                         val songs = (if (page == 0) result.value.items
                         else (state.catalogSongs + result.value.items).distinctBy { it.id })
@@ -867,12 +1116,29 @@ class ControllerViewModel(
                             catalogLoadingMore = false,
                             catalogLoading = false,
                             catalogDetail = true,
-                        )
+                        ).also { updatedState = it }
+                    }
+                    if (expected.kind == CatalogKind.ARTIST_SONGS) {
+                        updatedState?.let { next ->
+                            searchCache.putArtistSongs(
+                                artistKey = expected.value,
+                                keyword = expected.keyword,
+                                catalogRevision = next.catalogStatusRevision,
+                                songs = next.catalogSongs,
+                                lastPage = next.catalogPage,
+                                total = next.catalogTotal,
+                                hasMore = next.catalogHasMore,
+                            )
+                        }
                     }
                 }
                 is KtvApiResult.Failure -> {
                     if (catalogQuery == expected) {
-                        _state.update { ControllerStateReducer.withDomainFailure(it, UiDomain.CATALOG, result.error) }
+                        _state.update { state ->
+                            val wasInitialLoading = state.catalogLoading && !state.catalogLoadingMore
+                            ControllerStateReducer.withDomainFailure(state, UiDomain.CATALOG, result.error)
+                                .let { failed -> if (wasInitialLoading) failed.copy(catalogSongs = emptyList()) else failed }
+                        }
                     }
                 }
             }

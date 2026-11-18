@@ -61,6 +61,7 @@
  * and wish-song submission.
  */
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import api, { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
@@ -73,6 +74,8 @@ import { formatOrderToast } from './orderFeedbackState'
 import { useQueuedSongIds } from '../composables/useQueuedSongIds'
 import { ChevronLeft, Search, X } from 'lucide-vue-next'
 
+const route = useRoute()
+const router = useRouter()
 const user = useUserStore()
 const { toast } = useToast()
 const controls = makeControls(user.clientToken)
@@ -80,13 +83,17 @@ const { executeOrder, inflightIds } = useOrderLock()
 const { orderedIds, player } = useQueuedSongIds(inflightIds)
 
 /** @type {import('vue').Ref<string>} 当前搜索关键词 / Current search keyword */
-const kw = ref('')
+const initialQuery = typeof route.query.q === 'string' ? route.query.q : ''
+const initialFilter = ['KTV_VIDEO', 'MV', 'AUDIO'].includes(String(route.query.type || ''))
+  ? String(route.query.type)
+  : ''
+const kw = ref(initialQuery)
 /** @type {import('vue').Ref<Array>} 搜索结果列表 / Search result list */
 const results = ref([])
 /** @type {import('vue').Ref<boolean>} 搜索加载状态 / Search loading flag */
 const loading = ref(false)
 const searchError = ref('')
-const activeFilter = ref('')
+const activeFilter = ref(initialFilter)
 const filters = [
   { label: '全部', value: '' },
   { label: 'KTV 双音轨', value: 'KTV_VIDEO' },
@@ -97,6 +104,21 @@ const hasMore = ref(false)
 const loadingMore = ref(false)
 const inp = ref(null)
 const searchState = computed(() => searchViewState(kw.value, loading.value, searchError.value, results.value))
+
+let lastSyncedRouteKey = `${initialQuery.trim()}|${initialFilter}`
+
+function syncSearchRouteQuery(queryVal = kw.value.trim(), filterVal = activeFilter.value) {
+  const nextKey = `${queryVal}|${filterVal}`
+  const currentQ = typeof route.query.q === 'string' ? route.query.q : ''
+  const currentT = typeof route.query.type === 'string' ? route.query.type : ''
+  if (nextKey === lastSyncedRouteKey) return
+  lastSyncedRouteKey = nextKey
+  const nextQuery = {}
+  if (queryVal) nextQuery.q = queryVal
+  if (filterVal) nextQuery.type = filterVal
+  if (currentQ === (nextQuery.q || '') && currentT === (nextQuery.type || '')) return
+  router.replace({ query: nextQuery })
+}
 const searchController = createSearchController(api, {
   onState: next => {
     results.value = next.results
@@ -104,6 +126,9 @@ const searchController = createSearchController(api, {
     loadingMore.value = next.loadingMore
     hasMore.value = next.hasMore
     searchError.value = next.error
+    if (!next.loading) {
+      syncSearchRouteQuery()
+    }
   }
 })
 
@@ -116,7 +141,13 @@ function retryLoadMore() {
   searchController.loadMore(kw.value, activeFilter.value)
 }
 
-onMounted(() => inp.value?.focus())
+onMounted(() => {
+  if (kw.value.trim()) {
+    searchController.setFilter(activeFilter.value, kw.value)
+  } else {
+    inp.value?.focus()
+  }
+})
 onBeforeUnmount(() => searchController.dispose())
 
 /**
@@ -125,15 +156,24 @@ onBeforeUnmount(() => searchController.dispose())
  * Input event handler with 300ms debounce before search (spec H5-03).
  */
 function onInput() {
+  if (!kw.value.trim()) {
+    syncSearchRouteQuery('', activeFilter.value)
+  }
   searchController.setQuery(kw.value, activeFilter.value)
 }
 
 /** 清空搜索关键词和结果 / Clear keyword and results */
-function clear() { kw.value = ''; searchController.clear(); inp.value?.focus() }
+function clear() {
+  kw.value = ''
+  searchController.clear()
+  syncSearchRouteQuery('', activeFilter.value)
+  inp.value?.focus()
+}
 
 function selectFilter(value) {
   if (activeFilter.value === value) return
   activeFilter.value = value
+  syncSearchRouteQuery(kw.value.trim(), value)
   if (!kw.value.trim()) return
   searchController.setFilter(value, kw.value)
 }

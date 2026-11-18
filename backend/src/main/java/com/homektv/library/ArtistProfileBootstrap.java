@@ -104,6 +104,7 @@ public class ArtistProfileBootstrap {
     private boolean refreshNow() {
         boolean creditsCompleted = reconcileCreditsOnce();
         try {
+            profiles.pruneObsoleteCombinedProfiles();
             int count = profiles.backfillFromSongs();
             int classified = 0;
             if (genderDictionary != null && genderMatcher != null) {

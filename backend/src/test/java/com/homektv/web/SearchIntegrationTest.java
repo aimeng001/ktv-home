@@ -280,4 +280,17 @@ class SearchIntegrationTest {
         assertThat(zwResults.get(0).getTitle()).isEqualTo("知我");
         assertThat(gftResults).extracting(Song::getTitle).contains("知我");
     }
+
+    @Test
+    void shortSearchRanksTitleInitialPrefixAheadOfArtistInitials() {
+        for (int i = 0; i < 60; i++) {
+            save("陌生歌曲" + i, "张伟", "KTV_VIDEO", 10);
+        }
+        save("知我(戏腔版)", "国风堂", "MV", 0);
+
+        List<Song> zwResults = searchService.search("ZW", 0);
+
+        assertThat(zwResults).extracting(Song::getTitle).contains("知我(戏腔版)");
+        assertThat(zwResults.get(0).getTitle()).isEqualTo("知我(戏腔版)");
+    }
 }

@@ -296,7 +296,7 @@ class ControllerStateReducerTest {
     }
 
     @Test
-    fun searchStateStopsAppendingAfterTheMemoryBudget() {
+    fun searchStateContinuesPagingWithoutTruncatingAtTwoThousandResults() {
         val page = (1L..50L).map { id -> SongDto(id, "歌$id", "歌手") }
         var state = ControllerStateReducer.withSearchStarted(ControllerUiState(), "歌")
         repeat(41) { index ->
@@ -309,8 +309,8 @@ class ControllerStateReducerTest {
             )
         }
 
-        assertEquals(2000, state.results.size)
-        assertFalse(state.searchHasMore)
+        assertEquals(2050, state.results.size)
+        assertTrue(state.searchHasMore)
     }
 
     @Test
@@ -568,5 +568,46 @@ class ControllerStateReducerTest {
         assertEquals("服务端说明", ControllerStateReducer.userMessage(
             KtvApiError(KtvApiErrorKind.BUSINESS, "UNKNOWN", "服务端说明"),
         ))
+    }
+
+    @Test
+    fun searchStartedKeepsPreviousResultsWhileTypingNextNonBlankQueryAndClearsOnBlank() {
+        val songZ = SongDto(id = 101L, title = "知我", artist = "国风堂")
+        val withFirstResults = ControllerStateReducer.withSearchResults(
+            ControllerStateReducer.withSearchStarted(ControllerUiState(), "Z"),
+            query = "Z",
+            results = listOf(songZ),
+            page = 0,
+        )
+
+        val typingNext = ControllerStateReducer.withSearchStarted(withFirstResults, "ZW")
+        assertEquals("ZW", typingNext.query)
+        assertTrue(typingNext.loading)
+        assertEquals(listOf(songZ), typingNext.results)
+
+        val cleared = ControllerStateReducer.withSearchStarted(typingNext, "")
+        assertEquals("", cleared.query)
+        assertFalse(cleared.loading)
+        assertTrue(cleared.results.isEmpty())
+    }
+
+    @Test
+    fun searchFailureClearsStaleResultsWhenInitialLoadFailsButKeepsLoadedPagesWhenPagingFails() {
+        val songZ = SongDto(id = 101L, title = "知我", artist = "国风堂")
+        val typingState = ControllerStateReducer.withSearchStarted(
+            ControllerUiState(query = "Z", results = listOf(songZ)),
+            "ZW",
+        )
+        val initialError = KtvApiError(KtvApiErrorKind.NETWORK, "NETWORK_ERROR", "timeout")
+        val initialFailed = ControllerStateReducer.withSearchFailure(typingState, initialError)
+        assertTrue(initialFailed.results.isEmpty())
+        assertFalse(initialFailed.loading)
+
+        val pagingState = ControllerStateReducer.withSearchLoadStarted(
+            ControllerUiState(query = "ZW", results = listOf(songZ), searchHasMore = true),
+        )
+        val pagingFailed = ControllerStateReducer.withSearchFailure(pagingState, initialError)
+        assertEquals(listOf(songZ), pagingFailed.results)
+        assertFalse(pagingFailed.searchLoadingMore)
     }
 }

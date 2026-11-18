@@ -121,7 +121,7 @@ class SongSearchServiceTest {
 
     @Test
     void searchRejectsPageBeyondSafetyLimit() {
-        assertThatThrownBy(() -> service.search("zhou", 4001))
+        assertThatThrownBy(() -> service.search("zhou", SongSearchService.MAX_PAGE + 1))
                 .isInstanceOf(ApiException.class)
                 .extracting(error -> ((ApiException) error).getCode())
                 .isEqualTo("INVALID_PAGE");

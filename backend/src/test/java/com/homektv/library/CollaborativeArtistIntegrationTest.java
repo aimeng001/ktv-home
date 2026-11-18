@@ -155,6 +155,25 @@ class CollaborativeArtistIntegrationTest {
                 .containsExactlyInAnyOrder("晴天", "七里香");
     }
 
+    @Test
+    void plusSeparatedCollaborativeSongMapsToBothArtistsAndNeverCreatesCombinedDirectoryEntry() {
+        Song song = save("合唱测试", "歌手A+歌手B", "collaborative-plus-ab");
+        artistCredits.replace(song.getId(), song.getArtist(), List.of("歌手A+歌手B", "歌手A", "歌手B"));
+
+        assertThat(artistRepository.findBySongIdOrderByArtistOrder(song.getId()))
+                .extracting(SongArtist::getArtistName)
+                .containsExactly("歌手A", "歌手B");
+        assertThat(browseService.artists()).extracting(row -> row.get("name"))
+                .contains("歌手A", "歌手B")
+                .doesNotContain("歌手A+歌手B");
+        assertThat(browseService.songsPage("", ArtistCreditParser.key("歌手A"), "", "", "", "", "title", 0, 15).items())
+                .extracting(SongDto::title)
+                .contains("合唱测试");
+        assertThat(browseService.songsPage("", ArtistCreditParser.key("歌手B"), "", "", "", "", "title", 0, 15).items())
+                .extracting(SongDto::title)
+                .contains("合唱测试");
+    }
+
     private Song save(String title, String artist, String fingerprint) {
         Song song = new Song();
         song.setTitle(title);

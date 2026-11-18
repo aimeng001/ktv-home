@@ -10,9 +10,24 @@ interface ControllerCatalogActions {
     fun searchArtists(gender: String, initial: String, region: String = "", keyword: String) {
         loadArtists(gender, initial, 0, region)
     }
+    fun restoreArtistsSearch(
+        gender: String,
+        initial: String,
+        region: String = "",
+        keyword: String,
+        restorePage: Int = 0,
+    ) {
+        searchArtists(gender, initial, region, keyword)
+    }
     fun loadArtistSongs(artistKey: String, restorePage: Int)
     fun searchArtistSongs(artistKey: String, keyword: String) {
         loadArtistSongs(artistKey, 0)
+    }
+    fun restoreArtistSongsSearch(artistKey: String, keyword: String, restorePage: Int = 0) {
+        searchArtistSongs(artistKey, keyword)
+    }
+    fun restoreSearch(query: String, restorePage: Int = 0) {
+        setQuery(query)
     }
     fun loadLanguageSongs(language: String, restorePage: Int)
     fun loadTagSongs(tag: String, restorePage: Int)
@@ -20,6 +35,9 @@ interface ControllerCatalogActions {
     fun loadTags()
     fun loadMoreCatalog()
     fun loadKioskAllSongs()
+    fun restoreKioskAllSongs(restorePage: Int = 0) {
+        loadKioskAllSongs()
+    }
     fun loadMoreKioskAllSongs()
     fun stopKioskAllSongs()
 }

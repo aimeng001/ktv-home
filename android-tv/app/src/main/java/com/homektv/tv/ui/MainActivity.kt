@@ -745,10 +745,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                     )
                 ) {
                     NonKioskKeyAction.OPEN_KIOSK -> {
-                        ensureKioskController().apply {
-                            selectTab(KioskTab.DASHBOARD)
-                            toggleKiosk(true)
-                        }
+                        ensureKioskController().resumeKiosk()
                         return true
                     }
                     NonKioskKeyAction.TOGGLE_PLAYBACK -> {
@@ -1465,10 +1462,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     private fun openKioskFromFullscreen() {
         if (bottomDockController.isFullscreen) bottomDockController.exitFullscreen()
-        ensureKioskController().apply {
-            selectTab(KioskTab.PINYIN)
-            toggleKiosk(true)
-        }
+        ensureKioskController().resumeKiosk()
     }
 
     private fun showHomePage() {
@@ -1476,17 +1470,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         binding.ktvOverlay.visibility = View.GONE
         audioOverlayBinding?.root?.visibility = View.GONE
         binding.pageContainer.visibility = View.VISIBLE
-        ensureKioskController().apply {
-            selectTab(KioskTab.DASHBOARD)
-            toggleKiosk(true)
-        }
+        ensureKioskController().openDashboardHome()
     }
 
     private fun openHistoryTab() {
-        ensureKioskController().apply {
-            selectTab(KioskTab.HISTORY)
-            toggleKiosk(true)
-        }
+        ensureKioskController().openHistoryFromShortcut()
     }
 
     private fun showMixerPanel() {

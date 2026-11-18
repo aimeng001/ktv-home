@@ -38,18 +38,22 @@
  * language, or category tag.
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api/client'
 import { useAsyncResource } from '../composables/useAsyncResource'
 import TabBar from '../components/TabBar.vue'
 import { avatarUrlFor, rememberAvatarFailure } from './artistAvatarState'
 
 const route = useRoute()
+const router = useRouter()
 /** 顶部标签页：歌手 / 语种 / 分类。Top tabs: artists / languages / tags. */
 const tabs = [{ key:'artists',label:'歌手' },{ key:'languages',label:'语种' },{ key:'tags',label:'分类' }]
-const tab = ref(route.query.tab || 'artists'), activeLetter = ref('热门')
-const artistGender = ref('')
+const initialTab = tabs.some(item => item.key === route.query.tab) ? String(route.query.tab) : 'artists'
+const initialLetter = typeof route.query.letter === 'string' && route.query.letter ? route.query.letter : '热门'
 const genderOptions = [{value:'',label:'全部歌手'},{value:'男歌手',label:'男歌手'},{value:'女歌手',label:'女歌手'},{value:'组合',label:'组合'}]
+const initialGender = genderOptions.some(item => item.value === route.query.gender) ? String(route.query.gender) : ''
+const tab = ref(initialTab), activeLetter = ref(initialLetter)
+const artistGender = ref(initialGender)
 const artistsResource = useAsyncResource(() => api.browseArtistPage({
   gender: artistGender.value,
   initial: activeLetter.value === '热门' ? '' : activeLetter.value,
@@ -74,16 +78,42 @@ const loading = computed(() => tab.value === 'artists'
 const loadError = computed(() => tab.value === 'artists'
   ? artistsResource.error.value || artistInitialsResource.error.value
   : currentResource.value.error.value)
-onMounted(load); watch(tab, load)
+function syncBrowseRouteQuery() {
+  const nextQuery = {}
+  if (tab.value && tab.value !== 'artists') nextQuery.tab = tab.value
+  if (tab.value === 'artists') {
+    if (artistGender.value) nextQuery.gender = artistGender.value
+    if (activeLetter.value && activeLetter.value !== '热门') nextQuery.letter = activeLetter.value
+  }
+  const currentTab = typeof route.query.tab === 'string' && route.query.tab !== 'artists' ? route.query.tab : ''
+  const currentGender = typeof route.query.gender === 'string' ? route.query.gender : ''
+  const currentLetter = typeof route.query.letter === 'string' && route.query.letter !== '热门' ? route.query.letter : ''
+  if (
+    currentTab === (nextQuery.tab || '') &&
+    currentGender === (nextQuery.gender || '') &&
+    currentLetter === (nextQuery.letter || '')
+  ) {
+    return
+  }
+  router.replace({ query: nextQuery })
+}
+
+onMounted(load)
+watch(tab, () => {
+  syncBrowseRouteQuery()
+  load()
+})
 watch(artistGender, () => {
   const alreadyHot = activeLetter.value === '热门'
   activeLetter.value = '热门'
+  syncBrowseRouteQuery()
   if (tab.value === 'artists') {
     if (alreadyHot) loadArtistPage(true)
     artistInitialsResource.load()
   }
 })
 watch(activeLetter, () => {
+  syncBrowseRouteQuery()
   if (tab.value === 'artists') loadArtistPage(true)
 })
 

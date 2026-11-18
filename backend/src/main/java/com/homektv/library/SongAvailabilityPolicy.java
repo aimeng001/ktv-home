@@ -54,6 +54,30 @@ public class SongAvailabilityPolicy {
         Set<Long> ready = fileRepository.findSongIdsWithReadyFile(candidates);
         return ready == null ? Set.of() : Set.copyOf(ready);
     }
+
+    /**
+     * Derives playable song IDs from preloaded valid files without a second database round-trip.
+     */
+    public Set<Long> playableSongIdsFromFiles(Collection<Song> songs, Collection<SongFile> files) {
+        if (songs == null || songs.isEmpty() || files == null || files.isEmpty()) return Set.of();
+        Set<Long> readyFileSongIds = new LinkedHashSet<>();
+        for (SongFile file : files) {
+            if (isReadyMediaFile(file) && file.getSongId() != null) {
+                readyFileSongIds.add(file.getSongId());
+            }
+        }
+        if (readyFileSongIds.isEmpty()) return Set.of();
+        Set<Long> playable = new LinkedHashSet<>();
+        for (Song song : songs) {
+            if (song != null
+                    && song.getId() != null
+                    && "ok".equalsIgnoreCase(song.getStatus())
+                    && readyFileSongIds.contains(song.getId())) {
+                playable.add(song.getId());
+            }
+        }
+        return playable.isEmpty() ? Set.of() : Set.copyOf(playable);
+    }
     /** Rejects a Fast Index or otherwise unavailable song at a play boundary. */
     public void requirePlayable(Song song) {
         if (!isPlayable(song)) {

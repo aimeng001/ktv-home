@@ -7,6 +7,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
 import java.sql.ResultSet;
+import java.util.Collection;
 import java.util.List;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -319,6 +320,37 @@ class ArtistProfileServiceTest {
         new ArtistProfileService(jdbc).setGender("周杰伦", "男歌手");
 
         verify(jdbc).update(anyString(), org.mockito.ArgumentMatchers.any(Object[].class));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void pruneObsoleteCombinedProfilesDeletesOnlyOrphanCombinedCredits() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.query(anyString(), org.mockito.ArgumentMatchers.<RowMapper<Object>>any()))
+                .thenAnswer(invocation -> {
+                    RowMapper<Object> mapper = invocation.getArgument(1);
+                    ResultSet r1 = mock(ResultSet.class);
+                    when(r1.getString("artist_key")).thenReturn("a+b");
+                    when(r1.getString("display_name")).thenReturn("A+B");
+                    ResultSet r2 = mock(ResultSet.class);
+                    when(r2.getString("artist_key")).thenReturn("c++");
+                    when(r2.getString("display_name")).thenReturn("C++");
+                    ResultSet r3 = mock(ResultSet.class);
+                    when(r3.getString("artist_key")).thenReturn("solo");
+                    when(r3.getString("display_name")).thenReturn("Solo");
+                    return List.of(mapper.mapRow(r1, 0), mapper.mapRow(r2, 1), mapper.mapRow(r3, 2));
+                });
+
+        int pruned = new ArtistProfileService(jdbc).pruneObsoleteCombinedProfiles();
+
+        assertThat(pruned).isEqualTo(1);
+        ArgumentCaptor<Collection<String>> keysCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(jdbc).batchUpdate(
+                org.mockito.ArgumentMatchers.eq("DELETE FROM artist_profiles WHERE artist_key = ?"),
+                keysCaptor.capture(),
+                org.mockito.ArgumentMatchers.eq(1),
+                org.mockito.ArgumentMatchers.any());
+        assertThat(keysCaptor.getValue()).containsExactly("a+b");
     }
 
     private static ResultSet profileRow() throws Exception {

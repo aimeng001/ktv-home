@@ -45,6 +45,8 @@ import com.homektv.tv.ui.kiosk.KtvSingerRegionPolicy
 import com.homektv.tv.ui.kiosk.KioskCategoryLoadPolicy
 import com.homektv.tv.ui.kiosk.KioskCommercialTagPolicy
 import com.homektv.tv.ui.kiosk.KioskCategoryMode
+import com.homektv.tv.ui.kiosk.KioskNavigationEntry
+import com.homektv.tv.ui.kiosk.KioskNavigationHistory
 import com.homektv.tv.ui.kiosk.KioskSongGridPaginationPolicy
 import com.homektv.tv.ui.kiosk.KtvDashboardPhotoCarousel
 import com.homektv.tv.ui.kiosk.KtvGlobalSearchPolicy
@@ -156,6 +158,15 @@ class KtvKioskOverlayController(
     private var playlistDetail = false
     private var pendingAutoSelectFirstPlaylist = false
     private var skipNextDashboardAutoFocus = false
+    private val navigationHistory = KioskNavigationHistory()
+    private var isRestoringNavigation = false
+    private var hasOpenedBrowser = false
+    private var selectedArtistKey: String? = null
+    private var activeVarietyProgram: String? = null
+    private var lastSingersRootEntry: KioskNavigationEntry? = null
+    private var pendingRestoreFocusKey: String? = null
+    private var lastAutoPagedSingerCount = -1
+    private var lastAutoPagedSongCount = -1
     private var externalDisplayActive = initialExternalDisplayActive
     private var activeFilterOptionsCollector: MutableList<BrowserRailOptionSpec>? = null
     private lateinit var browserBinding: ViewKtvThreeColumnBrowserBinding
@@ -283,19 +294,35 @@ class KtvKioskOverlayController(
         }
 
         browserBinding.browserNavHome.setOnClickListener {
-            presentationState.selectTab(KioskTab.DASHBOARD)
+            openDashboardHome()
         }
         browserBinding.browserNavSingers.setOnClickListener {
-            focusController.hasInnerDetailBack = false
-            presentationState.selectTab(KioskTab.SINGERS)
+            openCommercialRoute(KioskCommercialRoute.SINGERS)
         }
-        browserBinding.browserNavLanguages.setOnClickListener { openCategoryRoot(KioskCategoryMode.LANGUAGES) }
-        browserBinding.browserNavTags.setOnClickListener { openCategoryRoot(KioskCategoryMode.TAGS) }
-        browserBinding.browserNavRankings.setOnClickListener { presentationState.selectTab(KioskTab.RANKINGS) }
-        browserBinding.browserNavPlaylists.setOnClickListener { presentationState.selectTab(KioskTab.PLAYLISTS) }
-        browserBinding.browserNavSearch.setOnClickListener { selectPinyinTab() }
-        browserBinding.browserNavFavorites.setOnClickListener { presentationState.selectTab(KioskTab.FAVORITES) }
-        browserBinding.browserNavHistory.setOnClickListener { presentationState.selectTab(KioskTab.HISTORY) }
+        browserBinding.browserNavLanguages.setOnClickListener {
+            openCommercialRoute(KioskCommercialRoute.LANGUAGES)
+        }
+        browserBinding.browserNavTags.setOnClickListener {
+            openCommercialRoute(KioskCommercialRoute.THEMES)
+        }
+        browserBinding.browserNavRankings.setOnClickListener {
+            openCommercialRoute(KioskCommercialRoute.HOT_NEW)
+        }
+        browserBinding.browserNavPlaylists.setOnClickListener {
+            openCommercialRoute(KioskCommercialRoute.FEATURED)
+        }
+        browserBinding.browserNavSearch.setOnClickListener {
+            openCommercialRoute(KioskCommercialRoute.SONG_NAME)
+        }
+        browserBinding.browserNavFavorites.setOnClickListener {
+            openCommercialRoute(KioskCommercialRoute.FAVORITES)
+        }
+        browserBinding.browserNavHistory.setOnClickListener {
+            if (presentationState.currentTab.value != KioskTab.HISTORY) {
+                pushNavigationSnapshot()
+            }
+            presentationState.selectTab(KioskTab.HISTORY)
+        }
 
         // Bind all 11 reference destinations to Home KTV's real data families.
         browserBinding.btnTabSongName.setOnClickListener {
@@ -314,6 +341,10 @@ class KtvKioskOverlayController(
 
         // 底部分页栏与返回键绑定
         browserBinding.btnBrowserBack.setOnClickListener {
+            if (navigationHistory.canPop()) {
+                popAndRestoreNavigationEntry()
+                return@setOnClickListener
+            }
             when (
                 KioskBackNavigationPolicy.resolveBrowserBackTarget(
                     hasInnerDetailBack = focusController.hasInnerDetailBack,
@@ -613,16 +644,22 @@ class KtvKioskOverlayController(
         ) {
             browserBinding.browserSingerRecyclerView.visibility = View.VISIBLE
         }
+        val singerKeyword = if (presentationState.currentTab.value == KioskTab.SINGERS && selectedArtist == null) {
+            overlay.kioskKeyboard.state.currentKeyword
+        } else {
+            ""
+        }
         val singerResetSignature = buildString {
             append(state.artistGender).append('|')
             append(state.artistInitial).append('|')
             append(state.artistRegion).append('|')
-            append(if (presentationState.currentTab.value == KioskTab.SINGERS && selectedArtist == null) state.query else "")
+            append(singerKeyword)
         }
         if (singerResetSignature != lastSingerListResetSignature) {
             lastSingerListResetSignature = singerResetSignature
             currentSingerPageIndex = 0
             pendingSingerPageTarget = null
+            lastAutoPagedSingerCount = -1
         }
         val pendingSingerTarget = pendingSingerPageTarget
         val singerLoadingMore = state.catalogLoading || state.catalogLoadingMore
@@ -630,8 +667,16 @@ class KtvKioskOverlayController(
             if (pendingSingerTarget < state.artists.size) {
                 currentSingerPageIndex = pendingSingerTarget / SINGER_GRID_PAGE_SIZE
                 pendingSingerPageTarget = null
+                lastAutoPagedSingerCount = -1
             } else if (!state.catalogHasMore && !singerLoadingMore) {
                 pendingSingerPageTarget = null
+                lastAutoPagedSingerCount = -1
+            } else if (!singerLoadingMore && state.catalogHasMore && state.artists.isNotEmpty() &&
+                state.artists.size > lastAutoPagedSingerCount &&
+                state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) == null
+            ) {
+                lastAutoPagedSingerCount = state.artists.size
+                catalogActions.loadMoreCatalog()
             }
         }
         val singerPageSlice = KioskSongGridPaginationPolicy.slicePage(
@@ -642,9 +687,30 @@ class KtvKioskOverlayController(
             pageSize = SINGER_GRID_PAGE_SIZE,
         )
         currentSingerPageIndex = singerPageSlice.pageIndex
+        val restoreArtistKey = pendingRestoreFocusKey?.takeIf {
+            presentationState.currentTab.value == KioskTab.SINGERS &&
+                selectedArtist == null &&
+                it.startsWith("artist:")
+        }
         singerAdapter.submitList(singerPageSlice.items) {
             if (browserBinding.browserSingerRecyclerView.visibility == View.VISIBLE) {
-                browserBinding.browserSingerRecyclerView.scrollToPosition(0)
+                val restoreIndex = if (restoreArtistKey != null) {
+                    singerPageSlice.items.indexOfFirst { "artist:${it.artistKey}" == restoreArtistKey }
+                } else {
+                    -1
+                }
+                if (restoreIndex >= 0) {
+                    pendingRestoreFocusKey = null
+                    browserBinding.browserSingerRecyclerView.scrollToPosition(restoreIndex)
+                    browserBinding.browserSingerRecyclerView.post {
+                        browserBinding.browserSingerRecyclerView
+                            .findViewHolderForAdapterPosition(restoreIndex)
+                            ?.itemView
+                            ?.requestRemoteFocus()
+                    }
+                } else {
+                    browserBinding.browserSingerRecyclerView.scrollToPosition(0)
+                }
                 browserBinding.browserSingerRecyclerView.requestLayout()
                 browserBinding.browserSingerRecyclerView.invalidate()
             }
@@ -690,12 +756,12 @@ class KtvKioskOverlayController(
         val browser = browserBinding
         val selectedArtist = presentationState.selectedArtist.value
         val navButtons = listOf(
-            browser.browserNavSingers to (tab == KioskTab.SINGERS),
+            browser.browserNavSingers to (tab == KioskTab.SINGERS || selectedArtist != null),
             browser.browserNavLanguages to (tab == KioskTab.CATEGORIES && categoryMode == KioskCategoryMode.LANGUAGES),
             browser.browserNavTags to (tab == KioskTab.CATEGORIES && categoryMode != KioskCategoryMode.LANGUAGES),
             browser.browserNavRankings to (tab == KioskTab.RANKINGS),
             browser.browserNavPlaylists to (tab == KioskTab.PLAYLISTS),
-            browser.browserNavSearch to (tab == KioskTab.PINYIN),
+            browser.browserNavSearch to (tab == KioskTab.PINYIN && selectedArtist == null && !browsingAllSongs),
             browser.browserNavFavorites to (tab == KioskTab.FAVORITES),
             browser.browserNavHistory to (tab == KioskTab.HISTORY),
         )
@@ -763,13 +829,18 @@ class KtvKioskOverlayController(
         }
 
         browserSongAdapter.setSearchKeyword(
-            if (tab == KioskTab.PINYIN && selectedArtist == null) state.query else "",
+            if ((tab == KioskTab.PINYIN && selectedArtist == null) || selectedArtist != null) {
+                binding.kioskOverlay.kioskKeyboard.state.currentKeyword.ifBlank { state.query }
+            } else {
+                ""
+            },
         )
         val listSignature = songListResetSignature(state)
         if (listSignature != lastSongListResetSignature) {
             lastSongListResetSignature = listSignature
             currentSongPageIndex = 0
             pendingBrowserPageTarget = null
+            lastAutoPagedSongCount = -1
         }
         currentLoadedSongs = visibleSongs
         val pendingTarget = pendingBrowserPageTarget
@@ -779,8 +850,15 @@ class KtvKioskOverlayController(
             if (pendingTarget < visibleSongs.size) {
                 currentSongPageIndex = pendingTarget / SONG_GRID_PAGE_SIZE
                 pendingBrowserPageTarget = null
+                lastAutoPagedSongCount = -1
             } else if (!currentSongsHasMore(state) && !stillLoadingMore) {
                 pendingBrowserPageTarget = null
+                lastAutoPagedSongCount = -1
+            } else if (!stillLoadingMore && currentSongsHasMore(state) && visibleSongs.isNotEmpty() &&
+                visibleSongs.size > lastAutoPagedSongCount
+            ) {
+                lastAutoPagedSongCount = visibleSongs.size
+                requestNextSongsPage()
             }
         }
         val songPageSlice = KioskSongGridPaginationPolicy.slicePage(
@@ -793,8 +871,25 @@ class KtvKioskOverlayController(
         currentSongPageIndex = songPageSlice.pageIndex
         browserSongAdapter.updateQueueProjection(state.queueProjection)
         browserSongAdapter.updateFavoriteIds(state.favoriteIds)
+        val restoreSongKey = pendingRestoreFocusKey?.takeIf { it.startsWith("song:") }
         browserSongAdapter.submitList(songPageSlice.items) {
-            browser.browserResultsRecyclerView.scrollToPosition(0)
+            val restoreIndex = if (restoreSongKey != null) {
+                songPageSlice.items.indexOfFirst { "song:${it.id}" == restoreSongKey }
+            } else {
+                -1
+            }
+            if (restoreIndex >= 0) {
+                pendingRestoreFocusKey = null
+                browser.browserResultsRecyclerView.scrollToPosition(restoreIndex)
+                browser.browserResultsRecyclerView.post {
+                    browser.browserResultsRecyclerView
+                        .findViewHolderForAdapterPosition(restoreIndex)
+                        ?.itemView
+                        ?.requestRemoteFocus()
+                }
+            } else {
+                browser.browserResultsRecyclerView.scrollToPosition(0)
+            }
             updatePageIndicator(state)
         }
 
@@ -838,8 +933,21 @@ class KtvKioskOverlayController(
             browser.browserSingerRecyclerView.visibility = View.GONE
             browser.browserResultsRecyclerView.visibility = View.GONE
             browser.txtBrowserEmptyState.visibility = View.VISIBLE
+            val artistSearchKeyword = if (selectedArtist != null) {
+                T9PinyinSearchPolicy.normalizeSearchKeyword(binding.kioskOverlay.kioskKeyboard.state.currentKeyword)
+            } else {
+                ""
+            }
+            val artistError = selectedArtist != null &&
+                state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null
             browser.txtBrowserEmptyState.text = when {
                 tab == KioskTab.FAVORITES -> "您还没有收藏过歌曲"
+                selectedArtist != null && state.catalogLoading ->
+                    if (artistSearchKeyword.isNotBlank()) "正在搜索歌手歌曲…" else "正在加载歌手歌曲…"
+                selectedArtist != null && artistError -> "歌手歌曲加载失败，按确定重试"
+                selectedArtist != null && artistSearchKeyword.isNotBlank() ->
+                    "该歌手暂无“$artistSearchKeyword”相关歌曲"
+                selectedArtist != null -> "该歌手暂无可点歌曲"
                 tab == KioskTab.PINYIN && browsingAllSongs && state.kioskLibraryBrowse.loading -> "正在加载全曲库…"
                 tab == KioskTab.PINYIN && browsingAllSongs && state.kioskLibraryBrowse.error != null -> "全曲库加载失败，按确定重试"
                 tab == KioskTab.PINYIN && browsingAllSongs -> "当前曲库暂无可点歌曲"
@@ -859,15 +967,29 @@ class KtvKioskOverlayController(
                 tab == KioskTab.PLAYLISTS && state.playlists.isEmpty() -> "暂无精选歌单"
                 else -> "暂无歌曲"
             }
-            val retryAllSongs = tab == KioskTab.PINYIN && browsingAllSongs &&
+            val retryArtistSongs = selectedArtist != null && !state.catalogLoading && artistError
+            val retryAllSongs = tab == KioskTab.PINYIN && selectedArtist == null && browsingAllSongs &&
                 state.kioskLibraryBrowse.error != null
             val retryCategory = tab == KioskTab.CATEGORIES && categoryDetail &&
                 state.errorFor(com.homektv.tv.controller.UiDomain.CATALOG) != null && state.catalogValue.isNotBlank()
             val retryPlaylists = tab == KioskTab.PLAYLISTS &&
                 state.errorFor(com.homektv.tv.controller.UiDomain.PLAYLISTS) != null
-            browser.txtBrowserEmptyState.isFocusable = retryAllSongs || retryCategory || retryPlaylists
+            browser.txtBrowserEmptyState.isFocusable =
+                retryArtistSongs || retryAllSongs || retryCategory || retryPlaylists
             browser.txtBrowserEmptyState.setOnClickListener {
                 when {
+                    retryArtistSongs -> {
+                        val artistKey = selectedArtistKey
+                            ?.takeIf { it.isNotBlank() }
+                            ?: state.catalogValue.ifBlank { selectedArtist.orEmpty() }
+                        if (artistKey.isNotBlank()) {
+                            if (artistSearchKeyword.isNotBlank()) {
+                                catalogActionRouter.searchArtistSongs(artistKey, artistSearchKeyword)
+                            } else {
+                                catalogActionRouter.artistSongs(artistKey)
+                            }
+                        }
+                    }
                     retryAllSongs -> catalogActionRouter.allSongs()
                     retryCategory && categoryMode == KioskCategoryMode.LANGUAGES -> catalogActionRouter.languageSongs(state.catalogValue)
                     retryCategory -> catalogActionRouter.tagSongs(state.catalogValue)
@@ -875,6 +997,7 @@ class KtvKioskOverlayController(
                 }
             }
             browser.txtBrowserEmptyState.contentDescription = when {
+                retryArtistSongs -> "歌手歌曲加载失败，按确定重试"
                 retryAllSongs -> "全曲库加载失败，按确定重试"
                 retryCategory -> "分类歌曲加载失败，按确定重试"
                 retryPlaylists -> "精选歌单加载失败，按确定重试"
@@ -1084,7 +1207,8 @@ class KtvKioskOverlayController(
         val routeAtRenderEnd = presentationState.commercialRoute.value
         val routeActivationPending = pendingCommercialRouteFocus == routeAtRenderEnd
         val noVisibleViewHasFocusBeforeRender = activity.currentFocus?.isShown != true
-        val routeFocusRequested = browserHadFocusBeforeRender || routeActivationPending || noVisibleViewHasFocusBeforeRender
+        val routeFocusRequested = pendingRestoreFocusKey == null &&
+            (browserHadFocusBeforeRender || routeActivationPending || noVisibleViewHasFocusBeforeRender)
         if (routeFocusRequested) {
             commercialRouteButton(routeAtRenderEnd)?.let { routeFocusTarget ->
                 routeFocusTarget.post {
@@ -1147,10 +1271,14 @@ class KtvKioskOverlayController(
         }
     }
 
-    private fun selectVarietyProgram(name: String) {
+    private fun selectVarietyProgram(name: String, pushHistory: Boolean = true) {
+        if (pushHistory && isThreeColumnTab(presentationState.currentTab.value) && activeVarietyProgram != null && activeVarietyProgram != name) {
+            pushNavigationSnapshot()
+        }
+        activeVarietyProgram = name
         val actualTag = KioskCommercialTagPolicy.findExactTag(controllerState.tags, name)
         if (actualTag != null) {
-            selectCommercialTag(actualTag)
+            selectCommercialTag(actualTag, pushHistory = false)
             browserBinding.browserResultsRecyclerView.post {
                 if (browserBinding.panelVarietyShows.visibility == View.VISIBLE) {
                     browserBinding.browserResultsRecyclerView.requestFocus()
@@ -1159,7 +1287,7 @@ class KtvKioskOverlayController(
         } else {
             categoryMode = KioskCategoryMode.TAGS
             categoryDetail = true
-            focusController.hasInnerDetailBack = true
+            syncBackState()
             commercialRouteNotice = "暂无“$name”相关歌曲"
             catalogActions.setQuery("")
             catalogActionRouter.tagSongs(name)
@@ -1215,6 +1343,11 @@ class KtvKioskOverlayController(
                     pendingSingerPageTarget = null
                     renderCatalogState(state)
                     browserBinding.browserSingerRecyclerView.scrollToPosition(0)
+                    if (delta > 0 && state.catalogHasMore && !state.catalogLoading && !state.catalogLoadingMore &&
+                        (action.targetPageIndex + 2) * SINGER_GRID_PAGE_SIZE > state.artists.size
+                    ) {
+                        catalogActions.loadMoreCatalog()
+                    }
                 }
                 is KioskSongGridPaginationPolicy.TurnPageAction.LoadMoreForPage -> {
                     pendingSingerPageTarget = action.targetPageIndex * SINGER_GRID_PAGE_SIZE
@@ -1237,6 +1370,13 @@ class KtvKioskOverlayController(
                 currentSongPageIndex = action.targetPageIndex
                 pendingBrowserPageTarget = null
                 renderThreeColumnBrowser(state)
+                val alreadyLoadingMore = state.catalogLoading || state.catalogLoadingMore ||
+                    state.searchLoadingMore || state.kioskLibraryBrowse.loadingMore
+                if (delta > 0 && currentSongsHasMore(state) && !alreadyLoadingMore &&
+                    (action.targetPageIndex + 2) * SONG_GRID_PAGE_SIZE > currentLoadedSongs.size
+                ) {
+                    requestNextSongsPage()
+                }
             }
             is KioskSongGridPaginationPolicy.TurnPageAction.LoadMoreForPage -> {
                 pendingBrowserPageTarget = action.targetPageIndex * SONG_GRID_PAGE_SIZE
@@ -1271,7 +1411,7 @@ class KtvKioskOverlayController(
             (loadedCount + SONG_GRID_PAGE_SIZE).toLong()
         presentationState.currentTab.value == KioskTab.PINYIN && state.query.isBlank() -> state.catalogTotal
         else -> loadedCount.toLong()
-    }.coerceAtMost(MAX_VISIBLE_CATALOG_ITEMS.toLong())
+    }
 
     private fun requestNextSongsPage() {
         val state = controllerState
@@ -1285,14 +1425,23 @@ class KtvKioskOverlayController(
     }
 
     private fun songListResetSignature(state: ControllerUiState): String = buildString {
-        append(presentationState.currentTab.value.name).append('|')
+        val tab = presentationState.currentTab.value
+        val selectedArtist = presentationState.selectedArtist.value
+        val activeKeyword = if (selectedArtist != null) {
+            binding.kioskOverlay.kioskKeyboard.state.currentKeyword
+        } else if (tab == KioskTab.PINYIN) {
+            state.query
+        } else {
+            ""
+        }
+        append(tab.name).append('|')
         append(presentationState.commercialRoute.value?.name ?: "").append('|')
-        append(presentationState.selectedArtist.value ?: "").append('|')
+        append(selectedArtist ?: "").append('|')
         append(categoryMode.name).append('|')
         append(categoryDetail).append('|')
         append(browsingAllSongs).append('|')
         append(playlistDetail).append('|')
-        append(state.query).append('|')
+        append(activeKeyword).append('|')
         append(state.catalogValue)
     }
 
@@ -1341,15 +1490,28 @@ class KtvKioskOverlayController(
         fun item(label: String, selected: Boolean = false, action: () -> Unit) = Triple(label, selected, action)
         val subcategories: List<Triple<String, Boolean, () -> Unit>> = when {
             route == KioskCommercialRoute.HOT_NEW -> listOf(
-                item("热歌榜", selected = tab == KioskTab.RANKINGS) { openCommercialRoute(KioskCommercialRoute.HOT_NEW) },
+                item("热歌榜", selected = tab == KioskTab.RANKINGS) {
+                    if (tab != KioskTab.RANKINGS) {
+                        pushNavigationSnapshot()
+                        leaveKioskAllSongs()
+                        showVarietyPanel(false)
+                        categoryMode = KioskCategoryMode.NEW
+                        categoryDetail = false
+                        presentationState.selectTab(KioskTab.RANKINGS, KioskCommercialRoute.HOT_NEW)
+                        syncBackState()
+                    }
+                },
                 item("新歌速递", selected = tab == KioskTab.CATEGORIES && categoryMode == KioskCategoryMode.NEW) {
+                    if (!(tab == KioskTab.CATEGORIES && categoryMode == KioskCategoryMode.NEW)) {
+                        pushNavigationSnapshot()
+                    }
                     leaveKioskAllSongs()
                     showVarietyPanel(false)
                     categoryMode = KioskCategoryMode.NEW
                     categoryDetail = false
-                    focusController.hasInnerDetailBack = false
                     if (controllerState.newSongs.isEmpty()) catalogActionRouter.newSongs()
                     presentationState.selectTab(KioskTab.CATEGORIES, KioskCommercialRoute.HOT_NEW)
+                    syncBackState()
                     renderThreeColumnBrowser(controllerState)
                 },
             )
@@ -1509,15 +1671,19 @@ class KtvKioskOverlayController(
 
     /** Returns a focusable control that is actually visible in the aggregate browser. */
     private fun threeColumnFocusTarget(tab: KioskTab): View {
-        val route = when (tab) {
-            KioskTab.PINYIN -> KioskCommercialRoute.SONG_NAME
-            KioskTab.SINGERS -> KioskCommercialRoute.SINGERS
-            KioskTab.RANKINGS -> KioskCommercialRoute.HOT_NEW
-            KioskTab.FAVORITES -> KioskCommercialRoute.FAVORITES
-            KioskTab.PLAYLISTS -> KioskCommercialRoute.FEATURED
-            KioskTab.CATEGORIES -> presentationState.commercialRoute.value
-            KioskTab.HISTORY,
-            KioskTab.DASHBOARD -> null
+        val route = if (presentationState.selectedArtist.value != null) {
+            presentationState.commercialRoute.value ?: KioskCommercialRoute.SINGERS
+        } else {
+            when (tab) {
+                KioskTab.PINYIN -> KioskCommercialRoute.SONG_NAME
+                KioskTab.SINGERS -> KioskCommercialRoute.SINGERS
+                KioskTab.RANKINGS -> KioskCommercialRoute.HOT_NEW
+                KioskTab.FAVORITES -> KioskCommercialRoute.FAVORITES
+                KioskTab.PLAYLISTS -> KioskCommercialRoute.FEATURED
+                KioskTab.CATEGORIES -> presentationState.commercialRoute.value
+                KioskTab.HISTORY,
+                KioskTab.DASHBOARD -> null
+            }
         }
         commercialRouteButton(route)?.let { return it }
         return when (tab) {
@@ -1534,21 +1700,30 @@ class KtvKioskOverlayController(
         }
     }
 
-    private fun selectQuickLanguage(language: String) {
+    private fun selectQuickLanguage(language: String, pushHistory: Boolean = true) {
         if (controllerState.languages.none { it.name == language }) return
+        if (pushHistory && isThreeColumnTab(presentationState.currentTab.value) &&
+            (!categoryDetail || controllerState.catalogValue != language)
+        ) {
+            pushNavigationSnapshot()
+        }
         categoryMode = KioskCategoryMode.LANGUAGES
         categoryDetail = true
-        focusController.hasInnerDetailBack = true
         commercialRouteNotice = null
         catalogActions.setQuery("")
         catalogActionRouter.languageSongs(language)
+        syncBackState()
         browserBinding.browserResultsRecyclerView.requestFocus()
     }
 
-    private fun selectCommercialTag(actualTag: com.homektv.tv.net.NamedCount) {
+    private fun selectCommercialTag(actualTag: com.homektv.tv.net.NamedCount, pushHistory: Boolean = true) {
+        if (pushHistory && isThreeColumnTab(presentationState.currentTab.value) &&
+            (!categoryDetail || controllerState.catalogValue != actualTag.name)
+        ) {
+            pushNavigationSnapshot()
+        }
         categoryMode = KioskCategoryMode.TAGS
         categoryDetail = true
-        focusController.hasInnerDetailBack = true
         commercialRouteNotice = null
         when (presentationState.commercialRoute.value) {
             KioskCommercialRoute.HIGH_DEFINITION -> if (!actualTag.name.trim().equals(KioskCommercialTagPolicy.HIGH_DEFINITION_TAG, true)) {
@@ -1561,6 +1736,7 @@ class KtvKioskOverlayController(
         }
         catalogActions.setQuery("")
         catalogActionRouter.tagSongs(actualTag.name)
+        syncBackState()
         browserBinding.browserResultsRecyclerView.requestFocus()
     }
 
@@ -1636,14 +1812,15 @@ class KtvKioskOverlayController(
                 label = initial,
                 selected = state.artistInitial.equals(initial, ignoreCase = true),
             ) {
-                focusController.hasInnerDetailBack = false
                 presentationState.clearArtistSelection()
+                selectedArtistKey = null
                 catalogActions.loadArtists(
                     gender = controllerState.artistGender,
                     initial = initial,
                     restorePage = 0,
                     region = controllerState.artistRegion,
                 )
+                syncBackState()
             }
         }
         syncBrowserOptionRail(rail, specs, INITIAL_RAIL_STYLE)
@@ -1752,6 +1929,9 @@ class KtvKioskOverlayController(
 
         browserBinding.root.visibility = if (isThreeColumnTab) View.VISIBLE else View.GONE
         overlay.kioskDashboardView.visibility = if (tab == KioskTab.DASHBOARD) View.VISIBLE else View.GONE
+        if (isThreeColumnTab) {
+            hasOpenedBrowser = true
+        }
 
         if (tab == KioskTab.DASHBOARD) {
             val skipAutoFocus = skipNextDashboardAutoFocus
@@ -1761,63 +1941,71 @@ class KtvKioskOverlayController(
             }
         }
 
-        if (tab != KioskTab.CATEGORIES && categoryDetail) {
-            categoryDetail = false
-            focusController.hasInnerDetailBack = false
-        }
-        if (tab != KioskTab.PLAYLISTS) {
-            pendingAutoSelectFirstPlaylist = false
-            if (playlistDetail) {
-                playlistDetail = false
-                personalActionRouter.clearPlaylistDetail()
-                focusController.hasInnerDetailBack = false
+        if (!isRestoringNavigation) {
+            if (tab != KioskTab.CATEGORIES && categoryDetail) {
+                categoryDetail = false
+                activeVarietyProgram = null
             }
-        }
-
-        if (tab != KioskTab.PINYIN) {
-            leaveKioskAllSongs()
-            val wasArtistSelected = presentationState.selectedArtist.value != null
-            presentationState.clearArtistSelection()
-            focusController.hasInnerDetailBack = false
-            if (wasArtistSelected) {
-                overlay.kioskKeyboard.clear()
-                if (controllerState.query.isNotEmpty()) {
-                    catalogActions.setQuery("")
-                    browserSongAdapter.setSearchKeyword("")
+            if (tab != KioskTab.PLAYLISTS) {
+                pendingAutoSelectFirstPlaylist = false
+                if (playlistDetail) {
+                    playlistDetail = false
+                    personalActionRouter.clearPlaylistDetail()
                 }
-                loadDefaultSongs()
             }
-        }
-        if (tab != KioskTab.SINGERS) {
-            pendingSingerPageTarget = null
-            currentSingerPageIndex = 0
-        }
 
-        (catalogActions as? ControllerCatalogVisibility)?.setCatalogVisible(tab != KioskTab.DASHBOARD)
-        when (tab) {
-            KioskTab.DASHBOARD -> if (
-                focusController.isKioskActive && !artistsLoaded && controllerState.artists.isEmpty()
-            ) loadArtists()
-            KioskTab.PINYIN -> {
-                val activeQuery = if (presentationState.selectedArtist.value == null) controllerState.query else ""
-                if (overlay.kioskKeyboard.state.currentKeyword != activeQuery) {
-                    overlay.kioskKeyboard.setKeyword(activeQuery)
+            if (tab != KioskTab.PINYIN && !(tab == KioskTab.SINGERS && presentationState.selectedArtist.value != null)) {
+                leaveKioskAllSongs()
+                val wasArtistSelected = presentationState.selectedArtist.value != null
+                selectedArtistKey = null
+                presentationState.clearArtistSelection()
+                if (wasArtistSelected) {
+                    overlay.kioskKeyboard.setKeywordSilently("")
+                    if (controllerState.query.isNotEmpty()) {
+                        catalogActions.setQuery("")
+                        browserSongAdapter.setSearchKeyword("")
+                    }
+                    loadDefaultSongs()
                 }
-                browserSongAdapter.setSearchKeyword(activeQuery)
-                if (!rankingsLoaded && controllerState.ranking.isEmpty()) loadRankings()
+            } else if (tab != KioskTab.PINYIN && tab == KioskTab.SINGERS && presentationState.selectedArtist.value != null) {
+                leaveKioskAllSongs()
             }
-            KioskTab.SINGERS -> if (!artistsLoaded || controllerState.artists.isEmpty()) loadArtists()
-            KioskTab.RANKINGS -> if (!rankingsLoaded) loadRankings()
-            KioskTab.CATEGORIES -> if (
-                shouldLoadCategoryRoot(categoryMode)
-            ) loadCategories()
-            KioskTab.FAVORITES -> loadFavorites()
-            KioskTab.PLAYLISTS -> {
-                pendingAutoSelectFirstPlaylist = true
-                loadPlaylists()
+            if (tab != KioskTab.SINGERS) {
+                pendingSingerPageTarget = null
+                currentSingerPageIndex = 0
             }
-            KioskTab.HISTORY -> loadHistory()
+
+            (catalogActions as? ControllerCatalogVisibility)?.setCatalogVisible(tab != KioskTab.DASHBOARD)
+            when (tab) {
+                KioskTab.DASHBOARD -> if (
+                    focusController.isKioskActive && !artistsLoaded && controllerState.artists.isEmpty()
+                ) loadArtists()
+                KioskTab.PINYIN -> {
+                    if (presentationState.selectedArtist.value == null) {
+                        val activeQuery = controllerState.query
+                        if (overlay.kioskKeyboard.state.currentKeyword != activeQuery) {
+                            overlay.kioskKeyboard.setKeyword(activeQuery)
+                        }
+                        browserSongAdapter.setSearchKeyword(activeQuery)
+                        if (!rankingsLoaded && controllerState.ranking.isEmpty()) loadRankings()
+                    }
+                }
+                KioskTab.SINGERS -> if (!artistsLoaded || controllerState.artists.isEmpty()) loadArtists()
+                KioskTab.RANKINGS -> if (!rankingsLoaded) loadRankings()
+                KioskTab.CATEGORIES -> if (
+                    shouldLoadCategoryRoot(categoryMode)
+                ) loadCategories()
+                KioskTab.FAVORITES -> loadFavorites()
+                KioskTab.PLAYLISTS -> {
+                    pendingAutoSelectFirstPlaylist = true
+                    loadPlaylists()
+                }
+                KioskTab.HISTORY -> loadHistory()
+            }
+        } else {
+            (catalogActions as? ControllerCatalogVisibility)?.setCatalogVisible(tab != KioskTab.DASHBOARD)
         }
+        syncBackState()
         renderThreeColumnBrowser(controllerState)
         if (isThreeColumnTab(tab) && !browserHadFocus) {
             val focusTarget = threeColumnFocusTarget(tab)
@@ -1831,14 +2019,18 @@ class KtvKioskOverlayController(
 
     private fun onKeywordInput(keyword: String) {
         val currentTab = presentationState.currentTab.value
+        val selectedArtist = presentationState.selectedArtist.value
         val globalSearchIsEnabled = globalSearchEnabled()
-        if (currentTab != KioskTab.PINYIN && !globalSearchIsEnabled) return
+        val searchScope = KtvGlobalSearchPolicy.resolveSearchScope(currentTab, selectedArtist)
+        if (currentTab != KioskTab.PINYIN &&
+            searchScope != KtvGlobalSearchPolicy.KeyboardSearchScope.ARTIST_SONGS &&
+            !globalSearchIsEnabled
+        ) return
 
         leaveKioskAllSongs()
         val normalizedKeyword = T9PinyinSearchPolicy.normalizeSearchKeyword(keyword)
-        if (currentTab == KioskTab.SINGERS) {
-            val selectedArtist = presentationState.selectedArtist.value
-            if (selectedArtist == null) {
+        when (searchScope) {
+            KtvGlobalSearchPolicy.KeyboardSearchScope.SINGER_DIRECTORY -> {
                 browserSongAdapter.setSearchKeyword("")
                 if (normalizedKeyword.isBlank()) {
                     catalogActions.loadArtists(
@@ -1855,16 +2047,22 @@ class KtvKioskOverlayController(
                         keyword = normalizedKeyword,
                     )
                 }
-            } else {
+                return
+            }
+            KtvGlobalSearchPolicy.KeyboardSearchScope.ARTIST_SONGS -> {
                 browserSongAdapter.setSearchKeyword(normalizedKeyword)
-                val artistKey = controllerState.catalogValue.ifBlank { selectedArtist }
+                val artistKey = selectedArtistKey
+                    ?.takeIf { it.isNotBlank() }
+                    ?: controllerState.catalogValue.ifBlank { selectedArtist.orEmpty() }
+                if (artistKey.isBlank()) return
                 if (normalizedKeyword.isBlank()) {
                     catalogActionRouter.artistSongs(artistKey)
                 } else {
                     catalogActionRouter.searchArtistSongs(artistKey, normalizedKeyword)
                 }
+                return
             }
-            return
+            KtvGlobalSearchPolicy.KeyboardSearchScope.GLOBAL_SONGS -> Unit
         }
 
         browserSongAdapter.setSearchKeyword(normalizedKeyword)
@@ -1876,10 +2074,12 @@ class KtvKioskOverlayController(
 
         val targetTab = KtvGlobalSearchPolicy.targetTabForQuery(currentTab, globalSearchIsEnabled)
         if (targetTab != currentTab) {
+            pushNavigationSnapshot()
             presentationState.selectTab(targetTab, KioskCommercialRoute.SONG_NAME)
         }
 
         catalogActionRouter.search(normalizedKeyword)
+        syncBackState()
     }
 
     /** Re-renders the active browser when the persisted cross-tab keyboard preference changes. */
@@ -1902,14 +2102,15 @@ class KtvKioskOverlayController(
         leaveKioskAllSongs()
         showVarietyPanel(false)
         if (presentationState.selectedArtist.value != null) {
+            selectedArtistKey = null
             presentationState.clearArtistSelection()
-            focusController.hasInnerDetailBack = false
-            binding.kioskOverlay.kioskKeyboard.clear()
+            binding.kioskOverlay.kioskKeyboard.setKeywordSilently("")
         }
         if (controllerState.catalogSongs.isEmpty()) {
             loadDefaultSongs()
         }
-        presentationState.selectTab(KioskTab.PINYIN)
+        presentationState.selectTab(KioskTab.PINYIN, KioskCommercialRoute.SONG_NAME)
+        syncBackState()
     }
 
     private fun openCommercialRoute(route: KioskCommercialRoute) {
@@ -1918,7 +2119,36 @@ class KtvKioskOverlayController(
         pendingCommercialTagRoute = null
         pendingCommercialTagRevision = null
         commercialRouteNotice = null
+
+        val currentTab = presentationState.currentTab.value
+        val currentRoute = presentationState.commercialRoute.value
+        val leavingArtistDetail = route == KioskCommercialRoute.SINGERS && presentationState.selectedArtist.value != null
+        val leavingSubView = currentRoute == route && (
+            browsingAllSongs ||
+                (route == KioskCommercialRoute.HOT_NEW && currentTab != KioskTab.RANKINGS) ||
+                (
+                    categoryDetail &&
+                        route != KioskCommercialRoute.VARIETY &&
+                        route != KioskCommercialRoute.HIGH_DEFINITION &&
+                        route != KioskCommercialRoute.TIKTOK
+                    )
+            )
+        if (isThreeColumnTab(currentTab) && (currentRoute != route || leavingArtistDetail || leavingSubView)) {
+            pushNavigationSnapshot()
+        }
+
         showVarietyPanel(false)
+
+        if (isThreeColumnTab(currentTab) && !leavingArtistDetail && currentRoute != route) {
+            val remembered = navigationHistory.lastModuleState(route)
+            if (remembered != null &&
+                route != KioskCommercialRoute.HIGH_DEFINITION &&
+                route != KioskCommercialRoute.TIKTOK
+            ) {
+                restoreNavigationEntry(remembered)
+                return
+            }
+        }
 
         when (route) {
             KioskCommercialRoute.SONG_NAME -> selectPinyinTab()
@@ -1926,55 +2156,68 @@ class KtvKioskOverlayController(
             KioskCommercialRoute.TIKTOK -> openCommercialTagRoute(route)
             KioskCommercialRoute.SINGERS -> {
                 leaveKioskAllSongs()
-                focusController.hasInnerDetailBack = false
-                presentationState.clearArtistSelection()
-                if (controllerState.artistGender.isNotBlank() || controllerState.artistInitial.isNotBlank() ||
-                    controllerState.artistRegion.isNotBlank()
-                ) {
-                    catalogActions.loadArtists(gender = "", initial = "", restorePage = 0, region = "")
+                if (leavingArtistDetail && lastSingersRootEntry != null) {
+                    restoreNavigationEntry(lastSingersRootEntry!!)
+                    return
                 }
-                presentationState.selectTab(KioskTab.SINGERS)
+                selectedArtistKey = null
+                presentationState.clearArtistSelection()
+                val keyboardKeyword = binding.kioskOverlay.kioskKeyboard.state.currentKeyword
+                if (leavingArtistDetail && keyboardKeyword.isNotBlank()) {
+                    binding.kioskOverlay.kioskKeyboard.setKeywordSilently("")
+                }
+                if (controllerState.catalogSongs.isNotEmpty() && controllerState.artists.isEmpty()) {
+                    catalogActions.loadArtists(
+                        gender = controllerState.artistGender,
+                        initial = controllerState.artistInitial,
+                        restorePage = currentSingerPageIndex,
+                        region = controllerState.artistRegion,
+                    )
+                }
+                presentationState.selectTab(KioskTab.SINGERS, KioskCommercialRoute.SINGERS)
+                syncBackState()
             }
             KioskCommercialRoute.HOT_NEW -> {
                 leaveKioskAllSongs()
                 categoryMode = KioskCategoryMode.NEW
                 categoryDetail = false
-                focusController.hasInnerDetailBack = false
-                presentationState.selectTab(KioskTab.RANKINGS)
+                presentationState.selectTab(KioskTab.RANKINGS, KioskCommercialRoute.HOT_NEW)
+                syncBackState()
             }
             KioskCommercialRoute.FEATURED -> {
                 leaveKioskAllSongs()
                 playlistDetail = false
                 pendingAutoSelectFirstPlaylist = true
-                presentationState.selectTab(KioskTab.PLAYLISTS)
+                presentationState.selectTab(KioskTab.PLAYLISTS, KioskCommercialRoute.FEATURED)
+                syncBackState()
             }
             KioskCommercialRoute.LOCAL -> {
                 leaveKioskAllSongs()
+                selectedArtistKey = null
                 presentationState.clearArtistSelection()
-                focusController.hasInnerDetailBack = false
-                binding.kioskOverlay.kioskKeyboard.clear()
+                binding.kioskOverlay.kioskKeyboard.setKeywordSilently("")
                 browsingAllSongs = true
                 catalogActions.setQuery("")
                 catalogActionRouter.allSongs()
                 presentationState.selectTab(KioskTab.PINYIN, KioskCommercialRoute.LOCAL)
+                syncBackState()
             }
             KioskCommercialRoute.FAVORITES -> {
                 leaveKioskAllSongs()
-                presentationState.selectTab(KioskTab.FAVORITES)
+                presentationState.selectTab(KioskTab.FAVORITES, KioskCommercialRoute.FAVORITES)
+                syncBackState()
             }
             KioskCommercialRoute.LANGUAGES -> openCategoryRoot(KioskCategoryMode.LANGUAGES, route)
             KioskCommercialRoute.THEMES -> openCategoryRoot(KioskCategoryMode.TAGS, route)
             KioskCommercialRoute.VARIETY -> {
                 leaveKioskAllSongs()
                 categoryMode = KioskCategoryMode.TAGS
-                focusController.hasInnerDetailBack = false
                 openCategoryRoot(KioskCategoryMode.TAGS, route)
                 showVarietyPanel(true)
-                selectVarietyProgram("中国好声音")
+                selectVarietyProgram("中国好声音", pushHistory = false)
                 browserBinding.varietyVoice.post { browserBinding.varietyVoice.requestFocus() }
             }
         }
-
     }
 
     private fun openCommercialTagRoute(route: KioskCommercialRoute) {
@@ -1988,11 +2231,10 @@ class KtvKioskOverlayController(
         showVarietyPanel(false)
         categoryMode = KioskCategoryMode.TAGS
         categoryDetail = true
-        focusController.hasInnerDetailBack = false
         commercialRouteNotice = null
         presentationState.selectTab(KioskTab.CATEGORIES, route)
         if (exactTag != null) {
-            selectCommercialTag(exactTag)
+            selectCommercialTag(exactTag, pushHistory = false)
         } else {
             // Directly load tag songs without blocking on full /browse/tags aggregation.
             catalogActions.setQuery("")
@@ -2001,6 +2243,7 @@ class KtvKioskOverlayController(
                 catalogActionRouter.tags()
             }
         }
+        syncBackState()
     }
 
     private fun resolvePendingCommercialTagRoute(state: ControllerUiState) {
@@ -2054,9 +2297,10 @@ class KtvKioskOverlayController(
         coordinator.resetIdleTimer()
         pendingSingerPageTarget = null
         currentSingerPageIndex = 0
-        focusController.hasInnerDetailBack = false
+        selectedArtistKey = null
         presentationState.clearArtistSelection()
         catalogActions.loadArtists(gender = gender, initial = "", restorePage = 0)
+        syncBackState()
         if (requestLegacyFocus) binding.kioskOverlay.singerRecyclerView.requestFocus()
     }
 
@@ -2064,7 +2308,7 @@ class KtvKioskOverlayController(
         coordinator.resetIdleTimer()
         pendingSingerPageTarget = null
         currentSingerPageIndex = 0
-        focusController.hasInnerDetailBack = false
+        selectedArtistKey = null
         presentationState.clearArtistSelection()
         catalogActions.loadArtists(
             gender = filter.gender,
@@ -2072,6 +2316,7 @@ class KtvKioskOverlayController(
             restorePage = 0,
             region = filter.region,
         )
+        syncBackState()
     }
 
     private fun updateSingerFilterButtons(gender: String) {
@@ -2120,25 +2365,43 @@ class KtvKioskOverlayController(
         leaveKioskAllSongs()
         showVarietyPanel(false)
         val alreadyOnCategories = presentationState.currentTab.value == KioskTab.CATEGORIES
+        if (alreadyOnCategories && categoryDetail && categoryMode == mode &&
+            route != KioskCommercialRoute.VARIETY
+        ) {
+            pushNavigationSnapshot()
+        }
         categoryMode = mode
         categoryDetail = false
-        focusController.hasInnerDetailBack = false
+        activeVarietyProgram = null
         if (alreadyOnCategories) {
             presentationState.selectTab(KioskTab.CATEGORIES, route)
             if (shouldLoadCategoryRoot(mode)) loadCategories()
+            syncBackState()
             renderThreeColumnBrowser(controllerState)
         } else {
             presentationState.selectTab(KioskTab.CATEGORIES, route)
+            syncBackState()
         }
     }
 
     private fun onArtistSelected(artist: ArtistItem) {
+        val artistFocusKey = "artist:${artist.artistKey}"
+        if (isThreeColumnTab(presentationState.currentTab.value)) {
+            if (presentationState.currentTab.value == KioskTab.SINGERS && presentationState.selectedArtist.value == null) {
+                lastSingersRootEntry = captureCurrentNavigationEntry(focusedItemKeyOverride = artistFocusKey)
+            }
+            pushNavigationSnapshot(focusedItemKeyOverride = artistFocusKey)
+        }
         leaveKioskAllSongs()
         pendingSingerPageTarget = null
+        currentSongPageIndex = 0
+        pendingBrowserPageTarget = null
+        lastSongListResetSignature = ""
         coordinator.resetIdleTimer()
-        focusController.hasInnerDetailBack = true
+        selectedArtistKey = artist.artistKey
         presentationState.selectArtist(artist.name)
-        binding.kioskOverlay.kioskKeyboard.clear()
+        binding.kioskOverlay.kioskKeyboard.setKeywordSilently("")
+        syncBackState()
         browserBinding.browserResultsRecyclerView.post {
             browserBinding.browserResultsRecyclerView.requestFocus()
         }
@@ -2172,12 +2435,15 @@ class KtvKioskOverlayController(
         personalActionRouter.history()
     }
 
-    private fun openPlaylist(playlist: com.homektv.tv.net.PlaylistSummary) {
+    private fun openPlaylist(playlist: com.homektv.tv.net.PlaylistSummary, pushHistory: Boolean = true) {
         coordinator.resetIdleTimer()
+        if (pushHistory && playlistDetail && controllerState.playlistDetail?.id != playlist.id) {
+            pushNavigationSnapshot()
+        }
         pendingAutoSelectFirstPlaylist = false
         playlistDetail = true
-        focusController.hasInnerDetailBack = false
         personalActionRouter.playlistDetail(playlist.id)
+        syncBackState()
     }
 
     private fun orderSong(song: SongDto, onComplete: (Boolean) -> Unit = {}) {
@@ -2404,6 +2670,9 @@ class KtvKioskOverlayController(
 
     /** Opens the global search surface and restores the initiating control when it closes. */
     fun openGlobalSearch(returnFocus: View) {
+        if (focusController.isKioskActive && isThreeColumnTab(presentationState.currentTab.value)) {
+            pushNavigationSnapshot()
+        }
         globalSearchReturnFocus = returnFocus
         presentationState.selectTab(KioskTab.PINYIN, KioskCommercialRoute.SONG_NAME)
         toggleKiosk(true)
@@ -2415,6 +2684,47 @@ class KtvKioskOverlayController(
                 browserBinding.btnTabSongName.requestFocusFromTouch()
             }
         }
+    }
+
+    /** Resumes the kiosk overlay on the exact tab/search/detail context the user left. */
+    fun resumeKiosk() {
+        if (presentationState.currentTab.value == KioskTab.DASHBOARD && !hasOpenedBrowser) {
+            presentationState.selectTab(KioskTab.DASHBOARD)
+        }
+        toggleKiosk(true)
+    }
+
+    /** Explicitly resets browser navigation history and returns to the Dashboard home screen. */
+    fun openDashboardHome() {
+        navigationHistory.clearAll()
+        lastSingersRootEntry = null
+        pendingRestoreFocusKey = null
+        hasOpenedBrowser = false
+        leaveKioskAllSongs()
+        showVarietyPanel(false)
+        activeVarietyProgram = null
+        categoryDetail = false
+        playlistDetail = false
+        selectedArtistKey = null
+        presentationState.clearArtistSelection()
+        binding.kioskOverlay.kioskKeyboard.setKeywordSilently("")
+        if (controllerState.query.isNotEmpty()) {
+            catalogActions.setQuery("")
+        }
+        browserSongAdapter.setSearchKeyword("")
+        presentationState.selectTab(KioskTab.DASHBOARD)
+        syncBackState()
+        toggleKiosk(true)
+    }
+
+    /** Opens the History tab while preserving any active browser screen on the back stack. */
+    fun openHistoryFromShortcut() {
+        val currentTab = presentationState.currentTab.value
+        if (isThreeColumnTab(currentTab) && currentTab != KioskTab.HISTORY) {
+            pushNavigationSnapshot()
+        }
+        presentationState.selectTab(KioskTab.HISTORY)
+        toggleKiosk(true)
     }
 
     fun selectTab(tab: KioskTab) {
@@ -2432,22 +2742,31 @@ class KtvKioskOverlayController(
             binding.kioskOverlay.kioskRootOverlay.visibility = View.VISIBLE
             bottomDockController.ensurePlayerInDock()
             renderPipState()
+            syncBackState()
             val currentTab = presentationState.currentTab.value
             if (currentTab == KioskTab.DASHBOARD) {
                 binding.kioskOverlay.kioskDashboardView.requestDashboardFocus()
                 if (!artistsLoaded && controllerState.artists.isEmpty()) loadArtists()
             } else if (isThreeColumnTab(currentTab)) {
-                threeColumnFocusTarget(currentTab).requestFocus()
-                threeColumnFocusTarget(currentTab).post {
-                    if (focusController.isKioskActive && isThreeColumnTab(presentationState.currentTab.value)) {
-                        threeColumnFocusTarget(presentationState.currentTab.value).requestRemoteFocus()
+                if (!restorePendingFocusInBrowser()) {
+                    threeColumnFocusTarget(currentTab).requestFocus()
+                    threeColumnFocusTarget(currentTab).post {
+                        if (focusController.isKioskActive && isThreeColumnTab(presentationState.currentTab.value)) {
+                            if (!restorePendingFocusInBrowser()) {
+                                threeColumnFocusTarget(presentationState.currentTab.value).requestRemoteFocus()
+                            }
+                        }
                     }
                 }
             }
         } else {
-            focusController.hasInnerDetailBack = false
-            presentationState.clearArtistSelection()
-            binding.kioskOverlay.kioskKeyboard.clear()
+            val capturedKey = currentFocusedBrowserItemKey()
+            if (capturedKey != null) {
+                pendingRestoreFocusKey = capturedKey
+            }
+            if (isThreeColumnTab(presentationState.currentTab.value)) {
+                navigationHistory.rememberModule(captureCurrentNavigationEntry(capturedKey))
+            }
             bottomDockController.ensurePlayerInDock()
             binding.kioskOverlay.kioskRootOverlay.visibility = View.GONE
             bottomDockController.focusHome()
@@ -2544,16 +2863,23 @@ class KtvKioskOverlayController(
     }
 
     private fun resetToSingersTab() {
+        val peek = navigationHistory.peek()
+        if (peek != null && peek.tab == KioskTab.SINGERS && peek.selectedArtist == null) {
+            popAndRestoreNavigationEntry()
+            return
+        }
         val wasAlreadyOnSingersTab = presentationState.currentTab.value == KioskTab.SINGERS
         pendingSingerPageTarget = null
         currentSingerPageIndex = 0
         artistsLoaded = false
+        selectedArtistKey = null
         focusController.hasInnerDetailBack = false
         presentationState.clearArtistSelection()
         presentationState.selectTab(KioskTab.SINGERS)
         binding.kioskOverlay.kioskKeyboard.clear()
         loadDefaultSongs()
         if (wasAlreadyOnSingersTab) loadArtists()
+        syncBackState()
         browserBinding.browserNavSingers.post {
             if (presentationState.currentTab.value == KioskTab.SINGERS) {
                 if (browserBinding.browserSingerRecyclerView.isShown) {
@@ -2566,17 +2892,34 @@ class KtvKioskOverlayController(
     }
 
     private fun resetCategoryDetail() {
+        val peek = navigationHistory.peek()
+        if (peek != null && peek.tab == KioskTab.CATEGORIES && !peek.categoryDetail) {
+            popAndRestoreNavigationEntry()
+            return
+        }
         categoryDetail = false
-        focusController.hasInnerDetailBack = false
+        activeVarietyProgram = null
         when (categoryMode) {
             KioskCategoryMode.LANGUAGES -> catalogActionRouter.languages()
             KioskCategoryMode.TAGS -> catalogActionRouter.tags()
             KioskCategoryMode.NEW -> loadCategories()
         }
+        syncBackState()
     }
 
     private fun returnToDashboardFromBrowser() {
+        navigationHistory.clear()
+        lastSingersRootEntry = null
+        pendingRestoreFocusKey = null
+        hasOpenedBrowser = false
+        leaveKioskAllSongs()
         showVarietyPanel(false)
+        activeVarietyProgram = null
+        categoryDetail = false
+        playlistDetail = false
+        selectedArtistKey = null
+        presentationState.clearArtistSelection()
+        binding.kioskOverlay.kioskKeyboard.setKeywordSilently("")
         if (globalSearchReturnFocus != null) {
             val returnFocus = globalSearchReturnFocus
             globalSearchReturnFocus = null
@@ -2592,9 +2935,14 @@ class KtvKioskOverlayController(
         } else {
             presentationState.selectTab(KioskTab.DASHBOARD)
         }
+        syncBackState()
     }
 
     private fun resetInnerDetail() {
+        if (navigationHistory.canPop()) {
+            popAndRestoreNavigationEntry()
+            return
+        }
         if (presentationState.selectedArtist.value != null) {
             resetToSingersTab()
         } else if (categoryDetail) {
@@ -2604,6 +2952,308 @@ class KtvKioskOverlayController(
             focusController.hasInnerDetailBack = false
             personalActionRouter.clearPlaylistDetail()
             personalActionRouter.playlists()
+        }
+    }
+
+    private fun currentFocusedBrowserItemKey(): String? {
+        val focused = activity.currentFocus ?: return null
+        if (focused.isDescendantOf(browserBinding.browserSingerRecyclerView)) {
+            val itemView = browserBinding.browserSingerRecyclerView.findContainingItemView(focused) ?: return null
+            val pos = browserBinding.browserSingerRecyclerView.getChildAdapterPosition(itemView)
+            val artist = singerAdapter.currentList.getOrNull(pos) ?: return null
+            return "artist:${artist.artistKey}"
+        }
+        if (focused.isDescendantOf(browserBinding.browserResultsRecyclerView)) {
+            val itemView = browserBinding.browserResultsRecyclerView.findContainingItemView(focused) ?: return null
+            val pos = browserBinding.browserResultsRecyclerView.getChildAdapterPosition(itemView)
+            val song = browserSongAdapter.currentList.getOrNull(pos) ?: return null
+            return "song:${song.id}"
+        }
+        return null
+    }
+
+    private fun restorePendingFocusInBrowser(): Boolean {
+        val key = pendingRestoreFocusKey ?: return false
+        if (key.startsWith("artist:") && browserBinding.browserSingerRecyclerView.isShown) {
+            val index = singerAdapter.currentList.indexOfFirst { "artist:${it.artistKey}" == key }
+            if (index >= 0) {
+                pendingRestoreFocusKey = null
+                browserBinding.browserSingerRecyclerView.scrollToPosition(index)
+                return browserBinding.browserSingerRecyclerView
+                    .findViewHolderForAdapterPosition(index)
+                    ?.itemView
+                    ?.requestRemoteFocus() == true
+            }
+        } else if (key.startsWith("song:") && browserBinding.browserResultsRecyclerView.isShown) {
+            val index = browserSongAdapter.currentList.indexOfFirst { "song:${it.id}" == key }
+            if (index >= 0) {
+                pendingRestoreFocusKey = null
+                browserBinding.browserResultsRecyclerView.scrollToPosition(index)
+                return browserBinding.browserResultsRecyclerView
+                    .findViewHolderForAdapterPosition(index)
+                    ?.itemView
+                    ?.requestRemoteFocus() == true
+            }
+        }
+        return false
+    }
+
+    private fun captureCurrentNavigationEntry(focusedItemKeyOverride: String? = null): KioskNavigationEntry {
+        val tab = presentationState.currentTab.value
+        val selectedArtist = presentationState.selectedArtist.value
+        val isSingerRoot = tab == KioskTab.SINGERS && selectedArtist == null
+        val currentPage = if (isSingerRoot) currentSingerPageIndex else currentSongPageIndex
+        val currentKeyword = when {
+            isSingerRoot -> binding.kioskOverlay.kioskKeyboard.state.currentKeyword
+            selectedArtist != null -> binding.kioskOverlay.kioskKeyboard.state.currentKeyword
+            tab == KioskTab.PINYIN && !browsingAllSongs ->
+                binding.kioskOverlay.kioskKeyboard.state.currentKeyword.ifBlank { controllerState.query }
+            else -> ""
+        }
+        val categoryVal = if (categoryDetail) controllerState.catalogValue else ""
+        return KioskNavigationEntry(
+            tab = tab,
+            commercialRoute = presentationState.commercialRoute.value,
+            selectedArtist = selectedArtist,
+            selectedArtistKey = selectedArtistKey ?: controllerState.catalogValue.takeIf { selectedArtist != null },
+            keyword = currentKeyword,
+            artistGender = controllerState.artistGender,
+            artistInitial = controllerState.artistInitial,
+            artistRegion = controllerState.artistRegion,
+            categoryMode = categoryMode,
+            categoryDetail = categoryDetail,
+            categoryValue = categoryVal,
+            playlistDetail = playlistDetail,
+            playlistId = controllerState.playlistDetail?.id,
+            varietyPanelVisible = browserBinding.panelVarietyShows.visibility == View.VISIBLE,
+            varietyProgram = activeVarietyProgram,
+            browsingAllSongs = browsingAllSongs,
+            pageIndex = currentPage,
+            focusedItemKey = focusedItemKeyOverride ?: currentFocusedBrowserItemKey(),
+        )
+    }
+
+    private fun pushNavigationSnapshot(focusedItemKeyOverride: String? = null) {
+        if (isRestoringNavigation) return
+        val currentTab = presentationState.currentTab.value
+        if (!isThreeColumnTab(currentTab)) return
+        navigationHistory.push(captureCurrentNavigationEntry(focusedItemKeyOverride))
+        syncBackState()
+    }
+
+    private fun syncBackState() {
+        focusController.hasInnerDetailBack =
+            presentationState.selectedArtist.value != null ||
+                categoryDetail ||
+                navigationHistory.canPop()
+        focusController.hasInputText = binding.kioskOverlay.kioskKeyboard.state.currentKeyword.isNotEmpty()
+    }
+
+    private fun popAndRestoreNavigationEntry(): Boolean {
+        val entry = navigationHistory.pop() ?: return false
+        if (entry.tab == KioskTab.DASHBOARD) {
+            returnToDashboardFromBrowser()
+            return true
+        }
+        restoreNavigationEntry(entry)
+        return true
+    }
+
+    private fun pageForItems(uiPageIndex: Int, uiPageSize: Int): Int {
+        val safePage = uiPageIndex.coerceAtLeast(0)
+        return if (uiPageSize == SINGER_GRID_PAGE_SIZE) {
+            ((safePage + 1) * SINGER_GRID_PAGE_SIZE - 1) / 32
+        } else {
+            safePage
+        }
+    }
+
+    private fun restoreNavigationEntry(entry: KioskNavigationEntry) {
+        isRestoringNavigation = true
+        try {
+            hasOpenedBrowser = entry.tab != KioskTab.DASHBOARD
+            showVarietyPanel(false)
+            leaveKioskAllSongs()
+            activeVarietyProgram = entry.varietyProgram
+            pendingCommercialTagRoute = null
+            pendingCommercialTagRevision = null
+            pendingCommercialRouteFocus = null
+            pendingAutoSelectFirstPlaylist = false
+            commercialRouteNotice = null
+            pendingRestoreFocusKey = entry.focusedItemKey
+            lastAutoPagedSingerCount = -1
+            lastAutoPagedSongCount = -1
+
+            val singerKeyword = if (entry.tab == KioskTab.SINGERS && entry.selectedArtist == null) {
+                entry.keyword
+            } else {
+                ""
+            }
+            lastSingerListResetSignature = buildString {
+                append(entry.artistGender).append('|')
+                append(entry.artistInitial).append('|')
+                append(entry.artistRegion).append('|')
+                append(singerKeyword)
+            }
+            val expectedCatalogValue = when {
+                entry.selectedArtist != null -> entry.selectedArtistKey ?: entry.selectedArtist
+                entry.categoryDetail -> entry.categoryValue
+                else -> ""
+            }
+            val expectedSongKeyword = if (entry.selectedArtist != null ||
+                (entry.tab == KioskTab.PINYIN && !entry.browsingAllSongs)
+            ) {
+                entry.keyword
+            } else {
+                ""
+            }
+            lastSongListResetSignature = buildString {
+                append(entry.tab.name).append('|')
+                append(entry.commercialRoute?.name ?: "").append('|')
+                append(entry.selectedArtist ?: "").append('|')
+                append(entry.categoryMode.name).append('|')
+                append(entry.categoryDetail).append('|')
+                append(entry.browsingAllSongs).append('|')
+                append(entry.playlistDetail).append('|')
+                append(expectedSongKeyword).append('|')
+                append(expectedCatalogValue)
+            }
+
+            if (entry.tab == KioskTab.SINGERS && entry.selectedArtist == null) {
+                currentSingerPageIndex = entry.pageIndex.coerceAtLeast(0)
+                pendingSingerPageTarget = if (currentSingerPageIndex > 0) {
+                    currentSingerPageIndex * SINGER_GRID_PAGE_SIZE
+                } else {
+                    null
+                }
+                currentSongPageIndex = 0
+                pendingBrowserPageTarget = null
+            } else {
+                currentSingerPageIndex = 0
+                pendingSingerPageTarget = null
+                currentSongPageIndex = entry.pageIndex.coerceAtLeast(0)
+                pendingBrowserPageTarget = if (currentSongPageIndex > 0) {
+                    currentSongPageIndex * SONG_GRID_PAGE_SIZE
+                } else {
+                    null
+                }
+            }
+
+            categoryMode = entry.categoryMode
+            categoryDetail = entry.categoryDetail
+            playlistDetail = entry.playlistDetail
+            browsingAllSongs = entry.browsingAllSongs
+
+            if (entry.selectedArtist != null) {
+                selectedArtistKey = entry.selectedArtistKey ?: entry.selectedArtist
+                presentationState.selectArtist(entry.selectedArtist)
+            } else {
+                selectedArtistKey = null
+                presentationState.clearArtistSelection()
+            }
+
+            val keyboardText = if (entry.tab == KioskTab.PINYIN || entry.tab == KioskTab.SINGERS) {
+                entry.keyword
+            } else {
+                ""
+            }
+            binding.kioskOverlay.kioskKeyboard.setKeywordSilently(keyboardText)
+            browserSongAdapter.setSearchKeyword(expectedSongKeyword)
+
+            when {
+                entry.tab == KioskTab.SINGERS && entry.selectedArtist == null -> {
+                    catalogActions.setQuery("")
+                    val artistMatches = controllerState.artists.isNotEmpty() &&
+                        controllerState.catalogValue.isBlank() &&
+                        controllerState.artistGender == entry.artistGender &&
+                        controllerState.artistInitial == entry.artistInitial &&
+                        controllerState.artistRegion == entry.artistRegion &&
+                        !controllerState.catalogLoading
+                    if (entry.keyword.isNotBlank()) {
+                        catalogActions.restoreArtistsSearch(
+                            gender = entry.artistGender,
+                            initial = entry.artistInitial,
+                            region = entry.artistRegion,
+                            keyword = entry.keyword,
+                            restorePage = pageForItems(entry.pageIndex, SINGER_GRID_PAGE_SIZE),
+                        )
+                    } else if (!artistMatches) {
+                        catalogActions.loadArtists(
+                            gender = entry.artistGender,
+                            initial = entry.artistInitial,
+                            restorePage = pageForItems(entry.pageIndex, SINGER_GRID_PAGE_SIZE),
+                            region = entry.artistRegion,
+                        )
+                    }
+                }
+                entry.selectedArtist != null -> {
+                    val artistKey = entry.selectedArtistKey ?: entry.selectedArtist
+                    if (entry.keyword.isNotBlank()) {
+                        catalogActions.restoreArtistSongsSearch(
+                            artistKey = artistKey,
+                            keyword = entry.keyword,
+                            restorePage = pageForItems(entry.pageIndex, SONG_GRID_PAGE_SIZE),
+                        )
+                    } else {
+                        catalogActions.setQuery("")
+                        catalogActions.loadArtistSongs(
+                            artistKey = artistKey,
+                            restorePage = pageForItems(entry.pageIndex, SONG_GRID_PAGE_SIZE),
+                        )
+                    }
+                }
+                entry.tab == KioskTab.PINYIN && entry.browsingAllSongs -> {
+                    catalogActions.setQuery("")
+                    catalogActions.restoreKioskAllSongs(
+                        restorePage = pageForItems(entry.pageIndex, SONG_GRID_PAGE_SIZE),
+                    )
+                }
+                entry.tab == KioskTab.PINYIN -> {
+                    if (entry.keyword.isNotBlank()) {
+                        catalogActions.restoreSearch(
+                            query = entry.keyword,
+                            restorePage = pageForItems(entry.pageIndex, SONG_GRID_PAGE_SIZE),
+                        )
+                    } else {
+                        loadDefaultSongs()
+                    }
+                }
+                entry.tab == KioskTab.CATEGORIES && entry.categoryDetail && entry.categoryValue.isNotBlank() -> {
+                    catalogActions.setQuery("")
+                    val songRestorePage = pageForItems(entry.pageIndex, SONG_GRID_PAGE_SIZE)
+                    when (entry.categoryMode) {
+                        KioskCategoryMode.LANGUAGES -> catalogActions.loadLanguageSongs(entry.categoryValue, songRestorePage)
+                        KioskCategoryMode.TAGS -> catalogActions.loadTagSongs(entry.categoryValue, songRestorePage)
+                        KioskCategoryMode.NEW -> catalogActionRouter.newSongs()
+                    }
+                }
+                entry.tab == KioskTab.CATEGORIES && entry.categoryMode == KioskCategoryMode.NEW -> {
+                    if (controllerState.newSongs.isEmpty()) catalogActionRouter.newSongs()
+                }
+                entry.tab == KioskTab.CATEGORIES -> {
+                    if (shouldLoadCategoryRoot(entry.categoryMode)) loadCategories()
+                }
+                entry.tab == KioskTab.RANKINGS -> {
+                    if (controllerState.ranking.isEmpty()) loadRankings()
+                }
+                entry.tab == KioskTab.PLAYLISTS && entry.playlistDetail && entry.playlistId != null -> {
+                    personalActionRouter.playlists()
+                    personalActionRouter.playlistDetail(entry.playlistId)
+                }
+                entry.tab == KioskTab.PLAYLISTS -> loadPlaylists()
+                entry.tab == KioskTab.FAVORITES -> loadFavorites()
+                entry.tab == KioskTab.HISTORY -> loadHistory()
+            }
+
+            presentationState.selectTab(entry.tab, entry.commercialRoute)
+            if (entry.varietyPanelVisible) {
+                browserBinding.panelVarietyShows.visibility = View.VISIBLE
+                browserBinding.browserCenterColumn.visibility = View.GONE
+            }
+            navigationHistory.rememberModule(entry)
+            syncBackState()
+        } finally {
+            isRestoringNavigation = false
         }
     }
 
@@ -2649,9 +3299,16 @@ class KtvKioskOverlayController(
                 focusController.handleBackPress(
                     onDismissDrawer = { queueDialog?.dismiss() },
                     onClearInputText = {
+                        val prevTab = presentationState.currentTab.value
+                        val prevArtist = presentationState.selectedArtist.value
                         binding.kioskOverlay.kioskKeyboard.clear()
                         focusController.hasInputText = false
-                        loadDefaultSongs()
+                        if (prevTab == KioskTab.PINYIN && prevArtist == null && !browsingAllSongs &&
+                            controllerState.query.isNotEmpty()
+                        ) {
+                            loadDefaultSongs()
+                        }
+                        syncBackState()
                     },
                     onInnerDetailBack = { resetInnerDetail() },
                     onExitKiosk = {

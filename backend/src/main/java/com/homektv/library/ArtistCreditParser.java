@@ -16,40 +16,63 @@ import java.util.regex.Pattern;
  * credits without treating a hyphen inside a name as a field boundary.
  */
 public final class ArtistCreditParser {
-    private static final Pattern COLLABORATOR_SEPARATOR =
-            Pattern.compile("\\s*(?:_|、|&|＆|/|／|,|，|;|；|(?<!\\+)\\+(?!\\+))\\s*");
+    private static final Pattern COLLABORATOR_SEPARATOR = Pattern.compile(
+            "\\s*(?:_|、|&|＆|/|／|,|，|;|；|×|✕|(?<!\\+)\\+(?!\\+)|(?<!\\uFF0B)\\uFF0B(?!\\uFF0B))\\s*"
+                    + "|\\s+(?i:feat\\.?|ft\\.?|featuring|vs\\.?)\\s+");
 
     private ArtistCreditParser() {}
+
+    public static boolean hasExplicitSeparator(String artistCredit) {
+        if (artistCredit == null || artistCredit.isBlank()) return false;
+        return COLLABORATOR_SEPARATOR.matcher(artistCredit.trim()).find();
+    }
 
     public static List<String> parse(String artistCredit) {
         return parse(artistCredit, List.of());
     }
 
     /**
-     * Splits explicit collaboration separators first. Whitespace is treated
-     * as a collaboration separator only when the complete credit can be
-     * covered by known artist names; otherwise the original credit is kept.
+     * Splits explicit collaboration separators first so legacy combined credits
+     * in knownArtists cannot block splitting into individual artists. Whitespace
+     * is treated as a collaboration separator only when the complete credit can
+     * be covered by known artist names; otherwise the original credit is kept.
      */
     public static List<String> parse(String artistCredit, Collection<String> knownArtists) {
         if (artistCredit == null || artistCredit.isBlank()) return List.of();
         String trimmed = artistCredit.trim();
-        String exact = exactKnownArtist(trimmed, knownArtists);
-        if (exact != null) return List.of(exact);
+        Collection<String> safeKnown = atomicKnownArtists(knownArtists);
 
         List<String> explicit = List.of(trimmed.split(COLLABORATOR_SEPARATOR.pattern(), -1));
+        if (explicit.size() <= 1) {
+            String exact = exactKnownArtist(trimmed, safeKnown);
+            if (exact != null) return List.of(exact);
+        }
+
         List<String> result = new ArrayList<>();
         for (String part : explicit) {
-            List<String> split = splitByKnownArtists(part, knownArtists);
+            List<String> split = splitByKnownArtists(part, safeKnown);
             if (split != null) {
                 result.addAll(split);
                 continue;
             }
 
-            List<String> plusSplit = splitByKnownPlus(part, knownArtists);
+            List<String> plusSplit = splitByKnownPlus(part, safeKnown);
             if (plusSplit != null) result.addAll(plusSplit);
             else result.add(part);
         }
         return normalize(result);
+    }
+
+    private static Collection<String> atomicKnownArtists(Collection<String> knownArtists) {
+        if (knownArtists == null || knownArtists.isEmpty()) return List.of();
+        List<String> filtered = new ArrayList<>(knownArtists.size());
+        for (String artist : knownArtists) {
+            if (artist == null || artist.isBlank()) continue;
+            if (!hasExplicitSeparator(artist)) {
+                filtered.add(artist);
+            }
+        }
+        return filtered;
     }
 
     private static String exactKnownArtist(String artistCredit,

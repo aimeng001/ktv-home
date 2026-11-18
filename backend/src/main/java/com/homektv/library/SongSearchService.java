@@ -22,7 +22,7 @@ public class SongSearchService {
     private static final Logger log = LoggerFactory.getLogger(SongSearchService.class);
     private static final int PAGE_SIZE = 50;
     public static final int MAX_KEYWORD_LENGTH = SearchKeyword.DEFAULT_MAX_LENGTH;
-    public static final int MAX_PAGE = 4000;
+    public static final int MAX_PAGE = 20000;
     private static final long SLOW_QUERY_THRESHOLD_MS = 500L;
 
     private final SongSearchRepository searchRepo;

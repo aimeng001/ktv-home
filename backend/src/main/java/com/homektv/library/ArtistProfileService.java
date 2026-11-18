@@ -116,6 +116,57 @@ public class ArtistProfileService {
         }
     }
 
+    /**
+     * Removes orphaned artist_profiles rows whose display name parses into
+     * multiple independent credits and is no longer referenced by any valid song.
+     */
+    public int pruneObsoleteCombinedProfiles() {
+        try {
+            List<ProfileCandidate> orphans = jdbc.query("""
+                    SELECT p.artist_key, p.display_name
+                    FROM artist_profiles p
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM song_artists sa
+                        JOIN songs s ON s.id = sa.song_id
+                        WHERE sa.artist_key = p.artist_key
+                          AND s.status = 'ok'
+                    )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM songs s
+                        WHERE s.status = 'ok'
+                          AND lower(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) = p.artist_key
+                          AND NOT EXISTS (SELECT 1 FROM song_artists sa2 WHERE sa2.song_id = s.id)
+                    )
+                    """, (rs, index) -> new ProfileCandidate(
+                    rs.getString("artist_key"),
+                    rs.getString("display_name")));
+            if (orphans == null || orphans.isEmpty()) return 0;
+
+            List<String> keysToDelete = orphans.stream()
+                    .filter(candidate -> candidate.displayName() != null
+                            && ArtistCreditParser.parse(candidate.displayName()).size() > 1)
+                    .map(ProfileCandidate::artistKey)
+                    .filter(key -> key != null && !key.isBlank())
+                    .toList();
+            if (keysToDelete.isEmpty()) return 0;
+
+            jdbc.batchUpdate(
+                    "DELETE FROM artist_profiles WHERE artist_key = ?",
+                    keysToDelete,
+                    keysToDelete.size(),
+                    (statement, artistKey) -> statement.setString(1, artistKey));
+            log.info("pruned {} obsolete combined artist profile(s)", keysToDelete.size());
+            return keysToDelete.size();
+        } catch (DataAccessException failure) {
+            log.warn("obsolete combined profile cleanup skipped: {}", failure.getMessage());
+            return 0;
+        }
+    }
+
+    private record ProfileCandidate(String artistKey, String displayName) {}
+
     public Optional<Profile> find(String artistKey) {
         if (artistKey == null || artistKey.isBlank()) return Optional.empty();
         List<Profile> rows = jdbc.query("""

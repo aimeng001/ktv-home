@@ -80,13 +80,17 @@ public class SongController {
         String searchTerm = acronym.isBlank() ? keyword : acronym;
         List<Song> songs = searchService.search(searchTerm, type, page);
         if (songs.isEmpty()) return List.of();
-        Map<Long, String> resolutions = storedVideoResolutions(songs);
+        List<SongFile> files = loadValidFiles(songs);
+        Map<Long, String> resolutions = extractVideoResolutions(files);
         if (availabilityPolicy == null) {
             return songs.stream()
                     .map(song -> SongDto.from(song, true, null, resolutions.get(song.getId())))
                     .toList();
         }
-        java.util.Set<Long> playableIds = availabilityPolicy.playableSongIds(songs);
+        // Reuse preloaded valid files for playability so production searches hit song_files once.
+        java.util.Set<Long> playableIds = !files.isEmpty()
+                ? availabilityPolicy.playableSongIdsFromFiles(songs, files)
+                : availabilityPolicy.playableSongIds(songs);
         return songs.stream()
                 .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
                         playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY,
@@ -94,20 +98,23 @@ public class SongController {
                 .toList();
     }
 
-    /** Reads resolution only for the current search page; this never opens media files. */
-    private Map<Long, String> storedVideoResolutions(List<Song> songs) {
-        if (fileRepo == null || songs == null || songs.isEmpty()) return Map.of();
+    /** Loads valid files once for the current search page; never opens media files. */
+    private List<SongFile> loadValidFiles(List<Song> songs) {
+        if (fileRepo == null || songs == null || songs.isEmpty()) return List.of();
         Set<Long> songIds = new LinkedHashSet<>();
         songs.stream()
                 .filter(Objects::nonNull)
                 .map(Song::getId)
                 .filter(Objects::nonNull)
                 .forEach(songIds::add);
-        if (songIds.isEmpty()) return Map.of();
-
+        if (songIds.isEmpty()) return List.of();
         List<SongFile> files = fileRepo.findBySongIdInAndValidTrueOrderByPriorityDesc(songIds);
-        if (files == null || files.isEmpty()) return Map.of();
+        return files == null ? List.of() : files;
+    }
 
+    /** Extracts highest-priority probed video resolutions from preloaded valid files. */
+    private static Map<Long, String> extractVideoResolutions(List<SongFile> files) {
+        if (files == null || files.isEmpty()) return Map.of();
         Map<Long, String> resolutions = new LinkedHashMap<>();
         for (SongFile file : files) {
             if (!SongAvailabilityPolicy.isReadyMediaFile(file)) continue;

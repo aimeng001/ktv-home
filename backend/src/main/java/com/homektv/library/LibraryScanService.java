@@ -1815,8 +1815,12 @@ public class LibraryScanService {
             List<String> storedArtists = songRepo.findDistinctArtistByStatus("ok");
             if (storedArtists == null) return artists;
             for (String artist : storedArtists) {
-                if (artist != null && !artist.isBlank() && !"未知歌手".equals(artist.trim())) {
-                    artists.add(artist.trim());
+                if (artist == null) continue;
+                String cleaned = artist.trim();
+                if (!cleaned.isBlank()
+                        && !"未知歌手".equals(cleaned)
+                        && !ArtistCreditParser.hasExplicitSeparator(cleaned)) {
+                    artists.add(cleaned);
                 }
             }
         } catch (RuntimeException failure) {

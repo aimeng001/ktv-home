@@ -137,9 +137,16 @@ object ControllerStateReducer {
 
     fun withSearchStarted(state: ControllerUiState, query: String): ControllerUiState {
         val nextDomainErrors = state.domainErrors - UiDomain.SEARCH
+        // Keep previous non-empty results visible while typing the next non-blank query
+        // (stale-while-revalidate) so rapid keystrokes never flash empty states.
+        val preservedResults = if (query.isNotBlank() && state.query.isNotBlank() && state.results.isNotEmpty()) {
+            state.results
+        } else {
+            emptyList()
+        }
         return state.copy(
             query = query,
-            results = emptyList(),
+            results = preservedResults,
             searchPage = 0,
             searchHasMore = query.isNotBlank(),
             searchLoadingMore = false,
@@ -159,13 +166,12 @@ object ControllerStateReducer {
     ): ControllerUiState {
         val merged = (if (page <= 0) results else (state.results + results))
             .distinctBy { it.id }
-            .take(MAX_SEARCH_RESULTS)
         val nextDomainErrors = state.domainErrors - UiDomain.SEARCH
         return state.copy(
             query = query,
             results = merged,
             searchPage = page.coerceAtLeast(0),
-            searchHasMore = results.size >= pageSize && merged.size < MAX_SEARCH_RESULTS,
+            searchHasMore = results.size >= pageSize,
             searchLoadingMore = false,
             loading = false,
             error = nextDomainErrors.values.firstOrNull(),
@@ -265,6 +271,7 @@ object ControllerStateReducer {
 
     fun withSearchFailure(state: ControllerUiState, error: KtvApiError): ControllerUiState =
         withDomainFailure(state, UiDomain.SEARCH, error).copy(
+            results = if (state.loading) emptyList() else state.results,
             loading = false,
             searchLoadingMore = false,
         )
@@ -289,5 +296,4 @@ object ControllerStateReducer {
     }
 
     private const val DEFAULT_SEARCH_PAGE_SIZE = 50
-    private const val MAX_SEARCH_RESULTS = 2000
 }

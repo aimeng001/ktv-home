@@ -637,6 +637,16 @@ class KtvKeyboardView @JvmOverloads constructor(
         updateDisplay()
     }
 
+    /** Restores keyboard text without dispatching onKeywordChanged side effects. */
+    fun setKeywordSilently(keyword: String) {
+        session.setKeyword(keyword)
+        handwritingCanvas?.clearInk()
+        session.clearPendingBopomofo()
+        lastDispatchedSearchKeyword = T9PinyinSearchPolicy.normalizeSearchKeyword(session.currentKeyword)
+        binding.txtKeywordDisplay.text = session.currentKeyword
+        renderPendingBopomofo()
+    }
+
     fun onRemoteDigitPressed(digit: Char) {
         if (digit !in '0'..'9') return
         session.onDigitPressed(digit)

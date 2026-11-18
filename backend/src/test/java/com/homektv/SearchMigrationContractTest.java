@@ -56,13 +56,29 @@ class SearchMigrationContractTest {
     }
 
     @Test
-    void shortSearchUsesBoundedTopNAndAvoidsSimilarityForHighHitKeywords() throws Exception {
+    void shortSearchAvoidsArtificialTruncationAndSimilarityAndUsesPartialAndCoveringIndexes() throws Exception {
         assertThat(SongSearchRepository.SHORT_SEARCH_SQL)
-                .contains("LIMIT 2000")
+                .doesNotContain("LIMIT 2000")
                 .doesNotContain("similarity(");
+        assertThat(SongSearchRepository.SINGLE_INITIAL_SEARCH_SQL)
+                .doesNotContain("LIMIT 2000");
         assertThat(Files.readString(migrationPath("V47__short_search_covering_index.sql")))
                 .contains("value_lower, song_id")
                 .contains("INCLUDE (kind)");
+        assertThat(Files.readString(migrationPath("V61__search_unbounded_optimization.sql")))
+                .contains("idx_songs_ok_title_init_lower_prefix")
+                .contains("WHERE status = 'ok'");
+    }
+
+    @Test
+    void v62AddsArtistDirectoryPrefixAndTrigramIndexesAndGeneralSearchSplitsBranches() throws Exception {
+        assertThat(Files.readString(migrationPath("V62__artist_directory_search_indexes.sql")))
+                .contains("idx_artist_directory_init_lower_prefix")
+                .contains("idx_artist_directory_py_lower_prefix")
+                .contains("idx_artist_directory_name_trgm");
+        assertThat(SongSearchRepository.SEARCH_SQL)
+                .contains("UNION ALL")
+                .contains(":kw ~ '^[a-z0-9]+$'");
     }
 
     private Path migrationPath() throws IOException {

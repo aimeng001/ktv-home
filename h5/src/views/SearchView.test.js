@@ -303,6 +303,34 @@ describe('SearchView', () => {
     expect(router.currentRoute.value.fullPath).toBe('/')
   })
 
+  it('preserves query and media filter in route query and restores results when revisited', async () => {
+    apiMock.searchSongs.mockResolvedValue([{ id: 33, title: '知我' }])
+    await typeQuery('ZW')
+    await runSearch()
+    clickText('.filter', 'MV')
+    await vi.advanceTimersByTimeAsync(0)
+    await flushUi()
+    await flushUi()
+
+    expect(router.currentRoute.value.query).toEqual({ q: 'ZW', type: 'MV' })
+
+    const savedPath = router.currentRoute.value.fullPath
+    app.unmount()
+    root.remove()
+    apiMock.searchSongs.mockClear()
+    await router.push(savedPath)
+    root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp({ render: () => h(RouterView) })
+    app.use(pinia)
+    app.use(router)
+    app.mount(root)
+    await flushUi()
+
+    expect(root.querySelector('input').value).toBe('ZW')
+    expect(apiMock.searchSongs).toHaveBeenCalledWith('ZW', 'MV', 0, expect.any(Object))
+  })
+
   async function typeQuery(value) {
     const input = root.querySelector('input')
     input.value = value

@@ -28,7 +28,7 @@
  * by artist, language, tag, vocal form, and other modes.
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api, { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
@@ -39,7 +39,7 @@ import TabBar from '../components/TabBar.vue'
 import SongRow from '../components/SongRow.vue'
 import { useQueuedSongIds } from '../composables/useQueuedSongIds'
 
-const route = useRoute(), user = useUserStore(), { toast } = useToast(), controls = makeControls(user.clientToken)
+const route = useRoute(), router = useRouter(), user = useUserStore(), { toast } = useToast(), controls = makeControls(user.clientToken)
 const { executeOrder, inflightIds } = useOrderLock()
 const { orderedIds, player } = useQueuedSongIds(inflightIds)
 const sort = ref(route.query.sort || 'hot'), artistGender = ref(route.query.artistGender || '')
@@ -109,15 +109,32 @@ async function loadMoreSongs() {
   songPage.value += 1
   await load(false)
 }
-onMounted(() => load(true)); watch(() => route.fullPath, () => load(true))
+function syncArtistRouteQuery() {
+  const nextQuery = { ...route.query }
+  if (sort.value && sort.value !== 'hot') nextQuery.sort = sort.value
+  else delete nextQuery.sort
+  if (artistGender.value) nextQuery.artistGender = artistGender.value
+  else delete nextQuery.artistGender
+  const curSort = typeof route.query.sort === 'string' && route.query.sort !== 'hot' ? route.query.sort : ''
+  const curGender = typeof route.query.artistGender === 'string' ? route.query.artistGender : ''
+  if (curSort === (nextQuery.sort || '') && curGender === (nextQuery.artistGender || '')) return
+  router.replace({ query: nextQuery })
+}
+
+onMounted(() => load(true))
+watch([() => route.params.name, mode, value, artistKey], () => {
+  if (typeof route.query.sort === 'string') sort.value = route.query.sort
+  if (typeof route.query.artistGender === 'string') artistGender.value = route.query.artistGender
+  load(true)
+})
 
 /**
  * 切换排序方式并重新加载。
  *
  * @param {'hot' | 'title' | 'new'} value - 排序方式 / sort method
  */
-function setSort(value) { sort.value = value; load(true) }
-function setGender(value) { artistGender.value = value; load(true) }
+function setSort(value) { sort.value = value; syncArtistRouteQuery(); load(true) }
+function setGender(value) { artistGender.value = value; syncArtistRouteQuery(); load(true) }
 
 /**
  * 将歌曲加入播放队列。失败时弹出错误提示。

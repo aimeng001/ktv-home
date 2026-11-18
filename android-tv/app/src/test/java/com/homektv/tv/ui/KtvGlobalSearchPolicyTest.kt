@@ -1,6 +1,7 @@
 package com.homektv.tv.ui
 
 import com.homektv.tv.ui.kiosk.KtvGlobalSearchPolicy
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -90,5 +91,60 @@ class KtvGlobalSearchPolicyTest {
             KtvGlobalSearchPolicy.KeyboardVisibilityMode.GONE,
             KtvGlobalSearchPolicy.resolveKeyboardVisibility(shouldShowKeyboard = false, isQueueDrawerOpen = false),
         )
+    }
+
+    @Test
+    fun resolveSearchScopePrioritizesSelectedArtistEvenUnderPinyinTab() {
+        assertEquals(
+            KtvGlobalSearchPolicy.KeyboardSearchScope.ARTIST_SONGS,
+            KtvGlobalSearchPolicy.resolveSearchScope(KioskTab.PINYIN, "国风堂"),
+        )
+        assertEquals(
+            KtvGlobalSearchPolicy.KeyboardSearchScope.ARTIST_SONGS,
+            KtvGlobalSearchPolicy.resolveSearchScope(KioskTab.SINGERS, "国风堂"),
+        )
+        assertEquals(
+            KtvGlobalSearchPolicy.KeyboardSearchScope.SINGER_DIRECTORY,
+            KtvGlobalSearchPolicy.resolveSearchScope(KioskTab.SINGERS, null),
+        )
+        assertEquals(
+            KtvGlobalSearchPolicy.KeyboardSearchScope.GLOBAL_SONGS,
+            KtvGlobalSearchPolicy.resolveSearchScope(KioskTab.PINYIN, null),
+        )
+        assertEquals(
+            KtvGlobalSearchPolicy.KeyboardSearchScope.GLOBAL_SONGS,
+            KtvGlobalSearchPolicy.resolveSearchScope(KioskTab.CATEGORIES, ""),
+        )
+    }
+
+    @Test
+    fun controllerRoutesArtistSongSearchBeforeGlobalSearchAndProtectsRankingReload() {
+        val controller = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+        val onKeywordInput = controller
+            .substringAfter("private fun onKeywordInput(keyword: String)")
+            .substringBefore("fun refreshGlobalSearchPreference()")
+        assertTrue(onKeywordInput.contains("KtvGlobalSearchPolicy.resolveSearchScope(currentTab, selectedArtist)"))
+        assertTrue(onKeywordInput.contains("KeyboardSearchScope.ARTIST_SONGS ->"))
+        assertTrue(onKeywordInput.contains("catalogActionRouter.searchArtistSongs(artistKey, normalizedKeyword)"))
+
+        val applyTab = controller
+            .substringAfter("private fun applyTabSelection(tab: KioskTab)")
+            .substringBefore("private fun onKeywordInput(keyword: String)")
+        val pinyinBranch = applyTab
+            .substringAfter("KioskTab.PINYIN -> {")
+            .substringBefore("KioskTab.SINGERS ->")
+        assertTrue(pinyinBranch.contains("if (presentationState.selectedArtist.value == null)"))
+    }
+
+    private fun locate(relativePath: String): File {
+        var current = File(System.getProperty("user.dir").orEmpty())
+        repeat(6) {
+            val candidate = File(current, "android-tv/app/$relativePath")
+            if (candidate.isFile) return candidate
+            val localCandidate = File(current, relativePath)
+            if (localCandidate.isFile) return localCandidate
+            current = current.parentFile ?: return@repeat
+        }
+        error("Could not locate $relativePath from ${System.getProperty("user.dir")}")
     }
 }
