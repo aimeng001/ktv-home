@@ -25,6 +25,7 @@ public record WsEvent(String type, Object payload) {
     public static final String PLAYBACK_REPORT_ACK = "playback_report_ack";
     public static final String HISTORY_UPDATED = "history_updated";
     public static final String ROOM_HOST_CHANGED = "room_host_changed";
+    public static final String WEB_PLAYER_STATE = "web_player_state";
     public static final String SNAPSHOT_CHUNK = "snapshot_chunk";
 
     /**

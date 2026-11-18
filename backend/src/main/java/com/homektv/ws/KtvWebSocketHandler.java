@@ -39,17 +39,29 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
     private final PlaybackService playbackService;
     private final TvOfflineWatcher tvOfflineWatcher;
     private final ActivePlayerRegistry playerRegistry;
+    private final WebPlayerCoordinator webPlayerCoordinator;
     private final ObjectMapper mapper;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public KtvWebSocketHandler(WsBroadcaster broadcaster, SnapshotService snapshotService,
                                PlaybackService playbackService, TvOfflineWatcher tvOfflineWatcher,
-                               ActivePlayerRegistry playerRegistry, ObjectMapper mapper) {
+                               ActivePlayerRegistry playerRegistry,
+                               WebPlayerCoordinator webPlayerCoordinator,
+                               ObjectMapper mapper) {
         this.broadcaster = broadcaster;
         this.snapshotService = snapshotService;
         this.playbackService = playbackService;
         this.tvOfflineWatcher = tvOfflineWatcher;
         this.playerRegistry = playerRegistry;
+        this.webPlayerCoordinator = webPlayerCoordinator != null ? webPlayerCoordinator : new WebPlayerCoordinator();
         this.mapper = mapper;
+    }
+
+    public KtvWebSocketHandler(WsBroadcaster broadcaster, SnapshotService snapshotService,
+                               PlaybackService playbackService, TvOfflineWatcher tvOfflineWatcher,
+                               ActivePlayerRegistry playerRegistry, ObjectMapper mapper) {
+        this(broadcaster, snapshotService, playbackService, tvOfflineWatcher, playerRegistry,
+                new WebPlayerCoordinator(), mapper);
     }
 
     /**
@@ -72,6 +84,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         }
         broadcaster.register(session);
         if (tvClient) {
+            preemptActiveWebPlayer();
             ActivePlayerRegistry.Assignment assignment = playerRegistry.register(
                     session.getId(), playerHello(session));
             sendRole(session, assignment);
@@ -117,6 +130,9 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
 
         switch (type) {
             case "ping" -> handlePing(session, node);
+            case "web_player_claim" -> handleWebPlayerClaim(session, node);
+            case "web_player_release" -> handleWebPlayerRelease(session);
+            case "web_player_status" -> handleWebPlayerStatus(session);
             case "progress" -> {
                 // TV 上行播放进度 → 转发给所有端（详设§4.2 progress）
                 long positionMs = node.path("payload").path("position_ms").asLong(0);
@@ -218,6 +234,10 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
     private void handlePlayerUnregistration(String sessionId, String clientType,
                                             ActivePlayerRegistry.Unregistration removal) {
         if (!"tv".equals(clientType)) {
+            WebPlayerCoordinator.ReleaseOutcome outcome = webPlayerCoordinator.release(sessionId);
+            if (outcome.released()) {
+                broadcaster.broadcastObservers(WsEvent.of(WsEvent.WEB_PLAYER_STATE, outcome.status()));
+            }
             return;
         }
         if (!removal.removed()) {
@@ -252,12 +272,17 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
     }
 
     private boolean authorizesPlaybackReport(WebSocketSession session, JsonNode node) {
-        if (!isTv(session)) return false;
         JsonNode generation = node.path("payload").path("generation");
         Long value = generation.isIntegralNumber() ? generation.asLong() : null;
-        if (!playerRegistry.authorizesUpstream(session.getId(), value)) return false;
         JsonNode queueId = node.path("payload").path("queue_id");
-        return queueId.isIntegralNumber() && queueId.asLong() > 0;
+        if (!queueId.isIntegralNumber() || queueId.asLong() <= 0) {
+            return false;
+        }
+        if (isTv(session)) {
+            return playerRegistry.authorizesUpstream(session.getId(), value);
+        }
+        return !broadcaster.isTvOnline()
+                && webPlayerCoordinator.authorizesUpstream(session.getId(), value);
     }
 
     private void sendRole(WebSocketSession session, ActivePlayerRegistry.Assignment assignment) {
@@ -270,8 +295,74 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 assignmentPayload(assignment)));
     }
 
+    private void preemptActiveWebPlayer() {
+        webPlayerCoordinator.clearForTvPreemption().ifPresent(webSessionId -> {
+            sendRole(webSessionId, new ActivePlayerRegistry.Assignment(
+                    ActivePlayerRegistry.Role.STANDBY, 0, 45_000L));
+            broadcaster.broadcastObservers(WsEvent.of(
+                    WsEvent.WEB_PLAYER_STATE, new WebPlayerCoordinator.WebPlayerStatus(false, null)));
+        });
+    }
+
+    private void handleWebPlayerClaim(WebSocketSession session, JsonNode node) {
+        if (isTv(session)) {
+            return;
+        }
+        boolean force = node.path("payload").path("force").asBoolean(false);
+        String clientToken = attribute(session, "client_token", session.getId());
+        WebPlayerCoordinator.ClaimOutcome outcome = webPlayerCoordinator.claim(
+                session.getId(), clientToken, force, broadcaster.isTvOnline());
+        outcome.replacedSessionId().ifPresent(oldId -> sendRole(
+                oldId, new ActivePlayerRegistry.Assignment(ActivePlayerRegistry.Role.STANDBY, 0, 45_000L)));
+        sendRole(session, outcome.assignment());
+        broadcaster.sendTo(session, WsEvent.of(WsEvent.WEB_PLAYER_STATE, outcome.status()));
+        if (outcome.stateChanged()) {
+            broadcaster.broadcastObservers(WsEvent.of(WsEvent.WEB_PLAYER_STATE, outcome.status()));
+        }
+    }
+
+    private void handleWebPlayerRelease(WebSocketSession session) {
+        if (isTv(session)) {
+            return;
+        }
+        WebPlayerCoordinator.ReleaseOutcome outcome = webPlayerCoordinator.release(session.getId());
+        sendRole(session, new ActivePlayerRegistry.Assignment(
+                ActivePlayerRegistry.Role.STANDBY, 0, 45_000L));
+        broadcaster.sendTo(session, WsEvent.of(WsEvent.WEB_PLAYER_STATE, outcome.status()));
+        if (outcome.released()) {
+            broadcaster.broadcastObservers(WsEvent.of(WsEvent.WEB_PLAYER_STATE, outcome.status()));
+        }
+    }
+
+    private void handleWebPlayerStatus(WebSocketSession session) {
+        if (isTv(session)) {
+            return;
+        }
+        broadcaster.sendTo(session, WsEvent.of(
+                WsEvent.WEB_PLAYER_STATE, webPlayerCoordinator.status(broadcaster.isTvOnline())));
+    }
+
     private void handlePing(WebSocketSession session, JsonNode node) {
         if (!isTv(session)) {
+            JsonNode generation = node.path("payload").path("generation");
+            Long value = generation.isIntegralNumber() ? generation.asLong() : null;
+            boolean tvOnline = broadcaster.isTvOnline();
+            if (value != null) {
+                WebPlayerCoordinator.HeartbeatOutcome outcome =
+                        webPlayerCoordinator.heartbeatOutcome(session.getId(), value, tvOnline);
+                if (outcome.assignment().isPresent()) {
+                    broadcaster.sendTo(session, WsEvent.of("pong", assignmentPayload(outcome.assignment().get())));
+                    return;
+                }
+                if (value > 0) {
+                    sendRole(session, new ActivePlayerRegistry.Assignment(
+                            ActivePlayerRegistry.Role.STANDBY, 0, 45_000L));
+                    broadcaster.sendTo(session, WsEvent.of(WsEvent.WEB_PLAYER_STATE, outcome.status()));
+                }
+                if (outcome.expiredCleared()) {
+                    broadcaster.broadcastObservers(WsEvent.of(WsEvent.WEB_PLAYER_STATE, outcome.status()));
+                }
+            }
             broadcaster.sendTo(session, WsEvent.of("pong", null));
             return;
         }

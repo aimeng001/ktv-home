@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -300,14 +301,18 @@ public class MusicMetadataScrapeService {
         if (songIds.isEmpty()) return Set.of();
         String placeholders = String.join(",", java.util.Collections.nCopies(songIds.size(), "?"));
         String sql = """
-                SELECT DISTINCT song_id FROM (
-                    SELECT song_id FROM music_metadata_scrape_items
-                    WHERE status IN ('AUTO_APPLIED','REVIEW','MANUAL_APPLIED','FAILED')
-                    UNION ALL
-                    SELECT song_id FROM song_external_matches WHERE status='APPLIED'
-                ) scraped WHERE song_id IN (%s)
-                """.formatted(placeholders);
-        return new LinkedHashSet<>(jdbc.query(sql, (rs, index) -> rs.getLong(1), songIds.toArray()));
+                SELECT song_id FROM music_metadata_scrape_items
+                WHERE status IN ('AUTO_APPLIED','REVIEW','MANUAL_APPLIED','FAILED')
+                  AND song_id IN (%s)
+                UNION
+                SELECT song_id FROM song_external_matches
+                WHERE status='APPLIED'
+                  AND song_id IN (%s)
+                """.formatted(placeholders, placeholders);
+        List<Object> params = new ArrayList<>(songIds.size() * 2);
+        params.addAll(songIds);
+        params.addAll(songIds);
+        return new LinkedHashSet<>(jdbc.query(sql, (rs, index) -> rs.getLong(1), params.toArray()));
     }
 
     @Scheduled(fixedDelayString = "${home-ktv.metadata-scrape.recovery-delay-ms:30000}")

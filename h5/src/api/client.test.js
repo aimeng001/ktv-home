@@ -375,4 +375,33 @@ describe('api client admin authentication', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/diagnostics/memory')
     expect(fetchMock.mock.calls[1][1].headers['X-Admin-Token']).toBe('diag-token')
   })
+
+  it('forwards abort signals on browse/ranking endpoints and serializes mute control commands', async () => {
+    const signal = new AbortController().signal
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([]))
+    const controls = makeControls('client-999')
+
+    await api.browseArtistPage({ gender: '女歌手', region: '港台', page: 0, size: 18 }, { signal })
+    await api.browseArtistInitials('女歌手', '港台', { signal })
+    await api.browseSongPage({ tag: '高清HD歌曲', mediaType: 'KTV_VIDEO', page: 0, size: 18 }, { signal })
+    await api.ranking(30, { signal })
+    await api.newSongs({ signal })
+    await controls.setMuted(true)
+
+    expect(fetchMock.mock.calls[0][0]).toContain('region=%E6%B8%AF%E5%8F%B0')
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ signal }))
+    expect(fetchMock.mock.calls[1][0]).toContain('region=%E6%B8%AF%E5%8F%B0')
+    expect(fetchMock.mock.calls[1][1]).toEqual(expect.objectContaining({ signal }))
+    expect(fetchMock.mock.calls[2][0]).toContain('mediaType=KTV_VIDEO')
+    expect(fetchMock.mock.calls[2][1]).toEqual(expect.objectContaining({ signal }))
+    expect(fetchMock.mock.calls[3][0]).toBe('/api/ranking?days=30')
+    expect(fetchMock.mock.calls[3][1]).toEqual(expect.objectContaining({ signal }))
+    expect(fetchMock.mock.calls[4][0]).toBe('/api/songs/new')
+    expect(fetchMock.mock.calls[4][1]).toEqual(expect.objectContaining({ signal }))
+    expect(JSON.parse(fetchMock.mock.calls[5][1].body)).toEqual({
+      action: 'mute',
+      params: { muted: true },
+      client_token: 'client-999'
+    })
+  })
 })

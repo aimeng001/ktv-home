@@ -172,6 +172,38 @@ public class AiLibraryService {
         return result;
     }
 
+    public Map<String, Object> createTasksBatch(List<Long> songIds) {
+        List<Long> cleanIds = songIds == null ? List.of() : songIds.stream()
+                .filter(Objects::nonNull)
+                .filter(id -> id > 0)
+                .distinct()
+                .limit(SONG_PAGE_SIZE)
+                .toList();
+        if (cleanIds.isEmpty()) {
+            return Map.of("created", 0, "skipped", 0, "dispatchRejected", 0);
+        }
+        List<Song> songs = songRepository.findAllById(cleanIds);
+        int skipped = cleanIds.size() - songs.size();
+        if (songs.isEmpty()) {
+            return Map.of("created", 0, "skipped", skipped, "dispatchRejected", 0);
+        }
+        AiConfigService.ResolvedConfig config = configService.resolve();
+        List<Long> foundIds = songs.stream().map(Song::getId).toList();
+        Set<Long> activeSongIds = new HashSet<>(taskRepository.findSongIdsBySongIdInAndStatusIn(foundIds, ACTIVE_STATUSES));
+        List<AiAnalysisTask> newTasks = new ArrayList<>();
+        for (Song song : songs) {
+            if (activeSongIds.contains(song.getId())) {
+                skipped++;
+                continue;
+            }
+            newTasks.add(buildSongTask(song.getId(), null, config));
+        }
+        BatchWriteResult writeResult = persistAndDispatchBatch(newTasks);
+        return Map.of("created", writeResult.created(),
+                "skipped", skipped + writeResult.skippedExisting(),
+                "dispatchRejected", writeResult.dispatchRejected());
+    }
+
     /** Create a repair batch for every existing song, including already analyzed songs. */
     public Map<String, Object> createRepairBatch() {
         String batchId = UUID.randomUUID().toString();
@@ -182,37 +214,73 @@ public class AiLibraryService {
         for (int pageNumber = 0; ; pageNumber++) {
             Page<Song> page = songPage(pageNumber);
             if (page == null || page.isEmpty()) break;
-            for (Song song : page.getContent()) {
-                if (taskRepository.existsBySongIdAndStatusIn(song.getId(), ACTIVE_STATUSES)) {
+            List<Song> pageSongs = page.getContent();
+            List<Long> pageIds = pageSongs.stream().map(Song::getId).toList();
+            Set<Long> activeSongIds = new HashSet<>(taskRepository.findSongIdsBySongIdInAndStatusIn(pageIds, ACTIVE_STATUSES));
+            List<AiAnalysisTask> newTasks = new ArrayList<>();
+            for (Song song : pageSongs) {
+                if (activeSongIds.contains(song.getId())) {
                     skippedExisting++;
                     continue;
                 }
-                AiAnalysisTask task = new AiAnalysisTask();
-                task.setSongId(song.getId());
-                task.setTargetId(song.getId());
-                task.setTargetType("SONG");
-                task.setBatchId(batchId);
-                task.setModel(configService.isConfigured() ? config.bulkModel() : "LOCAL");
-                task.setModelRole(configService.isConfigured() ? "BULK" : "LOCAL");
-                try {
-                    taskRepository.saveAndFlush(task);
-                } catch (DataIntegrityViolationException conflict) {
-                    // The pre-check closes the common case. The partial unique index
-                    // remains the concurrency authority when two batches race.
-                    if (taskRepository.existsBySongIdAndStatusIn(song.getId(), ACTIVE_STATUSES)) {
-                        skippedExisting++;
-                        continue;
-                    }
-                    throw conflict;
-                }
-                if (!dispatchAfterCommit(task.getId())) dispatchRejected++;
-                created++;
+                newTasks.add(buildSongTask(song.getId(), batchId, config));
             }
+            BatchWriteResult pageResult = persistAndDispatchBatch(newTasks);
+            created += pageResult.created();
+            skippedExisting += pageResult.skippedExisting();
+            dispatchRejected += pageResult.dispatchRejected();
             if (!page.hasNext()) break;
         }
         return Map.of("batchId", batchId, "created", created, "skippedExisting", skippedExisting,
                 "dispatchRejected", dispatchRejected);
     }
+
+    private AiAnalysisTask buildSongTask(Long songId, String batchId, AiConfigService.ResolvedConfig config) {
+        AiAnalysisTask task = new AiAnalysisTask();
+        task.setSongId(songId);
+        task.setTargetId(songId);
+        task.setTargetType("SONG");
+        task.setBatchId(batchId);
+        task.setModel(configService.isConfigured() ? config.bulkModel() : "LOCAL");
+        task.setModelRole(configService.isConfigured() ? "BULK" : "LOCAL");
+        return task;
+    }
+
+    private BatchWriteResult persistAndDispatchBatch(List<AiAnalysisTask> newTasks) {
+        if (newTasks.isEmpty()) {
+            return new BatchWriteResult(0, 0, 0);
+        }
+        int created = 0;
+        int skippedExisting = 0;
+        int dispatchRejected = 0;
+        try {
+            List<AiAnalysisTask> persisted = taskRepository.saveAllAndFlush(newTasks);
+            for (AiAnalysisTask task : persisted) {
+                if (!dispatchAfterCommit(task.getId())) dispatchRejected++;
+                created++;
+            }
+            return new BatchWriteResult(created, 0, dispatchRejected);
+        } catch (DataIntegrityViolationException batchConflict) {
+            for (AiAnalysisTask task : newTasks) {
+                try {
+                    AiAnalysisTask saved = taskRepository.saveAndFlush(task);
+                    if (!dispatchAfterCommit(saved.getId())) dispatchRejected++;
+                    created++;
+                } catch (DataIntegrityViolationException conflict) {
+                    // The pre-check closes the common case. The partial unique index
+                    // remains the concurrency authority when two batches race.
+                    if (taskRepository.existsBySongIdAndStatusIn(task.getSongId(), ACTIVE_STATUSES)) {
+                        skippedExisting++;
+                    } else {
+                        throw conflict;
+                    }
+                }
+            }
+            return new BatchWriteResult(created, skippedExisting, dispatchRejected);
+        }
+    }
+
+    private record BatchWriteResult(int created, int skippedExisting, int dispatchRejected) {}
 
     /**
      * Async workers must not observe a status change that is only flushed but
@@ -244,53 +312,63 @@ public class AiLibraryService {
     }
     @Transactional
     public Map<String, Object> pauseRepairBatch(String batchId) {
-        List<AiAnalysisTask> tasks = taskRepository.findByBatchIdOrderByCreatedAtAsc(batchId);
-        if (tasks.isEmpty()) throw new ApiException("AI_BATCH_NOT_FOUND", "修复批次不存在");
+        if (!taskRepository.existsByBatchId(batchId)) throw new ApiException("AI_BATCH_NOT_FOUND", "修复批次不存在");
         taskRepository.pauseBatch(batchId);
         return repairProgress(batchId);
     }
 
     @Transactional
     public Map<String, Object> resumeRepairBatch(String batchId) {
-        List<AiAnalysisTask> tasks = taskRepository.findByBatchIdOrderByCreatedAtAsc(batchId);
-        if (tasks.isEmpty()) throw new ApiException("AI_BATCH_NOT_FOUND", "修复批次不存在");
-        int resumed = 0;
-        for (AiAnalysisTask task : tasks) {
-            if ("paused".equals(task.getStatus())) {
-                task.setStatus("pending");
-                taskRepository.saveAndFlush(task);
-                dispatchAfterCommit(task.getId());
-                resumed++;
-            }
+        if (!taskRepository.existsByBatchId(batchId)) throw new ApiException("AI_BATCH_NOT_FOUND", "修复批次不存在");
+        List<Long> targetIds = taskRepository.findIdsByBatchIdAndStatus(batchId, "paused");
+        if (!targetIds.isEmpty()) {
+            taskRepository.resetBatchStatusToPending(batchId, "paused");
+            for (Long id : targetIds) dispatchAfterCommit(id);
         }
-        return Map.of("batchId", batchId, "resumed", resumed);
+        return Map.of("batchId", batchId, "resumed", targetIds.size());
     }
 
     @Transactional
     public Map<String, Object> retryFailedRepairBatch(String batchId) {
-        List<AiAnalysisTask> tasks = taskRepository.findByBatchIdOrderByCreatedAtAsc(batchId);
-        if (tasks.isEmpty()) throw new ApiException("AI_BATCH_NOT_FOUND", "修复批次不存在");
-        int retried = 0;
-        for (AiAnalysisTask task : tasks) {
-            if ("failed".equals(task.getStatus())) {
-                task.setStatus("pending");
-                taskRepository.saveAndFlush(task);
-                dispatchAfterCommit(task.getId());
-                retried++;
-            }
+        if (!taskRepository.existsByBatchId(batchId)) throw new ApiException("AI_BATCH_NOT_FOUND", "修复批次不存在");
+        List<Long> targetIds = taskRepository.findIdsByBatchIdAndStatus(batchId, "failed");
+        if (!targetIds.isEmpty()) {
+            taskRepository.resetBatchStatusToPending(batchId, "failed");
+            for (Long id : targetIds) dispatchAfterCommit(id);
         }
-        return Map.of("batchId", batchId, "retried", retried);
+        return Map.of("batchId", batchId, "retried", targetIds.size());
     }
 
     @Transactional(readOnly = true)
     public Map<String, Object> repairProgress(String batchId) {
-        List<AiAnalysisTask> tasks = taskRepository.findByBatchIdOrderByCreatedAtAsc(batchId);
-        long completed = tasks.stream().filter(t -> Set.of("auto_applied", "review", "failed", "applied").contains(t.getStatus())).count();
-        return Map.of("batchId", batchId, "total", tasks.size(), "completed", completed,
-                "failed", tasks.stream().filter(t -> "failed".equals(t.getStatus())).count(),
-                "review", tasks.stream().filter(t -> "review".equals(t.getStatus())).count(),
-                "paused", tasks.stream().filter(t -> "paused".equals(t.getStatus())).count(),
-                "running", tasks.stream().anyMatch(t -> Set.of("pending", "processing").contains(t.getStatus())));
+        List<AiAnalysisTaskRepository.BatchStatusCountProjection> counts = taskRepository.countStatusesByBatchId(batchId);
+        long total = 0;
+        long completed = 0;
+        long failed = 0;
+        long review = 0;
+        long paused = 0;
+        boolean running = false;
+        for (AiAnalysisTaskRepository.BatchStatusCountProjection row : counts) {
+            if (row == null || row.getStatus() == null || row.getTaskCount() == null) continue;
+            long count = row.getTaskCount();
+            total += count;
+            switch (row.getStatus()) {
+                case "auto_applied", "applied" -> completed += count;
+                case "review" -> {
+                    completed += count;
+                    review += count;
+                }
+                case "failed" -> {
+                    completed += count;
+                    failed += count;
+                }
+                case "paused" -> paused += count;
+                case "pending", "processing" -> running = true;
+                default -> {}
+            }
+        }
+        return Map.of("batchId", batchId, "total", Math.toIntExact(total), "completed", completed,
+                "failed", failed, "review", review, "paused", paused, "running", running);
     }
 
     /** Preview an AI-curated playlist. No playlist or playlist-song rows are written here. */

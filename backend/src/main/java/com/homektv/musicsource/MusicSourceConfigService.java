@@ -23,22 +23,41 @@ public class MusicSourceConfigService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
     private final int dailyLimit;
+    private final boolean defaultEnabled;
+    private final Set<MusicProvider> defaultProviders;
+    private final int defaultRequestIntervalMs;
+    private final boolean avatarFallbackEnabled;
 
     public MusicSourceConfigService(JdbcTemplate jdbc, ObjectMapper mapper) {
         this(jdbc, mapper, 300);
     }
 
+    public MusicSourceConfigService(JdbcTemplate jdbc, ObjectMapper mapper, int dailyLimit) {
+        this(jdbc, mapper, dailyLimit, false, "", false);
+    }
+
     @org.springframework.beans.factory.annotation.Autowired
     public MusicSourceConfigService(JdbcTemplate jdbc, ObjectMapper mapper,
-                                    @Value("${app.music-provider-rate-limit.daily-limit:300}") int dailyLimit) {
+                                    @Value("${app.music-provider-rate-limit.daily-limit:300}") int dailyLimit,
+                                    @Value("${app.music-sources.default-enabled:true}") boolean defaultEnabled,
+                                    @Value("${app.music-sources.default-providers:QQ,NETEASE,KUGOU}") String defaultProvidersCsv,
+                                    @Value("${app.artist-avatar.fallback-enabled:true}") boolean avatarFallbackEnabled) {
         this.jdbc = jdbc;
         this.mapper = mapper;
         this.dailyLimit = Math.max(1, dailyLimit);
+        this.defaultEnabled = defaultEnabled;
+        this.defaultProviders = parseDefaultProviders(defaultProvidersCsv);
+        this.defaultRequestIntervalMs = defaultEnabled ? 5000 : 1500;
+        this.avatarFallbackEnabled = avatarFallbackEnabled;
+    }
+
+    public boolean isAvatarFallbackEnabled() {
+        return avatarFallbackEnabled;
     }
 
     public MusicSourceConfig getConfig() {
         List<String> values = jdbc.query("SELECT value::text FROM settings WHERE key = ?", (rs, i) -> rs.getString(1), KEY);
-        if (values.isEmpty()) return MusicSourceConfig.defaults(this.dailyLimit);
+        if (values.isEmpty()) return effectiveDefaults();
         try {
             Map<String, Object> raw = mapper.readValue(values.getFirst(), new TypeReference<>() {});
             boolean enabled = Boolean.TRUE.equals(raw.get("enabled"));
@@ -52,8 +71,29 @@ public class MusicSourceConfigService {
                     number(raw.get("requestIntervalMs"), 1500), decimal(raw.get("autoApplyThreshold"), 0.95),
                     number(raw.get("dailyLimit"), this.dailyLimit)));
         } catch (Exception ex) {
+            return effectiveDefaults();
+        }
+    }
+
+    private MusicSourceConfig effectiveDefaults() {
+        if (!defaultEnabled) {
             return MusicSourceConfig.defaults(this.dailyLimit);
         }
+        Set<MusicProvider> initialProviders = defaultProviders.isEmpty()
+                ? Set.of(MusicProvider.QQ, MusicProvider.NETEASE, MusicProvider.KUGOU)
+                : defaultProviders;
+        return new MusicSourceConfig(true, initialProviders, 20, 8, 6, 1,
+                defaultRequestIntervalMs, 0.95, this.dailyLimit);
+    }
+
+    private static Set<MusicProvider> parseDefaultProviders(String csv) {
+        if (csv == null || csv.isBlank()) return Set.of();
+        EnumSet<MusicProvider> parsed = EnumSet.noneOf(MusicProvider.class);
+        for (String token : csv.split(",")) {
+            if (token == null || token.isBlank()) continue;
+            try { parsed.add(MusicProvider.parse(token)); } catch (ApiException ignored) {}
+        }
+        return Set.copyOf(parsed);
     }
 
     @Transactional
@@ -85,6 +125,7 @@ public class MusicSourceConfigService {
         out.put("requestIntervalMs", config.requestIntervalMs());
         out.put("autoApplyThreshold", config.autoApplyThreshold());
         out.put("dailyLimit", config.dailyLimit());
+        out.put("avatarFallbackEnabled", avatarFallbackEnabled);
         out.put("providerStatus", states(config.dailyLimit()));
         return out;
     }

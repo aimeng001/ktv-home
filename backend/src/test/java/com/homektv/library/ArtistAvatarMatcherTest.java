@@ -32,4 +32,24 @@ class ArtistAvatarMatcherTest {
 
         assertThat(match.confidence()).isGreaterThanOrEqualTo(0.90d);
     }
+
+    @Test
+    void matchesTraditionalSimplifiedAndBracketedStageNames() {
+        ExternalArtist simplified = new ExternalArtist(
+                MusicProvider.QQ, "gem", "G.E.M.邓紫棋", List.of(), "https://y.gtimg.cn/gem.jpg");
+        ExternalArtist bracketed = new ExternalArtist(
+                MusicProvider.NETEASE, "jay", "周杰伦", List.of(), "https://music.126.net/jay.jpg");
+
+        assertThat(ArtistAvatarMatcher.bestMatch("G.E.M. 鄧紫棋", List.of(simplified)))
+                .isPresent()
+                .get()
+                .satisfies(match -> assertThat(match.artist().externalId()).isEqualTo("gem"));
+
+        assertThat(ArtistAvatarMatcher.bestMatch("周杰倫 (Jay Chou)", List.of(bracketed)))
+                .isPresent()
+                .get()
+                .satisfies(match -> assertThat(match.artist().externalId()).isEqualTo("jay"));
+
+        assertThat(ArtistAvatarMatcher.cleanLookupName("周杰伦 (Jay Chou)")).isEqualTo("周杰伦");
+    }
 }

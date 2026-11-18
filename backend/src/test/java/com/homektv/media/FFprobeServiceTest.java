@@ -466,4 +466,55 @@ class FFprobeServiceTest {
             return count;
         }
     }
+
+    @Test
+    void fastProbeUsesBoundedLimitsAndSkipsFallbackWhenAudioAndDurationPresent() {
+        List<List<String>> invocations = new java.util.ArrayList<>();
+        AppProperties props = new AppProperties();
+        props.getScan().getFastProbe().setEnabled(true);
+        props.getScan().getFastProbe().setProbeSize(524_288L);
+        props.getScan().getFastProbe().setAnalyzeDuration(750_000L);
+        FFprobeService fastService = new FFprobeService(props, args -> {
+            invocations.add(args);
+            return new CompletedProcess(
+                    "{\"streams\":[{\"codec_type\":\"video\",\"codec_name\":\"h264\",\"width\":1920,\"height\":1080},"
+                            + "{\"codec_type\":\"audio\",\"codec_name\":\"aac\",\"channels\":2}],"
+                            + "\"format\":{\"duration\":\"215.4\"}}",
+                    "");
+        }, Duration.ofSeconds(1), true);
+
+        MediaProbe result = fastService.probe(Path.of("fast.mkv"));
+
+        assertThat(result.durationMs()).isEqualTo(215_400L);
+        assertThat(result.audioTracks()).isEqualTo(1);
+        assertThat(invocations).hasSize(1);
+        assertThat(invocations.getFirst()).containsSequence("-probesize", "524288", "-analyzeduration", "750000");
+    }
+
+    @Test
+    void fastProbeAutomaticallyFallsBackToUnlimitedProbeWhenAudioOrDurationMissing() {
+        List<List<String>> invocations = new java.util.ArrayList<>();
+        AppProperties props = new AppProperties();
+        props.getScan().getFastProbe().setEnabled(true);
+        FFprobeService fastService = new FFprobeService(props, args -> {
+            invocations.add(args);
+            if (invocations.size() == 1) {
+                return new CompletedProcess(
+                        "{\"streams\":[{\"codec_type\":\"video\",\"codec_name\":\"mpeg2video\"}],\"format\":{\"duration\":\"120.0\"}}",
+                        "");
+            }
+            return new CompletedProcess(
+                    "{\"streams\":[{\"codec_type\":\"video\",\"codec_name\":\"mpeg2video\"},"
+                            + "{\"codec_type\":\"audio\",\"codec_name\":\"mp2\",\"channels\":2}],"
+                            + "\"format\":{\"duration\":\"120.0\"}}",
+                    "");
+        }, Duration.ofSeconds(1), true);
+
+        MediaProbe result = fastService.probe(Path.of("delayed.ts"));
+
+        assertThat(result.audioTracks()).isEqualTo(1);
+        assertThat(invocations).hasSize(2);
+        assertThat(invocations.get(0)).contains("-probesize", "-analyzeduration");
+        assertThat(invocations.get(1)).doesNotContain("-probesize", "-analyzeduration");
+    }
 }

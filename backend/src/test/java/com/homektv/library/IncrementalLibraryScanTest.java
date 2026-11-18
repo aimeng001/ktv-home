@@ -130,6 +130,12 @@ class IncrementalLibraryScanTest {
                         .map(Song::getArtist)
                         .filter(java.util.Objects::nonNull)
                         .toList());
+        lenient().when(songRepository.findIdsByStatus(anyString()))
+                .thenAnswer(invocation -> songsById.values().stream()
+                        .filter(song -> invocation.getArgument(0).equals(song.getStatus()))
+                        .map(Song::getId)
+                        .filter(java.util.Objects::nonNull)
+                        .toList());
         lenient().when(songRepository.findByFingerprint(anyString())).thenAnswer(invocation ->
                 Optional.ofNullable(songsByFingerprint.get(invocation.getArgument(0))));
         lenient().when(songRepository.findById(anyLong())).thenAnswer(invocation ->
@@ -2265,6 +2271,52 @@ class IncrementalLibraryScanTest {
         assertThat(song.getArtist()).isEqualTo("旧待审核歌手");
         assertThat(song.getStatus()).isEqualTo("unrecognized");
         verify(ffprobe, never()).probe(any(Path.class));
+    }
+
+    @Test
+    void unchangedOkSongsSkipFilenameRepairQueriesWhileStillRepairingUnrecognizedOnes() throws Exception {
+        Path okFile = Files.write(sourceDir.resolve("周杰伦-晴天-国语-流行.mkv"), new byte[]{1, 2, 3});
+        Song okSong = new Song();
+        okSong.setId(711L);
+        okSong.setTitle("晴天");
+        okSong.setArtist("周杰伦");
+        okSong.setLanguage("国语");
+        okSong.setMediaType(MediaClassifier.KTV_VIDEO);
+        okSong.setDurationMs(180_000);
+        okSong.setFingerprint("ok-song-711");
+        okSong.setStatus("ok");
+        songsById.put(okSong.getId(), okSong);
+        songsByFingerprint.put(okSong.getFingerprint(), okSong);
+        registerUnchangedFile(okFile, okSong);
+
+        org.mockito.Mockito.clearInvocations(songRepository);
+        LibraryScanService.ScanResult onlyOkResult = scanService.scanAll();
+        assertThat(onlyOkResult.skipped()).isEqualTo(1);
+        verify(songRepository).findIdsByStatus("unrecognized");
+        verify(songRepository, never()).findAllById(any());
+
+        Path unrecognizedFile = Files.write(sourceDir.resolve("林俊杰-江南-国语-流行.mkv"), new byte[]{4, 5, 6});
+        Song unrecognizedSong = new Song();
+        unrecognizedSong.setId(712L);
+        unrecognizedSong.setTitle("旧待审核歌名");
+        unrecognizedSong.setArtist("旧待审核歌手");
+        unrecognizedSong.setLanguage("未知");
+        unrecognizedSong.setMediaType(MediaClassifier.KTV_VIDEO);
+        unrecognizedSong.setDurationMs(180_000);
+        unrecognizedSong.setFingerprint("legacy-unrecognized-712");
+        unrecognizedSong.setStatus("unrecognized");
+        unrecognizedSong.setNeedsAiOptimization(true);
+        songsById.put(unrecognizedSong.getId(), unrecognizedSong);
+        songsByFingerprint.put(unrecognizedSong.getFingerprint(), unrecognizedSong);
+        registerUnchangedFile(unrecognizedFile, unrecognizedSong);
+
+        org.mockito.Mockito.clearInvocations(songRepository);
+        LibraryScanService.ScanResult mixedResult = scanService.scanAll();
+        assertThat(mixedResult.updated()).isEqualTo(1);
+        assertThat(mixedResult.skipped()).isEqualTo(1);
+        assertThat(unrecognizedSong.getStatus()).isEqualTo("ok");
+        assertThat(unrecognizedSong.getTitle()).isEqualTo("江南");
+        verify(songRepository).findAllById(eq(java.util.Set.of(712L)));
     }
 
     @Test

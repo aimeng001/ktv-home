@@ -36,7 +36,7 @@ class ActivePlayerRegistryTest {
                     return registry.register(
                             "session-" + index,
                             new ActivePlayerRegistry.PlayerHello(
-                                    "player-" + index, "WINDOWS", 2));
+                                    "player-" + index, "ANDROID_TV", 2));
                 }));
             }
 
@@ -65,7 +65,7 @@ class ActivePlayerRegistryTest {
                 new ActivePlayerRegistry.PlayerHello("active-player", "ANDROID_TV", 2));
         ActivePlayerRegistry.Assignment standby = registry.register(
                 "standby-session",
-                new ActivePlayerRegistry.PlayerHello("standby-player", "WINDOWS", 2));
+                new ActivePlayerRegistry.PlayerHello("standby-player", "ANDROID_TV", 2));
 
         assertThat(registry.authorizesUpstream("active-session", active.generation())).isTrue();
         assertThat(registry.authorizesUpstream("active-session", active.generation() + 1)).isFalse();
@@ -79,8 +79,8 @@ class ActivePlayerRegistryTest {
         ActivePlayerRegistry registry = registry();
         ActivePlayerRegistry.Assignment first = registry.register(
                 "first", new ActivePlayerRegistry.PlayerHello("one", "ANDROID_TV", 2));
-        registry.register("second", new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
-        registry.register("third", new ActivePlayerRegistry.PlayerHello("three", "WINDOWS", 2));
+        registry.register("second", new ActivePlayerRegistry.PlayerHello("two", "ANDROID_TV", 2));
+        registry.register("third", new ActivePlayerRegistry.PlayerHello("three", "ANDROID_TV", 2));
 
         ActivePlayerRegistry.Promotion promotion = registry.unregister("first").orElseThrow();
 
@@ -98,7 +98,7 @@ class ActivePlayerRegistryTest {
         ActivePlayerRegistry registry = new ActivePlayerRegistry(clock, Duration.ofSeconds(45));
         ActivePlayerRegistry.Assignment first = registry.register(
                 "first", new ActivePlayerRegistry.PlayerHello("one", "ANDROID_TV", 2));
-        registry.register("second", new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
+        registry.register("second", new ActivePlayerRegistry.PlayerHello("two", "ANDROID_TV", 2));
 
         clock.advance(Duration.ofSeconds(46));
         assertThat(registry.authorizesUpstream("first", first.generation())).isFalse();
@@ -118,7 +118,7 @@ class ActivePlayerRegistryTest {
         ActivePlayerRegistry registry = new ActivePlayerRegistry(clock, Duration.ofSeconds(45));
         ActivePlayerRegistry.Assignment active = registry.register(
                 "first", new ActivePlayerRegistry.PlayerHello("one", "ANDROID_TV", 2));
-        registry.register("second", new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
+        registry.register("second", new ActivePlayerRegistry.PlayerHello("two", "ANDROID_TV", 2));
 
         clock.advance(Duration.ofSeconds(30));
         assertThat(registry.renew("second", 0)).isEmpty();
@@ -134,10 +134,10 @@ class ActivePlayerRegistryTest {
     void sameDeviceReconnectReplacesItsStaleSessionAndFencesOldGeneration() {
         ActivePlayerRegistry registry = registry();
         ActivePlayerRegistry.Assignment first = registry.register("old-session",
-                new ActivePlayerRegistry.PlayerHello("stable-device", "WINDOWS", 2));
+                new ActivePlayerRegistry.PlayerHello("stable-device", "ANDROID_TV", 2));
 
         ActivePlayerRegistry.Assignment replacement = registry.register("new-session",
-                new ActivePlayerRegistry.PlayerHello("stable-device", "WINDOWS", 2));
+                new ActivePlayerRegistry.PlayerHello("stable-device", "ANDROID_TV", 2));
 
         assertThat(replacement.role()).isEqualTo(ActivePlayerRegistry.Role.ACTIVE);
         assertThat(replacement.generation()).isGreaterThan(first.generation());
@@ -150,11 +150,11 @@ class ActivePlayerRegistryTest {
     void reconnectingAStandbyKeepsItsPlaceAheadOfLaterRegisteredPlayers() {
         ActivePlayerRegistry registry = registry();
         registry.register("active", new ActivePlayerRegistry.PlayerHello("one", "ANDROID_TV", 2));
-        registry.register("old-standby", new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
-        registry.register("later-standby", new ActivePlayerRegistry.PlayerHello("three", "WINDOWS", 2));
+        registry.register("old-standby", new ActivePlayerRegistry.PlayerHello("two", "ANDROID_TV", 2));
+        registry.register("later-standby", new ActivePlayerRegistry.PlayerHello("three", "ANDROID_TV", 2));
 
         ActivePlayerRegistry.Assignment replacement = registry.register(
-                "replacement-standby", new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
+                "replacement-standby", new ActivePlayerRegistry.PlayerHello("two", "ANDROID_TV", 2));
 
         assertThat(replacement.role()).isEqualTo(ActivePlayerRegistry.Role.STANDBY);
         assertThat(registry.connectedPlayerCount()).isEqualTo(3);
@@ -168,7 +168,7 @@ class ActivePlayerRegistryTest {
         MutableClock clock = new MutableClock(Instant.parse("2026-08-27T00:00:00Z"));
         ActivePlayerRegistry registry = new ActivePlayerRegistry(clock, Duration.ofSeconds(45));
         ActivePlayerRegistry.Assignment active = registry.register("legacy",
-                new ActivePlayerRegistry.PlayerHello("legacy-device", "WINDOWS", 1));
+                new ActivePlayerRegistry.PlayerHello("legacy-device", "ANDROID_TV", 1));
         clock.advance(Duration.ofHours(1));
 
         assertThat(registry.activeSessionId()).contains("legacy");
@@ -183,7 +183,7 @@ class ActivePlayerRegistryTest {
         ActivePlayerRegistry.Assignment active = registry.register("active",
                 new ActivePlayerRegistry.PlayerHello("one", "ANDROID_TV", 2));
         ActivePlayerRegistry.Assignment standby = registry.register("standby",
-                new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
+                new ActivePlayerRegistry.PlayerHello("two", "ANDROID_TV", 2));
 
         assertThat(registry.heartbeat("missing", null)).isEmpty();
         assertThat(registry.heartbeat("standby", active.generation())).contains(standby);
@@ -200,7 +200,7 @@ class ActivePlayerRegistryTest {
         ActivePlayerRegistry registry = new ActivePlayerRegistry(clock, Duration.ofSeconds(45));
         ActivePlayerRegistry.Assignment active = registry.register("active",
                 new ActivePlayerRegistry.PlayerHello("one", "ANDROID_TV", 2));
-        registry.register("standby", new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
+        registry.register("standby", new ActivePlayerRegistry.PlayerHello("two", "ANDROID_TV", 2));
 
         clock.advance(Duration.ofSeconds(45));
         assertThat(registry.expireAndPromote()).isEmpty();
@@ -215,7 +215,7 @@ class ActivePlayerRegistryTest {
 
         ActivePlayerRegistry empty = registry();
         ActivePlayerRegistry.Assignment only = empty.register("only",
-                new ActivePlayerRegistry.PlayerHello("only-device", "WINDOWS", 2));
+                new ActivePlayerRegistry.PlayerHello("only-device", "ANDROID_TV", 2));
         ActivePlayerRegistry.Unregistration removed = empty.unregisterPlayer("only");
         assertThat(removed.removed()).isTrue();
         assertThat(removed.promotion()).isEmpty();
@@ -235,7 +235,7 @@ class ActivePlayerRegistryTest {
         assertThat(registry.authorizesUpstream("missing", 0L)).isFalse();
         assertThat(registry.heartbeat("missing", null)).isEmpty();
 
-        registry.register("legacy", new ActivePlayerRegistry.PlayerHello("legacy", "WINDOWS", 1));
+        registry.register("legacy", new ActivePlayerRegistry.PlayerHello("legacy", "ANDROID_TV", 1));
         assertThat(registry.renew("legacy", 1)).isEmpty();
     }
 
@@ -244,7 +244,7 @@ class ActivePlayerRegistryTest {
         ActivePlayerRegistry registry = registry();
         ActivePlayerRegistry.Assignment active = registry.register("active",
                 new ActivePlayerRegistry.PlayerHello("one", "ANDROID_TV", 2));
-        registry.register("standby", new ActivePlayerRegistry.PlayerHello("two", "WINDOWS", 2));
+        registry.register("standby", new ActivePlayerRegistry.PlayerHello("two", "ANDROID_TV", 2));
 
         ActivePlayerRegistry.Unregistration removed = registry.unregisterPlayer("standby");
 

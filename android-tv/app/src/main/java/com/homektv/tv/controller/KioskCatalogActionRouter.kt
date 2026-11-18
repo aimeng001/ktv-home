@@ -37,5 +37,7 @@ class KioskCatalogActionRouter(
 
     fun tags() = actions.loadTags()
 
+    fun prefetchTags() = actions.prefetchTags()
+
     fun tagSongs(tag: String) = actions.loadTagSongs(tag, restorePage = 0)
 }

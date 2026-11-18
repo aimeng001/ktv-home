@@ -2,14 +2,13 @@
 
 [中文](README.md) | **English**
 
-Home KTV is a local-network karaoke system for a NAS or Linux host. The server owns the song catalog, playback queue, favorites, history, lyrics, and settings. Android TV or Windows Player handles playback; phones can browse and order songs through the H5 client.
+Home KTV is a local-network karaoke system for a NAS or Linux host. The server owns the song catalog, playback queue, favorites, history, lyrics, and settings. Android TV handles big-screen playback, while the H5 web client provides both a TV remote console when a TV is connected and a standalone web KTV player when no TV is online.
 
 ## Components
 
 - **Server:** Spring Boot, PostgreSQL, FFmpeg/FFprobe, HTTP APIs, and WebSocket.
-- **Phone and administration:** Vue 3 H5 songbook and admin console.
+- **Web KTV and administration:** Vue 3 H5 kiosk player, remote console, and admin dashboard.
 - **Android TV:** Media3/ExoPlayer playback and kiosk client replicating IKTV commercial TV interfaces.
-- **Windows Player:** Windows 11 WPF client using mpv and the shared server protocol.
 
 The system is intended for a trusted home network. Do not expose the ordinary song-ordering and remote-control endpoints directly to the public internet.
 
@@ -64,7 +63,6 @@ Release APKs must keep the same signing certificate across upgrades. A debug APK
 - Backend: Java 21 and PostgreSQL.
 - Android TV: JDK 17 and Android SDK.
 - H5: Node.js and npm.
-- Windows Player: .NET 10 SDK; a compatible `mpv.exe` is required at runtime.
 
 Useful local validation commands and the current architecture are documented in [REQUIREMENTS.md](REQUIREMENTS.md), [ARCHITECTURE.md](ARCHITECTURE.md), and the Chinese [README](README.md). The local project instructions are not a substitute for deployment-specific database backups or NAS permissions.
 

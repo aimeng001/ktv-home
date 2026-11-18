@@ -155,6 +155,18 @@ describe('usePlayerStore', () => {
     expect(p.historyRevision).toBe(1)
   })
 
+  it('toast updates lastToast for non-blank text and increments sequence', () => {
+    const p = usePlayerStore()
+    p.handleEvent('toast', { text: '当前歌曲播放失败，已自动切换下一首' })
+    const first = p.lastToast
+    expect(first.text).toBe('当前歌曲播放失败，已自动切换下一首')
+
+    p.handleEvent('toast', { text: '当前歌曲播放失败，已自动切换下一首' })
+    expect(p.lastToast.id).toBeGreaterThan(first.id)
+    p.handleEvent('toast', { text: '   ' })
+    expect(p.lastToast.id).toBe(first.id + 1)
+  })
+
   it('connects once and safely disconnects an absent or active socket', () => {
     vi.stubGlobal('WebSocket', SocketStub)
     const p = usePlayerStore()
@@ -361,5 +373,182 @@ describe('usePlayerStore', () => {
     u.serverUserId = 7
     p.handleEvent('room_host_changed', { claimed: true, hostUserId: 7, isHost: false, revision: 5 })
     expect(p.roomHost.isHost).toBe(true)
+  })
+
+  it('switches cleanly between TV_CONSOLE, WEB_HOST, and WEB_REMOTE modes', () => {
+    const p = usePlayerStore()
+    p.socket = { send: vi.fn(), close: vi.fn() }
+    p.connected = true
+
+    p.handleEvent('sync_full', { ...snapshot, tvOnline: false, stateRevision: 10 })
+    expect(p.effectiveMode).toBe('WEB_REMOTE')
+    expect(p.socket.send).toHaveBeenCalledWith({
+      type: 'web_player_claim',
+      payload: { force: false }
+    })
+
+    p.handleEvent('player_role', { role: 'ACTIVE', generation: 4, lease_ms: 45000 })
+    expect(p.isWebHost).toBe(true)
+    expect(p.effectiveMode).toBe('WEB_HOST')
+
+    p.reportProgress(1, 25000)
+    expect(p.socket.send).toHaveBeenLastCalledWith({
+      type: 'progress',
+      payload: { queue_id: 1, position_ms: 25000, generation: 4 }
+    })
+
+    p.handleEvent('player_state', { ...snapshot, tvOnline: true, stateRevision: 11 })
+    expect(p.isTvConsole).toBe(true)
+    expect(p.effectiveMode).toBe('TV_CONSOLE')
+    expect(p.webPlayerRole).toBe('STANDBY')
+    expect(p.webPlayerGeneration).toBe(0)
+
+    p.socket.send.mockClear()
+    p.reportFinished(1)
+    expect(p.socket.send).not.toHaveBeenCalled()
+  })
+
+  it('resets manual host modeOverride when server demotes web host to STANDBY', () => {
+    const p = usePlayerStore()
+    p.socket = { send: vi.fn(), close: vi.fn() }
+    p.connected = true
+    p.handleEvent('sync_full', { ...snapshot, tvOnline: false, stateRevision: 10 })
+
+    p.setModeOverride('host')
+    expect(p.modeOverride).toBe('host')
+
+    p.handleEvent('player_role', { role: 'STANDBY', generation: 0, lease_ms: 45000 })
+    expect(p.webPlayerRole).toBe('STANDBY')
+    expect(p.modeOverride).toBe('auto')
+
+    p.setModeOverride('host')
+    expect(p.modeOverride).toBe('host')
+    p.handleEvent('player_state', { ...snapshot, tvOnline: true, stateRevision: 11 })
+    expect(p.modeOverride).toBe('auto')
+  })
+
+  it('clamps pitch adjustment within -6 to +6 semitones', () => {
+    const p = usePlayerStore()
+    expect(p.adjustPitch(1)).toBe(1)
+    expect(p.adjustPitch(10)).toBe(6)
+    expect(p.adjustPitch(-20)).toBe(-6)
+    expect(p.setPitch(3.2)).toBe(3)
+    expect(p.setPitch(-99)).toBe(-6)
+    expect(p.setPitch('bad')).toBe(0)
+    expect(p.adjustPitch('bad')).toBe(0)
+    p.resetPitch()
+    expect(p.pitchSemitones).toBe(0)
+  })
+
+  it('wires socket connect callbacks, host registration lifecycle, and error/status edge branches', () => {
+    vi.stubGlobal('WebSocket', SocketStub)
+    const p = usePlayerStore()
+    const { useUserStore } = require('./user')
+    const u = useUserStore()
+    u.clientToken = 'tok-1'
+
+    p.connect()
+    const socket = p.socket
+    expect(socket.getClientToken()).toBe('tok-1')
+    u.clientToken = ''
+    expect(socket.getClientToken()).toBe('')
+    expect(socket.getPingPayload()).toBeNull()
+
+    socket.send = vi.fn()
+    socket.onStatus(true)
+    expect(p.connected).toBe(true)
+
+    p.tvOnline = false
+    p.modeOverride = 'console'
+    p.syncWebPlayerRegistration()
+    expect(socket.send).toHaveBeenCalledWith({ type: 'web_player_release' })
+
+    socket.send.mockClear()
+    p.modeOverride = 'auto'
+    p.webPlayerRole = 'ACTIVE'
+    p.webPlayerGeneration = 5
+    expect(socket.getPingPayload()).toEqual({ generation: 5 })
+    p.syncWebPlayerRegistration()
+    expect(socket.send).not.toHaveBeenCalled()
+
+    p.tvOnline = true
+    p.syncWebPlayerRegistration()
+    expect(socket.send).toHaveBeenCalledWith({ type: 'web_player_release' })
+    socket.send.mockClear()
+    p.syncWebPlayerRegistration()
+    expect(socket.send).not.toHaveBeenCalled()
+
+    p.setModeOverride('invalid-mode')
+    p.setModeOverride('host')
+    expect(p.modeOverride).toBe('auto')
+    p.claimWebPlayer(false)
+    expect(socket.send).not.toHaveBeenCalled()
+    p.claimWebPlayer(true)
+    expect(socket.send).toHaveBeenCalledWith({ type: 'web_player_claim', payload: { force: true } })
+
+    p.handleEvent('player_role', null)
+    p.handleEvent('player_role', { role: 'ACTIVE', generation: 'bad' })
+    expect(p.webPlayerRole).toBe('STANDBY')
+    expect(p.webPlayerGeneration).toBe(0)
+    p.tvOnline = false
+    p.handleEvent('player_role', { role: 'ACTIVE', generation: 'bad' })
+    expect(p.webPlayerRole).toBe('ACTIVE')
+    expect(p.webPlayerGeneration).toBe(0)
+
+    p.handleEvent('web_player_state', null)
+    p.handleEvent('web_player_state', { active: true, holderToken: 'tok-holder' })
+    expect(p.webPlayerActive).toBe(true)
+    expect(p.webPlayerHolderToken).toBe('tok-holder')
+    p.handleEvent('web_player_state', { active: false })
+    expect(p.webPlayerHolderToken).toBeNull()
+
+    socket.send.mockClear()
+    p.reportProgress(1, 5000)
+    p.reportPlayError(9, 1, 'bad')
+    expect(socket.send).not.toHaveBeenCalled()
+
+    p.webPlayerGeneration = 7
+    p.reportProgress(0, 5000)
+    p.reportFinished(0)
+    p.reportPlayError(9, 0, 'bad')
+    expect(socket.send).not.toHaveBeenCalled()
+
+    p.reportProgress(2, 'bad')
+    expect(socket.send).toHaveBeenLastCalledWith({
+      type: 'progress',
+      payload: { queue_id: 2, position_ms: 0, generation: 7 }
+    })
+    p.reportFinished(2)
+    expect(socket.send).toHaveBeenLastCalledWith({
+      type: 'finished',
+      payload: { queue_id: 2, generation: 7 }
+    })
+    p.reportPlayError(9, 2, '解码失败')
+    expect(socket.send).toHaveBeenLastCalledWith({
+      type: 'play_error',
+      payload: { file_id: 9, queue_id: 2, message: '解码失败', generation: 7 }
+    })
+    p.reportPlayError(null, 2, '')
+    expect(socket.send).toHaveBeenLastCalledWith({
+      type: 'play_error',
+      payload: { queue_id: 2, message: '媒体播放失败', generation: 7 }
+    })
+
+    socket.onEvent('history_updated', {})
+    expect(p.historyRevision).toBe(1)
+
+    socket.onStatus(false)
+    expect(p.connected).toBe(false)
+    expect(p.webPlayerRole).toBe('STANDBY')
+    expect(p.webPlayerGeneration).toBe(0)
+    p.syncWebPlayerRegistration()
+  })
+
+  it('covers socket connect clientToken catch fallback when Pinia is deactivated', () => {
+    vi.stubGlobal('WebSocket', SocketStub)
+    const p = usePlayerStore()
+    p.connect()
+    setActivePinia(undefined)
+    expect(p.socket.getClientToken()).toBe('')
   })
 })

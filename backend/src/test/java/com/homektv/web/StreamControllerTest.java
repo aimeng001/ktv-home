@@ -1568,6 +1568,51 @@ class StreamControllerTest {
         assertThat(budget.activeMediaStreamCount()).isZero();
     }
 
+    @Test
+    void browserAudioTrackSelectionValidatesBoundsAndCopiesMp4VideoWithoutTranscoding() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("web-track"));
+        Path media = Files.write(library.resolve("dual.mp4"), new byte[]{0x01, 0x02});
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("mp4");
+        songFile.setMediaType("KTV_VIDEO");
+        songFile.setAudioTracks(2);
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(302L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+
+        AtomicReference<List<String>> capturedCommand = new AtomicReference<>();
+        ResourceBudget budget = new ResourceBudget(1, 1, 2, 1, 2, () -> false);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), "ffmpeg-test",
+                builder -> {
+                    capturedCommand.set(List.copyOf(builder.command()));
+                    Process process = mock(Process.class);
+                    when(process.getInputStream()).thenReturn(new ByteArrayInputStream(new byte[]{0x00, 0x01}));
+                    try {
+                        when(process.waitFor(5, TimeUnit.SECONDS)).thenReturn(true);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                    when(process.exitValue()).thenReturn(0);
+                    when(process.isAlive()).thenReturn(false);
+                    return process;
+                }, budget);
+
+        ResponseEntity<StreamingResponseBody> outOfRange =
+                controller.streamInternal(302L, null, null, false, 2, null);
+        assertThat(outOfRange.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        ResponseEntity<StreamingResponseBody> valid =
+                controller.streamInternal(302L, null, 25.0, false, 1, null);
+        assertThat(valid.getStatusCode()).isEqualTo(HttpStatus.OK);
+        valid.getBody().writeTo(new ByteArrayOutputStream());
+        assertThat(capturedCommand.get()).containsSubsequence("-map", "0:v:0", "-map", "0:a:1");
+        assertThat(capturedCommand.get()).containsSubsequence("-c:v", "copy");
+        assertThat(capturedCommand.get()).containsSubsequence("-ss", "25.000");
+    }
+
     private static void diesWhenDestroyed(Process process) {
         AtomicBoolean alive = new AtomicBoolean(true);
         when(process.isAlive()).thenAnswer(invocation -> alive.get());

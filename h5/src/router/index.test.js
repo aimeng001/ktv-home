@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import router from './index'
 import { useAdminAuthStore } from '../stores/adminAuth'
-import { useUserStore } from '../stores/user'
 
 describe('application navigation guards', () => {
   beforeEach(async () => {
@@ -12,10 +11,12 @@ describe('application navigation guards', () => {
     await router.push('/')
   })
 
-  it('redirects an unregistered user to the entry page', async () => {
-    await router.push('/search')
+  it('allows immediate access to kiosk routes without a blocking entry form', async () => {
+    await router.push('/search?q=晴天')
+    expect(router.currentRoute.value.name).toBe('search')
 
-    expect(router.currentRoute.value.name).toBe('entry')
+    await router.push('/queue')
+    expect(router.currentRoute.value.name).toBe('queue')
   })
 
   it('redirects an unauthenticated admin route to login with the original path', async () => {
@@ -30,17 +31,5 @@ describe('application navigation guards', () => {
     await router.push('/admin/login')
 
     expect(router.currentRoute.value.name).toBe('admin-dashboard')
-  })
-
-  it('allows public pages and registered users through the guard', async () => {
-    await router.push('/admin/login')
-    expect(router.currentRoute.value.name).toBe('admin-login')
-
-    const user = useUserStore()
-    user.register('测试用户')
-    expect(user.markRegistrationSuccess({ id: 7, nickname: '测试用户' })).toBe(true)
-    await router.push('/search')
-
-    expect(router.currentRoute.value.name).toBe('search')
   })
 })

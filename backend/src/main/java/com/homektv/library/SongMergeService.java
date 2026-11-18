@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.web.ApiException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,9 +13,22 @@ import java.util.Map;
 @Service
 public class SongMergeService {
     private final JdbcTemplate jdbc;
+    private ArtistDirectoryProjectionService artistDirectoryProjectionService;
+    private CatalogRevisionService catalogRevisionService;
 
+    @Autowired
     public SongMergeService(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+    }
+
+    @Autowired(required = false)
+    void setArtistDirectoryProjectionService(ArtistDirectoryProjectionService artistDirectoryProjectionService) {
+        this.artistDirectoryProjectionService = artistDirectoryProjectionService;
+    }
+
+    @Autowired(required = false)
+    void setCatalogRevisionService(CatalogRevisionService catalogRevisionService) {
+        this.catalogRevisionService = catalogRevisionService;
     }
 
     @Transactional
@@ -66,6 +80,12 @@ public class SongMergeService {
                 WHERE song_id = ? AND valid = true
                 ORDER BY priority DESC, file_size DESC, id ASC LIMIT 1
                 """, result -> result.next() ? result.getLong(1) : null, keepSongId);
+        if (artistDirectoryProjectionService != null) {
+            artistDirectoryProjectionService.requestRefreshAfterCommit();
+        }
+        if (catalogRevisionService != null) {
+            catalogRevisionService.bumpIfChanged(true);
+        }
         return Map.of("status", "merged", "keepSongId", keepSongId, "sourceSongId", sourceSongId,
                 "primaryFileId", primaryFileId == null ? 0L : primaryFileId, "migrated", counts);
     }

@@ -27,7 +27,7 @@ public class ClientTypeInterceptor implements HandshakeInterceptor {
 
     private static final Set<String> CLIENT_TYPES = Set.of("tv", "h5", "controller");
     private static final Set<String> PLATFORMS = Set.of(
-            "WINDOWS", "ANDROID", "ANDROID_PHONE", "ANDROID_TABLET", "ANDROID_TV", "H5", "LEGACY");
+            "ANDROID", "ANDROID_PHONE", "ANDROID_TABLET", "ANDROID_TV", "H5", "LEGACY");
     private static final Set<String> DEVICE_MODES = Set.of("PLAYER", "CONTROLLER", "COMBINED");
     private static final int MAX_QUERY_LENGTH = 4096;
     private static final int MAX_VALUE_LENGTH = 256;

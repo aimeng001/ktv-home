@@ -539,6 +539,8 @@ class KtvQueueDrawerDialog(
         }
     }
 
+    fun isHistorySelected(): Boolean = selectedTab == KtvQueueDrawerTab.HISTORY
+
     fun renderHistoryState(
         history: List<RecentHistoryItem>,
         loading: Boolean,

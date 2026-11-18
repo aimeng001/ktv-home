@@ -22,6 +22,7 @@ class KioskCatalogActionRouterTest {
         router.languages()
         router.languageSongs("粤语")
         router.tags()
+        router.prefetchTags()
         router.tagSongs("经典")
 
         assertEquals(
@@ -39,6 +40,7 @@ class KioskCatalogActionRouterTest {
                 "languages",
                 "language-songs:粤语",
                 "tags",
+                "prefetch-tags",
                 "tag-songs:经典",
             ),
             fake.calls,
@@ -80,6 +82,9 @@ class KioskCatalogActionRouterTest {
         }
         override fun loadTags() {
             calls += "tags"
+        }
+        override fun prefetchTags() {
+            calls += "prefetch-tags"
         }
         override fun loadMoreCatalog() = Unit
         override fun loadKioskAllSongs() {

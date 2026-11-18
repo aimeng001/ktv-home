@@ -33,6 +33,7 @@ interface ControllerCatalogActions {
     fun loadTagSongs(tag: String, restorePage: Int)
     fun loadLanguages()
     fun loadTags()
+    fun prefetchTags() {}
     fun loadMoreCatalog()
     fun loadKioskAllSongs()
     fun restoreKioskAllSongs(restorePage: Int = 0) {

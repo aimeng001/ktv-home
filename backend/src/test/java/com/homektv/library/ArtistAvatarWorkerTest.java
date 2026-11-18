@@ -408,4 +408,39 @@ class ArtistAvatarWorkerTest {
         assertThat(sql.getValue()).contains("status=CASE");
         return (OffsetDateTime) arguments.getValue()[2];
     }
+
+    @Test
+    void executesFallbackJobAndSkipsRemainingPendingJobsWhenResolved() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        ExternalCoverService covers = mock(ExternalCoverService.class);
+        AssetWriter assets = mock(AssetWriter.class);
+        com.homektv.musicsource.ArtistAvatarFallbackChain chain = mock(com.homektv.musicsource.ArtistAvatarFallbackChain.class);
+        ResultSet row = claimRow("zhoujielun", "FALLBACK", "lease-token");
+        when(profiles.find("zhoujielun")).thenReturn(Optional.of(new ArtistProfileService.Profile(
+                "zhoujielun", "周杰伦", "PERSON", null, null, null, "PENDING")));
+        when(config.getConfig()).thenReturn(new MusicSourceConfig(
+                true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 5000, 0.95));
+        when(chain.isEnabled()).thenReturn(true);
+        when(chain.findCandidateUrls(eq("周杰伦"), any())).thenReturn(List.of("https://bkimg.cdn.bcebos.com/jay.jpg"));
+        when(assets.hasArtistCoverCapacity(any(Long.TYPE))).thenReturn(true);
+        when(covers.downloadFallbackArtistAvatar(eq("https://bkimg.cdn.bcebos.com/jay.jpg"),
+                eq("zhoujielun:lease-token"), any())).thenReturn("artist-covers/jay.jpg");
+        when(profiles.markAvatarReadyIfClaimed("zhoujielun", "WEB_FALLBACK", "bkimg.cdn.bcebos.com",
+                "artist-covers/jay.jpg", 1L, "lease-token")).thenReturn(true);
+        stubOneClaimThenEmpty(jdbc, row);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+
+        ArtistAvatarWorker worker = new ArtistAvatarWorker(
+                jdbc, profiles, config, covers, assets, List.of(), Runnable::run);
+        worker.setFallbackChain(chain);
+        worker.process();
+
+        verify(profiles).markAvatarReadyIfClaimed("zhoujielun", "WEB_FALLBACK", "bkimg.cdn.bcebos.com",
+                "artist-covers/jay.jpg", 1L, "lease-token");
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc, org.mockito.Mockito.atLeastOnce()).update(sql.capture(), any(Object[].class));
+        assertThat(sql.getAllValues()).anyMatch(s -> s.contains("status='SKIPPED'") && s.contains("id<>?"));
+    }
 }

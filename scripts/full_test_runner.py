@@ -70,12 +70,11 @@ CORE_BACKEND_UNIT_TESTS: tuple[str, ...] = (
     "MediaTranscoderTest",
     "MediaProcessRunnerTest",
     "OutputPathReservationTest",
-    "PlaybackVariantServiceTest",
-    "PlaybackVariantLifecycleTest",
-    "PlaybackVariantStreamControllerTest",
     "PlaybackServiceTest",
     "PlaybackResolutionServiceTest",
+    "PlaybackTransportConsistencyTest",
     "PlaybackPressureMonitorTest",
+    "WebPlayerCoordinatorTest",
     "SnapshotServiceTest",
     "StreamControllerTest",
     "TranscodeAsyncLifecycleInterceptorTest",
@@ -111,8 +110,9 @@ CORE_H5_TEST_FILES: tuple[str, ...] = (
     "src/composables/useQueuedSongIds.test.js",
     "src/stores/player.test.js",
     "src/stores/user.test.js",
-    "src/views/QueueView.test.js",
-    "src/views/RemoteView.test.js",
+    "src/player/streamSelection.test.js",
+    "src/player/webAudioChannelRouter.test.js",
+    "src/views/KtvKioskView.test.js",
     "src/views/latestRequest.test.js",
     "src/views/admin/audioLayout.test.js",
     "src/stores/adminAuth.test.js",
@@ -147,7 +147,7 @@ CORE_ANDROID_TEST_CLASSES: tuple[str, ...] = (
     "com.homektv.tv.player.AudioLayoutCapabilitiesTest",
     "com.homektv.tv.player.AudioPlaybackRouteTest",
     "com.homektv.tv.player.DualEnginePlaybackRouterTest",
-    "com.homektv.tv.player.KtvChannelAudioProcessorTest",
+    "com.homektv.tv.player.PcmChannelMapperTest",
     "com.homektv.tv.player.PlaybackCoordinatorBranchCoverageTest",
     "com.homektv.tv.player.PlaybackCoordinatorTest",
     "com.homektv.tv.player.PlaybackDecodeRecoveryPolicyTest",
@@ -169,29 +169,6 @@ CORE_ANDROID_TEST_CLASSES: tuple[str, ...] = (
     "com.homektv.tv.net.SyncReadyGateTest",
 )
 
-CORE_WINDOWS_TEST_CLASSES: tuple[str, ...] = (
-    "AudioLayoutMapperTests",
-    "KtvWebSocketClientTests",
-    "MpvJsonIpcSessionTests",
-    "MpvControllerTests",
-    "MpvIpcProtocolTests",
-    "MpvProcessSessionFactoryTests",
-    "MpvExecutableResolverTests",
-    "PlaybackCoordinatorTests",
-    "PlaybackFailurePolicyTests",
-    "PendingPlaybackReportTests",
-    "PlaybackProgressLoopTests",
-    "PlaybackRecoveryPolicyTests",
-    "PlaybackReportAckPolicyTests",
-    "PlaybackSnapshotPumpTests",
-    "PlaybackDescriptorReadinessTests",
-    "PlaybackTerminalTests",
-    "ReliablePlaybackOutboxTests",
-    "SharedProtocolFixtureTests",
-    "SyncChunkAssemblerTests",
-    "ServerProtocolTests",
-)
-
 # Source-file allowlists for the maintenance branches that define the core
 # safety, playback, and cross-platform protocol contract. Coverage attributed
 # to these files includes async state-machine outcomes mapped back to source;
@@ -205,7 +182,7 @@ CORE_BRANCH_COVERAGE_FILES: dict[str, tuple[str, ...]] = {
         "com/homektv/library/AudioLayoutResolver.java",
         "com/homektv/library/MediaTranscoder.java",
         "com/homektv/web/StreamController.java",
-        "com/homektv/playback/PlaybackVariantService.java",
+        "com/homektv/playback/PlaybackResolutionService.java",
         "com/homektv/queue/QueueService.java",
         "com/homektv/ws/KtvWebSocketHandler.java",
     ),
@@ -216,15 +193,6 @@ CORE_BRANCH_COVERAGE_FILES: dict[str, tuple[str, ...]] = {
         "com/homektv/tv/player/PlaybackDecodeRecoveryPolicy.kt",
         "com/homektv/tv/net/SyncChunkAssembler.kt",
         "com/homektv/tv/net/AppConfig.kt",
-    ),
-    "windows": (
-        "ServerConnection/KtvWebSocketClient.cs",
-        "ServerConnection/PendingPlaybackReport.cs",
-        "ServerConnection/ReliablePlaybackOutbox.cs",
-        "Protocol/SyncChunkAssembler.cs",
-        "Playback/PlaybackCoordinator.cs",
-        "Playback/PlaybackSnapshotPump.cs",
-        "Mpv/MpvJsonIpcSession.cs",
     ),
 }
 
@@ -352,11 +320,6 @@ def validate_core_coverage(module: str, coverage_dir: Path) -> list[str]:
 
     if module in CORE_BRANCH_COVERAGE_FILES:
         report_path = _coverage_report_path(module, coverage_dir)
-        if module == "windows":
-            reports = tuple((coverage_dir / "TestResults").rglob("coverage.cobertura.xml"))
-            if len(reports) != 1:
-                return [f"Windows coverage report missing or ambiguous (found {len(reports)})"]
-            report_path = reports[0]
         if report_path is None or not report_path.is_file():
             return [f"{module} coverage report missing: {report_path or coverage_dir}"]
         try:
@@ -577,9 +540,6 @@ def build_task_specs(
     backend = root / "backend"
     h5 = root / "h5"
     android = root / "android-tv"
-    windows_test_project = (
-        root / "windows-player" / "tests" / "HomeKtv.Windows.Tests" / "HomeKtv.Windows.Tests.csproj"
-    )
     scripts = root / "scripts"
 
     h5_executable = _executable("npm")
@@ -637,25 +597,6 @@ def build_task_specs(
         coverage,
         android_emulator_serial,
     )
-    windows_args = [
-        _executable("dotnet"),
-        "test",
-        str(windows_test_project),
-        "--nologo",
-    ]
-    if profile == "core":
-        test_filter = "|".join(
-            f"FullyQualifiedName~{test_class}" for test_class in CORE_WINDOWS_TEST_CLASSES
-        )
-        windows_args.extend(("--filter", test_filter))
-    if coverage:
-        windows_args.append("--collect:XPlat Code Coverage")
-    windows_command = CommandSpec(
-        tuple(windows_args),
-        "Windows core tests and coverage" if coverage and profile == "core" else (
-            "Windows Player tests and coverage" if coverage else "Windows core tests" if profile == "core" else "Windows Player tests"
-        ),
-    )
     return (
         TaskSpec(
             "backend",
@@ -681,14 +622,6 @@ def build_task_specs(
             coverage,
             android_emulator_serial,
             profile,
-        ),
-        TaskSpec(
-            "windows",
-            root,
-            (windows_command,),
-            "Windows Player tests",
-            coverage,
-            profile=profile,
         ),
         TaskSpec(
             "scripts",
@@ -808,10 +741,6 @@ def _run_task(
                     argv.extend(("--", "--outDir", str(h5_build_output), "--emptyOutDir"))
                 if task.name == "android" and module_coverage_dir is not None:
                     argv.insert(1, f"-Pktv.coverage.buildDir={module_coverage_dir / 'build'}")
-                if task.name == "windows" and module_coverage_dir is not None:
-                    results_dir = module_coverage_dir / "TestResults"
-                    results_dir.mkdir(parents=True, exist_ok=True)
-                    argv.extend(("--results-directory", str(results_dir)))
                 if task.name == "backend" and module_coverage_dir is not None:
                     argv[1:1] = [
                         f"-Djacoco.exec.path={module_coverage_dir / 'jacoco.exec'}",

@@ -409,7 +409,11 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             onMissingSource = { token ->
                 val ticket = activePlaybackLoadTicket
                 if (ticket != null && playbackCoordinator.isCurrent(token) && isCurrentPlaybackLoad(ticket)) {
-                    onPlayError(PlaybackErrorContext.missingSource(token.request.queueId))
+                    playbackReplacementJob = null
+                    onPlayError(
+                        PlaybackErrorContext.missingSource(token.request.queueId),
+                        bypassReplacementGuard = true,
+                    )
                 }
             },
             onPlaybackPreparing = { token, _ ->
@@ -422,13 +426,17 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             },
             onSourceFailure = { token, error ->
                 if (playbackCoordinator.isCurrent(token)) {
+                    playbackReplacementJob = null
                     val confirmedPlaybackFailure = error.code.startsWith("PLAYBACK_") ||
                         error.code.startsWith("TRANSCODE_") ||
                         error.code.startsWith("OUTPUT_") ||
                         error.code == "FILE_NOT_FOUND" || error.code == "NO_VALID_FILE"
                     if (confirmedPlaybackFailure) {
                         onToast(error.message)
-                        onPlayError(PlaybackErrorContext.missingSource(token.request.queueId))
+                        onPlayError(
+                            PlaybackErrorContext.missingSource(token.request.queueId),
+                            bypassReplacementGuard = true,
+                        )
                     } else {
                         val message = if (error.status == 401 || error.status == 403) {
                             "点歌服务凭据无效，请重新配置"
@@ -441,8 +449,12 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             },
             onSourceExhausted = { token, _ ->
                 if (playbackCoordinator.isCurrent(token)) {
+                    playbackReplacementJob = null
                     onToast(getString(R.string.play_waiting_network))
-                    onPlayError(PlaybackSourceFailurePolicy.errorContext(token))
+                    onPlayError(
+                        PlaybackSourceFailurePolicy.errorContext(token),
+                        bypassReplacementGuard = true,
+                    )
                 }
             },
         )
@@ -1835,6 +1847,12 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         if (text.isNotBlank()) Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
     }
 
+    override fun onHistoryUpdated() {
+        if (::kioskController.isInitialized) {
+            kioskController.onHistoryUpdated()
+        }
+    }
+
     override fun onEffect(effectId: String) {
         effectPlayer?.play(effectId, currentVolume, currentMuted)
         effectOverlay?.play(effectId)
@@ -2346,8 +2364,8 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     /** 播放失败：通知服务端推进队列，不将一次客户端播放失败视为源文件失效。 */
-    private fun onPlayError(context: PlaybackErrorContext) {
-        if (playbackReplacementJob?.isActive == true) return
+    private fun onPlayError(context: PlaybackErrorContext, bypassReplacementGuard: Boolean = false) {
+        if (!bypassReplacementGuard && playbackReplacementJob?.isActive == true) return
         Toast.makeText(this, R.string.play_error, Toast.LENGTH_SHORT).show()
         socket?.sendPlayError("media playback failed", context.fileId, context.queueId)
     }

@@ -26,7 +26,7 @@ class ClientTypeInterceptorTest {
     void decodesStablePlayerIdentityAndV2Capabilities() {
         MockHttpServletRequest servletRequest = new MockHttpServletRequest("GET", "/ws");
         servletRequest.setQueryString(
-                "client_type=tv&client_token=win%20player%2F1&protocol_version=2&platform=WINDOWS");
+                "client_type=tv&client_token=tv%20box%2F1&protocol_version=2&platform=ANDROID_TV");
         Map<String, Object> attributes = new HashMap<>();
 
         boolean accepted = new ClientTypeInterceptor().beforeHandshake(
@@ -37,9 +37,23 @@ class ClientTypeInterceptorTest {
 
         assertThat(accepted).isTrue();
         assertThat(attributes).containsEntry("client_type", "tv");
-        assertThat(attributes).containsEntry("client_token", "win player/1");
+        assertThat(attributes).containsEntry("client_token", "tv box/1");
         assertThat(attributes).containsEntry("protocol_version", "2");
-        assertThat(attributes).containsEntry("platform", "WINDOWS");
+        assertThat(attributes).containsEntry("platform", "ANDROID_TV");
+    }
+
+    @Test
+    void rejectsRetiredWindowsPlatformIdentifier() {
+        MockHttpServletRequest servletRequest = new MockHttpServletRequest("GET", "/ws");
+        servletRequest.setQueryString("client_type=tv&client_token=win-1&protocol_version=2&platform=WINDOWS");
+
+        boolean accepted = new ClientTypeInterceptor().beforeHandshake(
+                new ServletServerHttpRequest(servletRequest),
+                mock(org.springframework.http.server.ServerHttpResponse.class),
+                mock(org.springframework.web.socket.WebSocketHandler.class),
+                new HashMap<>());
+
+        assertThat(accepted).isFalse();
     }
 
     @Test

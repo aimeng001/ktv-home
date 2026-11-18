@@ -94,7 +94,7 @@ class WsBroadcasterTest {
         }).when(active).sendMessage(any(TextMessage.class));
         broadcaster.register(active);
         broadcaster.register(standby);
-        registry.register("active", new ActivePlayerRegistry.PlayerHello("a", "WINDOWS", 2));
+        registry.register("active", new ActivePlayerRegistry.PlayerHello("a", "ANDROID_TV", 2));
         registry.register("standby", new ActivePlayerRegistry.PlayerHello("b", "ANDROID_TV", 2));
 
         broadcaster.broadcast(WsEvent.of(WsEvent.PLAYER_STATE, Map.of("state", "playing")));
@@ -117,7 +117,7 @@ class WsBroadcasterTest {
         broadcaster.register(active);
         broadcaster.register(standby);
         broadcaster.register(h5);
-        registry.register("active", new ActivePlayerRegistry.PlayerHello("a", "WINDOWS", 2));
+        registry.register("active", new ActivePlayerRegistry.PlayerHello("a", "ANDROID_TV", 2));
         registry.register("standby", new ActivePlayerRegistry.PlayerHello("b", "ANDROID_TV", 2));
 
         CountDownLatch delivered = new CountDownLatch(2);

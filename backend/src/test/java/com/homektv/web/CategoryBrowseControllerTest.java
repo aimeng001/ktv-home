@@ -31,4 +31,16 @@ class CategoryBrowseControllerTest {
         assertThat(result.total()).isEqualTo(101);
         assertThat(result.page()).isEqualTo(2);
     }
+
+    @Test
+    void songPageForwardsOptionalMediaTypeAndKeyword() {
+        CategoryBrowseService service = mock(CategoryBrowseService.class);
+        when(service.songsPage("", "", "", "", "高清HD歌曲", "", "", "MV", "hot", 0, 18))
+                .thenReturn(new CategoryBrowseService.SongPage(List.of(), 0, 0, 18));
+
+        CategoryBrowseService.SongPage result = new CategoryBrowseController(service)
+                .songPage("", "", "", "", "高清HD歌曲", "", "", "MV", "hot", 0, 18);
+
+        assertThat(result.size()).isEqualTo(18);
+    }
 }

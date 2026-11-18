@@ -122,7 +122,7 @@ public class StreamController {
     }
 
     public ResponseEntity<StreamingResponseBody> stream(Long fileId, String rangeHeader) {
-        return streamInternal(fileId, rangeHeader, null, false);
+        return streamInternal(fileId, rangeHeader, null, false, null, null);
     }
 
     /**
@@ -144,25 +144,33 @@ public class StreamController {
             @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader,
             @org.springframework.web.bind.annotation.RequestParam(value = "start", required = false) Double startSeconds,
             @org.springframework.web.bind.annotation.RequestParam(value = "transcode", defaultValue = "false") boolean forceTranscode,
+            @org.springframework.web.bind.annotation.RequestParam(value = "audioTrack", required = false) Integer audioTrack,
             HttpServletRequest request) {
-        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, request);
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, audioTrack, request);
     }
 
     public ResponseEntity<StreamingResponseBody> stream(
             Long fileId, String rangeHeader, Double startSeconds) {
-        return streamInternal(fileId, rangeHeader, startSeconds, false);
+        return streamInternal(fileId, rangeHeader, startSeconds, false, null, null);
     }
 
     ResponseEntity<StreamingResponseBody> streamInternal(
             Long fileId, String rangeHeader, Double startSeconds, boolean forceTranscode) {
-        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null);
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null, null);
     }
 
-    private ResponseEntity<StreamingResponseBody> streamInternal(
+    ResponseEntity<StreamingResponseBody> streamInternal(
+            Long fileId, String rangeHeader, Double startSeconds, boolean forceTranscode,
+            HttpServletRequest request) {
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null, request);
+    }
+
+    ResponseEntity<StreamingResponseBody> streamInternal(
             Long fileId,
             String rangeHeader,
             Double startSeconds,
             boolean forceTranscode,
+            Integer audioTrack,
             HttpServletRequest request) {
 
         SongFile sf = fileRepo.findById(fileId).orElse(null);
@@ -188,30 +196,45 @@ public class StreamController {
             return ResponseEntity.notFound().build();
         }
 
-        // 1. Explicit fallback and automatic legacy-video routing share the resolver policy.
-        if (forceTranscode && !PlaybackTransportPolicy.isVideo(sf)) {
+        // 1. Explicit fallback, browser single-track selection, and legacy-video routing share pipe:1.
+        if ((forceTranscode || audioTrack != null) && !PlaybackTransportPolicy.isVideo(sf)) {
             return ResponseEntity.badRequest().build();
         }
-        if (PlaybackTransportPolicy.requiresLiveTranscode(sf, forceTranscode)) {
+        if (audioTrack != null) {
+            int trackLimit = Math.max(1, sf.getAudioTracks());
+            if (audioTrack < 0 || audioTrack >= trackLimit) {
+                return ResponseEntity.badRequest().build();
+            }
+        }
+        if (PlaybackTransportPolicy.requiresLiveTranscode(sf, forceTranscode) || audioTrack != null) {
             if (startSeconds != null && (!Double.isFinite(startSeconds)
                     || startSeconds < 0 || startSeconds > MAX_TRANSCODE_START_SECONDS)) {
                 return ResponseEntity.badRequest().build();
             }
-            return serveOnTheFlyTranscodeStream(fileId, file, sf, startSeconds, request);
+            boolean copyVideo = audioTrack != null && !forceTranscode && isBrowserCopySafeMp4(sf);
+            return serveOnTheFlyTranscodeStream(fileId, file, sf, startSeconds, audioTrack, copyVideo, request);
         }
 
         // 2. 99% 普通格式快路径：继续走 RandomAccessFile HTTP Range 流
         return serveStaticRangeStream(file, sf, rangeHeader, request);
     }
 
+    private static boolean isBrowserCopySafeMp4(SongFile sf) {
+        String format = sf.getFormat() == null ? "" : sf.getFormat().trim().toLowerCase(java.util.Locale.ROOT);
+        String path = sf.getFilePath() == null ? "" : sf.getFilePath().trim().toLowerCase(java.util.Locale.ROOT);
+        return format.contains("mp4") || path.endsWith(".mp4") || path.endsWith(".m4v");
+    }
+
     private ResponseEntity<StreamingResponseBody> serveOnTheFlyTranscodeStream(
-            Long fileId, File file, SongFile sf, Double startSeconds, HttpServletRequest request) {
+            Long fileId, File file, SongFile sf, Double startSeconds, Integer audioTrack,
+            boolean copyVideo, HttpServletRequest request) {
         MediaStreamLease mediaStreamLease = reserveMediaStream(request);
         if (mediaStreamLease == null) return tooManyStreamsResponse();
 
         LiveTranscodeSession session;
         try {
-            List<String> command = transcodeCommandBuilder.build(file, sf, startSeconds);
+            List<String> command = transcodeCommandBuilder.build(
+                    file, sf, startSeconds, audioTrack, copyVideo);
             session = LiveTranscodeSession.tryReserve(
                     resourceBudget, processLauncher, command, fileId, startSeconds).orElse(null);
         } catch (RuntimeException | Error error) {

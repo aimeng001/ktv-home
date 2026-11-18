@@ -111,6 +111,23 @@ class SongMergeServiceTest {
         verify(jdbc).query(anyString(), any(ResultSetExtractor.class), any(Object[].class));
     }
 
+    @Test
+    void mergeRequestsArtistDirectoryAndCatalogRevisionRefreshWhenWired() {
+        ArtistDirectoryProjectionService projection = mock(ArtistDirectoryProjectionService.class);
+        CatalogRevisionService revision = mock(CatalogRevisionService.class);
+        service.setArtistDirectoryProjectionService(projection);
+        service.setCatalogRevisionService(revision);
+        when(jdbc.queryForList(anyString(), eq(Long.class), any(Object[].class)))
+                .thenReturn(List.of(1L, 2L));
+        doAnswer(invocation -> 0).when(jdbc).update(anyString(), any(Object[].class));
+        doAnswer(invocation -> 0L).when(jdbc).query(anyString(), any(ResultSetExtractor.class), any(Object[].class));
+
+        service.merge(1L, 2L);
+
+        verify(projection).requestRefreshAfterCommit();
+        verify(revision).bumpIfChanged(true);
+    }
+
     private void assertInvalidMerge(Long keepSongId, Long sourceSongId) {
         assertThatThrownBy(() -> service.merge(keepSongId, sourceSongId))
                 .isInstanceOf(ApiException.class)

@@ -59,6 +59,8 @@ class KtvSocket(
         fun onRoomHostChanged(status: RoomHostStatus) {}
         /** 发现不同 endpoint；仅通知会话所有者，不自动改写当前配置。 */
         fun onRecoveryCandidate(candidate: DiscoveredServer) {}
+        /** 历史记录更新广播（finished 上报成功）；供抽屉或历史页按需刷新。 */
+        fun onHistoryUpdated() {}
     }
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -417,6 +419,9 @@ class KtvSocket(
             }
             "toast" -> {
                 listener.onToast(parseTextPayload(payload, "text"))
+            }
+            "history_updated" -> {
+                listener.onHistoryUpdated()
             }
             "room_host_changed" -> {
                 val status = payload?.let {

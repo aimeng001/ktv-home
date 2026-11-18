@@ -618,7 +618,7 @@ class KtvWebSocketHandlerTest {
                 "client_type", "tv",
                 "client_token", token,
                 "protocol_version", String.valueOf(protocolVersion),
-                "platform", "WINDOWS"));
+                "platform", "ANDROID_TV"));
         return session;
     }
 
@@ -649,6 +649,79 @@ class KtvWebSocketHandlerTest {
         handler.afterConnectionEstablished(newSession);
         verify(broadcaster).register(newSession);
         verify(broadcaster).disconnect("tv-old");
+    }
+
+    @Test
+    void webPlayerCanClaimWhenTvOfflineAndIsPreemptedWhenTvConnects() throws Exception {
+        WebSocketSession h5 = mock(WebSocketSession.class);
+        when(h5.getId()).thenReturn("h5-player");
+        when(h5.getAttributes()).thenReturn(Map.of("client_type", "h5", "client_token", "pc-1"));
+        when(broadcaster.isTvOnline()).thenReturn(false);
+        when(playbackService.updatePosition(21L, 12_000L))
+                .thenReturn(PositionUpdateResult.accepted(new com.homektv.domain.PlayerState()));
+
+        handler.afterConnectionEstablished(h5);
+        handler.handleTextMessage(h5, new TextMessage("{\"type\":\"web_player_claim\",\"payload\":{\"force\":false}}"));
+
+        var sent = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster, org.mockito.Mockito.atLeast(3)).sendTo(eq(h5), sent.capture());
+        WsEvent roleEvent = sent.getAllValues().stream()
+                .filter(e -> WsEvent.PLAYER_ROLE.equals(e.type()))
+                .findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> rolePayload = (Map<String, Object>) roleEvent.payload();
+        assertThat(rolePayload.get("role")).isEqualTo("ACTIVE");
+        long generation = ((Number) rolePayload.get("generation")).longValue();
+
+        handler.handleTextMessage(h5, new TextMessage(
+                "{\"type\":\"progress\",\"payload\":{\"queue_id\":21,\"position_ms\":12000,\"generation\":" + generation + "}}"));
+        verify(playbackService).updatePosition(21L, 12_000L);
+
+        clearInvocations(broadcaster);
+        WebSocketSession tv = mock(WebSocketSession.class);
+        when(tv.getId()).thenReturn("tv-1");
+        when(tv.getAttributes()).thenReturn(Map.of("client_type", "tv", "client_token", "tv-box"));
+        handler.afterConnectionEstablished(tv);
+
+        var preemptEvents = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster).sendTo(eq("h5-player"), preemptEvents.capture());
+        assertThat(preemptEvents.getValue().type()).isEqualTo(WsEvent.PLAYER_ROLE);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> preemptPayload = (Map<String, Object>) preemptEvents.getValue().payload();
+        assertThat(preemptPayload.get("role")).isEqualTo("STANDBY");
+    }
+
+    @Test
+    void staleOrExpiredWebPlayerPingReceivesStandbyDemotionAndObserverUpdate() throws Exception {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-23T00:00:00Z"), ZoneId.of("UTC"));
+        WebPlayerCoordinator shortCoordinator = new WebPlayerCoordinator(clock, Duration.ofSeconds(1));
+        KtvWebSocketHandler shortHandler = new KtvWebSocketHandler(
+                broadcaster, snapshotService, playbackService, offlineWatcher,
+                playerRegistry, shortCoordinator, new ObjectMapper());
+        WebSocketSession h5 = mock(WebSocketSession.class);
+        when(h5.getId()).thenReturn("h5-player");
+        when(h5.getAttributes()).thenReturn(Map.of("client_type", "h5", "client_token", "pc-1"));
+        when(broadcaster.isTvOnline()).thenReturn(false);
+
+        shortHandler.afterConnectionEstablished(h5);
+        shortHandler.handleTextMessage(h5, new TextMessage("{\"type\":\"web_player_claim\",\"payload\":{\"force\":false}}"));
+        clearInvocations(broadcaster);
+
+        clock.advance(Duration.ofSeconds(2));
+        shortHandler.handleTextMessage(h5, new TextMessage("{\"type\":\"ping\",\"payload\":{\"generation\":1}}"));
+
+        var directEvents = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster, org.mockito.Mockito.atLeast(3)).sendTo(eq(h5), directEvents.capture());
+        assertThat(directEvents.getAllValues()).extracting(WsEvent::type)
+                .containsSubsequence(WsEvent.PLAYER_ROLE, WsEvent.WEB_PLAYER_STATE, "pong");
+        WsEvent roleDemote = directEvents.getAllValues().stream()
+                .filter(e -> WsEvent.PLAYER_ROLE.equals(e.type()))
+                .findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> rolePayload = (Map<String, Object>) roleDemote.payload();
+        assertThat(rolePayload.get("role")).isEqualTo("STANDBY");
+        verify(broadcaster).broadcastObservers(
+                org.mockito.ArgumentMatchers.argThat(event -> WsEvent.WEB_PLAYER_STATE.equals(event.type())));
     }
 
     private MutableClock installShortLeaseRegistry() {

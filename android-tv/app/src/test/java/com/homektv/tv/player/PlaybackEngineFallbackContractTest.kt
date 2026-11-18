@@ -216,6 +216,17 @@ class PlaybackEngineFallbackContractTest {
         )
     }
 
+    @Test
+    fun liveTranscodeEscalationResetsPreferSoftwareFlagForSameFileId() {
+        val engineSource = locateMain("src/main/java/com/homektv/tv/player/PlaybackEngine.kt").readText()
+        val playBlock = engineSource.substringAfter("fun play(").substringBefore("private fun switchToFallbackEngine(")
+        assertTrue(
+            "Escalating the same fileId to live transcode must reset preferSoftware back to hardware decode",
+            playBlock.contains("softwareDecoderAttemptedLiveTranscode != currentIsLiveTranscode"),
+        )
+        assertTrue(engineSource.contains("softwareDecoderAttemptedLiveTranscode = currentIsLiveTranscode"))
+    }
+
     private fun locateMain(relativePath: String): java.io.File = sequenceOf(
         java.io.File(relativePath),
         java.io.File("android-tv/app/$relativePath"),

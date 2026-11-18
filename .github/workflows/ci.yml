@@ -114,26 +114,6 @@ jobs:
       - name: Run release-variant tests and lint
         run: ./gradlew --build-cache testReleaseUnitTest lintRelease
 
-  windows-player:
-    name: Windows Player tests and build
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "10.0.x"
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('windows-player/**/*.csproj') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-      - name: Build Windows Player
-        run: dotnet build windows-player/HomeKtv.Windows.sln -c Release
-      - name: Run Windows Player tests
-        run: dotnet test windows-player/HomeKtv.Windows.sln -c Release --no-build
-
   compose-config:
     name: Compose configuration checks
     runs-on: ubuntu-latest

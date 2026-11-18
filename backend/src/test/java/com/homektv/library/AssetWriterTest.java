@@ -178,6 +178,20 @@ class AssetWriterTest {
         assertApiCode("EXTERNAL_READ_ONLY", () -> new AssetWriter(props));
     }
 
+    @Test
+    void artistCoverCapacityTracksWritesOverwritesAndDeletesIncrementally() throws Exception {
+        String rel = writer.writeArtistCover("artist-a", new byte[]{1, 2, 3, 4}, "jpg");
+        assertThat(writer.hasArtistCoverCapacity(AssetWriter.MAX_ARTIST_COVER_CACHE_BYTES - 4)).isTrue();
+        assertThat(writer.hasArtistCoverCapacity(AssetWriter.MAX_ARTIST_COVER_CACHE_BYTES - 3)).isFalse();
+
+        writer.writeArtistCover("artist-a", new byte[]{1, 2}, "jpg");
+        assertThat(writer.hasArtistCoverCapacity(AssetWriter.MAX_ARTIST_COVER_CACHE_BYTES - 2)).isTrue();
+        assertThat(writer.hasArtistCoverCapacity(AssetWriter.MAX_ARTIST_COVER_CACHE_BYTES - 1)).isFalse();
+
+        writer.deleteReadableCache(rel);
+        assertThat(writer.hasArtistCoverCapacity(AssetWriter.MAX_ARTIST_COVER_CACHE_BYTES)).isTrue();
+    }
+
     private static void assertApiCode(String code, Runnable action) {
         assertThatThrownBy(action::run)
                 .isInstanceOf(ApiException.class)

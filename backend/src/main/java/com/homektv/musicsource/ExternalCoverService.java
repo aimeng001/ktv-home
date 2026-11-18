@@ -24,6 +24,10 @@ public class ExternalCoverService {
     }
 
     private static final int MAX_BYTES = 5 * 1024 * 1024;
+    private static final int MAX_REDIRECTS = 3;
+    private static final String BROWSER_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
     private static final Map<MusicProvider, Set<String>> ALLOWED_HOSTS = Map.of(
             MusicProvider.QQ, Set.of("y.gtimg.cn"),
             MusicProvider.NETEASE, Set.of("music.126.net"),
@@ -63,45 +67,124 @@ public class ExternalCoverService {
         return downloadLimited(provider, avatarUrl, artistKey, timeout, true);
     }
 
+    /**
+     * Downloads and quality-validates an artist avatar from public/web fallback sources.
+     * Relies on strict per-hop public IP resolution (anti-SSRF) instead of a fixed domain whitelist.
+     */
+    public String downloadFallbackArtistAvatar(String avatarUrl, String artistKey, Duration timeout) {
+        if (avatarUrl == null || avatarUrl.isBlank()) {
+            throw new ApiException("EXTERNAL_COVER_MISSING", "外部歌手没有可用头像");
+        }
+        if (AvatarImageQualityValidator.isKnownPlaceholderUrl(avatarUrl)) {
+            throw new ApiException("EXTERNAL_COVER_PLACEHOLDER", "检测到平台默认占位图");
+        }
+        URI uri = validateUri(null, avatarUrl, true);
+        byte[] bytes = guard.callFallback(() -> fetchBytesWithRedirects(
+                null, uri, timeout, true));
+        byte[] normalized = imageNormalizer.normalize(bytes);
+        if (normalized != null && normalized.length >= 32) {
+            AvatarImageQualityValidator.validateNormalizedBytes(normalized, true);
+        }
+        return writer.writeArtistCover(artistKey, normalized, "jpg");
+    }
+
     private String downloadLimited(MusicProvider provider, String coverUrl, String fingerprint,
                                    Duration timeout, boolean artistAvatar) {
         if (coverUrl == null || coverUrl.isBlank()) throw new ApiException("EXTERNAL_COVER_MISSING", "外部歌曲没有可用封面");
-        URI uri;
-        try { uri = URI.create(coverUrl); } catch (RuntimeException ex) { throw invalid(); }
-        if (!"https".equalsIgnoreCase(uri.getScheme()) || !allowed(provider, uri.getHost())) throw invalid();
-        rejectPrivateAddress(uri.getHost());
-        HttpRequest request = HttpRequest.newBuilder(uri).timeout(timeout).header("Accept", "image/*")
-                .header("User-Agent", "HomeKTV/0.1 cover-cache").GET().build();
-        byte[] bytes = guard.call(provider, () -> fetchBytes(provider, request));
+        if (artistAvatar && AvatarImageQualityValidator.isKnownPlaceholderUrl(coverUrl)) {
+            throw new ApiException("EXTERNAL_COVER_PLACEHOLDER", "检测到平台默认占位图");
+        }
+        URI uri = validateUri(provider, coverUrl, false);
+        byte[] bytes = guard.callMedia(provider, () -> fetchBytesWithRedirects(
+                provider, uri, timeout, false));
         byte[] normalized = imageNormalizer.normalize(bytes);
+        if (artistAvatar && normalized != null && normalized.length >= 32) {
+            AvatarImageQualityValidator.validateNormalizedBytes(normalized, false);
+        }
         return artistAvatar
                 ? writer.writeArtistCover(fingerprint, normalized, "jpg")
                 : writer.writeCover(fingerprint, normalized, "jpg");
     }
 
-    private byte[] fetchBytes(MusicProvider provider, HttpRequest request) {
+    private URI validateUri(MusicProvider provider, String url, boolean allowAnyPublicHost) {
+        URI uri;
         try {
-            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            try (InputStream input = response.body()) {
-                if (response.statusCode() < 200 || response.statusCode() >= 300)
-                    throw new ProviderHttpException(provider, response.statusCode(),
-                            MusicSourceHttp.parseRetryAfter(response.headers()),
-                            "封面下载失败：HTTP " + response.statusCode());
-                long length = response.headers().firstValueAsLong("Content-Length").orElse(-1);
-                if (length > MAX_BYTES) throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面超过 5 MB");
-                byte[] bytes = input.readNBytes(MAX_BYTES + 1);
-                if (bytes.length == 0 || bytes.length > MAX_BYTES)
-                    throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面为空或超过 5 MB");
-                return bytes;
-            }
-        } catch (ProviderHttpException ex) {
-            throw ex;
-        } catch (ApiException ex) {
-            throw ex;
-        } catch (Exception ex) {
-            if (ex instanceof InterruptedException) Thread.currentThread().interrupt();
-            throw new MusicSourceException(provider, "封面下载失败", ex);
+            uri = URI.create(url.trim());
+        } catch (RuntimeException ex) {
+            throw invalid();
         }
+        String scheme = uri.getScheme();
+        boolean validScheme = allowAnyPublicHost
+                ? ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
+                : "https".equalsIgnoreCase(scheme);
+        if (!validScheme || uri.getHost() == null || uri.getHost().isBlank()) throw invalid();
+        if (!allowAnyPublicHost && !allowed(provider, uri.getHost())) throw invalid();
+        rejectPrivateAddress(uri.getHost());
+        return uri;
+    }
+
+    private byte[] fetchBytesWithRedirects(MusicProvider provider, URI initialUri,
+                                           Duration timeout, boolean allowAnyPublicHost) {
+        URI currentUri = initialUri;
+        for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
+            HttpRequest.Builder builder = HttpRequest.newBuilder(currentUri)
+                    .timeout(timeout)
+                    .header("Accept", "image/*")
+                    .header("User-Agent", BROWSER_USER_AGENT)
+                    .GET();
+            String referer = refererFor(provider, currentUri);
+            if (referer != null) builder.header("Referer", referer);
+            HttpRequest request = builder.build();
+            try {
+                HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                int status = response.statusCode();
+                if (status >= 300 && status < 400) {
+                    try (InputStream ignored = response.body()) {
+                        // Drain/close redirect body before following.
+                    }
+                    if (hop == MAX_REDIRECTS) {
+                        throw new ProviderHttpException(provider != null ? provider : MusicProvider.QQ, status,
+                                null, "图片重定向次数过多");
+                    }
+                    String location = response.headers().firstValue("Location").orElse("").trim();
+                    if (location.isBlank()) throw invalid();
+                    URI resolved = currentUri.resolve(location);
+                    currentUri = validateUri(provider, resolved.toString(), allowAnyPublicHost);
+                    continue;
+                }
+                try (InputStream input = response.body()) {
+                    if (status < 200 || status >= 300) {
+                        throw new ProviderHttpException(provider != null ? provider : MusicProvider.QQ, status,
+                                MusicSourceHttp.parseRetryAfter(response.headers()),
+                                "封面下载失败：HTTP " + status);
+                    }
+                    long length = response.headers().firstValueAsLong("Content-Length").orElse(-1);
+                    if (length > MAX_BYTES) throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面超过 5 MB");
+                    byte[] bytes = input.readNBytes(MAX_BYTES + 1);
+                    if (bytes.length == 0 || bytes.length > MAX_BYTES) {
+                        throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面为空或超过 5 MB");
+                    }
+                    return bytes;
+                }
+            } catch (ProviderHttpException | ApiException ex) {
+                throw ex;
+            } catch (Exception ex) {
+                if (ex instanceof InterruptedException) Thread.currentThread().interrupt();
+                throw new MusicSourceException(provider != null ? provider : MusicProvider.QQ, "封面下载失败", ex);
+            }
+        }
+        throw invalid();
+    }
+
+    private static String refererFor(MusicProvider provider, URI uri) {
+        if (provider == MusicProvider.NETEASE) return "https://music.163.com/";
+        if (provider == MusicProvider.QQ) return "https://y.qq.com/";
+        if (provider == MusicProvider.KUGOU) return "https://www.kugou.com/";
+        String host = uri.getHost();
+        if (host != null && (host.endsWith("baidu.com") || host.endsWith("bdimg.com") || host.endsWith("bcebos.com"))) {
+            return "https://image.baidu.com/";
+        }
+        return null;
     }
 
     private static boolean allowed(MusicProvider provider, String host) {

@@ -70,8 +70,12 @@ public class LibraryScanCoordinator {
     }
 
     public LibraryScanService.ScanProgress startScan() {
-        requestScan();
-        return scanService.getScanProgress();
+        boolean accepted = requestScan();
+        LibraryScanService.ScanProgress progress = scanService.getScanProgress();
+        if (accepted && (progress == null || !progress.running())) {
+            return LibraryScanService.ScanProgress.queued();
+        }
+        return progress != null ? progress : LibraryScanService.ScanProgress.idle();
     }
 
     /** Submits one external scan and returns a truthful acceptance state. */
@@ -150,10 +154,14 @@ public class LibraryScanCoordinator {
             scheduled.set(false);
             return false;
         }
+        boolean markedQueued = scanService.markCoordinatorScanQueued();
         try {
             executor.execute(() -> run(claim, onSuccess));
             return true;
         } catch (RejectedExecutionException failure) {
+            if (markedQueued) {
+                scanService.clearCoordinatorScanQueued();
+            }
             scheduled.set(false);
             stateStore.markFailed(claim, "SCAN_EXECUTOR_REJECTED", failure.getMessage());
             log.warn("曲库扫描任务未能排队：{}", failure.getMessage());

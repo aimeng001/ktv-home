@@ -221,6 +221,21 @@ class MainActivityPlaybackContractTest {
         assertTrue("restoreFocus 在触控模式下不得强行抢占焦点框", restoreBlock.contains("!target.isInTouchMode"))
     }
 
+    @Test
+    fun coordinatorTerminalFailuresBypassReplacementGuardAndClearJob() {
+        val mainSource = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()
+        val missingBlock = mainSource.substringAfter("onMissingSource = { token ->")
+            .substringBefore("onPlaybackPreparing =")
+        val failureBlock = mainSource.substringAfter("onSourceFailure = { token, error ->")
+            .substringBefore("onSourceExhausted =")
+        val exhaustedBlock = mainSource.substringAfter("onSourceExhausted = { token, _ ->")
+            .substringBefore("updateManager = AndroidUpdateManager(")
+
+        assertTrue(missingBlock.contains("playbackReplacementJob = null") && missingBlock.contains("bypassReplacementGuard = true"))
+        assertTrue(failureBlock.contains("playbackReplacementJob = null") && failureBlock.contains("bypassReplacementGuard = true"))
+        assertTrue(exhaustedBlock.contains("playbackReplacementJob = null") && exhaustedBlock.contains("bypassReplacementGuard = true"))
+    }
+
     private fun locate(relativePath: String): File {
         val workingDirectory = File(System.getProperty("user.dir").orEmpty())
         val candidates = sequence {

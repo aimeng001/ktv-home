@@ -579,6 +579,32 @@ class CategoryBrowseServiceTest {
         verify(repository).browseCategorySongs(eq(""), eq(""), eq(""), eq(""), eq(""), any(Pageable.class));
     }
 
+    @Test
+    void songsPagePassesMediaTypeWhenSpecifiedAndRejectsUnknownValues() {
+        SongRepository repository = mock(SongRepository.class);
+        Song song = new Song();
+        song.setId(88L);
+        song.setTitle("KTV双音轨");
+        song.setMediaType("KTV_VIDEO");
+        when(repository.browseCategorySongsWithMediaType(
+                eq(""), eq(""), eq("国语"), eq(""), eq("对唱"), eq(""), eq("KTV_VIDEO"), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(song), PageRequest.of(0, 18), 1));
+
+        CategoryBrowseService service = new CategoryBrowseService(repository);
+        CategoryBrowseService.SongPage result = service.songsPage(
+                "", "", "", "国语", "", "对唱", "", "ktv_video", "hot", 0, 18);
+
+        assertThat(result.items()).hasSize(1);
+        assertThat(result.items().getFirst().title()).isEqualTo("KTV双音轨");
+        verify(repository).browseCategorySongsWithMediaType(
+                eq(""), eq(""), eq("国语"), eq(""), eq("对唱"), eq(""), eq("KTV_VIDEO"), any(Pageable.class));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                service.songsPage("", "", "", "", "", "", "", "BOGUS", "hot", 0, 18))
+                .isInstanceOf(com.homektv.web.ApiException.class)
+                .hasMessageContaining("媒体格式");
+    }
+
     private SongRepository.ArtistStatsProjection artistStatsRow(String artist, String key, String gender,
                                                                  String initial, Long count, String kind, String avatar) {
         SongRepository.ArtistStatsProjection row = mock(SongRepository.ArtistStatsProjection.class);

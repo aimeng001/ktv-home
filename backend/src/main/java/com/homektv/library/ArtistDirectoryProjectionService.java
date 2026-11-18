@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import jakarta.annotation.PreDestroy;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -8,6 +9,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -116,6 +118,60 @@ public class ArtistDirectoryProjectionService {
         this.jdbc = jdbc;
         this.refreshTransaction = transactionManager == null ? null : new TransactionTemplate(transactionManager);
         this.beforeRefreshTaskCompletion = beforeRefreshTaskCompletion;
+    }
+
+    /** Defers single-artist avatar projection update until the surrounding transaction commits. */
+    public void updateAvatarPathAfterCommit(String artistKey, String avatarPath) {
+        if (artistKey == null || artistKey.isBlank()) return;
+        Runnable action = () -> updateAvatarPathNow(artistKey, avatarPath);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { action.run(); }
+            });
+        } else {
+            action.run();
+        }
+    }
+
+    private void updateAvatarPathNow(String artistKey, String avatarPath) {
+        try {
+            int updated = jdbc.update(
+                    "UPDATE artist_directory_stats SET avatar_path=?, updated_at=now() WHERE artist_key=?",
+                    avatarPath, artistKey);
+            if (updated == 0) {
+                requestRefresh();
+            }
+        } catch (DataAccessException failure) {
+            requestRefresh();
+        }
+    }
+
+    /** Defers single-artist gender/review projection update until the surrounding transaction commits. */
+    public void updateGenderAfterCommit(String artistKey, String gender, boolean reviewed) {
+        if (artistKey == null || artistKey.isBlank()) return;
+        String effectiveGender = gender == null || gender.isBlank() ? "未知" : gender.trim();
+        boolean effectiveReviewed = reviewed && !"未知".equals(effectiveGender);
+        Runnable action = () -> updateGenderNow(artistKey, effectiveGender, effectiveReviewed);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { action.run(); }
+            });
+        } else {
+            action.run();
+        }
+    }
+
+    private void updateGenderNow(String artistKey, String gender, boolean reviewed) {
+        try {
+            int updated = jdbc.update(
+                    "UPDATE artist_directory_stats SET gender=?, reviewed=?, updated_at=now() WHERE artist_key=?",
+                    gender, reviewed, artistKey);
+            if (updated == 0) {
+                requestRefresh();
+            }
+        } catch (DataAccessException failure) {
+            requestRefresh();
+        }
     }
 
     /** Defers mutation-triggered refresh until the surrounding transaction commits. */
@@ -284,6 +340,66 @@ public class ArtistDirectoryProjectionService {
         return value == null ? "" : value.trim();
     }
 
+    public Optional<AdminProjectionPage> adminPage(String keyword, String gender, Boolean reviewed,
+                                                   int page, int size) {
+        if (!isReady()) return Optional.empty();
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size, 100));
+        String safeKeyword = normalize(keyword);
+        String safeGender = normalize(gender);
+
+        StringBuilder where = new StringBuilder();
+        List<Object> filterArgs = new ArrayList<>();
+        if (!safeGender.isEmpty()) {
+            where.append(where.isEmpty() ? "WHERE " : " AND ").append("gender = ?");
+            filterArgs.add(safeGender);
+        }
+        if (reviewed != null) {
+            where.append(where.isEmpty() ? "WHERE " : " AND ").append("reviewed = ?");
+            filterArgs.add(reviewed);
+        }
+        if (!safeKeyword.isEmpty()) {
+            where.append(where.isEmpty() ? "WHERE " : " AND ")
+                    .append("(LOWER(name) LIKE '%' || LOWER(?) || '%'"
+                            + " OR LOWER(artist_key) LIKE '%' || LOWER(?) || '%'"
+                            + " OR LOWER(artist_init) LIKE LOWER(?) || '%'"
+                            + " OR LOWER(artist_py) LIKE LOWER(?) || '%')");
+            filterArgs.add(safeKeyword);
+            filterArgs.add(safeKeyword);
+            filterArgs.add(safeKeyword);
+            filterArgs.add(safeKeyword);
+        }
+
+        String whereSql = where.isEmpty() ? "" : " " + where;
+        Long total = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM artist_directory_stats" + whereSql,
+                Long.class,
+                filterArgs.toArray());
+        long totalCount = total == null ? 0L : total;
+        if (totalCount == 0L) {
+            return Optional.of(new AdminProjectionPage(List.of(), 0L));
+        }
+
+        List<Object> rowArgs = new ArrayList<>(filterArgs.size() + 2);
+        rowArgs.addAll(filterArgs);
+        rowArgs.add(safeSize);
+        rowArgs.add(safePage * safeSize);
+        List<AdminArtistRow> rows = jdbc.query(
+                "SELECT artist_key, name, gender, song_count, reviewed, artist_kind, avatar_path "
+                        + "FROM artist_directory_stats" + whereSql
+                        + " ORDER BY song_count DESC, name ASC, artist_key ASC LIMIT ? OFFSET ?",
+                (rs, index) -> new AdminArtistRow(
+                        rs.getString("artist_key"),
+                        rs.getString("name"),
+                        rs.getString("gender"),
+                        rs.getLong("song_count"),
+                        rs.getBoolean("reviewed"),
+                        rs.getString("artist_kind"),
+                        rs.getString("avatar_path")),
+                rowArgs.toArray());
+        return Optional.of(new AdminProjectionPage(rows, totalCount));
+    }
+
     public record ArtistRow(String artistKey, String name, String initial, String gender,
                             long songCount, boolean reviewed, String artistKind, String avatarPath, String region) {
         public ArtistRow(String artistKey, String name, String initial, String gender,
@@ -293,4 +409,9 @@ public class ArtistDirectoryProjectionService {
     }
 
     public record ProjectionPage(List<ArtistRow> rows, long total) {}
+
+    public record AdminArtistRow(String artistKey, String name, String gender, long songCount,
+                                 boolean reviewed, String artistKind, String avatarPath) {}
+
+    public record AdminProjectionPage(List<AdminArtistRow> rows, long total) {}
 }

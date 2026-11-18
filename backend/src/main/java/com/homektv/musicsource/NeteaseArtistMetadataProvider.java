@@ -3,6 +3,8 @@ package com.homektv.musicsource;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.homektv.library.ArtistAvatarMatcher;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -11,16 +13,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** NetEase artist search adapter; it never treats a track cover as an avatar. */
+/** NetEase artist search adapter; prefers picUrl and rejects grey silhouette placeholders. */
 @Component
 public class NeteaseArtistMetadataProvider implements ArtistMetadataProvider {
+    private static final String USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
     private final ObjectMapper mapper;
     private final MusicSourceHttp http;
 
+    @Autowired
     public NeteaseArtistMetadataProvider(ObjectMapper mapper, ProviderCallGuard guard) {
+        this(mapper, new MusicSourceHttp(mapper, MusicProvider.NETEASE,
+                Set.of("interfacepc.music.163.com", "music.163.com"), guard));
+    }
+
+    NeteaseArtistMetadataProvider(ObjectMapper mapper, MusicSourceHttp http) {
         this.mapper = mapper;
-        this.http = new MusicSourceHttp(mapper, MusicProvider.NETEASE,
-                Set.of("interfacepc.music.163.com", "music.163.com"), guard);
+        this.http = http;
     }
 
     @Override
@@ -28,8 +39,10 @@ public class NeteaseArtistMetadataProvider implements ArtistMetadataProvider {
 
     @Override
     public List<ExternalArtist> search(String artistName, int limit, Duration timeout) {
+        String lookup = ArtistAvatarMatcher.cleanLookupName(artistName);
+        if (lookup.isBlank()) return List.of();
         ObjectNode data = mapper.createObjectNode();
-        data.put("s", artistName);
+        data.put("s", lookup);
         data.put("type", 100);
         data.put("limit", Math.min(Math.max(limit, 1), 20));
         data.put("offset", 0);
@@ -40,7 +53,7 @@ public class NeteaseArtistMetadataProvider implements ArtistMetadataProvider {
         header.put("requestId", String.valueOf(System.currentTimeMillis()));
         JsonNode root = http.form("https://interfacepc.music.163.com/eapi/cloudsearch/pc",
                 Map.of("params", NeteaseCrypto.eapi("/api/cloudsearch/pc", compact(data))),
-                Map.of("Referer", "https://music.163.com/"), timeout);
+                Map.of("Referer", "https://music.163.com/", "User-Agent", USER_AGENT), timeout);
         return parseArtists(root.path("result").path("artists"), limit);
     }
 
@@ -51,10 +64,8 @@ public class NeteaseArtistMetadataProvider implements ArtistMetadataProvider {
             String id = ProviderJson.clean(artist.path("id").asText(null), 160);
             String name = ProviderJson.text(artist, "name", 200);
             if (id == null || name == null) continue;
-            String avatar = ProviderJson.https(
-                    first(artist, "img1v1Url", "picUrl"),
-                    "music.126.net", "p1.music.126.net", "p2.music.126.net",
-                    "p3.music.126.net", "p4.music.126.net");
+            // Check img1v1Url first per contract, skipping known NetEase grey silhouette placeholders so picUrl is chosen.
+            String avatar = firstValidAvatar(artist, "img1v1Url", "picUrl");
             List<String> aliases = ProviderJson.names(
                     artist.has("alias") ? artist.path("alias") : artist.path("aliases"), null);
             result.add(new ExternalArtist(provider(), id, name, aliases, avatar));
@@ -68,10 +79,15 @@ public class NeteaseArtistMetadataProvider implements ArtistMetadataProvider {
         catch (Exception failure) { throw new IllegalStateException(failure); }
     }
 
-    private static String first(JsonNode node, String... fields) {
+    private static String firstValidAvatar(JsonNode node, String... fields) {
         for (String field : fields) {
-            String value = ProviderJson.text(node, field, 2000);
-            if (value != null) return value;
+            String candidate = ProviderJson.https(
+                    ProviderJson.text(node, field, 2000),
+                    "music.126.net", "p1.music.126.net", "p2.music.126.net",
+                    "p3.music.126.net", "p4.music.126.net");
+            if (candidate != null && !AvatarImageQualityValidator.isKnownPlaceholderUrl(candidate)) {
+                return candidate;
+            }
         }
         return null;
     }

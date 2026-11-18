@@ -7,8 +7,11 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.util.Optional;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * 歌曲数据访问层，负责 {@link Song} 实体的数据库操作。
@@ -71,6 +74,24 @@ public interface SongRepository extends JpaRepository<Song, Long> {
         String getName();
         Long getSongCount();
     }
+
+    interface DashboardSongCounts {
+        Long getTotalCount();
+        Long getKtvCount();
+        Long getMvCount();
+        Long getAudioCount();
+        Long getUnrecognizedCount();
+    }
+
+    @Query("""
+            SELECT COUNT(s) AS totalCount,
+                   COALESCE(SUM(CASE WHEN s.mediaType = 'KTV_VIDEO' THEN 1L ELSE 0L END), 0L) AS ktvCount,
+                   COALESCE(SUM(CASE WHEN s.mediaType = 'MV' THEN 1L ELSE 0L END), 0L) AS mvCount,
+                   COALESCE(SUM(CASE WHEN s.mediaType = 'AUDIO' THEN 1L ELSE 0L END), 0L) AS audioCount,
+                   COALESCE(SUM(CASE WHEN s.status = 'unrecognized' THEN 1L ELSE 0L END), 0L) AS unrecognizedCount
+            FROM Song s
+            """)
+    DashboardSongCounts fetchDashboardSongCounts();
 
     @Query("""
             SELECT s.language AS language, COUNT(s.id) AS songCount
@@ -344,20 +365,44 @@ public interface SongRepository extends JpaRepository<Song, Long> {
     boolean hasActiveIktvArtistRegionReference();
 
     @Query(value = """
-            WITH credits AS (
-                SELECT s.id AS song_id, sa.artist_key
-                FROM songs s
-                JOIN song_artists sa ON sa.song_id = s.id
-                WHERE s.status = :status AND trim(sa.artist_name) <> ''
-                UNION ALL
+            WITH target_keys AS (
+                SELECT DISTINCT sa.artist_key
+                FROM song_artists sa
+                WHERE sa.artist_key IN (:artistKeys)
+                  AND trim(sa.artist_name) <> ''
+            )
+            SELECT tk.artist_key AS "artistKey",
+                   picked.song_id AS "songId",
+                   picked.title AS "title",
+                   picked.artist AS "artist",
+                   picked.language AS "language",
+                   picked.media_type AS "mediaType",
+                   picked.cover_path AS "coverPath"
+            FROM target_keys tk
+            CROSS JOIN LATERAL (
                 SELECT s.id AS song_id,
-                       lower(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) AS artist_key
-                FROM songs s
-                WHERE s.status = :status
-                  AND s.artist IS NOT NULL AND trim(s.artist) <> ''
-                  AND NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
-            ), ranked AS (
-                SELECT c.artist_key,
+                       s.title,
+                       s.artist,
+                       s.language,
+                       s.media_type,
+                       s.cover_path,
+                       s.play_count
+                FROM song_artists sa
+                JOIN songs s ON s.id = sa.song_id
+                WHERE sa.artist_key = tk.artist_key
+                  AND trim(sa.artist_name) <> ''
+                  AND s.status = :status
+                ORDER BY s.play_count DESC, s.title ASC, s.id ASC
+                LIMIT 5
+            ) picked
+            ORDER BY tk.artist_key, picked.play_count DESC, picked.title ASC, picked.song_id ASC
+            """, nativeQuery = true)
+    List<ArtistSongProjection> findIndexedArtistSamples(@Param("status") String status,
+                                                          @Param("artistKeys") List<String> artistKeys);
+
+    @Query(value = """
+            WITH ranked AS (
+                SELECT lower(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) AS artist_key,
                        s.id AS song_id,
                        s.title,
                        s.artist,
@@ -365,12 +410,14 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                        s.media_type,
                        s.cover_path,
                        ROW_NUMBER() OVER (
-                           PARTITION BY c.artist_key
+                           PARTITION BY lower(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g'))
                            ORDER BY s.play_count DESC, s.title ASC, s.id ASC
                        ) AS row_number
-                FROM credits c
-                JOIN songs s ON s.id = c.song_id
-                WHERE c.artist_key IN (:artistKeys)
+                FROM songs s
+                WHERE s.status = :status
+                  AND s.artist IS NOT NULL AND trim(s.artist) <> ''
+                  AND lower(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) IN (:artistKeys)
+                  AND NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
             )
             SELECT artist_key AS "artistKey",
                    song_id AS "songId",
@@ -383,8 +430,35 @@ public interface SongRepository extends JpaRepository<Song, Long> {
             WHERE row_number <= 5
             ORDER BY artist_key, row_number
             """, nativeQuery = true)
-    List<ArtistSongProjection> findArtistSamples(@Param("status") String status,
-                                                  @Param("artistKeys") List<String> artistKeys);
+    List<ArtistSongProjection> findLegacyArtistSamples(@Param("status") String status,
+                                                         @Param("artistKeys") List<String> artistKeys);
+
+    default List<ArtistSongProjection> findArtistSamples(String status, List<String> artistKeys) {
+        if (artistKeys == null || artistKeys.isEmpty()) return List.of();
+        List<String> distinctKeys = artistKeys.stream()
+                .filter(k -> k != null && !k.isBlank())
+                .distinct()
+                .toList();
+        if (distinctKeys.isEmpty()) return List.of();
+        List<ArtistSongProjection> indexed = findIndexedArtistSamples(status, distinctKeys);
+        List<ArtistSongProjection> results = indexed == null ? new ArrayList<>() : new ArrayList<>(indexed);
+        Set<String> resolvedKeys = new HashSet<>();
+        for (ArtistSongProjection row : results) {
+            if (row != null && row.getArtistKey() != null) {
+                resolvedKeys.add(row.getArtistKey());
+            }
+        }
+        List<String> missingKeys = distinctKeys.stream()
+                .filter(key -> !resolvedKeys.contains(key))
+                .toList();
+        if (!missingKeys.isEmpty()) {
+            List<ArtistSongProjection> legacy = findLegacyArtistSamples(status, missingKeys);
+            if (legacy != null && !legacy.isEmpty()) {
+                results.addAll(legacy);
+            }
+        }
+        return results;
+    }
 
     @Query(value = """
             SELECT category.tag AS name, COUNT(DISTINCT s.id) AS songCount
@@ -453,8 +527,8 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               AND (
                   :keyword = ''
                   OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(COALESCE(s.title_init, '')) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(COALESCE(s.title_py, '')) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
               )
             """,
             countQuery = """
@@ -489,8 +563,8 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               AND (
                   :keyword = ''
                   OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(COALESCE(s.title_init, '')) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(COALESCE(s.title_py, '')) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
               )
             """,
             nativeQuery = true)
@@ -547,8 +621,8 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               AND (
                   :keyword = ''
                   OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(COALESCE(s.title_init, '')) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(COALESCE(s.title_py, '')) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
               )
             """,
             countQuery = """
@@ -590,8 +664,8 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               AND (
                   :keyword = ''
                   OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(COALESCE(s.title_init, '')) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(COALESCE(s.title_py, '')) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
               )
             """,
             nativeQuery = true)
@@ -607,6 +681,188 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                                       String tag, String vocalForm, Pageable pageable) {
         return browseCategorySongsByArtistKey(artistKey, artistGender, language, tag, vocalForm, "", pageable);
     }
+
+    @Query(value = """
+            SELECT * FROM songs s
+            WHERE s.status = 'ok'
+              AND (:artist = '' OR LOWER(s.artist) = LOWER(:artist)
+                   OR EXISTS (SELECT 1 FROM song_artists sa
+                              WHERE sa.song_id = s.id
+                                AND LOWER(sa.artist_name) = LOWER(:artist)))
+              AND (
+                  :artistGender = ''
+                  OR EXISTS (
+                      SELECT 1
+                      FROM song_artists sa
+                      LEFT JOIN artist_profiles p ON p.artist_key = sa.artist_key
+                      WHERE sa.song_id = s.id
+                        AND (:artist = '' OR LOWER(sa.artist_name) = LOWER(:artist))
+                        AND LOWER(COALESCE(NULLIF(p.gender, '未知'), '未知')) = LOWER(:artistGender)
+                  )
+                  OR (
+                      NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
+                      AND (:artist = '' OR LOWER(s.artist) = LOWER(:artist))
+                      AND LOWER(s.artist_gender) = LOWER(:artistGender)
+                  )
+              )
+              AND (:language = '' OR LOWER(s.language) = LOWER(:language))
+              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:mediaType = '' OR LOWER(s.media_type) = LOWER(:mediaType))
+              AND (:tag = '' OR EXISTS (
+                  SELECT 1 FROM song_tag_index sti
+                  WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
+              ))
+              AND (
+                  :keyword = ''
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+              )
+            """,
+            countQuery = """
+            SELECT COUNT(*) FROM songs s
+            WHERE s.status = 'ok'
+              AND (:artist = '' OR LOWER(s.artist) = LOWER(:artist)
+                   OR EXISTS (SELECT 1 FROM song_artists sa
+                              WHERE sa.song_id = s.id
+                                AND LOWER(sa.artist_name) = LOWER(:artist)))
+              AND (
+                  :artistGender = ''
+                  OR EXISTS (
+                      SELECT 1
+                      FROM song_artists sa
+                      LEFT JOIN artist_profiles p ON p.artist_key = sa.artist_key
+                      WHERE sa.song_id = s.id
+                        AND (:artist = '' OR LOWER(sa.artist_name) = LOWER(:artist))
+                        AND LOWER(COALESCE(NULLIF(p.gender, '未知'), '未知')) = LOWER(:artistGender)
+                  )
+                  OR (
+                      NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
+                      AND (:artist = '' OR LOWER(s.artist) = LOWER(:artist))
+                      AND LOWER(s.artist_gender) = LOWER(:artistGender)
+                  )
+              )
+              AND (:language = '' OR LOWER(s.language) = LOWER(:language))
+              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:mediaType = '' OR LOWER(s.media_type) = LOWER(:mediaType))
+              AND (:tag = '' OR EXISTS (
+                  SELECT 1 FROM song_tag_index sti
+                  WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
+              ))
+              AND (
+                  :keyword = ''
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+              )
+            """,
+            nativeQuery = true)
+    Page<Song> browseCategorySongsWithMediaType(@Param("artist") String artist,
+                                                @Param("artistGender") String artistGender,
+                                                @Param("language") String language,
+                                                @Param("tag") String tag,
+                                                @Param("vocalForm") String vocalForm,
+                                                @Param("keyword") String keyword,
+                                                @Param("mediaType") String mediaType,
+                                                Pageable pageable);
+
+    @Query(value = """
+            SELECT * FROM songs s
+            WHERE s.status = 'ok'
+              AND s.id IN (
+                  SELECT sa.song_id
+                  FROM song_artists sa
+                  WHERE LOWER(sa.artist_key) = LOWER(:artistKey)
+                  UNION
+                  SELECT s2.id
+                  FROM songs s2
+                  WHERE s2.status = 'ok'
+                    AND LOWER(regexp_replace(trim(s2.artist), '[[:space:]]+', '', 'g')) = LOWER(:artistKey)
+                    AND NOT EXISTS (SELECT 1 FROM song_artists sa2 WHERE sa2.song_id = s2.id)
+              )
+              AND (
+                  :artistGender = ''
+                  OR EXISTS (
+                      SELECT 1
+                      FROM song_artists sa
+                      LEFT JOIN artist_profiles p ON p.artist_key = sa.artist_key
+                      WHERE sa.song_id = s.id
+                        AND LOWER(sa.artist_key) = LOWER(:artistKey)
+                        AND LOWER(COALESCE(NULLIF(p.gender, '未知'), '未知')) = LOWER(:artistGender)
+                  )
+                  OR (
+                      NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
+                      AND LOWER(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) = LOWER(:artistKey)
+                      AND LOWER(s.artist_gender) = LOWER(:artistGender)
+                  )
+              )
+              AND (:language = '' OR LOWER(s.language) = LOWER(:language))
+              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:mediaType = '' OR LOWER(s.media_type) = LOWER(:mediaType))
+              AND (:tag = '' OR EXISTS (
+                  SELECT 1 FROM song_tag_index sti
+                  WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
+              ))
+              AND (
+                  :keyword = ''
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+              )
+            """,
+            countQuery = """
+            SELECT COUNT(*) FROM songs s
+            WHERE s.status = 'ok'
+              AND s.id IN (
+                  SELECT sa.song_id
+                  FROM song_artists sa
+                  WHERE LOWER(sa.artist_key) = LOWER(:artistKey)
+                  UNION
+                  SELECT s2.id
+                  FROM songs s2
+                  WHERE s2.status = 'ok'
+                    AND LOWER(regexp_replace(trim(s2.artist), '[[:space:]]+', '', 'g')) = LOWER(:artistKey)
+                    AND NOT EXISTS (SELECT 1 FROM song_artists sa2 WHERE sa2.song_id = s2.id)
+              )
+              AND (
+                  :artistGender = ''
+                  OR EXISTS (
+                      SELECT 1
+                      FROM song_artists sa
+                      LEFT JOIN artist_profiles p ON p.artist_key = sa.artist_key
+                      WHERE sa.song_id = s.id
+                        AND LOWER(sa.artist_key) = LOWER(:artistKey)
+                        AND LOWER(COALESCE(NULLIF(p.gender, '未知'), '未知')) = LOWER(:artistGender)
+                  )
+                  OR (
+                      NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
+                      AND LOWER(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) = LOWER(:artistKey)
+                      AND LOWER(s.artist_gender) = LOWER(:artistGender)
+                  )
+              )
+              AND (:language = '' OR LOWER(s.language) = LOWER(:language))
+              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:mediaType = '' OR LOWER(s.media_type) = LOWER(:mediaType))
+              AND (:tag = '' OR EXISTS (
+                  SELECT 1 FROM song_tag_index sti
+                  WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
+              ))
+              AND (
+                  :keyword = ''
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+              )
+            """,
+            nativeQuery = true)
+    Page<Song> browseCategorySongsByArtistKeyWithMediaType(@Param("artistKey") String artistKey,
+                                                           @Param("artistGender") String artistGender,
+                                                           @Param("language") String language,
+                                                           @Param("tag") String tag,
+                                                           @Param("vocalForm") String vocalForm,
+                                                           @Param("keyword") String keyword,
+                                                           @Param("mediaType") String mediaType,
+                                                           Pageable pageable);
 
     @Query(value = """
             SELECT sa.artist_name
@@ -727,6 +983,9 @@ public interface SongRepository extends JpaRepository<Song, Long> {
             """, nativeQuery = true)
     long countIndexedSongs(@Param("status") String status, @Param("fileRole") String fileRole);
 
+    @Query("SELECT s.id FROM Song s WHERE s.status = :status")
+    List<Long> findIdsByStatus(@Param("status") String status);
+
     /** Counts distinct logical songs that have at least one ready media file in the active role. */
     @Query(value = """
             SELECT COUNT(DISTINCT s.id)
@@ -771,10 +1030,10 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               AND (:keyword = ''
                 OR LOWER(song.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
                 OR LOWER(song.artist) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(song.titlePy) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(song.titleInit) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(song.artistPy) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(song.artistInit) LIKE LOWER(CONCAT('%', :keyword, '%')))
+                OR LOWER(song.titlePy) LIKE LOWER(CONCAT(:keyword, '%'))
+                OR LOWER(song.titleInit) LIKE LOWER(CONCAT(:keyword, '%'))
+                OR LOWER(song.artistPy) LIKE LOWER(CONCAT(:keyword, '%'))
+                OR LOWER(song.artistInit) LIKE LOWER(CONCAT(:keyword, '%')))
               AND (:type = ''
                 OR (:type = 'unrecognized' AND song.status = 'unrecognized')
                 OR (:type <> 'unrecognized' AND song.mediaType = :type))

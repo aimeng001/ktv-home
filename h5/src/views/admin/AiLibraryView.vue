@@ -12,7 +12,7 @@
         <button class="secondary icon-text-button" :disabled="loading" title="刷新歌单" @click="refreshAll">
           <RefreshCw :size="15" :class="{ spin: loading }" />刷新
         </button>
-        <button class="secondary icon-text-button" @click="showTaskPanel=true">AI 任务</button>
+        <button class="secondary icon-text-button" @click="showTaskPanel = !showTaskPanel">AI 任务</button>
       </div>
     </header>
 
@@ -197,7 +197,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import AiTaskPanel from '../../components/admin/AiTaskPanel.vue'
@@ -231,7 +231,7 @@ const playlistPreview = ref(null)
 const generateForm = reactive({ limit: 100 })
 const playlistForm = reactive({ id: null, name: '', description: '', theme: '', publicVisible: true })
 const filters = reactive({ keyword: '', source: '', visibility: '' })
-const showTaskPanel = ref(true)
+const showTaskPanel = ref(false)
 
 const filteredPlaylists = computed(() => {
   const keyword = filters.keyword.toLowerCase()
@@ -279,7 +279,21 @@ function resetFilters() { Object.assign(filters, { keyword: '', source: '', visi
 function go(nextPage) { if (nextPage >= 0 && nextPage < totalPages.value) page.value = nextPage }
 function formatTime(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—' }
 function coverStyle(playlist) { return playlist?.coverUrl ? { backgroundImage: `url(${playlist.coverUrl})` } : {} }
-function flash(value) { message.value = value; setTimeout(() => { message.value = '' }, 2500) }
+let flashTimer = null
+function flash(value) {
+  message.value = value
+  if (flashTimer) clearTimeout(flashTimer)
+  flashTimer = setTimeout(() => {
+    flashTimer = null
+    message.value = ''
+  }, 2500)
+}
+onUnmounted(() => {
+  if (flashTimer) {
+    clearTimeout(flashTimer)
+    flashTimer = null
+  }
+})
 
 function newPlaylist() {
   selectedPlaylist.value = null

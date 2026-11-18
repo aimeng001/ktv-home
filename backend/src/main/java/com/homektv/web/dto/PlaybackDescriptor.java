@@ -2,7 +2,7 @@ package com.homektv.web.dto;
 
 import com.homektv.domain.SongFile;
 
-/** Authoritative media choice shared by Android, Windows, and H5. */
+/** Authoritative media choice shared by Android TV and H5 Web. */
 public record PlaybackDescriptor(
         String kind,
         String status,

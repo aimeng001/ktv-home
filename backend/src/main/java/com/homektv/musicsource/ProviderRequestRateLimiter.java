@@ -69,6 +69,10 @@ public class ProviderRequestRateLimiter {
         this.configService = configService;
     }
 
+    public long minIntervalMs() {
+        return minIntervalMs;
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void beforeRequest(MusicProvider provider) {
         Instant now = clock.instant();

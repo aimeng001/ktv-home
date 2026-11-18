@@ -12,6 +12,7 @@ public class ArtistAvatarAsyncConfig {
         executor.setCorePoolSize(1);
         executor.setMaxPoolSize(1);
         executor.setQueueCapacity(1);
+        executor.setDaemon(true);
         executor.setThreadNamePrefix("artist-avatar-");
         executor.initialize();
         return executor;

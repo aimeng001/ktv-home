@@ -66,4 +66,22 @@ class LiveTranscodeCommandBuilderTest {
             Locale.setDefault(original);
         }
     }
+
+    @Test
+    void selectsSingleAudioTrackAndSupportsVideoStreamCopyForBrowserCompatibleMp4() {
+        File source = temp.resolve("dual-track.mp4").toFile();
+        SongFile song = new SongFile();
+        song.setAudioTracks(2);
+
+        List<String> copyCommand = builder.build(source, song, 18.5, 1, true);
+        assertThat(copyCommand).containsSubsequence("-ss", "18.500", "-i", source.getAbsolutePath());
+        assertThat(copyCommand).containsSubsequence("-map", "0:v:0", "-map", "0:a:1");
+        assertThat(copyCommand).containsSubsequence("-c:v", "copy", "-c:a", "aac");
+        assertThat(copyCommand).doesNotContain("0:a:0");
+        assertThat(copyCommand).doesNotContain("libx264");
+
+        List<String> transcodeCommand = builder.build(source, song, null, 0, false);
+        assertThat(transcodeCommand).containsSubsequence("-map", "0:v:0", "-map", "0:a:0");
+        assertThat(transcodeCommand).containsSubsequence("-c:v", "libx264");
+    }
 }

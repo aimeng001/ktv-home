@@ -9,10 +9,15 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -29,6 +34,9 @@ public class AssetWriter {
 
     private final Path dataRoot;
     private final AppProperties props;
+    private final Object artistCoverCapacityLock = new Object();
+    private long cachedArtistCoverBytes = -1L;
+    private FileTime cachedArtistCoverDirMtime;
 
     public AssetWriter(AppProperties props) {
         this.props = props;
@@ -70,28 +78,62 @@ public class AssetWriter {
      */
     public boolean hasArtistCoverCapacity(long incomingBytes) {
         if (incomingBytes < 0 || incomingBytes > MAX_ARTIST_COVER_CACHE_BYTES) return false;
-        Path root = dataRoot.toAbsolutePath().normalize().resolve("artist-covers").normalize();
         Path normalizedDataRoot = dataRoot.toAbsolutePath().normalize();
+        Path root = normalizedDataRoot.resolve("artist-covers").normalize();
         if (!root.startsWith(normalizedDataRoot)) return false;
         if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return true;
         if (Files.isSymbolicLink(root) || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) return false;
-        try (var paths = Files.walk(root)) {
+        try {
             Path realDataRoot = normalizedDataRoot.toRealPath();
             Path realRoot = root.toRealPath();
             if (!realRoot.startsWith(realDataRoot)) return false;
-            long used = 0;
-            for (Path path : paths.toList()) {
-                if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) continue;
-                if (!path.toRealPath().startsWith(realRoot)) return false;
-                long size = Files.size(path);
-                if (size > MAX_ARTIST_COVER_CACHE_BYTES - used) return false;
-                used += size;
+            synchronized (artistCoverCapacityLock) {
+                FileTime dirMtime = Files.getLastModifiedTime(realRoot, LinkOption.NOFOLLOW_LINKS);
+                if (cachedArtistCoverBytes < 0 || !Objects.equals(dirMtime, cachedArtistCoverDirMtime)) {
+                    long scanned = scanArtistCoverDirectoryBytes(realRoot);
+                    if (scanned < 0) return false;
+                    cachedArtistCoverBytes = scanned;
+                    cachedArtistCoverDirMtime = dirMtime;
+                }
+                return cachedArtistCoverBytes <= MAX_ARTIST_COVER_CACHE_BYTES - incomingBytes;
             }
-            return used <= MAX_ARTIST_COVER_CACHE_BYTES - incomingBytes;
         } catch (IOException failure) {
             log.debug("歌手头像缓存容量无法确认：{}", failure.getMessage());
             return false;
         }
+    }
+
+    private long scanArtistCoverDirectoryBytes(Path realRoot) throws IOException {
+        final long[] used = {0L};
+        final boolean[] invalid = {false};
+        Files.walkFileTree(realRoot, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                if (attrs.isSymbolicLink() || !dir.normalize().startsWith(realRoot)) {
+                    invalid[0] = true;
+                    return FileVisitResult.TERMINATE;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                if (attrs.isSymbolicLink() || !file.normalize().startsWith(realRoot)) {
+                    invalid[0] = true;
+                    return FileVisitResult.TERMINATE;
+                }
+                if (attrs.isRegularFile()) {
+                    used[0] = saturatedAdd(used[0], attrs.size());
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return invalid[0] ? -1L : used[0];
+    }
+
+    private static long saturatedAdd(long current, long delta) {
+        if (delta <= 0) return current;
+        return current > Long.MAX_VALUE - delta ? Long.MAX_VALUE : current + delta;
     }
 
     /**
@@ -133,7 +175,12 @@ public class AssetWriter {
     public void deleteReadableCache(String relativePath) {
         readableCachePath(relativePath).ifPresent(path -> {
             try {
-                Files.deleteIfExists(path);
+                boolean isArtistCover = relativePath != null && relativePath.startsWith("artist-covers/");
+                long deletedSize = isArtistCover && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                        ? Files.size(path) : 0L;
+                if (Files.deleteIfExists(path) && isArtistCover) {
+                    adjustCachedArtistCoverBytes(-deletedSize, path.getParent());
+                }
             } catch (IOException failure) {
                 log.debug("资源缓存清理失败：{} - {}", relativePath, failure.getMessage());
             }
@@ -189,6 +236,21 @@ public class AssetWriter {
         }
     }
 
+    private void adjustCachedArtistCoverBytes(long delta, Path coverRoot) {
+        synchronized (artistCoverCapacityLock) {
+            if (cachedArtistCoverBytes < 0) return;
+            cachedArtistCoverBytes = Math.max(0L, cachedArtistCoverBytes + delta);
+            try {
+                if (coverRoot != null && Files.isDirectory(coverRoot, LinkOption.NOFOLLOW_LINKS)) {
+                    cachedArtistCoverDirMtime = Files.getLastModifiedTime(coverRoot, LinkOption.NOFOLLOW_LINKS);
+                }
+            } catch (IOException ignored) {
+                cachedArtistCoverBytes = -1L;
+                cachedArtistCoverDirMtime = null;
+            }
+        }
+    }
+
     private void write(String relPath, byte[] data) {
         try {
             Path target = dataRoot.resolve(relPath);
@@ -197,7 +259,13 @@ public class AssetWriter {
             // Re-check the concrete target after parent directories exist. This catches
             // a symlink/junction in lyrics/, covers/, or another cache subdirectory.
             LibraryModePolicy.requireCacheOutsideExternalSource(props, target);
+            boolean isArtistCover = relPath != null && relPath.startsWith("artist-covers/");
+            long previousSize = isArtistCover && Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
+                    ? Files.size(target) : 0L;
             Files.write(target, data);
+            if (isArtistCover) {
+                adjustCachedArtistCoverBytes(data.length - previousSize, target.getParent());
+            }
         } catch (IOException e) {
             log.warn("资源落盘失败：{} - {}", relPath, e.getMessage());
             throw new UncheckedIOException(e);

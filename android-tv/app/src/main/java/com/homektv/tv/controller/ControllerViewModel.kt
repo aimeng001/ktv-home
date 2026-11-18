@@ -55,6 +55,7 @@ class ControllerViewModel(
     private val searchCache = SearchResultLruCache(clockMs = { SystemClock.elapsedRealtime() })
     private val queueRequests = LatestRequestScope(viewModelScope)
     private val catalogRequests = LatestRequestScope(viewModelScope)
+    private val tagMetadataRequests = LatestRequestScope(viewModelScope)
     private val kioskLibraryRequests = LatestRequestScope(viewModelScope)
     private val personalRequests = LatestRequestScope(viewModelScope)
     private val roomHostRequests = LatestRequestScope(viewModelScope)
@@ -996,6 +997,20 @@ class ControllerViewModel(
         }
     }
 
+    /** Populates tag chips in the background without cancelling an active tag-songs query. */
+    override fun prefetchTags() {
+        if (_state.value.tags.isNotEmpty()) return
+        tagMetadataRequests.launch {
+            when (val result = songApi.tags()) {
+                is KtvApiResult.Success -> _state.update { state ->
+                    if (state.tags.isNotEmpty()) state
+                    else state.copy(tags = result.value.take(MAX_CATALOG_ITEMS))
+                }
+                is KtvApiResult.Failure -> Unit
+            }
+        }
+    }
+
     private suspend fun loadArtistsPage(page: Int, expected: CatalogQuery): Boolean {
             when (val result = songApi.browseArtistsPage(
                 page = page,
@@ -1526,6 +1541,7 @@ class ControllerViewModel(
         snapshotBridgeJob?.cancel()
         queueRequests.cancel()
         catalogRequests.cancel()
+        tagMetadataRequests.cancel()
         kioskLibraryRequests.cancel()
         personalRequests.cancel()
         roomHostRequests.cancel()

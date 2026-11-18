@@ -4,7 +4,7 @@ import { createApp, h, nextTick } from 'vue'
 
 const { apiMock, alertMock, confirmMock } = vi.hoisted(() => ({
   apiMock: {
-    adminAiTasks: vi.fn(), adminAiConfig: vi.fn(), adminAiCreateTask: vi.fn(),
+    adminAiTasks: vi.fn(), adminAiConfig: vi.fn(), adminAiCreateTask: vi.fn(), adminAiCreateTasks: vi.fn(),
     adminAiCreateUnclassified: vi.fn(), adminAiRepair: vi.fn(), adminAiRepairProgress: vi.fn(),
     adminAiPauseRepair: vi.fn(), adminAiResumeRepair: vi.fn(), adminAiRetryFailedRepair: vi.fn(),
     adminAiRetryTask: vi.fn(), adminAiApplyTask: vi.fn(), adminMergeSong: vi.fn()
@@ -30,6 +30,7 @@ describe('AiTaskPanel', () => {
     apiMock.adminAiTasks.mockImplementation(async () => tasks)
     apiMock.adminAiConfig.mockResolvedValue({ enabled: true, baseUrl: 'http://ai.local', bulkModel: 'mock-model' })
     apiMock.adminAiCreateTask.mockResolvedValue({ id: 1 })
+    apiMock.adminAiCreateTasks.mockResolvedValue({ created: 2, skipped: 0, dispatchRejected: 0 })
     apiMock.adminAiApplyTask.mockResolvedValue({})
     apiMock.adminAiRetryTask.mockResolvedValue({})
     apiMock.adminAiRepair.mockResolvedValue({ batchId: 'batch-1', created: 3, dispatchRejected: 1 })
@@ -65,16 +66,14 @@ describe('AiTaskPanel', () => {
     expect(root.textContent).toContain('AI 任务读取失败：读取失败')
   })
 
-  it('creates selected tasks with per-song failure reporting and refreshes the task list', async () => {
-    apiMock.adminAiCreateTask.mockImplementation(async id => {
-      if (id === 2) throw new Error('此曲已存在任务')
-      return { id: 101 }
-    })
+  it('creates selected tasks in one batch call with skipped reporting and refreshes the task list', async () => {
+    apiMock.adminAiCreateTasks.mockResolvedValueOnce({ created: 1, skipped: 1, dispatchRejected: 0 })
     await mount({ selectedIds: [1, 2] })
     root.querySelector('.batch-tools .button:not(.ghost)').click()
     await flushUi()
 
-    expect(apiMock.adminAiCreateTask).toHaveBeenCalledTimes(2)
+    expect(apiMock.adminAiCreateTasks).toHaveBeenCalledTimes(1)
+    expect(apiMock.adminAiCreateTasks).toHaveBeenCalledWith([1, 2])
     expect(root.textContent).toContain('已创建 1 个任务，跳过 1 首')
     expect(apiMock.adminAiTasks).toHaveBeenCalledTimes(2)
   })
@@ -84,7 +83,8 @@ describe('AiTaskPanel', () => {
     findButton('为选中歌曲生成').click()
     await flushUi()
 
-    expect(apiMock.adminAiCreateTask).toHaveBeenCalledTimes(2)
+    expect(apiMock.adminAiCreateTasks).toHaveBeenCalledTimes(1)
+    expect(apiMock.adminAiCreateTasks).toHaveBeenCalledWith([1, 2])
     expect(root.textContent).toContain('已创建 2 个任务')
     expect(root.textContent).not.toContain('跳过')
   })

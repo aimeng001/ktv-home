@@ -90,21 +90,20 @@ async function load(){
   const request=listRequests.begin()
   loadError.value=''
   libraryMode.value=null
-  try{
-    const mode=await api.adminSourceLibrary({page:0,size:1},{signal:request.signal})
+  const modeTask=api.adminSourceLibrary({page:0,size:1},{signal:request.signal}).then(mode=>{
     if(!listRequests.isCurrent(request.id))return
     libraryMode.value=mode?.libraryMode||null
-  }catch(e){
+  }).catch(()=>{
     if(!listRequests.isCurrent(request.id))return
     libraryMode.value=null
-  }
-  try{
-    const r=await api.adminSongs({...filters,page:page.value,size:20},{signal:request.signal})
+  })
+  const songsTask=api.adminSongs({...filters,page:page.value,size:20},{signal:request.signal}).then(r=>{
     if(!listRequests.isCurrent(request.id))return
     songs.value=r.content||[];total.value=r.total||0;totalPages.value=r.totalPages||1;selected.value=new Set([...selected.value].filter(id=>songs.value.some(s=>s.id===id)))
-  }catch(e){
+  }).catch(e=>{
     if(listRequests.isCurrent(request.id) && e.name!=='AbortError')loadError.value=e.message||'曲库加载失败'
-  }
+  })
+  await Promise.all([modeTask,songsTask])
 }
 onBeforeUnmount(()=>listRequests.cancel())
 /** 搜索：重置到第一页并加载 / Search: reset to first page and load */
@@ -130,7 +129,7 @@ async function saveSongEdit(){
     const payload=buildSongEditPayload(editForm)
     const updated=await api.adminEditSong(editingSong.value.id,payload)
     if(updated){
-      Object.assign(editingSong.value,updated)
+      Object.assign(editingSong.value,updated,{language:updated.language!==undefined?updated.language:payload.language,tags:updated.tags!==undefined?updated.tags:payload.tags})
     }
     songEditorOpen.value=false
   }catch(err){

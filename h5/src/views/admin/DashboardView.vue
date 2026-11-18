@@ -9,7 +9,7 @@
     </header>
     <div v-if="loadError || scanPollError" class="error-notice" role="alert">{{ loadError || scanPollError }} <button class="text-btn" @click="load">重试</button></div>
     <!-- 统计卡片 / Stats cards -->
-    <section class="stats"><article><span>{{ externalMode ? '外部曲库文件' : '原始素材' }}</span><strong>{{ sourceTotal }}</strong><small>{{ externalMode ? 'NAS 只读索引' : '/source-music' }}</small></article><article><span>KTV曲库</span><strong>{{ d.totalSongs ?? 0 }}</strong><small>/music，可点歌</small></article><article><span>{{ externalMode ? '源文件转码' : '待转码' }}</span><strong>{{ pendingCount }}</strong><small>{{ externalMode ? '只读模式已禁用' : '等待批量转码入库' }}</small></article><article><span>未识别</span><strong>{{ d.unrecognizedCount ?? 0 }}</strong><small>需补录元数据</small></article></section>
+    <section class="stats"><article><span>{{ externalMode ? '外部曲库文件' : '原始素材' }}</span><strong>{{ sourceTotal }}</strong><small>{{ externalMode ? 'NAS 只读索引' : '/source-music' }}</small></article><article><span>KTV曲库</span><strong>{{ d.totalSongs ?? 0 }}</strong><small>{{ externalMode ? '外部只读，可点歌' : '/music，可点歌' }}</small></article><article><span>{{ externalMode ? '源文件转码' : '待转码' }}</span><strong>{{ pendingCount }}</strong><small>{{ externalMode ? '只读模式已禁用' : '等待批量转码入库' }}</small></article><article><span>未识别</span><strong>{{ d.unrecognizedCount ?? 0 }}</strong><small>需补录元数据</small></article></section>
     <!-- 扫描进度 / Scan progress -->
     <section v-if="scanning || scanResult" class="scan-progress" :class="{complete:!scanning && scanProgress.state !== 'FAILED', failed: scanProgress.state === 'FAILED'}">
       <div class="progress-head">
@@ -208,6 +208,7 @@ async function scan(){
     scanPollError.value=''
     scanProgress.value=await api.adminStartScan()
     scanResult.value=null
+    if(!scanProgress.value?.running){scanning.value=false;scanResult.value=scanProgress.value;await load();return}
     startPolling()
   }catch(e){scanning.value=false;await alertDialog(e.message||'扫描失败')}
 }

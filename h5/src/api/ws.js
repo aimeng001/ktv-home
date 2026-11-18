@@ -140,9 +140,11 @@ export class KtvSocket {
    * @param {Function} [options.onEvent]  - 收到业务事件时的回调（type, payload）/ Callback on business event (type, payload)
    * @param {Function} [options.onStatus] - 连接状态变化时的回调（boolean）/ Callback on connection status change (boolean)
    */
-  constructor({ onEvent, onStatus } = {}) {
+  constructor({ onEvent, onStatus, getPingPayload, getClientToken } = {}) {
     this.onEvent = onEvent || (() => {})
     this.onStatus = onStatus || (() => {})
+    this.getPingPayload = getPingPayload || null
+    this.getClientToken = getClientToken || null
     this.ws = null
     this.retry = 0
     this.pingTimer = null
@@ -173,7 +175,9 @@ export class KtvSocket {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     // 开发环境由 Vite 代理 /ws 请求；生产环境同源直连
     // Dev: Vite proxies /ws requests; production: same-origin direct connection
-    const url = `${proto}://${location.host}/ws?client_type=h5&protocol_version=2&platform=H5`
+    const token = this.getClientToken?.()
+    const tokenQuery = token ? `&client_token=${encodeURIComponent(token)}` : ''
+    const url = `${proto}://${location.host}/ws?client_type=h5&protocol_version=2&platform=H5${tokenQuery}`
     const socket = new WebSocket(url)
     this.ws = socket
 
@@ -291,7 +295,10 @@ export class KtvSocket {
    */
   _startPing() {
     this._stopPing()
-    this.pingTimer = setInterval(() => this.send({ type: 'ping' }), 25000)
+    this.pingTimer = setInterval(() => {
+      const payload = this.getPingPayload?.()
+      this.send(payload ? { type: 'ping', payload } : { type: 'ping' })
+    }, 25000)
   }
 
   /**

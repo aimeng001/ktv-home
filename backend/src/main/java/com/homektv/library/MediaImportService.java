@@ -38,6 +38,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -88,6 +89,7 @@ public class MediaImportService {
     private final AtomicReference<TranscodeProgress> progress = new AtomicReference<>(TranscodeProgress.idle());
     private final Object transcodeLock = new Object();
     private final Deque<Long> transcodeQueue = new ArrayDeque<>();
+    private final ThreadLocal<Optional<FilenameParser.ArtistIndex>> batchArtistIndexScope = new ThreadLocal<>();
     private final LinkedHashSet<Long> priorityRecordIds = new LinkedHashSet<>();
     private Long currentRecordId;
     /** Frozen per-manual-batch setting; direct-copy imports never set this flag. */
@@ -243,6 +245,8 @@ public class MediaImportService {
         // Snapshot candidates before moving media or sidecars. Mutating a live
         // Files.walk stream can make the next directory entry disappear on
         // Linux, surfacing as NoSuchFileException during an otherwise valid import.
+        batchArtistIndexScope.set(null);
+        try {
         for (Path source : candidates) {
             if (!Files.exists(source)) {
                 continue;
@@ -271,6 +275,9 @@ public class MediaImportService {
             scanProgress.set(new SourceScanProgress(true, total, completed,
                     source.getFileName().toString(), copied, pending, sourceDup, outputDup, unrecognized, failed,
                     startedAt, null));
+        }
+        } finally {
+            batchArtistIndexScope.remove();
         }
         SourceScanResult result = new SourceScanResult(total, copied, pending, sourceDup, outputDup,
                 unrecognized, failed);
@@ -937,7 +944,15 @@ public class MediaImportService {
 
         // Only ask the shared scan service for ambiguous names; simple legacy names
         // keep their original no-extra-interaction path.
-        ParsedMeta shared = scanService.parseFilename(filename);
+        Optional<FilenameParser.ArtistIndex> scoped = batchArtistIndexScope.get();
+        if (scoped == null && scanProgress.get().running()) {
+            FilenameParser.ArtistIndex built = scanService.createFilenameArtistIndex();
+            scoped = Optional.ofNullable(built);
+            batchArtistIndexScope.set(scoped);
+        }
+        ParsedMeta shared = (scoped != null && scoped.isPresent())
+                ? scanService.parseFilename(filename, scoped.get())
+                : scanService.parseFilename(filename);
         // Compatibility for isolated tests/legacy callers that provide a mock or older scan service.
         return shared == null ? local : shared;
     }

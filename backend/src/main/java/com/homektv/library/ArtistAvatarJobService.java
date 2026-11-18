@@ -111,7 +111,9 @@ public class ArtistAvatarJobService {
     public Map<String, Object> resetAndEnqueueMissingProfiles() {
         List<String> keys = worker.unresolvedKeys();
         com.homektv.musicsource.MusicSourceConfig config = configService.getConfig();
-        if (config == null || !config.enabled() || config.providers() == null || config.providers().isEmpty()) {
+        boolean fallbackEnabled = configService.isAvatarFallbackEnabled();
+        if (config == null || !config.enabled()
+                || ((config.providers() == null || config.providers().isEmpty()) && !fallbackEnabled)) {
             return Map.of(
                     "queued", 0,
                     "alreadyPending", 0,
@@ -125,7 +127,45 @@ public class ArtistAvatarJobService {
                 "nextWorkAt", Instant.now().toString());
     }
 
+    /** Triggers high-priority avatar scraping for a single artist (local-first, then online). */
+    public Map<String, Object> scrapeSingleArtist(String artistKey, LocalAvatarResolver localAvatarResolver) {
+        String safeKey = artistKey == null ? "" : artistKey.trim();
+        if (safeKey.isBlank()) {
+            throw new com.homektv.web.ApiException("INVALID_ARTIST_KEY", "歌手 Key 不能为空");
+        }
+        var profile = worker.findProfile(safeKey)
+                .orElseThrow(() -> new com.homektv.web.ApiException("ARTIST_NOT_FOUND", "歌手档案不存在"));
+        if (ArtistKindClassifier.isPlaceholder(profile.displayName())) {
+            throw new com.homektv.web.ApiException("INVALID_ARTIST_KIND", "占位歌手无需刮削头像");
+        }
+        if (worker.resetSingleArtistForScrape(safeKey)) {
+            if (localAvatarResolver != null && localAvatarResolver.resolveAllCandidates() > 0) {
+                var refreshed = worker.findProfile(safeKey).orElse(profile);
+                if (refreshed.avatarPath() != null && !refreshed.avatarPath().isBlank()) {
+                    return Map.of("queued", 0, "resolvedLocally", true, "status", "READY");
+                }
+            }
+        }
+        com.homektv.musicsource.MusicSourceConfig config;
+        try {
+            config = configService.getConfig();
+        } catch (DataAccessException failure) {
+            throw new com.homektv.web.ApiException("MUSIC_SOURCE_UNAVAILABLE", "音乐元数据配置暂时不可用");
+        }
+        boolean fallbackEnabled = configService.isAvatarFallbackEnabled();
+        if (config == null || !config.enabled()
+                || ((config.providers() == null || config.providers().isEmpty()) && !fallbackEnabled)) {
+            return Map.of("queued", 0, "resolvedLocally", false, "reason", "音乐元数据服务未启用");
+        }
+        enqueueKeys(List.of(safeKey), true, 100_000);
+        return Map.of("queued", 1, "resolvedLocally", false, "status", "PENDING");
+    }
+
     private void enqueueKeys(Collection<String> keys, boolean reopenTerminal) {
+        enqueueKeys(keys, reopenTerminal, null);
+    }
+
+    private void enqueueKeys(Collection<String> keys, boolean reopenTerminal, Integer fixedPriority) {
         if (keys == null || keys.isEmpty()) return;
         List<String> boundedKeys = keys.stream()
                 .filter(Objects::nonNull)
@@ -142,15 +182,32 @@ public class ArtistAvatarJobService {
             log.debug("artist avatar configuration unavailable: {}", failure.getMessage());
             return;
         }
-        if (config == null || !config.enabled() || config.providers() == null || config.providers().isEmpty()) return;
-        List<JobSeed> jobs = boundedKeys.stream()
-                .flatMap(key -> config.providers().stream().map(provider -> new JobSeed(key, provider.name())))
-                .toList();
+        boolean fallbackEnabled = configService.isAvatarFallbackEnabled();
+        boolean hasPrimary = config != null && config.providers() != null && !config.providers().isEmpty();
+        if (config == null || !config.enabled() || (!hasPrimary && !fallbackEnabled)) return;
+
+        Map<String, Integer> priorities = fixedPriority != null
+                ? Map.of()
+                : worker.songPriorities(boundedKeys);
+        List<JobSeed> jobs = new java.util.ArrayList<>();
+        for (String key : boundedKeys) {
+            int priority = fixedPriority != null ? fixedPriority : priorities.getOrDefault(key, 0);
+            if (hasPrimary) {
+                for (var provider : config.providers()) {
+                    jobs.add(new JobSeed(key, provider.name(), priority, 1));
+                }
+            }
+            if (fallbackEnabled) {
+                jobs.add(new JobSeed(key, "FALLBACK", priority, 0));
+            }
+        }
         if (jobs.isEmpty()) return;
         try {
             String conflictUpdate = reopenTerminal
                     ? """
                       ON CONFLICT (artist_key, provider) DO UPDATE SET
+                          priority = GREATEST(artist_avatar_jobs.priority, EXCLUDED.priority),
+                          tier = EXCLUDED.tier,
                           status = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW') THEN 'PENDING'
                                         ELSE artist_avatar_jobs.status END,
                           attempts = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW') THEN 0
@@ -164,11 +221,13 @@ public class ArtistAvatarJobService {
                       """;
             int[][] changed = jdbc.batchUpdate("""
                     INSERT INTO artist_avatar_jobs(
-                        artist_key, provider, status, attempts, next_run_at, created_at, updated_at)
-                    VALUES (?, ?, 'PENDING', 0, now(), now(), now())
+                        artist_key, provider, priority, tier, status, attempts, next_run_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'PENDING', 0, now(), now(), now())
                     """ + conflictUpdate, jobs, BATCH_SIZE, (statement, job) -> {
                         statement.setString(1, job.artistKey());
                         statement.setString(2, job.provider());
+                        statement.setInt(3, job.priority());
+                        statement.setInt(4, job.tier());
                     });
             boolean inserted = changed != null && changed.length > 0;
             if (inserted) worker.trigger();
@@ -179,5 +238,5 @@ public class ArtistAvatarJobService {
         }
     }
 
-    private record JobSeed(String artistKey, String provider) {}
+    private record JobSeed(String artistKey, String provider, int priority, int tier) {}
 }

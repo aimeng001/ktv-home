@@ -81,6 +81,27 @@ class FavoriteControllerTest {
         assertThat(favorites).isEmpty();
     }
 
+    @Test
+    void listAppliesAvailabilityPolicyWhenInjected() {
+        songs.put(10L, song(10L, "晴天"));
+        songs.put(11L, song(11L, "待探测"));
+        favorites.add(favorite(11L));
+        favorites.add(favorite(10L));
+        controller.setAvailabilityPolicy(new com.homektv.library.SongAvailabilityPolicy(null) {
+            @Override
+            public java.util.Set<Long> playableSongIds(java.util.Collection<Song> input) {
+                return java.util.Set.of(10L);
+            }
+        });
+
+        List<com.homektv.web.dto.SongDto> result = controller.list("token-1", 0, 10);
+
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).playable()).isFalse();
+        assertThat(result.get(0).unavailableReason()).isEqualTo(com.homektv.library.SongAvailabilityPolicy.SONG_NOT_READY);
+        assertThat(result.get(1).playable()).isTrue();
+    }
+
     private FavoriteRepository favoriteRepository() {
         return proxy(FavoriteRepository.class, (method, args) -> switch (method.getName()) {
             case "findByUserIdOrderByCreatedAtDesc" -> {

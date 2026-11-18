@@ -293,7 +293,7 @@ class ArtistProfileServiceTest {
 
         new ArtistProfileService(jdbc, projection).setGender("周杰伦", "男歌手");
 
-        verify(projection).requestRefreshAfterCommit();
+        verify(projection).updateGenderAfterCommit("周杰伦", "男歌手", true);
     }
 
     @Test
@@ -309,7 +309,7 @@ class ArtistProfileServiceTest {
         verifyNoInteractions(jdbc, projection);
 
         service.setGender("周杰伦", "男歌手");
-        verify(projection, org.mockito.Mockito.never()).requestRefreshAfterCommit();
+        verify(projection, org.mockito.Mockito.never()).updateGenderAfterCommit(anyString(), anyString(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test
@@ -351,6 +351,21 @@ class ArtistProfileServiceTest {
                 org.mockito.ArgumentMatchers.eq(1),
                 org.mockito.ArgumentMatchers.any());
         assertThat(keysCaptor.getValue()).containsExactly("a+b");
+    }
+
+    @Test
+    void readyAvatarUpdatesSyncDirectoryProjectionImmediately() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistDirectoryProjectionService projection = mock(ArtistDirectoryProjectionService.class);
+        when(jdbc.update(anyString(), org.mockito.ArgumentMatchers.any(Object[].class))).thenReturn(1);
+        ArtistProfileService service = new ArtistProfileService(jdbc, projection);
+
+        assertThat(service.markAvatarReadyIfClaimed(
+                "zhoujielun", "QQ", "mid", "artist-covers/jay.jpg", 10L, "token")).isTrue();
+        assertThat(service.setAvatarReady("zhoujielun", "CUSTOM_UPLOAD", "artist-covers/jay2.jpg")).isTrue();
+
+        verify(projection).updateAvatarPathAfterCommit("zhoujielun", "artist-covers/jay.jpg");
+        verify(projection).updateAvatarPathAfterCommit("zhoujielun", "artist-covers/jay2.jpg");
     }
 
     private static ResultSet profileRow() throws Exception {

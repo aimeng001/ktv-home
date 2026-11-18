@@ -344,6 +344,27 @@ class LibraryScanCoordinatorTest {
         external.shutdown();
     }
 
+    @Test
+    void startScanImmediatelyPublishesRunningProgressBeforeWorkerStarts() {
+        AppProperties props = new AppProperties();
+        props.setLibraryMode(LibraryMode.EXTERNAL_READ_ONLY);
+        props.setSourceLibraryPath(Path.of("src/test/resources").toAbsolutePath().toString());
+        LibraryScanService scan = mock(LibraryScanService.class);
+        when(scan.getScanProgress()).thenReturn(LibraryScanService.ScanProgress.idle());
+        LibraryScanStateStore state = mock(LibraryScanStateStore.class);
+        when(state.tryClaim(props, "MANUAL_OR_WATCH")).thenReturn(Optional.of(claim(91L)));
+        AtomicReference<Runnable> queuedTask = new AtomicReference<>();
+        LibraryScanCoordinator coordinator = new LibraryScanCoordinator(
+                props, scan, state, queuedTask::set);
+
+        LibraryScanService.ScanProgress started = coordinator.startScan();
+
+        assertThat(started.running()).isTrue();
+        assertThat(started.state()).isEqualTo(LibraryScanService.ScanState.RUNNING);
+        assertThat(queuedTask.get()).isNotNull();
+        verify(scan).markCoordinatorScanQueued();
+    }
+
     private static LibraryScanStateStore.Claim claim(long generation) {
         return new LibraryScanStateStore.Claim(UUID.randomUUID(), UUID.randomUUID(), generation);
     }

@@ -53,6 +53,21 @@ class ProviderCallGuardTest {
         order.verify(limiter).recordSuccess(MusicProvider.QQ);
     }
 
+    @Test
+    void mediaChannelDoesNotHitPersistentSearchRateLimiterRightAfterSearch() {
+        MusicSourceConfig config = new MusicSourceConfig(true, Set.of(MusicProvider.NETEASE),
+                20, 5, 6, 1, 1500, 0.95);
+        ProviderRequestRateLimiter limiter = mock(ProviderRequestRateLimiter.class);
+        org.mockito.Mockito.when(limiter.minIntervalMs()).thenReturn(5000L);
+        ProviderCallGuard guard = new ProviderCallGuard(() -> config, limiter);
+
+        assertThat(guard.call(MusicProvider.NETEASE, () -> "search-ok")).isEqualTo("search-ok");
+        assertThat(guard.callMedia(MusicProvider.NETEASE, () -> "image-ok")).isEqualTo("image-ok");
+
+        org.mockito.Mockito.verify(limiter, org.mockito.Mockito.times(1)).beforeRequest(MusicProvider.NETEASE);
+        org.mockito.Mockito.verify(limiter, org.mockito.Mockito.times(1)).recordSuccess(MusicProvider.NETEASE);
+    }
+
     private static void invoke(ProviderCallGuard guard, AtomicInteger active, AtomicInteger maximum) {
         guard.call(MusicProvider.QQ, () -> {
             int current = active.incrementAndGet();

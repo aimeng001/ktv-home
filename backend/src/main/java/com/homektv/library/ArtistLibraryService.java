@@ -34,6 +34,8 @@ public class ArtistLibraryService {
     private final ObjectMapper mapper;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ArtistProfileService artistProfiles;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ArtistDirectoryProjectionService directoryProjection;
     private static final Comparator<Song> REPRESENTATIVE_ORDER = Comparator
             .comparingInt(Song::getPlayCount).reversed()
             .thenComparing(Song::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER));
@@ -68,33 +70,72 @@ public class ArtistLibraryService {
     }
 
     /**
-     * Database-backed artist directory. This is the path used by the admin UI;
-     * it never materializes the entire song table in the application heap.
+     * Database-backed artist directory. Prefers the materialized {@code artist_directory_stats}
+     * projection so opening the admin artist library on 200k+ song catalogs never triggers a
+     * full-table credit aggregation scan, falling back to live aggregation before initialization.
      */
     public ArtistPage page(String keyword, String gender, Boolean reviewed, int page, int size) {
         int safePage = Math.max(0, page);
         int safeSize = Math.max(1, Math.min(size <= 0 ? ARTIST_PAGE_SIZE : size, MAX_ARTIST_PAGE_SIZE));
         String safeKeyword = keyword == null ? "" : keyword.trim();
         String safeGender = gender == null ? "" : gender.trim();
+
+        if (directoryProjection != null) {
+            Optional<ArtistDirectoryProjectionService.AdminProjectionPage> projected =
+                    directoryProjection.adminPage(safeKeyword, safeGender, reviewed, safePage, safeSize);
+            if (projected.isPresent()) {
+                ArtistDirectoryProjectionService.AdminProjectionPage pageData = projected.get();
+                List<ArtistDirectoryProjectionService.AdminArtistRow> rows =
+                        pageData.rows() == null ? List.of() : pageData.rows();
+                List<String> keys = rows.stream()
+                        .map(ArtistDirectoryProjectionService.AdminArtistRow::artistKey)
+                        .filter(Objects::nonNull).filter(value -> !value.isBlank()).toList();
+                Map<String, List<Map<String, Object>>> samples = loadArtistSamples(keys);
+                Map<String, ArtistProfileService.AvatarDiagnostic> diagnostics = loadAvatarDiagnostics(keys);
+                List<Map<String, Object>> items = rows.stream()
+                        .map(row -> buildArtistValue(
+                                row.artistKey(), row.name(), row.gender(), row.reviewed(),
+                                row.songCount(), row.artistKind(), row.avatarPath(),
+                                samples.getOrDefault(row.artistKey(), List.of()),
+                                diagnostics.get(row.artistKey())))
+                        .toList();
+                return new ArtistPage(items, pageData.total(), safePage, safeSize);
+            }
+        }
+
         Page<SongRepository.ArtistDirectoryProjection> rows = songs.pageArtistDirectory(
                 "ok", safeKeyword, safeGender, reviewed, PageRequest.of(safePage, safeSize));
         List<SongRepository.ArtistDirectoryProjection> content = rows == null || rows.getContent() == null
                 ? List.of() : rows.getContent();
         List<String> keys = content.stream().map(SongRepository.ArtistDirectoryProjection::getArtistKey)
                 .filter(Objects::nonNull).filter(value -> !value.isBlank()).toList();
+        Map<String, List<Map<String, Object>>> samples = loadArtistSamples(keys);
+        Map<String, ArtistProfileService.AvatarDiagnostic> diagnostics = loadAvatarDiagnostics(keys);
+        List<Map<String, Object>> items = content.stream()
+                .map(row -> artistValue(row,
+                        samples.getOrDefault(row.getArtistKey(), List.of()),
+                        diagnostics.get(row.getArtistKey())))
+                .toList();
+        long total = rows == null ? 0 : rows.getTotalElements();
+        return new ArtistPage(items, total, safePage, safeSize);
+    }
+
+    private Map<String, List<Map<String, Object>>> loadArtistSamples(List<String> keys) {
+        if (keys == null || keys.isEmpty()) return Map.of();
         Map<String, List<Map<String, Object>>> samples = new HashMap<>();
-        if (!keys.isEmpty()) {
-            List<SongRepository.ArtistSongProjection> sampleRows = songs.findArtistSamples("ok", keys);
-            if (sampleRows != null) for (SongRepository.ArtistSongProjection sample : sampleRows) {
+        List<SongRepository.ArtistSongProjection> sampleRows = songs.findArtistSamples("ok", keys);
+        if (sampleRows != null) {
+            for (SongRepository.ArtistSongProjection sample : sampleRows) {
                 if (sample == null || sample.getArtistKey() == null) continue;
                 samples.computeIfAbsent(sample.getArtistKey(), ignored -> new ArrayList<>()).add(songValue(sample));
             }
         }
-        List<Map<String, Object>> items = content.stream()
-                .map(row -> artistValue(row, samples.getOrDefault(row.getArtistKey(), List.of())))
-                .toList();
-        long total = rows == null ? 0 : rows.getTotalElements();
-        return new ArtistPage(items, total, safePage, safeSize);
+        return samples;
+    }
+
+    private Map<String, ArtistProfileService.AvatarDiagnostic> loadAvatarDiagnostics(List<String> keys) {
+        if (artistProfiles == null || keys == null || keys.isEmpty()) return Map.of();
+        return artistProfiles.avatarDiagnostics(keys);
     }
 
     /** 对一个歌手的代表歌曲进行 AI 分析；没有 AI 时返回可人工填写的未知建议。 */
@@ -219,19 +260,40 @@ public class ArtistLibraryService {
     }
 
     private Map<String, Object> artistValue(SongRepository.ArtistDirectoryProjection row,
-                                            List<Map<String, Object>> samples) {
+                                            List<Map<String, Object>> samples,
+                                            ArtistProfileService.AvatarDiagnostic diagnostic) {
+        return buildArtistValue(
+                row.getArtistKey(), row.getName(), row.getGender(), row.getReviewed(),
+                row.getSongCount(), row.getArtistKind(), row.getAvatarPath(),
+                samples, diagnostic);
+    }
+
+    private Map<String, Object> buildArtistValue(String artistKey,
+                                                 String rawName,
+                                                 String rawGender,
+                                                 Boolean reviewed,
+                                                 Long songCount,
+                                                 String storedKind,
+                                                 String avatarPath,
+                                                 List<Map<String, Object>> samples,
+                                                 ArtistProfileService.AvatarDiagnostic diagnostic) {
         Map<String, Object> value = new LinkedHashMap<>();
-        String name = row.getName() == null || row.getName().isBlank() ? "未知歌手" : row.getName().trim();
-        String kind = effectiveArtistKind(name, row.getArtistKind());
-        value.put("artistKey", row.getArtistKey());
+        String name = rawName == null || rawName.isBlank() ? "未知歌手" : rawName.trim();
+        String kind = effectiveArtistKind(name, storedKind);
+        value.put("artistKey", artistKey);
         value.put("name", name);
-        value.put("gender", row.getGender() == null || row.getGender().isBlank() ? "未知" : row.getGender());
-        value.put("reviewed", Boolean.TRUE.equals(row.getReviewed()));
-        value.put("songCount", row.getSongCount() == null ? 0L : row.getSongCount());
+        value.put("gender", rawGender == null || rawGender.isBlank() ? "未知" : rawGender);
+        value.put("reviewed", Boolean.TRUE.equals(reviewed));
+        value.put("songCount", songCount == null ? 0L : songCount);
         value.put("artistKind", kind);
-        value.put("avatarUrl", ArtistKindClassifier.isPlaceholder(name)
-                || row.getAvatarPath() == null || row.getAvatarPath().isBlank()
-                ? null : "/api/artists/avatar?key=" + URLEncoder.encode(row.getArtistKey(), StandardCharsets.UTF_8));
+        boolean hasAvatar = !ArtistKindClassifier.isPlaceholder(name)
+                && avatarPath != null && !avatarPath.isBlank();
+        value.put("avatarUrl", hasAvatar
+                ? "/api/artists/avatar?key=" + URLEncoder.encode(artistKey, StandardCharsets.UTF_8) : null);
+        value.put("avatarStatus", hasAvatar ? "READY"
+                : (diagnostic != null && diagnostic.avatarStatus() != null ? diagnostic.avatarStatus() : "PENDING"));
+        value.put("avatarProvider", diagnostic != null ? diagnostic.avatarProvider() : null);
+        value.put("avatarError", hasAvatar ? null : (diagnostic != null ? diagnostic.avatarError() : null));
         value.put("songs", samples);
         return value;
     }

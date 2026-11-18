@@ -16,6 +16,11 @@ final class LiveTranscodeCommandBuilder {
     }
 
     List<String> build(File source, SongFile songFile, Double startSeconds) {
+        return build(source, songFile, startSeconds, null, false);
+    }
+
+    List<String> build(File source, SongFile songFile, Double startSeconds,
+                       Integer audioTrack, boolean copyVideo) {
         List<String> command = new ArrayList<>();
         command.add(ffmpegPath);
         command.add("-hide_banner");
@@ -30,25 +35,35 @@ final class LiveTranscodeCommandBuilder {
 
         command.add("-map");
         command.add("0:v:0");
-        int audioTracks = songFile.getAudioTracks();
-        if (audioTracks > 1) {
-            for (int index = 0; index < audioTracks; index++) {
-                command.add("-map");
-                command.add("0:a:" + index);
-            }
-        } else {
+        if (audioTrack != null && audioTrack >= 0) {
             command.add("-map");
-            command.add("0:a?");
+            command.add("0:a:" + audioTrack);
+        } else {
+            int audioTracks = songFile.getAudioTracks();
+            if (audioTracks > 1) {
+                for (int index = 0; index < audioTracks; index++) {
+                    command.add("-map");
+                    command.add("0:a:" + index);
+                }
+            } else {
+                command.add("-map");
+                command.add("0:a?");
+            }
         }
 
-        command.add("-c:v");
-        command.add("libx264");
-        command.add("-preset");
-        command.add("veryfast");
-        command.add("-tune");
-        command.add("zerolatency");
-        command.add("-pix_fmt");
-        command.add("yuv420p");
+        if (copyVideo) {
+            command.add("-c:v");
+            command.add("copy");
+        } else {
+            command.add("-c:v");
+            command.add("libx264");
+            command.add("-preset");
+            command.add("veryfast");
+            command.add("-tune");
+            command.add("zerolatency");
+            command.add("-pix_fmt");
+            command.add("yuv420p");
+        }
 
         command.add("-c:a");
         command.add("aac");

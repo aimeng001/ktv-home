@@ -42,7 +42,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("GITHUB_REF_NAME", source_gate)
         self.assertIn("git merge-base --is-ancestor", source_gate)
         self.assertIn("needs: release-source", release_meta)
-        self.assertIn("windows-player", image)
+        self.assertIn("android-tv", image)
+        self.assertNotIn("windows-player", self.workflow)
         self.assertIn("image", github_release)
 
     def test_release_publishes_a_manifest_bound_to_the_image_digest(self) -> None:
@@ -71,13 +72,6 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(SAFE_VERSION.fullmatch("1.0.0-unstable.3"))
         self.assertIsNone(SAFE_VERSION.fullmatch("1.0.0/rc1"))
         self.assertIsNone(SAFE_VERSION.fullmatch("1.0.0:rc1"))
-
-    def test_windows_package_explains_the_mpv_prerequisite(self) -> None:
-        windows_player = job_block(self.workflow, "windows-player")
-
-        self.assertIn("mpv.exe", windows_player)
-        self.assertIn("Copy-Item windows-player/README.md", windows_player)
-        self.assertIn("README-WINDOWS-PLAYER.md", windows_player)
 
     def test_docker_image_wires_source_revision_and_build_time(self) -> None:
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")

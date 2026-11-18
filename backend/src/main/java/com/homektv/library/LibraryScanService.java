@@ -256,6 +256,12 @@ public class LibraryScanService {
                     null, null, "IDLE", 0, 0, 0, 0, 0.0, null,
                     ScanState.IDLE, 0, null, null);
         }
+
+        static ScanProgress queued() {
+            return new ScanProgress(true, 0, 0, null, 0, 0, 0, 0,
+                    OffsetDateTime.now(), null, PHASE_DISCOVERING, 0, 0, 0, 0, 0.0, null,
+                    ScanState.RUNNING, 0, null, null);
+        }
     }
 
     private ArtistCreditService artistCreditService;
@@ -320,6 +326,7 @@ public class LibraryScanService {
             UUID scanId = UUID.randomUUID();
             long maxIdAtScanStart = fileRepo.findMaxIdByFileRole(activeRole);
             long validFilesAtScanStart = countValidFilesAtScanStart(activeRole, root);
+            Set<Long> unrecognizedSongIds = loadUnrecognizedSongIds();
 
             List<FastIndexEntry> batch = new ArrayList<>(FAST_INDEX_BATCH_SIZE);
             ScanCounters counters = new ScanCounters();
@@ -350,7 +357,7 @@ public class LibraryScanService {
 
                     @Override
                     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                        if (!attrs.isRegularFile() || Files.isSymbolicLink(file)
+                        if (!attrs.isRegularFile() || attrs.isSymbolicLink() || Files.isSymbolicLink(file)
                                 || !isMediaFile(file) || !rootContext.allowsVisitedFile(file)) {
                             return FileVisitResult.CONTINUE;
                         }
@@ -369,8 +376,8 @@ public class LibraryScanService {
                                     enumerationComplete[0] = false;
                                     log.warn("记录本轮扫描路径失败，本轮不标记缺失：{}", failure.getMessage());
                                 }
-                                processFastIndexBatch(batch, externalDefault, knownArtists, counters, totals,
-                                        startedAt, discovered[0], activeRole,
+                                processFastIndexBatch(batch, externalDefault, knownArtists, unrecognizedSongIds,
+                                        counters, totals, startedAt, discovered[0], activeRole,
                                         scanId, maxIdAtScanStart, leaseGuard);
                                 batch.clear();
                             }
@@ -421,8 +428,8 @@ public class LibraryScanService {
                     enumerationComplete[0] = false;
                     log.warn("记录本轮扫描路径失败，本轮不标记缺失：{}", failure.getMessage());
                 }
-                processFastIndexBatch(batch, externalDefault, knownArtists, counters, totals,
-                        startedAt, discovered[0], activeRole,
+                processFastIndexBatch(batch, externalDefault, knownArtists, unrecognizedSongIds,
+                        counters, totals, startedAt, discovered[0], activeRole,
                         scanId, maxIdAtScanStart, leaseGuard);
                 batch.clear();
             }
@@ -483,6 +490,7 @@ public class LibraryScanService {
 
     private void processFastIndexBatch(List<FastIndexEntry> batch, AudioLayout externalDefault,
                                        Collection<String> knownArtists,
+                                       Set<Long> unrecognizedSongIds,
                                        ScanCounters counters, ScanTotals totals,
                                        OffsetDateTime startedAt, int discovered, String activeRole,
                                        UUID scanId, long maxIdAtScanStart,
@@ -500,7 +508,8 @@ public class LibraryScanService {
                     startedAt, null);
             return;
         }
-        Map<Long, Song> songsForFilenameRepair = loadSongsForFilenameRepair(resolvedBatch);
+        Map<Long, Song> songsForFilenameRepair = loadSongsForFilenameRepair(resolvedBatch, unrecognizedSongIds);
+        int updatesBeforeBatch = counters.dbUpdates;
         Runnable work = () -> {
             for (FastIndexEntry entry : resolvedBatch) {
                 LibrarySnapshotPolicy.Change change = snapshotChange(entry);
@@ -537,7 +546,9 @@ public class LibraryScanService {
                     work.run();
                     leaseGuard.assertOwned();
                     if (entityManager != null) {
-                        entityManager.flush();
+                        if (counters.dbUpdates > updatesBeforeBatch) {
+                            entityManager.flush();
+                        }
                         entityManager.clear();
                     }
                 });
@@ -555,19 +566,39 @@ public class LibraryScanService {
                 startedAt, null);
     }
 
+    private Set<Long> loadUnrecognizedSongIds() {
+        try {
+            List<Long> ids = songRepo.findIdsByStatus("unrecognized");
+            if (ids == null) return null;
+            if (ids.isEmpty()) return Set.of();
+            return Set.copyOf(ids);
+        } catch (RuntimeException failure) {
+            log.debug("读取待修复歌曲 ID 集合失败，将退回按批次校验：{}", failure.getMessage());
+            return null;
+        }
+    }
+
     /**
-     * Load only the songs that could benefit from the legacy filename repair.
-     * The lookup is batched so a scan never turns this compatibility path into
-     * one database query per unchanged file.
+     * Load only the unrecognized songs that could benefit from the legacy filename repair.
+     * Normal 'ok' songs are skipped in O(1) without triggering entity queries or filename parsing.
      */
-    private Map<Long, Song> loadSongsForFilenameRepair(List<FastIndexEntry> batch) {
+    private Map<Long, Song> loadSongsForFilenameRepair(List<FastIndexEntry> batch,
+                                                         Set<Long> unrecognizedSongIds) {
+        if (unrecognizedSongIds != null && unrecognizedSongIds.isEmpty()) return Map.of();
         Set<Long> songIds = new LinkedHashSet<>();
         for (FastIndexEntry entry : batch) {
-            if (snapshotChange(entry) != LibrarySnapshotPolicy.Change.UNCHANGED
-                    || !entry.filenameMeta().recognized()) {
+            if (snapshotChange(entry) != LibrarySnapshotPolicy.Change.UNCHANGED) {
                 continue;
             }
-            entry.existing().map(SongFile::getSongId).ifPresent(songIds::add);
+            Long songId = entry.existing().map(SongFile::getSongId).orElse(null);
+            if (songId == null) continue;
+            if (unrecognizedSongIds != null && !unrecognizedSongIds.contains(songId)) {
+                continue;
+            }
+            if (!entry.filenameMeta().recognized()) {
+                continue;
+            }
+            songIds.add(songId);
         }
         if (songIds.isEmpty()) return Map.of();
 
@@ -749,83 +780,68 @@ public class LibraryScanService {
                                       int discovered,
                                       LibraryScanLeaseGuard leaseGuard) {
         totals.probeStartedAt = OffsetDateTime.now();
-        String afterPath = "";
-        while (true) {
-            leaseGuard.assertOwned();
-            Slice<SongFile> page;
-            try {
-                page = fileRepo.findPendingForScan(activeRole, maxIdAtScanStart, scanId,
-                        afterPath, PageRequest.of(0, PROBE_PAGE_SIZE));
-            } catch (RuntimeException failure) {
-                log.warn("读取媒体探测队列失败，保留 pending 记录等待重试：{}", failure.getMessage());
-                return;
-            }
-            // Spring Data's Slice query returns an empty slice when no rows match;
-            // a null page is outside the repository contract.
-            if (page.getContent().isEmpty()) return;
+        CompletionService<ProbeResult> completionService = new ExecutorCompletionService<>(probeExecutor);
+        Set<Future<ProbeResult>> activeFutures = new HashSet<>();
+        Deque<PendingProbeItem> readyQueue = new ArrayDeque<>();
+        int windowSize = PROBE_CONCURRENCY * 2;
+        String[] afterPath = {""};
+        boolean[] exhausted = {false};
 
-            Set<String> pendingAtStartPaths;
-            try {
-                pendingAtStartPaths = seenPathStore.findPendingAtStart(scanId, activeRole,
-                        page.getContent().stream().map(SongFile::getFilePath)
-                                .filter(path -> !isBlank(path)).toList());
-            } catch (RuntimeException failure) {
-                log.warn("读取扫描开始时的 pending 状态失败，保留队列等待下次扫描：{}", failure.getMessage());
-                pendingAtStartPaths = page.getContent().stream()
-                        .filter(file -> file.getId() <= maxIdAtScanStart)
-                        .map(SongFile::getFilePath)
-                        .filter(path -> !isBlank(path))
-                        .collect(java.util.stream.Collectors.toSet());
-            }
-            Set<String> pendingPathsForProbe = pendingAtStartPaths;
-
-            CompletionService<ProbeResult> completionService = new ExecutorCompletionService<>(probeExecutor);
-            List<Future<ProbeResult>> futures = new ArrayList<>();
-            int submitted = 0;
-            for (SongFile tracked : page.getContent()) {
-                if (isBlank(tracked.getFilePath())) continue;
-                afterPath = tracked.getFilePath();
-                Path file;
-                try {
-                    file = Path.of(tracked.getFilePath());
-                } catch (RuntimeException invalidPath) {
-                    log.warn("探测队列存在无效路径，保留 pending：{}", tracked.getFilePath());
-                    continue;
+        try {
+            while (!activeFutures.isEmpty() || !readyQueue.isEmpty() || !exhausted[0]) {
+                while (activeFutures.size() < windowSize) {
+                    if (readyQueue.isEmpty() && !exhausted[0]) {
+                        leaseGuard.assertOwned();
+                        if (!loadNextPendingProbePage(rootContext, activeRole, scanId,
+                                maxIdAtScanStart, afterPath, readyQueue, exhausted)) {
+                            exhausted[0] = true;
+                            break;
+                        }
+                    }
+                    if (readyQueue.isEmpty()) break;
+                    PendingProbeItem next = readyQueue.pollFirst();
+                    activeFutures.add(completionService.submit(() -> probePendingFile(
+                            next.file(), next.tracked(), rootContext, artistIndex,
+                            maxIdAtScanStart, next.pendingAtStart())));
                 }
-                if (!rootContext.allowsExistingFile(file)
-                        || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || !isMediaFile(file)) {
-                    continue;
-                }
-                futures.add(completionService.submit(() -> probePendingFile(file, tracked, rootContext,
-                        artistIndex, maxIdAtScanStart,
-                        pendingPathsForProbe.contains(tracked.getFilePath()))));
-                submitted++;
-            }
+                if (activeFutures.isEmpty()) return;
 
-            for (int completed = 0; completed < submitted; completed++) {
-                ProbeResult result;
+                Future<ProbeResult> completedFuture;
                 try {
-                    result = completionService.take().get();
+                    completedFuture = completionService.take();
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
-                    futures.forEach(future -> future.cancel(true));
+                    return;
+                }
+                activeFutures.remove(completedFuture);
+
+                // Keep worker threads fed immediately before the scan thread enters DB write.
+                while (activeFutures.size() < windowSize && !readyQueue.isEmpty()) {
+                    PendingProbeItem next = readyQueue.pollFirst();
+                    activeFutures.add(completionService.submit(() -> probePendingFile(
+                            next.file(), next.tracked(), rootContext, artistIndex,
+                            maxIdAtScanStart, next.pendingAtStart())));
+                }
+
+                ProbeResult result;
+                try {
+                    result = completedFuture.get();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
                     return;
                 } catch (ExecutionException failure) {
                     totals.skipped++;
                     totals.probeCompleted++;
-                    log.warn("媒体探测任务异常，保留 pending：{}",
-                            failure.getCause().getMessage());
+                    log.warn("媒体探测任务异常，保留 pending：{}", failure.getCause().getMessage());
                     continue;
                 }
 
                 counters.probeCalls += result.attempted() ? 1 : 0;
                 IngestOutcome outcome = IngestOutcome.SKIPPED;
                 if (result.probe() == null) {
-                    if (result.failure() != null) {
-                        if (!(result.failure() instanceof InterruptedException)) {
-                            log.debug("ffprobe 失败，保留 pending：{} - {}",
-                                    result.file(), result.failure().getMessage());
-                        }
+                    if (result.failure() != null && !(result.failure() instanceof InterruptedException)) {
+                        log.debug("ffprobe 失败，保留 pending：{} - {}",
+                                result.file(), result.failure().getMessage());
                     }
                 } else {
                     try {
@@ -844,9 +860,73 @@ public class LibraryScanService {
                         PHASE_MEDIA_PROBE, counters.fastIndexed, counters.probeQueued,
                         totals.probeCompleted, startedAt, null);
             }
-            if (page.getContent().size() < PROBE_PAGE_SIZE) return;
+        } finally {
+            activeFutures.forEach(future -> future.cancel(true));
         }
     }
+
+    private boolean loadNextPendingProbePage(ScanRootContext rootContext,
+                                             String activeRole,
+                                             UUID scanId,
+                                             long maxIdAtScanStart,
+                                             String[] afterPath,
+                                             Deque<PendingProbeItem> readyQueue,
+                                             boolean[] exhausted) {
+        while (true) {
+            Slice<SongFile> page;
+            try {
+                page = fileRepo.findPendingForScan(activeRole, maxIdAtScanStart, scanId,
+                        afterPath[0], PageRequest.of(0, PROBE_PAGE_SIZE));
+            } catch (RuntimeException failure) {
+                log.warn("读取媒体探测队列失败，保留 pending 记录等待重试：{}", failure.getMessage());
+                return false;
+            }
+            if (page.getContent().isEmpty()) {
+                exhausted[0] = true;
+                return false;
+            }
+
+            Set<String> pendingAtStartPaths;
+            try {
+                pendingAtStartPaths = seenPathStore.findPendingAtStart(scanId, activeRole,
+                        page.getContent().stream().map(SongFile::getFilePath)
+                                .filter(path -> !isBlank(path)).toList());
+            } catch (RuntimeException failure) {
+                log.warn("读取扫描开始时的 pending 状态失败，保留队列等待下次扫描：{}", failure.getMessage());
+                pendingAtStartPaths = page.getContent().stream()
+                        .filter(file -> file.getId() <= maxIdAtScanStart)
+                        .map(SongFile::getFilePath)
+                        .filter(path -> !isBlank(path))
+                        .collect(java.util.stream.Collectors.toSet());
+            }
+
+            for (SongFile tracked : page.getContent()) {
+                if (isBlank(tracked.getFilePath())) continue;
+                afterPath[0] = tracked.getFilePath();
+                Path file;
+                try {
+                    file = Path.of(tracked.getFilePath());
+                } catch (RuntimeException invalidPath) {
+                    log.warn("探测队列存在无效路径，保留 pending：{}", tracked.getFilePath());
+                    continue;
+                }
+                if (!rootContext.allowsExistingFile(file)
+                        || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || !isMediaFile(file)) {
+                    continue;
+                }
+                readyQueue.addLast(new PendingProbeItem(
+                        file, tracked, pendingAtStartPaths.contains(tracked.getFilePath())));
+            }
+            if (page.getContent().size() < PROBE_PAGE_SIZE) {
+                exhausted[0] = true;
+            }
+            if (!readyQueue.isEmpty() || exhausted[0]) {
+                return !readyQueue.isEmpty();
+            }
+        }
+    }
+
+    private record PendingProbeItem(Path file, SongFile tracked, boolean pendingAtStart) {}
 
     /**
      * Probe workers are deliberately restricted to filesystem metadata and FFprobe.
@@ -966,13 +1046,38 @@ public class LibraryScanService {
         }
     }
 
+    boolean markCoordinatorScanQueued() {
+        ScanProgress current = scanProgress.get();
+        if (scanRunning.get() || (current != null && current.running())) {
+            return false;
+        }
+        return scanProgress.compareAndSet(current, ScanProgress.queued());
+    }
+
+    void clearCoordinatorScanQueued() {
+        ScanProgress current = scanProgress.get();
+        if (!scanRunning.get() && current != null && current.running() && PHASE_DISCOVERING.equals(current.phase())) {
+            scanProgress.compareAndSet(current, ScanProgress.idle());
+        }
+    }
+
     public ScanProgress getScanProgress() {
         return scanProgress.get();
     }
 
     /** Shared filename parsing entry point for Managed imports and active-library scans. */
     public ParsedMeta parseFilename(String filename) {
-        return FilenameParser.parse(filename, artistIndexFor(existingArtistNames()));
+        return parseFilename(filename, null);
+    }
+
+    /** Batch-friendly filename parsing entry point reusing a caller-scoped ArtistIndex. */
+    public ParsedMeta parseFilename(String filename, FilenameParser.ArtistIndex artistIndex) {
+        return FilenameParser.parse(filename, artistIndex != null ? artistIndex : artistIndexFor(existingArtistNames()));
+    }
+
+    /** Builds a transient ArtistIndex scoped to the caller's batch without retaining it on the singleton. */
+    public FilenameParser.ArtistIndex createFilenameArtistIndex() {
+        return artistIndexFor(existingArtistNames());
     }
 
     private void syncArtistCredits(Song song, Collection<String> knownArtists) {
@@ -1053,7 +1158,7 @@ public class LibraryScanService {
         }
         return new FastIndexEntry(file, path, relativePath, attrs.size(), newestMtime(mediaMtime, lyricSnapshot),
                 legacyFileIdentity(mediaIdentity, lyricSnapshot.fileIdentity()),
-                FilenameParser.parse(file.getFileName().toString(), artistIndex),
+                () -> FilenameParser.parse(file.getFileName().toString(), artistIndex),
                 mediaMtime, mediaIdentity, lyricSnapshot,
                 Optional.ofNullable(tracked), tracked != null, tracked != null && tracked.isProbePending());
     }
@@ -1689,26 +1794,92 @@ public class LibraryScanService {
         }
     }
 
-    record FastIndexEntry(Path file, String path, String relativePath, long size, OffsetDateTime mtime,
-                                  String fileIdentity, ParsedMeta filenameMeta,
-                                  OffsetDateTime mediaMtime, String mediaIdentity,
-                                  LyricSnapshot lyricSnapshot,
-                                  Optional<SongFile> existing, boolean existedBeforeScan,
-                                  boolean pendingBeforeScan) {
+    static final class FastIndexEntry {
+        private final Path file;
+        private final String path;
+        private final String relativePath;
+        private final long size;
+        private final OffsetDateTime mtime;
+        private final String fileIdentity;
+        private final Supplier<ParsedMeta> filenameMetaSupplier;
+        private ParsedMeta cachedFilenameMeta;
+        private final OffsetDateTime mediaMtime;
+        private final String mediaIdentity;
+        private final LyricSnapshot lyricSnapshot;
+        private final Optional<SongFile> existing;
+        private final boolean existedBeforeScan;
+        private final boolean pendingBeforeScan;
+
+        FastIndexEntry(Path file, String path, String relativePath, long size, OffsetDateTime mtime,
+                       String fileIdentity, Supplier<ParsedMeta> filenameMetaSupplier,
+                       OffsetDateTime mediaMtime, String mediaIdentity,
+                       LyricSnapshot lyricSnapshot,
+                       Optional<SongFile> existing, boolean existedBeforeScan,
+                       boolean pendingBeforeScan) {
+            this(file, path, relativePath, size, mtime, fileIdentity, filenameMetaSupplier, null,
+                    mediaMtime, mediaIdentity, lyricSnapshot, existing, existedBeforeScan, pendingBeforeScan);
+        }
+
+        private FastIndexEntry(Path file, String path, String relativePath, long size, OffsetDateTime mtime,
+                               String fileIdentity, Supplier<ParsedMeta> filenameMetaSupplier,
+                               ParsedMeta cachedFilenameMeta,
+                               OffsetDateTime mediaMtime, String mediaIdentity,
+                               LyricSnapshot lyricSnapshot,
+                               Optional<SongFile> existing, boolean existedBeforeScan,
+                               boolean pendingBeforeScan) {
+            this.file = file;
+            this.path = path;
+            this.relativePath = relativePath;
+            this.size = size;
+            this.mtime = mtime;
+            this.fileIdentity = fileIdentity;
+            this.filenameMetaSupplier = filenameMetaSupplier;
+            this.cachedFilenameMeta = cachedFilenameMeta;
+            this.mediaMtime = mediaMtime;
+            this.mediaIdentity = mediaIdentity;
+            this.lyricSnapshot = lyricSnapshot;
+            this.existing = existing;
+            this.existedBeforeScan = existedBeforeScan;
+            this.pendingBeforeScan = pendingBeforeScan;
+        }
+
+        Path file() { return file; }
+        String path() { return path; }
+        String relativePath() { return relativePath; }
+        long size() { return size; }
+        OffsetDateTime mtime() { return mtime; }
+        String fileIdentity() { return fileIdentity; }
+
+        ParsedMeta filenameMeta() {
+            if (cachedFilenameMeta == null) {
+                cachedFilenameMeta = filenameMetaSupplier.get();
+            }
+            return cachedFilenameMeta;
+        }
+
+        OffsetDateTime mediaMtime() { return mediaMtime; }
+        String mediaIdentity() { return mediaIdentity; }
+        LyricSnapshot lyricSnapshot() { return lyricSnapshot; }
+        Optional<SongFile> existing() { return existing; }
+        boolean existedBeforeScan() { return existedBeforeScan; }
+        boolean pendingBeforeScan() { return pendingBeforeScan; }
+
         LibraryIngestionWriter.Input toIngestionInput() {
             return new LibraryIngestionWriter.Input(file, path, relativePath, size, mtime, fileIdentity,
-                    filenameMeta, mediaMtime, mediaIdentity, lyricSnapshot,
+                    filenameMeta(), mediaMtime, mediaIdentity, lyricSnapshot,
                     existing.map(SongFile::getId).orElse(null), existedBeforeScan, pendingBeforeScan);
         }
 
         private FastIndexEntry withExisting(SongFile replacement) {
-            return new FastIndexEntry(file, path, relativePath, size, mtime, fileIdentity, filenameMeta,
+            return new FastIndexEntry(file, path, relativePath, size, mtime, fileIdentity,
+                    filenameMetaSupplier, cachedFilenameMeta,
                     mediaMtime, mediaIdentity, lyricSnapshot,
                     Optional.ofNullable(replacement), existedBeforeScan, pendingBeforeScan);
         }
 
         private FastIndexEntry withScanHistory(boolean existed, boolean pending) {
-            return new FastIndexEntry(file, path, relativePath, size, mtime, fileIdentity, filenameMeta,
+            return new FastIndexEntry(file, path, relativePath, size, mtime, fileIdentity,
+                    filenameMetaSupplier, cachedFilenameMeta,
                     mediaMtime, mediaIdentity, lyricSnapshot,
                     existing, existed, pending);
         }

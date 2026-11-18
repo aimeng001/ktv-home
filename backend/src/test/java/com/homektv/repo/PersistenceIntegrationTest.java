@@ -9,6 +9,7 @@ import com.homektv.library.CategoryBrowseService;
 import com.homektv.library.ArtistDirectoryProjectionService;
 import com.homektv.library.ArtistGenderDictionaryService;
 import com.homektv.library.ArtistGenderMatcher;
+import com.homektv.library.ArtistLibraryService;
 import com.homektv.library.IktvReferenceCatalogLoader;
 import com.homektv.library.SongMergeService;
 import org.junit.jupiter.api.Test;
@@ -101,6 +102,9 @@ class PersistenceIntegrationTest {
 
     @Autowired
     private ArtistDirectoryProjectionService artistDirectoryProjection;
+
+    @Autowired
+    private ArtistLibraryService artistLibraryService;
 
     @Autowired
     private ArtistGenderDictionaryService artistGenderDictionary;
@@ -965,6 +969,62 @@ class PersistenceIntegrationTest {
                 .isTrue();
         assertThat(songRepository.findById(insideSong.getId()).orElseThrow().getStatus()).isEqualTo("file_missing");
         assertThat(songRepository.findById(siblingSong.getId()).orElseThrow().getStatus()).isEqualTo("ok");
+    }
+
+    @Test
+    void adminArtistLibraryUsesMaterializedProjectionSamplesAndSyncsManualGenderImmediately() {
+        String suffix = String.valueOf(System.nanoTime());
+        String indexedArtist = "高速投影歌手-" + suffix;
+        String indexedKey = com.homektv.library.ArtistCreditParser.key(indexedArtist);
+        String legacyArtist = "遗留样本歌手-" + suffix;
+        String legacyKey = com.homektv.library.ArtistCreditParser.key(legacyArtist);
+
+        for (int i = 1; i <= 7; i++) {
+            Song s = song("热门代表作-" + i + "-" + suffix, indexedArtist, "admin-fast-indexed-" + i + "-" + suffix);
+            s.setPlayCount(i * 10);
+            s.setStatus("ok");
+            Song saved = songRepository.save(s);
+            jdbc.update("""
+                    INSERT INTO song_artists(song_id, artist_name, artist_key, artist_order)
+                    VALUES (?, ?, ?, 0)
+                    """, saved.getId(), indexedArtist, indexedKey);
+        }
+
+        Song legacySong = song("遗留代表作-" + suffix, legacyArtist, "admin-fast-legacy-" + suffix);
+        legacySong.setPlayCount(50);
+        legacySong.setStatus("ok");
+        songRepository.save(legacySong);
+
+        artistDirectoryProjection.refresh();
+
+        var indexedPage = artistLibraryService.page(indexedArtist, "", null, 0, 50);
+        assertThat(indexedPage.total()).isEqualTo(1L);
+        assertThat(indexedPage.items()).hasSize(1);
+        var indexedRow = indexedPage.items().getFirst();
+        assertThat(indexedRow).containsEntry("artistKey", indexedKey)
+                .containsEntry("songCount", 7L)
+                .containsEntry("reviewed", false);
+        @SuppressWarnings("unchecked")
+        List<java.util.Map<String, Object>> indexedSamples =
+                (List<java.util.Map<String, Object>>) indexedRow.get("songs");
+        assertThat(indexedSamples).hasSize(5);
+        assertThat(indexedSamples.getFirst().get("title")).isEqualTo("热门代表作-7-" + suffix);
+
+        var legacyPage = artistLibraryService.page(legacyArtist, "", null, 0, 50);
+        assertThat(legacyPage.total()).isEqualTo(1L);
+        @SuppressWarnings("unchecked")
+        List<java.util.Map<String, Object>> legacySamples =
+                (List<java.util.Map<String, Object>>) legacyPage.items().getFirst().get("songs");
+        assertThat(legacySamples).extracting(item -> item.get("title"))
+                .containsExactly("遗留代表作-" + suffix);
+
+        artistLibraryService.apply(indexedArtist, "女歌手");
+
+        var afterReview = artistLibraryService.page(indexedArtist, "女歌手", true, 0, 50);
+        assertThat(afterReview.total()).isEqualTo(1L);
+        assertThat(afterReview.items().getFirst())
+                .containsEntry("gender", "女歌手")
+                .containsEntry("reviewed", true);
     }
 
     private SongFile songFile(String path, Long songId, boolean valid) {

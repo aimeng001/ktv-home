@@ -49,6 +49,16 @@ class KtvKioskCatalogReloadContractTest {
         assertTrue(dataCheck.contains("KioskCategoryMode.TAGS -> controllerState.tags.isNotEmpty()"))
     }
 
+    @Test
+    fun directCommercialTagRoutePrefetchesTagsWithoutCancellingTagSongs() {
+        val source = controllerSource()
+        val tagRoute = source.substringAfter("private fun openCommercialTagRoute(")
+            .substringBefore("private fun resolvePendingCommercialTagRoute(")
+        assertTrue(tagRoute.contains("catalogActionRouter.tagSongs(exactName)"))
+        assertTrue(tagRoute.contains("catalogActionRouter.prefetchTags()"))
+        assertTrue(!tagRoute.contains("catalogActionRouter.tags()"))
+    }
+
     private fun controllerSource(): String = listOf(
         File("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt"),
         File("android-tv/app/src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt"),

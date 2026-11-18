@@ -94,12 +94,13 @@ public class CategoryBrowseController {
                                                    @RequestParam(required = false) String tag,
                                                    @RequestParam(required = false) String vocalForm,
                                                    @RequestParam(required = false) String keyword,
+                                                   @RequestParam(required = false) String mediaType,
                                                    @RequestParam(defaultValue = "hot") String sort,
                                                    @RequestParam(defaultValue = "0") int page,
                                                    @RequestParam(defaultValue = "50") int size) {
-        if (keyword == null || keyword.isBlank()) {
+        if ((keyword == null || keyword.isBlank()) && (mediaType == null || mediaType.isBlank())) {
             return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, sort, page, size);
         }
-        return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, keyword, sort, page, size);
+        return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, keyword, mediaType, sort, page, size);
     }
 }

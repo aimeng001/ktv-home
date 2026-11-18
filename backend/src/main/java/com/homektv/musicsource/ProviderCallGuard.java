@@ -9,8 +9,16 @@ import java.util.function.Supplier;
 
 @Component
 public class ProviderCallGuard {
+    private static final long CDN_MEDIA_INTERVAL_MS = 350L;
+    private static final int CDN_MEDIA_MAX_CONCURRENCY = 2;
+    private static final long FALLBACK_INTERVAL_MS = 1_200L;
+
     private final Map<MusicProvider, Integer> activeCalls = new EnumMap<>(MusicProvider.class);
     private final Map<MusicProvider, Long> nextRequestAt = new EnumMap<>(MusicProvider.class);
+    private final Map<MusicProvider, Integer> activeMediaCalls = new EnumMap<>(MusicProvider.class);
+    private final Map<MusicProvider, Long> nextMediaAt = new EnumMap<>(MusicProvider.class);
+    private final Object fallbackLock = new Object();
+    private long nextFallbackAt = 0L;
     private final Supplier<MusicSourceConfig> configSupplier;
     private final ProviderRequestRateLimiter persistentLimiter;
 
@@ -37,6 +45,8 @@ public class ProviderCallGuard {
         for (MusicProvider provider : MusicProvider.values()) {
             activeCalls.put(provider, 0);
             nextRequestAt.put(provider, 0L);
+            activeMediaCalls.put(provider, 0);
+            nextMediaAt.put(provider, 0L);
         }
     }
 
@@ -45,7 +55,9 @@ public class ProviderCallGuard {
         try {
             acquire(provider);
             acquired = true;
-            throttle(provider, configSupplier.get().requestIntervalMs());
+            long configuredInterval = configSupplier.get().requestIntervalMs();
+            long minPersistent = persistentLimiter != null ? persistentLimiter.minIntervalMs() : 0L;
+            throttle(provider, Math.max(configuredInterval, minPersistent));
             if (persistentLimiter != null) persistentLimiter.beforeRequest(provider);
             T result;
             try {
@@ -71,6 +83,65 @@ public class ProviderCallGuard {
         }
     }
 
+    /**
+     * Lightweight static CDN image channel isolated from API search quota and
+     * search interval so downloading artwork right after search never deadlocks.
+     */
+    public <T> T callMedia(MusicProvider provider, Supplier<T> action) {
+        boolean acquired = false;
+        try {
+            acquireMedia(provider);
+            acquired = true;
+            throttleMedia(provider, CDN_MEDIA_INTERVAL_MS);
+            return action.get();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new MusicSourceException(provider, "图片下载请求已取消", ex);
+        } finally {
+            if (acquired) releaseMedia(provider);
+        }
+    }
+
+    /** Serialized lightweight throttle for public fallback / web image sources. */
+    public <T> T callFallback(Supplier<T> action) {
+        synchronized (fallbackLock) {
+            try {
+                long now = System.currentTimeMillis();
+                long wait = Math.max(0L, nextFallbackAt - now);
+                if (wait > 0L) Thread.sleep(wait);
+                nextFallbackAt = System.currentTimeMillis() + FALLBACK_INTERVAL_MS;
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new MusicSourceException(MusicProvider.QQ, "兜底刮削请求已取消", ex);
+            }
+            return action.get();
+        }
+    }
+
+    private void acquireMedia(MusicProvider provider) throws InterruptedException {
+        synchronized (activeMediaCalls) {
+            while (activeMediaCalls.get(provider) >= CDN_MEDIA_MAX_CONCURRENCY) activeMediaCalls.wait();
+            activeMediaCalls.put(provider, activeMediaCalls.get(provider) + 1);
+        }
+    }
+
+    private void releaseMedia(MusicProvider provider) {
+        synchronized (activeMediaCalls) {
+            activeMediaCalls.put(provider, activeMediaCalls.get(provider) - 1);
+            activeMediaCalls.notifyAll();
+        }
+    }
+
+    private void throttleMedia(MusicProvider provider, long intervalMs) throws InterruptedException {
+        long wait;
+        synchronized (nextMediaAt) {
+            long now = System.currentTimeMillis();
+            wait = Math.max(0L, nextMediaAt.get(provider) - now);
+            nextMediaAt.put(provider, Math.max(now, nextMediaAt.get(provider)) + intervalMs);
+        }
+        if (wait > 0L) Thread.sleep(wait);
+    }
+
     private void acquire(MusicProvider provider) throws InterruptedException {
         synchronized (activeCalls) {
             // The persisted gate is shared by metadata and avatar traffic.
@@ -88,7 +159,7 @@ public class ProviderCallGuard {
         }
     }
 
-    private void throttle(MusicProvider provider, int intervalMs) throws InterruptedException {
+    private void throttle(MusicProvider provider, long intervalMs) throws InterruptedException {
         long wait;
         synchronized (nextRequestAt) {
             long now = System.currentTimeMillis();

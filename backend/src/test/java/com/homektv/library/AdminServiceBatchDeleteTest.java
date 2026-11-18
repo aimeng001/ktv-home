@@ -54,6 +54,8 @@ class AdminServiceBatchDeleteTest {
         verify(fixture.queue, times(2)).deleteAll(List.of());
         verify(fixture.history).deleteBySongId(1L);
         verify(fixture.history).deleteBySongId(2L);
+        verify(fixture.artistDirectoryProjection, times(2)).requestRefreshAfterCommit();
+        verify(fixture.catalogRevision, times(2)).bumpIfChanged(true);
     }
 
     private static Song song(long id) {
@@ -68,6 +70,8 @@ class AdminServiceBatchDeleteTest {
         final PlayHistoryRepository history = mock(PlayHistoryRepository.class);
         final QueueItemRepository queue = mock(QueueItemRepository.class);
         final PlayerStateRepository player = mock(PlayerStateRepository.class);
+        final ArtistDirectoryProjectionService artistDirectoryProjection = mock(ArtistDirectoryProjectionService.class);
+        final CatalogRevisionService catalogRevision = mock(CatalogRevisionService.class);
         final AdminService service;
 
         Fixture() {
@@ -76,6 +80,8 @@ class AdminServiceBatchDeleteTest {
             properties.setKtvLibraryPath("C:\\managed");
             service = new AdminService(songs, files, history, mock(WsBroadcaster.class),
                     mock(AssetWriter.class), queue, player, properties);
+            service.setArtistDirectoryProjectionService(artistDirectoryProjection);
+            service.setCatalogRevisionService(catalogRevision);
         }
     }
 }

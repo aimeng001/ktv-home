@@ -79,20 +79,20 @@
         </section>
 
         <section v-show="section === 'metadata'" class="section" id="section-metadata">
-          <SectionHead title="音乐元数据" description="为 KTV 曲库刮削歌名、歌手、专辑、发行时间和封面；歌手头像另按本地优先规则补全"><Music2 :size="19" /><template #aside><span class="source-pill" :class="{ok: musicForm.enabled && musicForm.providers.length}"><i></i>{{ musicForm.enabled && musicForm.providers.length ? '已启用' : '默认关闭' }}</span></template></SectionHead>
+          <SectionHead title="音乐元数据" description="为 KTV 曲库刮削歌名、歌手、专辑、发行时间和封面；歌手头像按本地优先 + 音乐平台与网页兜底低频补全"><Music2 :size="19" /><template #aside><span class="source-pill" :class="{ok: musicForm.enabled && musicForm.providers.length}"><i></i>{{ musicForm.enabled && musicForm.providers.length ? '已启用' : '默认关闭' }}</span></template></SectionHead>
           <div class="setting-group">
             <div class="group-head"><strong>刮削来源</strong><span>仅用于补全 KTV 曲库，不提供在线搜歌或播放</span></div>
             <SettingRow id="music_sources_enabled" label="启用元数据刮削"><Toggle v-model="musicForm.enabled" /></SettingRow>
             <SettingRow id="music_sources_providers" label="刮削平台" hint="批量任务会从已选平台匹配最可靠的候选"><Checks v-model="musicForm.providers" :options="musicProviderOptions" /></SettingRow>
           </div>
           <div class="setting-group">
-            <div class="group-head"><strong>请求与缓存</strong><span>歌曲元数据、歌手头像搜索和头像下载共享 Provider 限速</span></div>
+            <div class="group-head"><strong>请求与缓存</strong><span>API 搜索遵循平台间隔与每日配额；静态 CDN 图片与兜底图床使用独立下载通道</span></div>
             <SettingRow id="music_sources_limit" label="每个平台搜索数量"><div class="unit-input"><input v-model.number="musicForm.resultLimit" class="input short" type="number" min="1" max="50" /><span>条</span></div></SettingRow>
             <SettingRow id="music_sources_timeout" label="请求超时"><div class="unit-input"><input v-model.number="musicForm.timeoutSeconds" class="input short" type="number" min="2" max="30" /><span>秒</span></div></SettingRow>
             <SettingRow id="music_sources_cache" label="搜索缓存"><div class="unit-input"><input v-model.number="musicForm.searchCacheHours" class="input short" type="number" min="1" max="168" /><span>小时</span></div></SettingRow>
             <SettingRow id="music_sources_threshold" label="自动写入阈值" hint="达到该置信度的结果自动写入，低于阈值进入人工审核"><div class="unit-input"><input v-model.number="musicForm.autoApplyThreshold" class="input short" type="number" min="0.5" max="1" step="0.01" /><span>{{ Math.round(musicForm.autoApplyThreshold * 100) }}%</span></div></SettingRow>
             <SettingRow id="music_sources_concurrency" label="单平台并发上限" hint="批量刮削时，每个平台同时进行的请求数"><div class="unit-input"><input v-model.number="musicForm.concurrencyLimit" class="input short" type="number" min="1" max="4" /><span>个</span></div></SettingRow>
-            <SettingRow id="music_sources_interval" label="同平台请求间隔" hint="实际安全下限为 5 秒；头像搜索、头像下载和歌曲元数据共用该平台的限速状态"><div class="unit-input"><input v-model.number="musicForm.requestIntervalMs" class="input short" type="number" min="500" max="30000" step="100" /><span>毫秒</span></div></SettingRow>
+            <SettingRow id="music_sources_interval" label="同平台请求间隔" hint="后端安全下限为 5000 毫秒（低于 5000 按 5000 生效）；头像搜索与歌曲元数据共用限速，静态 CDN 头像下载走独立通道"><div class="unit-input"><input v-model.number="musicForm.requestIntervalMs" class="input short" type="number" min="500" max="30000" step="100" /><span>毫秒</span></div></SettingRow>
             <SettingRow id="music_sources_daily_limit" label="单平台每日请求上限" hint="防封禁防护机制；各平台累计请求达到上限后自动进入冷却"><div class="unit-input"><input v-model.number="musicForm.dailyLimit" class="input short" type="number" min="10" max="2000" /><span>次/天</span></div></SettingRow>
           </div>
           <div class="setting-group">

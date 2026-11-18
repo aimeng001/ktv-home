@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 
-describe('H5 Views Wiring & Error Contracts (Batch 4)', () => {
+describe('H5 Views Wiring & Error Contracts', () => {
   const viewsDir = path.resolve(__dirname, '../views')
+  const ktvDir = path.resolve(__dirname, '../components/ktv')
 
   it('R-05: AiLibraryView mounts AiTaskPanel with correct import path', () => {
     const aiViewContent = fs.readFileSync(path.join(viewsDir, 'admin/AiLibraryView.vue'), 'utf-8')
@@ -11,16 +12,32 @@ describe('H5 Views Wiring & Error Contracts (Batch 4)', () => {
     expect(aiViewContent).toMatch(/<AiTaskPanel\b/)
   })
 
-  it('R-06: HomeView cats contains recent history entry', () => {
-    const homeContent = fs.readFileSync(path.join(viewsDir, 'HomeView.vue'), 'utf-8')
-    expect(homeContent).toContain("label: '最近唱'")
-    expect(homeContent).toContain('History')
+  it('KTV kiosk mounts header, bento/browser, bottom dock, media surface, drawer, and modals', () => {
+    const kioskContent = fs.readFileSync(path.join(viewsDir, 'KtvKioskView.vue'), 'utf-8')
+    expect(kioskContent).toContain('<KtvHeaderBar')
+    expect(kioskContent).toContain('<KtvBentoDashboard')
+    expect(kioskContent).toContain('<KtvThreeColumnBrowser')
+    expect(kioskContent).toContain('<KtvBottomDock')
+    expect(kioskContent).toContain('<KtvMediaSurface')
+    expect(kioskContent).toContain('<KtvQueueDrawer')
+    expect(kioskContent).toContain('<KtvModals')
   })
 
-  it('R-42: QueueView uses tri-state equality check for tvOnline', () => {
-    const queueContent = fs.readFileSync(path.join(viewsDir, 'QueueView.vue'), 'utf-8')
-    expect(queueContent).toContain('player.tvOnline === false')
-    expect(queueContent).not.toMatch(/v-if="!player\.tvOnline"/)
+  it('KtvThreeColumnBrowser includes error retry, tri-state tvOnline drawer notice, and top ordering', () => {
+    const browserContent = fs.readFileSync(path.join(ktvDir, 'KtvThreeColumnBrowser.vue'), 'utf-8')
+    const drawerContent = fs.readFileSync(path.join(ktvDir, 'KtvQueueDrawer.vue'), 'utf-8')
+    expect(browserContent).toContain('@click="reloadActive"')
+    expect(browserContent).toContain('orderTopSong')
+    expect(drawerContent).toContain('player.tvOnline === false')
+  })
+
+  it('KtvMediaSurface suppresses stale liveTranscode progress during source reload and exposes fullscreen navigation', () => {
+    const mediaContent = fs.readFileSync(path.join(ktvDir, 'KtvMediaSurface.vue'), 'utf-8')
+    const headerContent = fs.readFileSync(path.join(ktvDir, 'KtvHeaderBar.vue'), 'utf-8')
+    expect(mediaContent).toContain('awaitingMediaReload')
+    expect(mediaContent).toContain("$emit('open-browser')")
+    expect(mediaContent).toContain("$emit('open-home')")
+    expect(headerContent).toContain('player.connected')
   })
 
   it('R-22: SourceLibraryView and KtvLibraryView contain error state notice and retry', () => {
@@ -31,13 +48,6 @@ describe('H5 Views Wiring & Error Contracts (Batch 4)', () => {
     const ktvContent = fs.readFileSync(path.join(viewsDir, 'admin/KtvLibraryView.vue'), 'utf-8')
     expect(ktvContent).toContain('loadError')
     expect(ktvContent).toMatch(/class="notice error-notice"/)
-  })
-
-  it('R-43: PlaylistDetailView differentiates 404 from other errors', () => {
-    const playlistContent = fs.readFileSync(path.join(viewsDir, 'PlaylistDetailView.vue'), 'utf-8')
-    expect(playlistContent).toContain('notFound')
-    expect(playlistContent).toContain('loadError')
-    expect(playlistContent).toMatch(/404/)
   })
 
   it('retries only failed settings sections and preserves unsaved drafts', () => {
@@ -54,36 +64,6 @@ describe('H5 Views Wiring & Error Contracts (Batch 4)', () => {
     expect(sourceContent).toContain('progressPollGate.isCurrent(request)')
     expect(dashboardContent).toContain('createProgressPollGate()')
     expect(dashboardContent).toContain('scanPollGate.isCurrent(request)')
-  })
-
-  it('keeps existing search results visible and offers retry for a failed next page', () => {
-    const searchContent = fs.readFileSync(path.join(viewsDir, 'SearchView.vue'), 'utf-8')
-    expect(searchContent).toContain('v-if="searchError && results.length"')
-    expect(searchContent).toContain('@click="retryLoadMore"')
-    expect(searchContent).toContain('v-if="hasMore && !searchError"')
-  })
-
-  it('exposes home, now-playing, remote vocal and lyric navigation actions to keyboard users', () => {
-    const homeContent = fs.readFileSync(path.join(viewsDir, 'HomeView.vue'), 'utf-8')
-    const nowPlayingContent = fs.readFileSync(path.join(viewsDir, '../components/NowPlayingBar.vue'), 'utf-8')
-    const remoteContent = fs.readFileSync(path.join(viewsDir, 'RemoteView.vue'), 'utf-8')
-    const lyricContent = fs.readFileSync(path.join(viewsDir, 'LyricView.vue'), 'utf-8')
-
-    expect(homeContent).toMatch(/<button[^>]*class="search"[^>]*@click=/)
-    expect(homeContent).toContain('aria-label="搜索歌名、歌手或拼音"')
-    expect(homeContent).toMatch(/<button[^>]*class="cat"[^>]*@click=/)
-    expect(homeContent).not.toMatch(/<div[^>]*class="cat"[^>]*@click=/)
-    expect(nowPlayingContent).toContain('<RouterLink')
-    expect(remoteContent).toMatch(/<button[^>]*aria-pressed=/)
-    expect(remoteContent).not.toMatch(/<div[^>]*@click="setVocal/)
-    expect(lyricContent).toMatch(/<button[^>]*class="down"[^>]*aria-label=/)
-    expect(lyricContent).not.toMatch(/<span[^>]*class="down"[^>]*@click=/)
-  })
-
-  it('R-44: PlaylistDetailView reports a queue-full partial result', () => {
-    const playlistContent = fs.readFileSync(path.join(viewsDir, 'PlaylistDetailView.vue'), 'utf-8')
-    expect(playlistContent).toContain('result.queueFull')
-    expect(playlistContent).toContain('队列已满')
   })
 
   it('R-09b: SettingsView synchronizes only the transcode baseline after reset defaults', () => {

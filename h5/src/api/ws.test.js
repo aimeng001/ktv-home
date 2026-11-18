@@ -362,6 +362,21 @@ describe('KtvSocket', () => {
     }))
   })
 
+  it('connects with client token query and optional heartbeat payload', () => {
+    const getClientToken = vi.fn(() => 'tok+/=')
+    const getPingPayload = vi.fn(() => ({ generation: 3 }))
+    const socket = new KtvSocket({ getClientToken, getPingPayload })
+
+    socket.connect()
+    const ws = FakeWebSocket.instances[0]
+    expect(ws.url).toBe(`ws://${location.host}/ws?client_type=h5&protocol_version=2&platform=H5&client_token=tok%2B%2F%3D`)
+
+    ws.open()
+    vi.advanceTimersByTime(25_000)
+    expect(ws.sent).toEqual([JSON.stringify({ type: 'ping', payload: { generation: 3 } })])
+    socket.close()
+  })
+
   it('only sends while the WebSocket is open and stops reconnecting after close', () => {
     const socket = new KtvSocket()
     socket.connect()

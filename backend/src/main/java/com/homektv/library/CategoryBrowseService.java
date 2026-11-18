@@ -20,6 +20,7 @@ public class CategoryBrowseService {
     private static final int PUBLIC_SONG_PAGE_SIZE = 50;
     private static final int MAX_PUBLIC_SONG_PAGE_SIZE = 100;
     private static final Set<String> SUPPORTED_ARTIST_REGIONS = Set.of("", "内地", "港台", "国外");
+    private static final Set<String> SUPPORTED_MEDIA_TYPES = Set.of("", "KTV_VIDEO", "MV", "AUDIO");
     private final SongRepository songRepository;
     private final SongAvailabilityPolicy availabilityPolicy;
     private final ArtistDirectoryProjectionService artistDirectoryProjection;
@@ -208,27 +209,48 @@ public class CategoryBrowseService {
     public SongPage songsPage(String artist, String artistKey, String artistGender, String language,
                               String tag, String vocalForm, String keyword, String sort,
                               int page, int size) {
+        return songsPage(artist, artistKey, artistGender, language, tag, vocalForm, keyword, "", sort, page, size);
+    }
+
+    public SongPage songsPage(String artist, String artistKey, String artistGender, String language,
+                              String tag, String vocalForm, String keyword, String mediaType, String sort,
+                              int page, int size) {
         int safePage = Math.max(0, page);
         int safeSize = Math.max(1, Math.min(
                 size <= 0 ? PUBLIC_SONG_PAGE_SIZE : size, MAX_PUBLIC_SONG_PAGE_SIZE));
         PageRequest request = PageRequest.of(safePage, safeSize, songSort(sort));
         String normalizedKey = ArtistCreditParser.key(artistKey);
         String safeKeyword = normalize(keyword);
-        Page<Song> rows = normalizedKey.isBlank()
-                ? (safeKeyword.isEmpty()
-                        ? songRepository.browseCategorySongs(
-                                normalize(artist), normalize(artistGender), normalize(language),
-                                normalize(tag), normalize(vocalForm), request)
-                        : songRepository.browseCategorySongs(
-                                normalize(artist), normalize(artistGender), normalize(language),
-                                normalize(tag), normalize(vocalForm), safeKeyword, request))
-                : (safeKeyword.isEmpty()
-                        ? songRepository.browseCategorySongsByArtistKey(
-                                normalizedKey, normalize(artistGender), normalize(language),
-                                normalize(tag), normalize(vocalForm), request)
-                        : songRepository.browseCategorySongsByArtistKey(
-                                normalizedKey, normalize(artistGender), normalize(language),
-                                normalize(tag), normalize(vocalForm), safeKeyword, request));
+        String safeMediaType = normalize(mediaType).toUpperCase(Locale.ROOT);
+        if (!SUPPORTED_MEDIA_TYPES.contains(safeMediaType)) {
+            throw new com.homektv.web.ApiException("INVALID_MEDIA_TYPE", "媒体格式筛选值无效");
+        }
+        Page<Song> rows;
+        if (safeMediaType.isEmpty()) {
+            rows = normalizedKey.isBlank()
+                    ? (safeKeyword.isEmpty()
+                            ? songRepository.browseCategorySongs(
+                                    normalize(artist), normalize(artistGender), normalize(language),
+                                    normalize(tag), normalize(vocalForm), request)
+                            : songRepository.browseCategorySongs(
+                                    normalize(artist), normalize(artistGender), normalize(language),
+                                    normalize(tag), normalize(vocalForm), safeKeyword, request))
+                    : (safeKeyword.isEmpty()
+                            ? songRepository.browseCategorySongsByArtistKey(
+                                    normalizedKey, normalize(artistGender), normalize(language),
+                                    normalize(tag), normalize(vocalForm), request)
+                            : songRepository.browseCategorySongsByArtistKey(
+                                    normalizedKey, normalize(artistGender), normalize(language),
+                                    normalize(tag), normalize(vocalForm), safeKeyword, request));
+        } else {
+            rows = normalizedKey.isBlank()
+                    ? songRepository.browseCategorySongsWithMediaType(
+                            normalize(artist), normalize(artistGender), normalize(language),
+                            normalize(tag), normalize(vocalForm), safeKeyword, safeMediaType, request)
+                    : songRepository.browseCategorySongsByArtistKeyWithMediaType(
+                            normalizedKey, normalize(artistGender), normalize(language),
+                            normalize(tag), normalize(vocalForm), safeKeyword, safeMediaType, request);
+        }
         List<SongDto> items = rows == null || rows.getContent() == null
                 ? List.of() : toSongDtos(rows.getContent());
         return new SongPage(items, rows == null ? 0 : rows.getTotalElements(), safePage, safeSize);

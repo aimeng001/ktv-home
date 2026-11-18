@@ -800,7 +800,12 @@ class AiLibraryServiceTest {
         List<AiAnalysisTask> batch = List.of(batchTask(701L, "auto_applied"), batchTask(702L, "review"),
                 batchTask(703L, "failed"), batchTask(704L, "applied"), batchTask(705L, "paused"),
                 batchTask(706L, "pending"), batchTask(707L, "processing"));
-        when(tasks.findByBatchIdOrderByCreatedAtAsc(batchId)).thenReturn(batch);
+        when(tasks.existsByBatchId(batchId)).thenReturn(true);
+        when(tasks.countStatusesByBatchId(batchId)).thenReturn(List.of(
+                statusCount("auto_applied", 1L), statusCount("review", 1L),
+                statusCount("failed", 1L), statusCount("applied", 1L),
+                statusCount("paused", 1L), statusCount("pending", 1L),
+                statusCount("processing", 1L)));
         AiLibraryService service = taskService(tasks, mock(SongRepository.class),
                 mock(MediaImportRecordRepository.class), mock(AiAnalysisWorker.class), taskConfig(false));
 
@@ -810,7 +815,10 @@ class AiLibraryServiceTest {
                 .containsEntry("completed", 4L).containsEntry("failed", 1L).containsEntry("review", 1L)
                 .containsEntry("paused", 1L).containsEntry("running", true);
         verify(tasks).pauseBatch(batchId);
-        verify(tasks, times(2)).findByBatchIdOrderByCreatedAtAsc(batchId);
+        verify(tasks).existsByBatchId(batchId);
+        verify(tasks).pauseBatch(batchId);
+        verify(tasks).countStatusesByBatchId(batchId);
+        verify(tasks, never()).findByBatchIdOrderByCreatedAtAsc(anyString());
     }
 
     @Test
@@ -1413,12 +1421,15 @@ class AiLibraryServiceTest {
                 mock(AiClassificationApplier.class), mock(OpenAiCompatibleClient.class),
                 mock(MediaImportRecordRepository.class), mock(AiTaskDispatchFailureRecorder.class));
 
+        when(taskRepository.saveAllAndFlush(anyList())).thenAnswer(invocation -> invocation.getArgument(0));
         service.createRepairBatch();
 
-        ArgumentCaptor<AiAnalysisTask> captor = ArgumentCaptor.forClass(AiAnalysisTask.class);
-        verify(taskRepository).saveAndFlush(captor.capture());
-        assertThat(captor.getValue().getModel()).isEqualTo("bulk-model");
-        assertThat(captor.getValue().getModelRole()).isEqualTo("BULK");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<AiAnalysisTask>> captor = ArgumentCaptor.forClass(List.class);
+        verify(taskRepository).saveAllAndFlush(captor.capture());
+        assertThat(captor.getValue()).hasSize(1);
+        assertThat(captor.getValue().getFirst().getModel()).isEqualTo("bulk-model");
+        assertThat(captor.getValue().getFirst().getModelRole()).isEqualTo("BULK");
     }
 
     @Test
@@ -1432,7 +1443,14 @@ class AiLibraryServiceTest {
         when(configService.isConfigured()).thenReturn(false);
         when(configService.resolve()).thenReturn(new AiConfigService.ResolvedConfig(false, "", "", "",
                 30, 0.97, 0.92, AiConfigService.JsonMode.AUTO, 2, 1, ""));
-        when(taskRepository.existsBySongIdAndStatusIn(eq(4L), anyList())).thenReturn(true);
+        when(taskRepository.findSongIdsBySongIdInAndStatusIn(eq(List.of(4L, 5L)), anyList())).thenReturn(List.of(4L));
+        when(taskRepository.saveAllAndFlush(anyList())).thenAnswer(invocation -> {
+            List<AiAnalysisTask> saved = invocation.getArgument(0);
+            for (AiAnalysisTask task : saved) {
+                ReflectionTestUtils.setField(task, "id", task.getSongId() + 100L);
+            }
+            return saved;
+        });
 
         AiLibraryService service = new AiLibraryService(taskRepository, songRepository,
                 mock(PlaylistRepository.class), mock(PlaylistSongRepository.class), worker,
@@ -1444,10 +1462,10 @@ class AiLibraryServiceTest {
 
         assertThat(result).containsEntry("created", 1)
                 .containsEntry("skippedExisting", 1);
-        verify(taskRepository).existsBySongIdAndStatusIn(eq(4L), anyList());
-        verify(taskRepository).existsBySongIdAndStatusIn(eq(5L), anyList());
-        verify(taskRepository, times(1)).saveAndFlush(any(AiAnalysisTask.class));
-        verify(worker, times(1)).analyze(any());
+        verify(taskRepository).findSongIdsBySongIdInAndStatusIn(eq(List.of(4L, 5L)), anyList());
+        verify(taskRepository, never()).existsBySongIdAndStatusIn(anyLong(), anyList());
+        verify(taskRepository, times(1)).saveAllAndFlush(argThat((Iterable<AiAnalysisTask> iterable) -> iterable instanceof List<AiAnalysisTask> list && list.size() == 1 && list.getFirst().getSongId().equals(5L)));
+        verify(worker, times(1)).analyze(105L);
     }
 
     @Test
@@ -1461,10 +1479,10 @@ class AiLibraryServiceTest {
         when(configService.isConfigured()).thenReturn(false);
         when(configService.resolve()).thenReturn(new AiConfigService.ResolvedConfig(false, "", "", "",
                 30, 0.97, 0.92, AiConfigService.JsonMode.AUTO, 2, 1, ""));
-        when(taskRepository.saveAndFlush(any())).thenAnswer(invocation -> {
-            AiAnalysisTask task = invocation.getArgument(0);
-            ReflectionTestUtils.setField(task, "id", 77L);
-            return task;
+        when(taskRepository.saveAllAndFlush(anyList())).thenAnswer(invocation -> {
+            List<AiAnalysisTask> list = invocation.getArgument(0);
+            ReflectionTestUtils.setField(list.getFirst(), "id", 77L);
+            return list;
         });
         doThrow(new TaskRejectedException("queue full")).when(worker).analyze(77L);
         AiLibraryService service = new AiLibraryService(taskRepository, songRepository,
@@ -1522,10 +1540,10 @@ class AiLibraryServiceTest {
                 default -> new PageImpl<>(List.of(), pageable, 1001);
             };
         });
-        when(tasks.saveAndFlush(any(AiAnalysisTask.class))).thenAnswer(invocation -> {
-            AiAnalysisTask task = invocation.getArgument(0);
-            ReflectionTestUtils.setField(task, "id", task.getSongId() + 2000L);
-            return task;
+        when(tasks.saveAllAndFlush(anyList())).thenAnswer(invocation -> {
+            List<AiAnalysisTask> saved = invocation.getArgument(0);
+            for (AiAnalysisTask task : saved) ReflectionTestUtils.setField(task, "id", task.getSongId() + 2000L);
+            return saved;
         });
         AiLibraryService service = new AiLibraryService(tasks, songs, mock(PlaylistRepository.class),
                 mock(PlaylistSongRepository.class), worker, new ObjectMapper(), taskConfig(false),
@@ -1546,7 +1564,9 @@ class AiLibraryServiceTest {
         AiAnalysisTaskRepository tasks = mock(AiAnalysisTaskRepository.class);
         AiAnalysisWorker worker = mock(AiAnalysisWorker.class);
         when(songs.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(song(1311L, "竞态歌曲", "歌手"))));
-        when(tasks.existsBySongIdAndStatusIn(eq(1311L), anyList())).thenReturn(false, true);
+        when(tasks.findSongIdsBySongIdInAndStatusIn(eq(List.of(1311L)), anyList())).thenReturn(List.of());
+        when(tasks.saveAllAndFlush(anyList())).thenThrow(new DataIntegrityViolationException("active task unique index"));
+        when(tasks.existsBySongIdAndStatusIn(eq(1311L), anyList())).thenReturn(true);
         when(tasks.saveAndFlush(any(AiAnalysisTask.class)))
                 .thenThrow(new DataIntegrityViolationException("active task unique index"));
         AiLibraryService service = new AiLibraryService(tasks, songs, mock(PlaylistRepository.class),
@@ -1564,7 +1584,9 @@ class AiLibraryServiceTest {
         DataIntegrityViolationException unrelated = new DataIntegrityViolationException("other constraint");
         when(unrelatedSongs.findAll(any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(song(1312L, "其他错误", "歌手"))));
-        when(unrelatedTasks.existsBySongIdAndStatusIn(eq(1312L), anyList())).thenReturn(false, false);
+        when(unrelatedTasks.findSongIdsBySongIdInAndStatusIn(eq(List.of(1312L)), anyList())).thenReturn(List.of());
+        when(unrelatedTasks.saveAllAndFlush(anyList())).thenThrow(unrelated);
+        when(unrelatedTasks.existsBySongIdAndStatusIn(eq(1312L), anyList())).thenReturn(false);
         when(unrelatedTasks.saveAndFlush(any(AiAnalysisTask.class))).thenThrow(unrelated);
         AiLibraryService unrelatedService = new AiLibraryService(unrelatedTasks, unrelatedSongs,
                 mock(PlaylistRepository.class), mock(PlaylistSongRepository.class), mock(AiAnalysisWorker.class),
@@ -1578,11 +1600,10 @@ class AiLibraryServiceTest {
     @Test
     void resumeRepairBatchDispatchesOnlyPausedTasks() {
         String batchId = "resume-batch";
-        AiAnalysisTask paused = batchTask(91L, "paused");
-        AiAnalysisTask pending = batchTask(92L, "pending");
         AiAnalysisTaskRepository taskRepository = mock(AiAnalysisTaskRepository.class);
         AiAnalysisWorker worker = mock(AiAnalysisWorker.class);
-        when(taskRepository.findByBatchIdOrderByCreatedAtAsc(batchId)).thenReturn(List.of(paused, pending));
+        when(taskRepository.existsByBatchId(batchId)).thenReturn(true);
+        when(taskRepository.findIdsByBatchIdAndStatus(batchId, "paused")).thenReturn(List.of(91L));
         AiLibraryService service = new AiLibraryService(taskRepository, mock(SongRepository.class),
                 mock(PlaylistRepository.class), mock(PlaylistSongRepository.class), worker,
                 new ObjectMapper(), mock(AiConfigService.class), mock(AssetWriter.class),
@@ -1592,21 +1613,48 @@ class AiLibraryServiceTest {
         Map<String, Object> result = service.resumeRepairBatch(batchId);
 
         assertThat(result).containsEntry("batchId", batchId).containsEntry("resumed", 1);
-        assertThat(paused.getStatus()).isEqualTo("pending");
-        assertThat(pending.getStatus()).isEqualTo("pending");
-        verify(taskRepository).saveAndFlush(paused);
+        verify(taskRepository).resetBatchStatusToPending(batchId, "paused");
         verify(worker).analyze(91L);
         verify(worker, never()).analyze(92L);
+        verify(taskRepository, never()).findByBatchIdOrderByCreatedAtAsc(anyString());
+    }
+
+    @Test
+    void createTasksBatchDeduplicatesSkipsExistingOrMissingSongsAndDispatchesOnce() {
+        SongRepository songRepository = mock(SongRepository.class);
+        AiAnalysisTaskRepository taskRepository = mock(AiAnalysisTaskRepository.class);
+        AiAnalysisWorker worker = mock(AiAnalysisWorker.class);
+        when(songRepository.findAllById(List.of(4L, 5L, 999L)))
+                .thenReturn(List.of(song(4L, "已有", "歌手"), song(5L, "新建", "歌手")));
+        when(taskRepository.findSongIdsBySongIdInAndStatusIn(eq(List.of(4L, 5L)), anyList()))
+                .thenReturn(List.of(4L));
+        when(taskRepository.saveAllAndFlush(anyList())).thenAnswer(invocation -> {
+            List<AiAnalysisTask> saved = invocation.getArgument(0);
+            for (AiAnalysisTask task : saved) {
+                ReflectionTestUtils.setField(task, "id", task.getSongId() + 500L);
+            }
+            return saved;
+        });
+        AiLibraryService service = new AiLibraryService(taskRepository, songRepository,
+                mock(PlaylistRepository.class), mock(PlaylistSongRepository.class), worker,
+                new ObjectMapper(), taskConfig(false), mock(AssetWriter.class),
+                mock(AiClassificationApplier.class), mock(OpenAiCompatibleClient.class),
+                mock(MediaImportRecordRepository.class), mock(AiTaskDispatchFailureRecorder.class));
+
+        Map<String, Object> result = service.createTasksBatch(Arrays.asList(4L, 5L, 4L, null, -1L, 999L));
+
+        assertThat(result).containsEntry("created", 1).containsEntry("skipped", 2).containsEntry("dispatchRejected", 0);
+        verify(taskRepository, times(1)).saveAllAndFlush(argThat((Iterable<AiAnalysisTask> iterable) -> iterable instanceof List<AiAnalysisTask> list && list.size() == 1 && list.getFirst().getSongId().equals(5L)));
+        verify(worker, times(1)).analyze(505L);
     }
 
     @Test
     void retryFailedRepairBatchDispatchesOnlyFailedTasks() {
         String batchId = "retry-batch";
-        AiAnalysisTask failed = batchTask(93L, "failed");
-        AiAnalysisTask review = batchTask(94L, "review");
         AiAnalysisTaskRepository taskRepository = mock(AiAnalysisTaskRepository.class);
         AiAnalysisWorker worker = mock(AiAnalysisWorker.class);
-        when(taskRepository.findByBatchIdOrderByCreatedAtAsc(batchId)).thenReturn(List.of(failed, review));
+        when(taskRepository.existsByBatchId(batchId)).thenReturn(true);
+        when(taskRepository.findIdsByBatchIdAndStatus(batchId, "failed")).thenReturn(List.of(93L));
         AiLibraryService service = new AiLibraryService(taskRepository, mock(SongRepository.class),
                 mock(PlaylistRepository.class), mock(PlaylistSongRepository.class), worker,
                 new ObjectMapper(), mock(AiConfigService.class), mock(AssetWriter.class),
@@ -1616,11 +1664,10 @@ class AiLibraryServiceTest {
         Map<String, Object> result = service.retryFailedRepairBatch(batchId);
 
         assertThat(result).containsEntry("batchId", batchId).containsEntry("retried", 1);
-        assertThat(failed.getStatus()).isEqualTo("pending");
-        assertThat(review.getStatus()).isEqualTo("review");
-        verify(taskRepository).saveAndFlush(failed);
+        verify(taskRepository).resetBatchStatusToPending(batchId, "failed");
         verify(worker).analyze(93L);
         verify(worker, never()).analyze(94L);
+        verify(taskRepository, never()).findByBatchIdOrderByCreatedAtAsc(anyString());
     }
 
     @Test
@@ -1628,7 +1675,7 @@ class AiLibraryServiceTest {
         String batchId = "missing-batch";
         AiAnalysisTaskRepository taskRepository = mock(AiAnalysisTaskRepository.class);
         AiAnalysisWorker worker = mock(AiAnalysisWorker.class);
-        when(taskRepository.findByBatchIdOrderByCreatedAtAsc(batchId)).thenReturn(List.of());
+        when(taskRepository.existsByBatchId(batchId)).thenReturn(false);
         AiLibraryService service = new AiLibraryService(taskRepository, mock(SongRepository.class),
                 mock(PlaylistRepository.class), mock(PlaylistSongRepository.class), worker,
                 new ObjectMapper(), mock(AiConfigService.class), mock(AssetWriter.class),
@@ -1640,7 +1687,7 @@ class AiLibraryServiceTest {
         assertThatThrownBy(() -> service.pauseRepairBatch(batchId)).hasMessageContaining("修复批次不存在");
 
         verifyNoInteractions(worker);
-        verify(taskRepository, never()).saveAndFlush(any(AiAnalysisTask.class));
+        verify(taskRepository, never()).resetBatchStatusToPending(anyString(), anyString());
         verify(taskRepository, never()).pauseBatch(batchId);
     }
 
@@ -1846,5 +1893,12 @@ class AiLibraryServiceTest {
                 objectMapper, configService, assetWriter,
                 mock(AiClassificationApplier.class), aiClient, mock(MediaImportRecordRepository.class),
                 mock(AiTaskDispatchFailureRecorder.class));
+    }
+
+    private AiAnalysisTaskRepository.BatchStatusCountProjection statusCount(String status, long count) {
+        return new AiAnalysisTaskRepository.BatchStatusCountProjection() {
+            @Override public String getStatus() { return status; }
+            @Override public Long getTaskCount() { return count; }
+        };
     }
 }

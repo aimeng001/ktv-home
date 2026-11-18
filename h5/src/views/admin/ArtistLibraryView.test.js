@@ -7,7 +7,8 @@ const { apiMock, alertMock, routerMock } = vi.hoisted(() => ({
     adminArtistPage: vi.fn(), adminAiConfig: vi.fn(), adminAnalyzeArtist: vi.fn(),
     adminAnalyzeArtists: vi.fn(), adminApplyArtistGender: vi.fn(),
     adminScanLocalAvatars: vi.fn(), adminRetryMissingAvatars: vi.fn(),
-    adminApplyArtistGenderDictionary: vi.fn(), adminUploadArtistAvatar: vi.fn()
+    adminApplyArtistGenderDictionary: vi.fn(), adminUploadArtistAvatar: vi.fn(),
+    adminArtistAvatarProgress: vi.fn(), adminScrapeArtistAvatar: vi.fn()
   },
   alertMock: vi.fn(), routerMock: { push: vi.fn() }
 }))
@@ -36,6 +37,11 @@ describe('ArtistLibraryView', () => {
     apiMock.adminRetryMissingAvatars.mockResolvedValue({ queued: 3 })
     apiMock.adminApplyArtistGenderDictionary.mockResolvedValue({ changed: 1 })
     apiMock.adminUploadArtistAvatar.mockResolvedValue({ avatarUrl: '/avatar/new.webp' })
+    apiMock.adminArtistAvatarProgress.mockResolvedValue({
+      totalArtists: 2, readyCount: 1, pendingCount: 1, unresolvedCount: 0, queuedJobs: 2,
+      recentErrors: []
+    })
+    apiMock.adminScrapeArtistAvatar.mockResolvedValue({ queued: 1, resolvedLocally: false })
   })
 
   afterEach(() => {
@@ -751,6 +757,19 @@ describe('ArtistLibraryView', () => {
     expect(alertMock).toHaveBeenCalledWith('批量写入失败')
     expect(root.querySelector('.batch-modal').textContent).toContain('张三')
     expect(root.querySelector('.batch-modal .primary').disabled).toBe(false)
+  })
+
+  it('displays avatar scraping progress and triggers single-artist re-scrape', async () => {
+    await mount()
+    expect(root.querySelector('.avatar-progress-bar').textContent).toContain('已缓存 1 / 2')
+    expect(root.querySelector('.avatar-progress-bar').textContent).toContain('队列待处理 2')
+
+    const scrapeBtn = root.querySelector('tbody .scrape-link')
+    scrapeBtn.click()
+    await flushUi()
+
+    expect(apiMock.adminScrapeArtistAvatar).toHaveBeenCalledWith('张三')
+    expect(root.querySelector('.avatar-backfill-status').textContent).toContain('优先重刮任务')
   })
 
   async function mount() {

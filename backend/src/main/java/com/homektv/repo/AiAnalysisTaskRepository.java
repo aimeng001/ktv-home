@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.time.OffsetDateTime;
@@ -19,6 +20,11 @@ import java.time.OffsetDateTime;
  * AI analysis task repository, mapping to the ai_analysis_task table.
  */
 public interface AiAnalysisTaskRepository extends JpaRepository<AiAnalysisTask, Long> {
+    interface BatchStatusCountProjection {
+        String getStatus();
+        Long getTaskCount();
+    }
+
     List<AiAnalysisTask> findTop500ByStatusInAndCreatedAtBeforeOrderByCreatedAtAscIdAsc(
             List<String> statuses, OffsetDateTime createdAtCutoff);
     List<AiAnalysisTask> findTop100ByOrderByCreatedAtDesc();
@@ -94,4 +100,34 @@ public interface AiAnalysisTaskRepository extends JpaRepository<AiAnalysisTask, 
                               @Param("status") String status,
                               @Param("errorMessage") String errorMessage);
     boolean existsByTargetTypeAndTargetIdAndStatusIn(String targetType, Long targetId, List<String> statuses);
+
+    @Query("SELECT task.songId FROM AiAnalysisTask task WHERE task.songId IN :songIds AND task.status IN :statuses")
+    List<Long> findSongIdsBySongIdInAndStatusIn(@Param("songIds") Collection<Long> songIds,
+                                                @Param("statuses") List<String> statuses);
+
+    boolean existsByBatchId(String batchId);
+
+    @Query("""
+            SELECT task.status AS status, COUNT(task) AS taskCount
+            FROM AiAnalysisTask task
+            WHERE task.batchId = :batchId
+            GROUP BY task.status
+            """)
+    List<BatchStatusCountProjection> countStatusesByBatchId(@Param("batchId") String batchId);
+
+    @Query("""
+            SELECT task.id FROM AiAnalysisTask task
+            WHERE task.batchId = :batchId AND task.status = :status
+            ORDER BY task.createdAt ASC, task.id ASC
+            """)
+    List<Long> findIdsByBatchIdAndStatus(@Param("batchId") String batchId, @Param("status") String status);
+
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE AiAnalysisTask task
+            SET task.status = 'pending'
+            WHERE task.batchId = :batchId AND task.status = :fromStatus
+            """)
+    int resetBatchStatusToPending(@Param("batchId") String batchId, @Param("fromStatus") String fromStatus);
 }

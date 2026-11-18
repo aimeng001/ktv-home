@@ -31,8 +31,8 @@ public interface MediaImportRecordRepository extends JpaRepository<MediaImportRe
             SELECT record FROM MediaImportRecord record
             WHERE (:keyword = ''
                 OR LOWER(record.sourceFilename) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(COALESCE(record.parsedTitle, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(COALESCE(record.parsedArtist, '')) LIKE LOWER(CONCAT('%', :keyword, '%')))
+                OR LOWER(record.parsedTitle) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                OR LOWER(record.parsedArtist) LIKE LOWER(CONCAT('%', :keyword, '%')))
               AND (:action IS NULL OR record.action = :action)
               AND (:duplicateFlag IS NULL OR record.duplicateFlag = :duplicateFlag)
               AND (:transcodeRequired IS NULL OR record.transcodeRequired = :transcodeRequired)
@@ -51,8 +51,8 @@ public interface MediaImportRecordRepository extends JpaRepository<MediaImportRe
             WHERE record.id > :afterId
               AND (:keyword = ''
                 OR LOWER(record.sourceFilename) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(COALESCE(record.parsedTitle, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(COALESCE(record.parsedArtist, '')) LIKE LOWER(CONCAT('%', :keyword, '%')))
+                OR LOWER(record.parsedTitle) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                OR LOWER(record.parsedArtist) LIKE LOWER(CONCAT('%', :keyword, '%')))
               AND (:action IS NULL OR record.action = :action)
               AND (:duplicateFlag IS NULL OR record.duplicateFlag = :duplicateFlag)
               AND (:transcodeRequired IS NULL OR record.transcodeRequired = :transcodeRequired)

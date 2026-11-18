@@ -361,4 +361,25 @@ class ArtistAvatarJobServiceTest {
         verify(jdbc, org.mockito.Mockito.times(2)).batchUpdate(anyString(), any(Collection.class), eq(500),
                 any(ParameterizedPreparedStatementSetter.class));
     }
+
+    @Test
+    void enqueuesFallbackJobWhenFallbackScrapingIsEnabled() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistAvatarWorker worker = mock(ArtistAvatarWorker.class);
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        when(worker.pendingKeys()).thenReturn(List.of("zhoujielun"));
+        when(worker.songPriorities(List.of("zhoujielun"))).thenReturn(Map.of("zhoujielun", 42));
+        when(config.getConfig()).thenReturn(new MusicSourceConfig(
+                true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 5000, 0.95));
+        when(config.isAvatarFallbackEnabled()).thenReturn(true);
+        when(jdbc.batchUpdate(anyString(), any(Collection.class), anyInt(),
+                any(ParameterizedPreparedStatementSetter.class))).thenReturn(new int[][]{{1, 1}});
+
+        new ArtistAvatarJobService(jdbc, worker, config).enqueuePendingProfiles();
+
+        org.mockito.ArgumentCaptor<Collection<?>> batchCaptor = org.mockito.ArgumentCaptor.forClass(Collection.class);
+        verify(jdbc).batchUpdate(anyString(), batchCaptor.capture(), eq(500),
+                any(ParameterizedPreparedStatementSetter.class));
+        assertThat(batchCaptor.getValue()).hasSize(2);
+    }
 }

@@ -1,10 +1,13 @@
 package com.homektv.web;
 
 import com.homektv.domain.Favorite;
+import com.homektv.domain.Song;
+import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.queue.UserService;
 import com.homektv.repo.FavoriteRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.dto.SongDto;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -28,11 +31,17 @@ public class FavoriteController {
     private final FavoriteRepository favoriteRepo;
     private final SongRepository songRepo;
     private final UserService userService;
+    private SongAvailabilityPolicy availabilityPolicy;
 
     public FavoriteController(FavoriteRepository favoriteRepo, SongRepository songRepo, UserService userService) {
         this.favoriteRepo = favoriteRepo;
         this.songRepo = songRepo;
         this.userService = userService;
+    }
+
+    @Autowired(required = false)
+    void setAvailabilityPolicy(SongAvailabilityPolicy availabilityPolicy) {
+        this.availabilityPolicy = availabilityPolicy;
     }
 
     /**
@@ -55,11 +64,7 @@ public class FavoriteController {
                 .getContent().stream()
                 .map(Favorite::getSongId).filter(Objects::nonNull).toList();
         if (orderedIds.isEmpty()) return List.of();
-        Iterable<com.homektv.domain.Song> found = songRepo.findAllById(new LinkedHashSet<>(orderedIds));
-        Map<Long, com.homektv.domain.Song> byId = new LinkedHashMap<>();
-        if (found != null) found.forEach(song -> byId.put(song.getId(), song));
-        return orderedIds.stream().map(byId::get).filter(Objects::nonNull).map(SongDto::from)
-                .toList();
+        return loadSongsInOrder(orderedIds);
     }
 
     /** Compatibility helper for direct callers; HTTP requests use the bounded endpoint above. */
@@ -94,10 +99,18 @@ public class FavoriteController {
 
     private List<SongDto> loadSongsInOrder(List<Long> orderedIds) {
         if (orderedIds.isEmpty()) return List.of();
-        Iterable<com.homektv.domain.Song> found = songRepo.findAllById(new LinkedHashSet<>(orderedIds));
-        Map<Long, com.homektv.domain.Song> byId = new LinkedHashMap<>();
+        Iterable<Song> found = songRepo.findAllById(new LinkedHashSet<>(orderedIds));
+        Map<Long, Song> byId = new LinkedHashMap<>();
         if (found != null) found.forEach(song -> byId.put(song.getId(), song));
-        return orderedIds.stream().map(byId::get).filter(Objects::nonNull).map(SongDto::from).toList();
+        List<Song> orderedSongs = orderedIds.stream().map(byId::get).filter(Objects::nonNull).toList();
+        if (availabilityPolicy == null || orderedSongs.isEmpty()) {
+            return orderedSongs.stream().map(SongDto::from).toList();
+        }
+        Set<Long> playableIds = availabilityPolicy.playableSongIds(orderedSongs);
+        return orderedSongs.stream()
+                .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
+                        playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY))
+                .toList();
     }
 
     /**

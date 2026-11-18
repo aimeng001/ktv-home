@@ -304,6 +304,7 @@ class PlaybackEngine(
     private var lastResolutionRequestedFileId: Long? = null
     private val prioritizedCodecSelector = PrioritizedMediaCodecSelector()
     private var softwareDecoderAttemptedFileId: Long? = null
+    private var softwareDecoderAttemptedLiveTranscode: Boolean = false
     @Volatile
     private var firstFrameRenderedForCurrentMedia: Boolean = false
 
@@ -658,8 +659,11 @@ class PlaybackEngine(
         if (lastResolutionRequestedFileId != fileId) {
             lastResolutionRequestedFileId = null
         }
-        if (softwareDecoderAttemptedFileId != fileId) {
+        if (softwareDecoderAttemptedFileId != fileId ||
+            softwareDecoderAttemptedLiveTranscode != currentIsLiveTranscode
+        ) {
             softwareDecoderAttemptedFileId = null
+            softwareDecoderAttemptedLiveTranscode = false
             prioritizedCodecSelector.preferSoftware = false
         }
         player.playWhenReady = false
@@ -1203,11 +1207,13 @@ class PlaybackEngine(
         if (fallbackPlayerFactoryInjected ||
             !currentHasVideoDeclared ||
             prioritizedCodecSelector.preferSoftware ||
-            softwareDecoderAttemptedFileId == fileId
+            (softwareDecoderAttemptedFileId == fileId &&
+                softwareDecoderAttemptedLiveTranscode == currentIsLiveTranscode)
         ) {
             return false
         }
         softwareDecoderAttemptedFileId = fileId
+        softwareDecoderAttemptedLiveTranscode = currentIsLiveTranscode
         prioritizedCodecSelector.preferSoftware = true
         Log.w(TAG, "switching fileId=$fileId to local software MediaCodec at positionMs=$positionMs")
         if (currentIsLiveTranscode) {

@@ -177,16 +177,6 @@ class MergeGateContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertRegex(android, r"const val UDP_PORT\s*=\s*18_888")
 
-        windows = (
-            REPOSITORY
-            / "windows-player"
-            / "src"
-            / "HomeKtv.Windows"
-            / "ServerConnection"
-            / "DiscoveryProtocol.cs"
-        ).read_text(encoding="utf-8")
-        self.assertRegex(windows, r"const int UdpPort\s*=\s*18_888")
-
     def test_readmes_match_current_release_notice(self) -> None:
         chinese = (REPOSITORY / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("默认公告除了提示下载 TV APK，还会提醒", chinese)

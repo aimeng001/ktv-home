@@ -87,9 +87,27 @@ public class AppProperties {
 
     public static class Scan {
         private MissingGuard missingGuard = new MissingGuard();
+        private FastProbe fastProbe = new FastProbe();
 
         public MissingGuard getMissingGuard() { return missingGuard; }
         public void setMissingGuard(MissingGuard missingGuard) { this.missingGuard = missingGuard; }
+        public FastProbe getFastProbe() { return fastProbe; }
+        public void setFastProbe(FastProbe fastProbe) { this.fastProbe = fastProbe; }
+    }
+
+    public static class FastProbe {
+        private boolean enabled = false;
+        private long probeSize = 1_048_576L;
+        private long analyzeDuration = 1_000_000L;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public long getProbeSize() { return probeSize; }
+        public void setProbeSize(long probeSize) { this.probeSize = Math.max(65_536L, probeSize); }
+        public long getAnalyzeDuration() { return analyzeDuration; }
+        public void setAnalyzeDuration(long analyzeDuration) {
+            this.analyzeDuration = Math.max(100_000L, analyzeDuration);
+        }
     }
 
     public static class MissingGuard {

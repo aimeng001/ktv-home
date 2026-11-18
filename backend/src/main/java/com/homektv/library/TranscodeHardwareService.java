@@ -15,7 +15,10 @@ import java.util.Locale;
 @Service
 public class TranscodeHardwareService {
 
+    private static final long DETECT_CACHE_TTL_MS = 60_000L;
     private final Path driRoot;
+    private final Object detectLock = new Object();
+    private volatile CachedHardwareStatus cachedStatus;
     private final Path drmSysRoot;
     private final Path rkmppDevice;
     private final String ffmpegPath;
@@ -32,6 +35,24 @@ public class TranscodeHardwareService {
     }
 
     public HardwareStatus detect() {
+        long now = System.currentTimeMillis();
+        CachedHardwareStatus current = cachedStatus;
+        if (current != null && now - current.detectedAtMs() < DETECT_CACHE_TTL_MS) {
+            return current.status();
+        }
+        synchronized (detectLock) {
+            current = cachedStatus;
+            long lockedNow = System.currentTimeMillis();
+            if (current != null && lockedNow - current.detectedAtMs() < DETECT_CACHE_TTL_MS) {
+                return current.status();
+            }
+            HardwareStatus fresh = detectUncached();
+            cachedStatus = new CachedHardwareStatus(fresh, System.currentTimeMillis());
+            return fresh;
+        }
+    }
+
+    private HardwareStatus detectUncached() {
         HardwareStatus rockchip = detectRockchip();
         if (rockchip != null) return rockchip;
         if (!Files.isDirectory(driRoot)) {
@@ -130,5 +151,8 @@ public class TranscodeHardwareService {
         static HardwareStatus unavailable(String reason) {
             return new HardwareStatus(false, null, null, List.of(), null, reason);
         }
+    }
+
+    private record CachedHardwareStatus(HardwareStatus status, long detectedAtMs) {
     }
 }

@@ -40,18 +40,16 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("-Xmx512m", large_scan)
         self.assertNotIn("scanRows=100000", large_scan)
 
-    def test_h5_android_and_windows_jobs_run_tests_and_build_checks(self) -> None:
+    def test_h5_and_android_jobs_run_tests_and_build_checks(self) -> None:
         h5 = job_block(self.workflow, "h5")
         android = job_block(self.workflow, "android-tv")
-        windows = job_block(self.workflow, "windows-player")
 
         self.assertIn("npm ci", h5)
         self.assertIn("npm test", h5)
         self.assertIn("npm run build", h5)
         self.assertIn("testReleaseUnitTest lintRelease", android)
         self.assertIn("sha256sum -c -", android)
-        self.assertIn("dotnet build windows-player/HomeKtv.Windows.sln -c Release", windows)
-        self.assertIn("dotnet test windows-player/HomeKtv.Windows.sln -c Release", windows)
+        self.assertNotIn("windows-player:", self.workflow)
 
     def test_compose_job_validates_each_local_configuration(self) -> None:
         compose = job_block(self.workflow, "compose-config")

@@ -233,57 +233,6 @@ jobs:
           path: android-tv/staged-apks/*.apk
           if-no-files-found: error
 
-  windows-player:
-    name: Build Windows x64 Player
-    runs-on: windows-latest
-    needs: release-meta
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "10.0.x"
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('windows-player/**/*.csproj') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-      - name: Restore Windows Player
-        run: dotnet restore windows-player/HomeKtv.Windows.sln
-      - name: Run Windows Player tests
-        run: dotnet test windows-player/HomeKtv.Windows.sln --no-restore -c Release
-      - name: Publish self-contained Windows x64 Player (mpv prerequisite)
-        run: >-
-          dotnet publish windows-player/src/HomeKtv.Windows/HomeKtv.Windows.csproj
-          -c Release
-          -r win-x64
-          --self-contained true
-          -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:DebugType=None
-          -p:DebugSymbols=false
-          -p:Version="${{ needs.release-meta.outputs.version_name }}"
-          -o windows-player/staged/win-x64
-      - name: Stage Windows Player prerequisites (mpv.exe instructions)
-        shell: pwsh
-        run: >-
-          Copy-Item windows-player/README.md
-          windows-player/staged/win-x64/README-WINDOWS-PLAYER.md
-      - name: Package Windows x64 Player
-        shell: pwsh
-        run: >-
-          Compress-Archive
-          -Path windows-player/staged/win-x64/*
-          -DestinationPath windows-player/staged/home-ktv-windows-player-${{ needs.release-meta.outputs.version_name }}-win-x64.zip
-          -Force
-      - name: Upload Windows x64 Release package
-        uses: actions/upload-artifact@v4
-        with:
-          name: home-ktv-windows-player-${{ needs.release-meta.outputs.artifact_version }}-win-x64
-          path: windows-player/staged/*.zip
-          if-no-files-found: error
-
   docker-runtime-test:
     name: Candidate Docker runtime smoke test
     runs-on: ubuntu-latest
@@ -365,7 +314,7 @@ jobs:
   image:
     name: Publish image with TV APKs
     runs-on: ubuntu-latest
-    needs: [release-meta, backend-release-gate, large-scan-gate, docker-runtime-test, android-tv, windows-player]
+    needs: [release-meta, backend-release-gate, large-scan-gate, docker-runtime-test, android-tv]
     timeout-minutes: 45
     outputs:
       image_digest: ${{ steps.publish_image.outputs.digest }}
@@ -417,18 +366,13 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [release-meta, android-tv, windows-player, image]
+    needs: [release-meta, android-tv, image]
     steps:
       - uses: actions/checkout@v4
       - name: Download APK artifacts
         uses: actions/download-artifact@v4
         with:
           name: home-ktv-tv-${{ needs.release-meta.outputs.artifact_version }}-release
-          path: release-assets
-      - name: Download Windows Player artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: home-ktv-windows-player-${{ needs.release-meta.outputs.artifact_version }}-win-x64
           path: release-assets
       - name: Generate release evidence manifest
         run: >-
@@ -452,5 +396,4 @@ jobs:
           make_latest: ${{ needs.release-meta.outputs.unstable != 'true' }}
           files: |
             release-assets/*.apk
-            release-assets/*.zip
             release-assets/release-manifest.json

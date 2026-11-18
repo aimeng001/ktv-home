@@ -51,6 +51,11 @@ public class AiLibraryController {
         return service.createTask(request.songId());
     }
 
+    @PostMapping("/tasks/batch")
+    public Map<String, Object> createBatch(@RequestBody BatchSongIdsRequest request) {
+        return service.createTasksBatch(request == null ? List.of() : request.songIds());
+    }
+
     @PostMapping("/tasks/import-records")
     public AiAnalysisTask createImportTask(@RequestBody CreateImportTaskRequest request) {
         return service.createImportTask(request.recordId());
@@ -257,6 +262,7 @@ public class AiLibraryController {
     }
 
     public record CreateTaskRequest(Long songId) {}
+    public record BatchSongIdsRequest(List<Long> songIds) {}
     public record CreateImportTaskRequest(Long recordId) {}
     public record BatchRequest(Integer limit) {}
     public record GeneratePlaylistRequest(String name, String tag, Integer limit) {}

@@ -36,8 +36,6 @@ class ReleaseManifestTests(unittest.TestCase):
             artifacts.mkdir()
             apk = artifacts / "home-ktv-tv-1.0.0-arm64-v8a.apk"
             apk.write_bytes(b"apk fixture")
-            windows = artifacts / "home-ktv-windows-player-1.0.0-win-x64.zip"
-            windows.write_bytes(b"windows fixture")
             manifest = artifacts / "release-manifest.json"
 
             result = self.run_manifest(
@@ -78,7 +76,6 @@ class ReleaseManifestTests(unittest.TestCase):
                 hashlib.sha256(apk.read_bytes()).hexdigest(),
                 by_path[apk.name]["sha256"],
             )
-            self.assertEqual(windows.stat().st_size, by_path[windows.name]["size"])
 
             verify = self.run_manifest(
                 "verify",

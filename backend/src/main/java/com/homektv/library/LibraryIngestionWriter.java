@@ -206,11 +206,7 @@ final class LibraryIngestionWriter {
 
         // 5) 指纹去重：同指纹已存在 → 作为多文件源加入，按 priority 择优
         Optional<Song> dup = songRepo.findByFingerprint(fingerprint);
-        Song provisional = existing.map(SongFile::getSongId)
-                .filter(Objects::nonNull)
-                .flatMap(songRepo::findById)
-                .filter(LibraryScanService::isProvisionalSong)
-                .orElse(null);
+        Song provisional = isProvisionalSong(existingSong) ? existingSong : null;
         boolean initialCreditsAlreadyMatch = false;
         Song song;
         boolean isNew;

@@ -2236,11 +2236,11 @@ class KtvKioskOverlayController(
         if (exactTag != null) {
             selectCommercialTag(exactTag, pushHistory = false)
         } else {
-            // Directly load tag songs without blocking on full /browse/tags aggregation.
+            // Directly load tag songs without blocking on or cancelling via /browse/tags.
             catalogActions.setQuery("")
             catalogActionRouter.tagSongs(exactName)
             if (controllerState.tags.isEmpty()) {
-                catalogActionRouter.tags()
+                catalogActionRouter.prefetchTags()
             }
         }
         syncBackState()
@@ -2658,9 +2658,14 @@ class KtvKioskOverlayController(
         renderPipState()
 
         if (queueDialog?.isShowing == true) {
-            val currentTitle = snapshot.playing?.song?.let { "${it.title} · ${it.artist}" } ?: "当前暂无歌曲播放"
-            val waitingEntries = snapshot.list.filter { it.status == "waiting" }
-            queueDialog?.submitQueue(currentTitle, waitingEntries)
+            renderQueueDrawerState(controllerState)
+        }
+    }
+
+    fun onHistoryUpdated() {
+        val drawerShowingHistory = queueDialog?.isShowing == true && queueDialog?.isHistorySelected() == true
+        if (presentationState.currentTab.value == KioskTab.HISTORY || drawerShowingHistory) {
+            loadHistory()
         }
     }
 

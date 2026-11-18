@@ -102,27 +102,30 @@ export const api = {
 
   // 发现/历史/心愿（P3）
   // Discovery / history / wishes (P3)
-  ranking: (days = 30) => request(`/ranking?days=${days}`),
-  newSongs: () => request('/songs/new'),
+  ranking: (days = 30, options = {}) => request(`/ranking?days=${days}`, options),
+  newSongs: (options = {}) => request('/songs/new', options),
   history: () => request('/history'),
-  recentHistory: (clientToken, mine = false) => request(`/history/recent?clientToken=${encodeURIComponent(clientToken || '')}&mine=${mine}`),
+  recentHistory: (clientToken, mine = false, options = {}) => request(`/history/recent?clientToken=${encodeURIComponent(clientToken || '')}&mine=${mine}`, options),
   repeatHistory: (historyId, clientToken, force = false) => request(`/history/${historyId}/repeat`, { method: 'POST', body: JSON.stringify({ clientToken, force }) }),
   favorites: (clientToken, page = null, size = 100, options = {}) => request(`/favorites?clientToken=${encodeURIComponent(clientToken || '')}${page == null ? '' : `&page=${page}&size=${size}`}`, options),
   favoriteIds: (clientToken, page = null, size = 100, options = {}) => request(`/favorites/ids?clientToken=${encodeURIComponent(clientToken || '')}${page == null ? '' : `&page=${page}&size=${size}`}`, options),
   addFavorite: (songId, clientToken) => request(`/favorites/${songId}`, { method: 'POST', body: JSON.stringify({ clientToken }) }),
   removeFavorite: (songId, clientToken) => request(`/favorites/${songId}?clientToken=${encodeURIComponent(clientToken || '')}`, { method: 'DELETE' }),
-  playlists: () => request('/playlists'),
+  playlists: (options = {}) => request('/playlists', options),
   playlistDetail: (id, options = {}) => request(`/playlists/${id}`, options),
   orderPlaylist: (id, clientToken) => request(`/playlists/${id}/order`, { method: 'POST', body: JSON.stringify({ clientToken }) }),
-  browseArtistPage: (params = {}) => request('/browse/artists/page?' + new URLSearchParams(
+  browseArtistPage: (params = {}, options = {}) => request('/browse/artists/page?' + new URLSearchParams(
     Object.entries(params).filter(([, value]) => value !== '' && value != null)
-  ).toString()),
-  browseArtistInitials: (gender = '') => request('/browse/artists/initials?' + new URLSearchParams(
-    gender ? { gender } : {}
-  ).toString()),
-  browseLanguages: () => request('/browse/languages'),
-  browseTags: () => request('/browse/tags'),
-  browseSongPage: (params = {}) => request('/browse/songs/page?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString()),
+  ).toString(), options),
+  browseArtistInitials: (gender = '', region = '', options = {}) => {
+    const query = new URLSearchParams()
+    if (gender) query.set('gender', gender)
+    if (region) query.set('region', region)
+    return request('/browse/artists/initials?' + query.toString(), options)
+  },
+  browseLanguages: (options = {}) => request('/browse/languages', options),
+  browseTags: (options = {}) => request('/browse/tags', options),
+  browseSongPage: (params = {}, options = {}) => request('/browse/songs/page?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString(), options),
   addWish: (keyword, clientToken) =>
     request('/wishes', { method: 'POST', body: JSON.stringify({ keyword, client_token: clientToken }) }),
   registerUser: (clientToken, nickname) =>
@@ -199,6 +202,7 @@ export const api = {
   // ADM-04 AI song library and themed playlists
   adminAiTasks: () => request('/admin/ai/tasks'),
   adminAiCreateTask: (songId) => request('/admin/ai/tasks', { method: 'POST', body: JSON.stringify({ songId }) }),
+  adminAiCreateTasks: (songIds) => request('/admin/ai/tasks/batch', { method: 'POST', body: JSON.stringify({ songIds }) }),
   adminAiCreateUnclassified: (limit = 50) => request('/admin/ai/tasks/unclassified', { method: 'POST', body: JSON.stringify({ limit }) }),
   adminAiRetryTask: (id) => request(`/admin/ai/tasks/${id}/retry`, { method: 'POST' }),
   adminAiApplyTask: (id, result) => request(`/admin/ai/tasks/${id}/apply`, { method: 'POST', body: JSON.stringify(result) }),
@@ -215,6 +219,8 @@ export const api = {
   adminArtistPage: (params = {}, options = {}) => request('/admin/artists/page?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString(), options),
   adminScanLocalAvatars: () => request('/admin/artists/local-avatars/scan', { method: 'POST' }),
   adminRetryMissingAvatars: (options = {}) => request('/admin/artists/avatars/retry', { method: 'POST', ...options }),
+  adminArtistAvatarProgress: (options = {}) => request('/admin/artists/avatars/progress', options),
+  adminScrapeArtistAvatar: (artistKey) => request(`/admin/artists/${encodeURIComponent(artistKey)}/avatar/scrape`, { method: 'POST' }),
   adminApplyArtistGenderDictionary: (options = {}) => request('/admin/artists/gender-dictionary/apply', { method: 'POST', ...options }),
   adminUploadArtistAvatar: (artistKey, file) => {
     const body = new FormData()
@@ -268,6 +274,7 @@ export function makeControls(clientToken, { onResponse } = {}) {
     next: () => c('next', {}),
     restart: () => c('restart', {}),
     setVolume: (volume) => c('set_volume', { volume }),
+    setMuted: (muted) => c('mute', { muted: Boolean(muted) }),
     setVocal: (mode) => c('set_vocal', { mode }),
     swapVocalTracks: () => c('swap_vocal_tracks', {}),
     effect: (effectId) => c('effect', { effect_id: effectId })

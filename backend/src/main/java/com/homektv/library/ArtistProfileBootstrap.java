@@ -23,6 +23,7 @@ public class ArtistProfileBootstrap {
     private final ArtistDirectoryProjectionService directoryProjection;
     private final ArtistGenderDictionaryService genderDictionary;
     private final ArtistGenderMatcher genderMatcher;
+    private AssetWriter assetWriter;
     private final AtomicBoolean refreshRequested = new AtomicBoolean(false);
     private final AtomicBoolean refreshRunning = new AtomicBoolean(false);
     private final AtomicBoolean creditsReconciled = new AtomicBoolean(false);
@@ -61,6 +62,11 @@ public class ArtistProfileBootstrap {
         this.directoryProjection = directoryProjection;
         this.genderDictionary = genderDictionary;
         this.genderMatcher = genderMatcher;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setAssetWriter(AssetWriter assetWriter) {
+        this.assetWriter = assetWriter;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -112,6 +118,9 @@ public class ArtistProfileBootstrap {
                 classified = genderMatcher.applyDictionary();
             }
             int matched = localAvatarResolver.resolveAllCandidates();
+            if (assetWriter != null) {
+                profiles.requeueSuspectNeteasePlaceholders(assetWriter, 200);
+            }
             avatarJobs.enqueuePendingProfilesAfterCommit();
             if (directoryProjection != null) directoryProjection.refresh();
             log.info("artist profile backfill completed: {} source names, {} database classifications, {} local avatars resolved",

@@ -1,0 +1,290 @@
+<template>
+  <aside class="soft-keyboard" aria-label="点歌拼音软键盘">
+    <div class="kb-input-row">
+      <input
+        ref="inputEl"
+        type="text"
+        :value="modelValue"
+        maxlength="40"
+        placeholder="输入歌名 / 歌手 / 拼音首字母"
+        @input="onManualInput"
+        @keydown.enter.prevent="$emit('submit')"
+      />
+      <button v-if="modelValue" type="button" class="kb-clear-mini" aria-label="清空输入" @click="clearAll">
+        <X :size="15" />
+      </button>
+    </div>
+
+    <div class="kb-mode-tabs" role="tablist">
+      <button
+        type="button"
+        :class="{ on: kbMode === 'qwerty' }"
+        @click="switchMode('qwerty')"
+      >
+        全拼 26 键
+      </button>
+      <button
+        type="button"
+        :class="{ on: kbMode === 't9' }"
+        @click="switchMode('t9')"
+      >
+        T9 九宫格
+      </button>
+    </div>
+
+    <!-- 全拼 26 键 + 数字 -->
+    <div v-if="kbMode === 'qwerty'" class="qwerty-wrap">
+      <div v-for="(row, rIdx) in qwertyRows" :key="rIdx" class="qwerty-row">
+        <button
+          v-for="keyChar in row"
+          :key="keyChar"
+          type="button"
+          class="kb-key"
+          @click="appendChar(keyChar)"
+        >
+          {{ keyChar }}
+        </button>
+      </div>
+      <div class="qwerty-actions">
+        <button type="button" class="kb-action" @click="backspace">⌫ 退格</button>
+        <button type="button" class="kb-action" @click="clearAll">清空</button>
+        <button type="button" class="kb-action gold" @click="$emit('submit')">搜索</button>
+      </div>
+    </div>
+
+    <!-- T9 九宫格（对标 Android TV 800ms Multi-Tap 连按循环字母） -->
+    <div v-else class="t9-wrap">
+      <div class="t9-grid">
+        <button
+          v-for="item in t9Keys"
+          :key="item.digit"
+          type="button"
+          class="t9-key"
+          :class="{ action: item.action }"
+          @click="onT9Press(item)"
+        >
+          <strong>{{ item.label }}</strong>
+          <small v-if="item.letters !== item.label">{{ item.letters }}</small>
+        </button>
+      </div>
+      <p class="t9-hint">连按数字键可在 800ms 内循环切换字母，停顿后输入下一位</p>
+    </div>
+  </aside>
+</template>
+
+<script setup>
+import { ref } from 'vue'
+import { X } from 'lucide-vue-next'
+import { QWERTY_ROWS, T9_DIGIT_MAP, T9_KEYS } from './ktvCatalogPresets'
+
+const MULTI_TAP_TIMEOUT_MS = 800
+
+const props = defineProps({
+  modelValue: { type: String, default: '' }
+})
+const emit = defineEmits(['update:modelValue', 'submit'])
+
+const kbMode = ref('qwerty')
+const inputEl = ref(null)
+const qwertyRows = QWERTY_ROWS
+const t9Keys = T9_KEYS
+
+let lastT9Digit = null
+let lastT9TapAt = 0
+let lastT9TapCount = 0
+
+function resetMultiTap() {
+  lastT9Digit = null
+  lastT9TapAt = 0
+  lastT9TapCount = 0
+}
+
+function switchMode(mode) {
+  kbMode.value = mode
+  resetMultiTap()
+}
+
+function onManualInput(e) {
+  resetMultiTap()
+  emit('update:modelValue', e.target.value)
+}
+
+function appendChar(ch) {
+  resetMultiTap()
+  emit('update:modelValue', (props.modelValue || '') + ch)
+}
+
+function backspace() {
+  resetMultiTap()
+  const v = props.modelValue || ''
+  if (!v) return
+  emit('update:modelValue', v.slice(0, -1))
+}
+
+function clearAll() {
+  resetMultiTap()
+  emit('update:modelValue', '')
+}
+
+function onT9Press(item) {
+  if (item.action === 'clear') {
+    clearAll()
+    return
+  }
+  if (item.action === 'backspace') {
+    backspace()
+    return
+  }
+  const letters = T9_DIGIT_MAP[item.digit]
+  if (!letters) {
+    appendChar(item.digit)
+    return
+  }
+  const now = Date.now()
+  const current = props.modelValue || ''
+  const prevChar = current.slice(-1)
+  if (
+    lastT9Digit === item.digit
+    && (now - lastT9TapAt) < MULTI_TAP_TIMEOUT_MS
+    && current.length > 0
+    && letters.includes(prevChar)
+  ) {
+    lastT9TapCount += 1
+    lastT9TapAt = now
+    const nextLetter = letters[(lastT9TapCount - 1) % letters.length]
+    emit('update:modelValue', current.slice(0, -1) + nextLetter)
+  } else {
+    lastT9Digit = item.digit
+    lastT9TapCount = 1
+    lastT9TapAt = now
+    emit('update:modelValue', current + letters[0])
+  }
+}
+
+function focusInput() {
+  inputEl.value?.focus()
+}
+
+defineExpose({ focusInput })
+</script>
+
+<style scoped>
+.soft-keyboard {
+  background: rgba(13, 18, 30, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kb-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 198, 75, 0.35);
+  border-radius: 8px;
+  padding: 0 8px;
+  height: 38px;
+}
+.kb-input-row input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 13px;
+}
+.kb-clear-mini {
+  color: var(--dim);
+  display: grid;
+  place-items: center;
+}
+.kb-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.kb-mode-tabs button {
+  height: 30px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--dim);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.kb-mode-tabs button.on {
+  color: #191304;
+  background: var(--gold);
+  border-color: var(--gold);
+  font-weight: 700;
+}
+.qwerty-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.qwerty-row {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}
+.kb-key {
+  flex: 1;
+  min-width: 20px;
+  height: 32px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+.kb-key:hover, .kb-key:active {
+  background: rgba(255, 198, 75, 0.25);
+  border-color: var(--gold);
+}
+.qwerty-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  margin-top: 2px;
+}
+.kb-action {
+  height: 34px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 12px;
+  font-weight: 600;
+}
+.kb-action.gold {
+  background: var(--gold);
+  color: #191304;
+  border-color: var(--gold);
+  font-weight: 800;
+}
+.t9-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.t9-key {
+  height: 46px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
+}
+.t9-key strong { font-size: 15px; }
+.t9-key small { font-size: 9px; color: var(--dim); margin-top: 2px; }
+.t9-key.action { background: rgba(255, 198, 75, 0.14); border-color: rgba(255, 198, 75, 0.3); }
+.t9-wrap { display: flex; flex-direction: column; gap: 6px; }
+.t9-hint { font-size: 10px; color: var(--dim); text-align: center; }
+</style>

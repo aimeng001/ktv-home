@@ -74,6 +74,12 @@ class FFprobeRealProbeTest {
         assertThat(p.audioCodec()).isEqualTo("mp2");
         assertThat(p.audioStreams()).singleElement()
                 .extracting(AudioStreamInfo::channels).isEqualTo(1);
+
+        com.homektv.config.AppProperties fastProps = new com.homektv.config.AppProperties();
+        fastProps.getScan().getFastProbe().setEnabled(true);
+        MediaProbe fallbackProbe = new FFprobeService(fastProps).probe(media);
+        assertThat(fallbackProbe.audioTracks()).isEqualTo(1);
+        assertThat(fallbackProbe.audioCodec()).isEqualTo("mp2");
     }
 
     private static boolean commandExists(String cmd) {

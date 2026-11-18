@@ -40,19 +40,32 @@ public class FFprobeService {
     private final ObjectMapper mapper = new ObjectMapper();
     private final ProcessStarter processStarter;
     private final Duration timeout;
+    private final boolean fastProbeEnabled;
+    private final long fastProbeSize;
+    private final long fastProbeAnalyzeDuration;
 
     @Autowired
     public FFprobeService(AppProperties props) {
-        this(props, FFprobeService::startProcess, DEFAULT_TIMEOUT);
+        this(props, FFprobeService::startProcess, DEFAULT_TIMEOUT,
+                props != null && props.getScan() != null && props.getScan().getFastProbe() != null
+                        && props.getScan().getFastProbe().isEnabled());
     }
 
     FFprobeService(AppProperties props, ProcessStarter processStarter, Duration timeout) {
+        this(props, processStarter, timeout, false);
+    }
+
+    FFprobeService(AppProperties props, ProcessStarter processStarter, Duration timeout, boolean fastProbeEnabled) {
         this.ffprobePath = props.getFfprobePath();
         this.processStarter = processStarter;
         if (timeout == null || timeout.isZero() || timeout.isNegative()) {
             throw new IllegalArgumentException("ffprobe timeout must be positive");
         }
         this.timeout = timeout;
+        this.fastProbeEnabled = fastProbeEnabled;
+        AppProperties.FastProbe fastProbe = props.getScan() != null ? props.getScan().getFastProbe() : null;
+        this.fastProbeSize = fastProbe != null ? fastProbe.getProbeSize() : 1_048_576L;
+        this.fastProbeAnalyzeDuration = fastProbe != null ? fastProbe.getAnalyzeDuration() : 1_000_000L;
     }
 
     @FunctionalInterface
@@ -72,14 +85,55 @@ public class FFprobeService {
      * @throws MediaProbeException 探测失败（进程异常、超时、非媒体文件等）
      */
     public MediaProbe probe(Path file) {
-        List<String> command = List.of(
-                ffprobePath,
-                "-v", "error",
-                "-print_format", "json",
-                "-show_format",
-                "-show_streams",
-                file.toString()
-        );
+        if (!fastProbeEnabled) {
+            return probeInternal(file, false);
+        }
+        MediaProbe fast = probeInternal(file, true);
+        if (needsFullFallback(fast)) {
+            log.debug("ffprobe 快速探测流或时长不完整，自动回退完整探测：{}", file.getFileName());
+            return probeInternal(file, false);
+        }
+        return fast;
+    }
+
+    private static boolean needsFullFallback(MediaProbe probe) {
+        if (probe == null || probe.durationMs() <= 0 || probe.audioTracks() == 0) {
+            return true;
+        }
+        if (probe.hasVideo() && (probe.resolution() == null || probe.resolution().isBlank())) {
+            return true;
+        }
+        if (probe.audioStreams() == null || probe.audioStreams().isEmpty()) {
+            return true;
+        }
+        for (AudioStreamInfo stream : probe.audioStreams()) {
+            if (stream == null || stream.channels() <= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private MediaProbe probeInternal(Path file, boolean applyFastLimits) {
+        List<String> command = applyFastLimits
+                ? List.of(
+                        ffprobePath,
+                        "-v", "error",
+                        "-probesize", String.valueOf(fastProbeSize),
+                        "-analyzeduration", String.valueOf(fastProbeAnalyzeDuration),
+                        "-print_format", "json",
+                        "-show_format",
+                        "-show_streams",
+                        file.toString()
+                )
+                : List.of(
+                        ffprobePath,
+                        "-v", "error",
+                        "-print_format", "json",
+                        "-show_format",
+                        "-show_streams",
+                        file.toString()
+                );
 
         Process process;
         try {

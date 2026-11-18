@@ -54,7 +54,7 @@ class ExternalCoverServiceTest {
             Object result = operation.get();
             verifyNoInteractions(writer);
             return result;
-        }).when(guard).call(eq(MusicProvider.QQ), any());
+        }).when(guard).callMedia(eq(MusicProvider.QQ), any());
 
         ExternalCoverService service = service(writer, guard, normalizer, client,
                 ExternalCoverServiceTest::publicAddress);
@@ -242,6 +242,38 @@ class ExternalCoverServiceTest {
                 .hasRootCauseInstanceOf(IOException.class);
     }
 
+    @Test
+    void rejectsKnownPlaceholderAvatarUrlWithoutCallingNetwork() {
+        HttpClient client = mock(HttpClient.class);
+        ProviderCallGuard guard = mock(ProviderCallGuard.class);
+        ExternalCoverService service = service(mock(AssetWriter.class), guard,
+                mock(CoverImageNormalizer.class), client, ExternalCoverServiceTest::publicAddress);
+
+        assertCode("EXTERNAL_COVER_PLACEHOLDER", () -> service.downloadArtistAvatar(
+                MusicProvider.NETEASE, "https://p1.music.126.net/6y-UleORITEDbvrOLV0Q8A==/5639395138885805.jpg",
+                "artist-key", Duration.ofSeconds(1)));
+        verifyNoInteractions(client, guard);
+    }
+
+    @Test
+    void fallbackDownloadBlocksRedirectsToPrivateAddresses() throws Exception {
+        AssetWriter writer = mock(AssetWriter.class);
+        ProviderCallGuard guard = mock(ProviderCallGuard.class);
+        doAnswer(invocation -> ((Supplier<?>) invocation.getArgument(0)).get())
+                .when(guard).callFallback(any());
+        HttpClient client = mock(HttpClient.class);
+        stubResponse(client, 302, Map.of("Location", List.of("http://127.0.0.1/secret.jpg")),
+                new ByteArrayInputStream(new byte[0]));
+        ExternalCoverService service = service(writer, guard, mock(CoverImageNormalizer.class), client, host ->
+                "127.0.0.1".equals(host)
+                        ? new InetAddress[]{InetAddress.getByAddress(host, new byte[]{127, 0, 0, 1})}
+                        : ExternalCoverServiceTest.publicAddress(host));
+
+        assertCode("EXTERNAL_COVER_URL_INVALID", () -> service.downloadFallbackArtistAvatar(
+                "https://upload.wikimedia.org/portrait.jpg", "artist-key", Duration.ofSeconds(1)));
+        verifyNoInteractions(writer);
+    }
+
     private static ExternalCoverService responseService(int status, Map<String, List<String>> headers,
                                                         InputStream body) throws Exception {
         return responseService(mock(AssetWriter.class), mock(CoverImageNormalizer.class), status, headers, body);
@@ -264,7 +296,7 @@ class ExternalCoverServiceTest {
     private static ProviderCallGuard guardedAction() {
         ProviderCallGuard guard = mock(ProviderCallGuard.class);
         doAnswer(invocation -> ((Supplier<?>) invocation.getArgument(1)).get())
-                .when(guard).call(eq(MusicProvider.QQ), any());
+                .when(guard).callMedia(eq(MusicProvider.QQ), any());
         return guard;
     }
 

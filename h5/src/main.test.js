@@ -1,25 +1,46 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { apiMock } = vi.hoisted(() => ({
+const { apiMock, makeControlsMock } = vi.hoisted(() => ({
   apiMock: {
-    standbyContent: vi.fn(),
-    registerUser: vi.fn()
-  }
+    registerUser: vi.fn(),
+    roomHostStatus: vi.fn(),
+    recentHistory: vi.fn(),
+    favoriteIds: vi.fn(),
+    favorites: vi.fn()
+  },
+  makeControlsMock: vi.fn(() => ({
+    order: vi.fn(),
+    top: vi.fn(),
+    cancel: vi.fn(),
+    shuffle: vi.fn(),
+    play: vi.fn(),
+    pause: vi.fn(),
+    next: vi.fn(),
+    restart: vi.fn(),
+    seek: vi.fn(),
+    setVolume: vi.fn(),
+    setVocal: vi.fn(),
+    swapVocalTracks: vi.fn(),
+    effect: vi.fn()
+  }))
 }))
 
-vi.mock('./api/client', () => ({ default: apiMock }))
+vi.mock('./api/client', () => ({
+  default: apiMock,
+  makeControls: makeControlsMock
+}))
 
 describe('main entry point', () => {
   beforeEach(() => {
     vi.resetModules()
     localStorage.clear()
     document.body.innerHTML = '<div id="app"></div>'
-    apiMock.standbyContent.mockResolvedValue({
-      welcomeText: '入口已挂载',
-      subtitle: '本地模拟服务'
-    })
     apiMock.registerUser.mockResolvedValue({ id: 7, nickname: '模拟用户' })
+    apiMock.roomHostStatus.mockResolvedValue({ claimed: false, isHost: false, revision: 1 })
+    apiMock.recentHistory.mockResolvedValue([])
+    apiMock.favoriteIds.mockResolvedValue([])
+    apiMock.favorites.mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -27,16 +48,16 @@ describe('main entry point', () => {
     localStorage.clear()
   })
 
-  it('mounts the root app on #app with the configured router and Pinia', async () => {
+  it('mounts the root app on #app straight into the KTV kiosk dashboard', async () => {
     await import('./main.js')
     const { default: router } = await import('./router')
     await router.isReady()
     await flushUi()
 
-    expect(document.querySelector('#app .title')?.textContent).toBe('入口已挂载')
-    expect(document.querySelector('#app .room')?.textContent).toContain('本地模拟服务')
-    expect(apiMock.standbyContent).toHaveBeenCalledOnce()
-    expect(apiMock.registerUser).not.toHaveBeenCalled()
+    expect(document.querySelector('#app .ktv-kiosk-shell')).not.toBeNull()
+    expect(document.querySelectorAll('#app .bento-tile')).toHaveLength(10)
+    expect(document.querySelector('#app .ktv-bottom-dock')).not.toBeNull()
+    expect(apiMock.registerUser).toHaveBeenCalledOnce()
   })
 
   async function flushUi() {

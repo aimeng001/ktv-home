@@ -28,6 +28,7 @@ public class ArtistLibraryController {
     private final ArtistGenderDictionaryService genderDictionary;
     private final ArtistGenderMatcher genderMatcher;
     private CoverImageNormalizer coverImageNormalizer;
+    private com.homektv.musicsource.MusicSourceConfigService musicSourceConfigService;
 
     public ArtistLibraryController(ArtistLibraryService service,
                                    LocalAvatarResolver localAvatarResolver,
@@ -56,6 +57,11 @@ public class ArtistLibraryController {
     @org.springframework.beans.factory.annotation.Autowired
     void setCoverImageNormalizer(CoverImageNormalizer coverImageNormalizer) {
         this.coverImageNormalizer = coverImageNormalizer;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setMusicSourceConfigService(com.homektv.musicsource.MusicSourceConfigService musicSourceConfigService) {
+        this.musicSourceConfigService = musicSourceConfigService;
     }
 
     @PostMapping("/{artistKey}/avatar")
@@ -117,6 +123,23 @@ public class ArtistLibraryController {
     @PostMapping("/avatars/retry")
     public Map<String, Object> retryMissingAvatars() {
         return avatarJobs.resetAndEnqueueMissingProfiles();
+    }
+
+    @GetMapping("/avatars/progress")
+    public Map<String, Object> avatarProgress() {
+        Map<String, Object> summary = new java.util.LinkedHashMap<>(profileService.avatarProgressSummary());
+        if (musicSourceConfigService != null) {
+            var config = musicSourceConfigService.getConfig();
+            summary.put("enabled", config != null && config.enabled());
+            summary.put("fallbackEnabled", musicSourceConfigService.isAvatarFallbackEnabled());
+            summary.put("providerStatus", musicSourceConfigService.states(config != null ? config.dailyLimit() : 300));
+        }
+        return summary;
+    }
+
+    @PostMapping("/{artistKey}/avatar/scrape")
+    public Map<String, Object> scrapeArtistAvatar(@PathVariable String artistKey) {
+        return avatarJobs.scrapeSingleArtist(artistKey, localAvatarResolver);
     }
 
     @PostMapping("/gender-dictionary/import")

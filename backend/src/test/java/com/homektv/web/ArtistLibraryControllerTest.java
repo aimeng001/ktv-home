@@ -114,4 +114,22 @@ class ArtistLibraryControllerTest {
         assertThat(controller.retryMissingAvatars().get("queued")).isEqualTo(2);
         verify(avatarJobs).resetAndEnqueueMissingProfiles();
     }
+
+    @Test
+    void progressAndSingleArtistScrapeEndpointsDelegateToServices() {
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        ArtistAvatarJobService avatarJobs = mock(ArtistAvatarJobService.class);
+        LocalAvatarResolver localResolver = mock(LocalAvatarResolver.class);
+        when(profiles.avatarProgressSummary()).thenReturn(Map.of(
+                "totalArtists", 10L, "readyCount", 4L, "pendingCount", 5L, "unresolvedCount", 1L));
+        when(avatarJobs.scrapeSingleArtist("zhoujielun", localResolver))
+                .thenReturn(Map.of("queued", 1, "resolvedLocally", false, "status", "PENDING"));
+        ArtistLibraryController controller = new ArtistLibraryController(
+                mock(ArtistLibraryService.class), localResolver,
+                mock(AssetWriter.class), profiles, avatarJobs);
+
+        assertThat(controller.avatarProgress().get("readyCount")).isEqualTo(4L);
+        assertThat(controller.scrapeArtistAvatar("zhoujielun").get("queued")).isEqualTo(1);
+        verify(avatarJobs).scrapeSingleArtist("zhoujielun", localResolver);
+    }
 }

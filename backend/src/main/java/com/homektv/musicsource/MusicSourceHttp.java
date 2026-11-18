@@ -65,6 +65,11 @@ final class MusicSourceHttp {
                 .POST(HttpRequest.BodyPublishers.ofString(body)), headers, timeout);
     }
 
+    JsonNode postJson(String url, String jsonBody, Map<String, ?> headers, Duration timeout) {
+        return send(HttpRequest.newBuilder(checked(url)).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody)), headers, timeout);
+    }
+
     private JsonNode send(HttpRequest.Builder builder, Map<String, ?> headers, Duration timeout) {
         if (callGuard == null) return sendOnce(builder, headers, timeout);
         return callGuard.call(provider, () -> sendOnce(builder, headers, timeout));
@@ -149,5 +154,4 @@ final class MusicSourceHttp {
         });
         return out.toString();
     }
-
 }

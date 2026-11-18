@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FlywayMigrationIntegrityTest {
 
     private static final Pattern MIGRATION_FILE_PATTERN = Pattern.compile("^V(\\d+)__(.+)\\.sql$");
-    private static final int CURRENT_LATEST_VERSION = 62;
+    private static final int CURRENT_LATEST_VERSION = 66;
 
     @Test
     void allMigrationVersionsFromOneToLatestArePresentAndContiguous() throws Exception {
@@ -115,6 +115,31 @@ class FlywayMigrationIntegrityTest {
         String v58Content = Files.readString(v58Path);
         assertThat(v58Content).contains("idx_song_artists_key_lower", "idx_songs_ok_norm_artist")
                 .doesNotContain("DELETE FROM songs", "UPDATE songs");
+
+        Path v63Path = findMigrationPath(migrationDirectory, 63);
+        String v63Content = Files.readString(v63Path);
+        assertThat(v63Content).contains("ck_artist_avatar_job_provider", "'FALLBACK'", "priority", "tier");
+
+        Path v64Path = findMigrationPath(migrationDirectory, 64);
+        String v64Content = Files.readString(v64Path);
+        assertThat(v64Content).contains(
+                "idx_artist_directory_stats_admin_order",
+                "idx_artist_directory_stats_admin_filter",
+                "idx_artist_avatar_jobs_recent_errors");
+
+        Path v65Path = findMigrationPath(migrationDirectory, 65);
+        String v65Content = Files.readString(v65Path);
+        assertThat(v65Content).contains(
+                "idx_songs_unrecognized_id",
+                "idx_song_files_role_pending_path");
+
+        Path v66Path = findMigrationPath(migrationDirectory, 66);
+        String v66Content = Files.readString(v66Path);
+        assertThat(v66Content).contains(
+                "idx_songs_title_lower_trgm",
+                "idx_songs_artist_lower_trgm",
+                "idx_metadata_scrape_items_song_status",
+                "idx_metadata_scrape_items_batch_id_desc");
 
     }
 

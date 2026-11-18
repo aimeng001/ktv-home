@@ -355,4 +355,63 @@ class ArtistDirectoryProjectionServiceTest {
         doAnswer(update).when(jdbc).update(anyString(), any(Object[].class));
         return refreshComplete;
     }
+
+    @Test
+    void adminPageSkipsQueryUntilProjectionReadyAndShortCircuitsZeroTotal() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class)))
+                .thenReturn(false, true);
+        when(jdbc.queryForObject(contains("SELECT COUNT(*)"), eq(Long.class), any(Object[].class)))
+                .thenReturn(0L);
+        ArtistDirectoryProjectionService service = new ArtistDirectoryProjectionService(jdbc);
+
+        assertThat(service.adminPage("", "", null, 0, 50)).isEmpty();
+        var empty = service.adminPage("周杰伦", "男歌手", false, 0, 50).orElseThrow();
+
+        assertThat(empty.total()).isZero();
+        assertThat(empty.rows()).isEmpty();
+        verify(jdbc, never()).query(contains("ORDER BY song_count DESC"), any(RowMapper.class), any(Object[].class));
+    }
+
+    @Test
+    void adminPageFiltersAndPagesMaterializedDirectory() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class))).thenReturn(true);
+        when(jdbc.queryForObject(contains("SELECT COUNT(*)"), eq(Long.class), any(Object[].class))).thenReturn(2L);
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            RowMapper<ArtistDirectoryProjectionService.AdminArtistRow> mapper = invocation.getArgument(1);
+            ResultSet resultSet = mock(ResultSet.class);
+            when(resultSet.getString("artist_key")).thenReturn("zhoujielun");
+            when(resultSet.getString("name")).thenReturn("周杰伦");
+            when(resultSet.getString("gender")).thenReturn("男歌手");
+            when(resultSet.getLong("song_count")).thenReturn(128L);
+            when(resultSet.getBoolean("reviewed")).thenReturn(true);
+            when(resultSet.getString("artist_kind")).thenReturn("PERSON");
+            when(resultSet.getString("avatar_path")).thenReturn("artist-covers/zjl.jpg");
+            return List.of(mapper.mapRow(resultSet, 0));
+        }).when(jdbc).query(contains("ORDER BY song_count DESC"), any(RowMapper.class), any(Object[].class));
+
+        ArtistDirectoryProjectionService service = new ArtistDirectoryProjectionService(jdbc);
+        var result = service.adminPage(" zjl ", " 男歌手 ", true, 1, 25).orElseThrow();
+
+        assertThat(result.total()).isEqualTo(2L);
+        assertThat(result.rows()).containsExactly(new ArtistDirectoryProjectionService.AdminArtistRow(
+                "zhoujielun", "周杰伦", "男歌手", 128L, true, "PERSON", "artist-covers/zjl.jpg"));
+        var arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
+        verify(jdbc).query(contains("ORDER BY song_count DESC"), any(RowMapper.class), arguments.capture());
+        assertThat(arguments.getValue()).containsExactly("男歌手", true, "zjl", "zjl", "zjl", "zjl", 25, 25);
+    }
+
+    @Test
+    void updateGenderAfterCommitUpdatesProjectionRowOrFallsBackToRefresh() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.update(contains("UPDATE artist_directory_stats SET gender=?"),
+                any(), any(), any())).thenReturn(1, 0);
+        ArtistDirectoryProjectionService service = new ArtistDirectoryProjectionService(jdbc);
+
+        service.updateGenderAfterCommit("zhoujielun", "男歌手", true);
+        verify(jdbc).update(contains("UPDATE artist_directory_stats SET gender=?"),
+                eq("男歌手"), eq(true), eq("zhoujielun"));
+    }
 }

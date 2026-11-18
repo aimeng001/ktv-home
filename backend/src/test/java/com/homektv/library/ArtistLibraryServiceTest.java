@@ -664,6 +664,53 @@ class ArtistLibraryServiceTest {
         assertThat(result).containsEntry("updated", Integer.MAX_VALUE).containsEntry("gender", "女歌手");
     }
 
+    @Test
+    void pagedDirectoryUsesMaterializedProjectionWhenReadyWithoutScanningSongsTable() {
+        ArtistDirectoryProjectionService projection = mock(ArtistDirectoryProjectionService.class);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        ReflectionTestUtils.setField(service, "directoryProjection", projection);
+        ReflectionTestUtils.setField(service, "artistProfiles", profiles);
+
+        when(projection.adminPage("周", "男歌手", false, 0, 50)).thenReturn(java.util.Optional.of(
+                new ArtistDirectoryProjectionService.AdminProjectionPage(
+                        List.of(new ArtistDirectoryProjectionService.AdminArtistRow(
+                                "zhoujielun", "周杰伦", "男歌手", 200L, false, "PERSON", "artist-covers/zjl.jpg")),
+                        1L)));
+        SongRepository.ArtistSongProjection sample = sampleRow("周杰伦", "晴天", 10L);
+        when(sample.getArtistKey()).thenReturn("zhoujielun");
+        when(songs.findArtistSamples("ok", List.of("zhoujielun"))).thenReturn(List.of(sample));
+        when(profiles.avatarDiagnostics(List.of("zhoujielun"))).thenReturn(Map.of(
+                "zhoujielun", new ArtistProfileService.AvatarDiagnostic("READY", "QQ", null)));
+
+        ArtistLibraryService.ArtistPage page = service.page(" 周 ", " 男歌手 ", false, 0, 50);
+
+        assertThat(page.total()).isEqualTo(1L);
+        assertThat(page.items()).hasSize(1);
+        assertThat(page.items().getFirst())
+                .containsEntry("artistKey", "zhoujielun")
+                .containsEntry("name", "周杰伦")
+                .containsEntry("songCount", 200L)
+                .containsEntry("avatarProvider", "QQ");
+        verify(songs, never()).pageArtistDirectory(anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void pagedDirectoryFallsBackToLiveSongAggregationWhenProjectionNotReady() {
+        ArtistDirectoryProjectionService projection = mock(ArtistDirectoryProjectionService.class);
+        ReflectionTestUtils.setField(service, "directoryProjection", projection);
+        when(projection.adminPage("", "", null, 0, 50)).thenReturn(java.util.Optional.empty());
+        SongRepository.ArtistDirectoryProjection row = directoryRow("周杰伦", "未知", false, 5L);
+        when(songs.pageArtistDirectory(eq("ok"), eq(""), eq(""), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(row), Pageable.ofSize(50), 1));
+        when(songs.findArtistSamples(eq("ok"), any())).thenReturn(List.of());
+
+        ArtistLibraryService.ArtistPage page = service.page(null, null, null, 0, 50);
+
+        assertThat(page.total()).isEqualTo(1L);
+        assertThat(page.items()).hasSize(1);
+        verify(songs).pageArtistDirectory(eq("ok"), eq(""), eq(""), eq(null), any(Pageable.class));
+    }
+
     private SongRepository.ArtistDirectoryProjection directoryRow(String name, String gender,
                                                                      boolean reviewed, long songCount) {
         SongRepository.ArtistDirectoryProjection row = mock(SongRepository.ArtistDirectoryProjection.class);

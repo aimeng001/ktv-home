@@ -183,12 +183,16 @@ public class ArtistProfileService {
 
     @Transactional
     public boolean setAvatarReady(String artistKey, String provider, String path) {
-        return jdbc.update("""
+        boolean changed = jdbc.update("""
                 UPDATE artist_profiles
                 SET avatar_path=?, avatar_provider=?, avatar_status='READY',
                     avatar_error=NULL, updated_at=now()
                 WHERE artist_key=?
                 """, path, provider, artistKey) > 0;
+        if (changed && directoryProjection != null) {
+            directoryProjection.updateAvatarPathAfterCommit(artistKey, path);
+        }
+        return changed;
     }
 
     public List<Profile> unresolvedProfiles(int limit) {
@@ -216,7 +220,7 @@ public class ArtistProfileService {
     @Transactional
     public boolean markAvatarReadyIfClaimed(String artistKey, String provider, String externalId, String path,
                                             long jobId, String claimToken) {
-        return jdbc.update("""
+        boolean changed = jdbc.update("""
                 UPDATE artist_profiles
                 SET avatar_path=?, avatar_provider=?, avatar_external_id=?,
                     avatar_status='READY', avatar_error=NULL, updated_at=now()
@@ -227,6 +231,10 @@ public class ArtistProfileService {
                         AND job.status='PROCESSING' AND job.claim_token=?::uuid
                 )
                 """, path, provider, externalId, artistKey, jobId, claimToken) > 0;
+        if (changed && directoryProjection != null) {
+            directoryProjection.updateAvatarPathAfterCommit(artistKey, path);
+        }
+        return changed;
     }
 
     @Transactional
@@ -240,7 +248,7 @@ public class ArtistProfileService {
                 WHERE artist_key=?
                 """, gender, artistKey);
         if (updated > 0 && directoryProjection != null) {
-            directoryProjection.requestRefreshAfterCommit();
+            directoryProjection.updateGenderAfterCommit(artistKey, gender, !"未知".equals(gender));
         }
     }
 
@@ -263,14 +271,15 @@ public class ArtistProfileService {
         int safeLimit = Math.max(1, Math.min(limit, 10_000));
         try {
             return jdbc.query("""
-                    SELECT artist_key FROM artist_profiles
-                    WHERE artist_kind IN ('PERSON', 'GROUP')
-                      AND avatar_status IN ('PENDING', 'RETRY')
+                    SELECT artist_profiles.artist_key FROM artist_profiles
+                    LEFT JOIN artist_directory_stats dir ON dir.artist_key = artist_profiles.artist_key
+                    WHERE artist_profiles.artist_kind IN ('PERSON', 'GROUP')
+                      AND artist_profiles.avatar_status IN ('PENDING', 'RETRY')
                       AND NOT EXISTS (
                           SELECT 1 FROM artist_avatar_jobs job
                           WHERE job.artist_key = artist_profiles.artist_key
                       )
-                    ORDER BY updated_at, artist_key
+                    ORDER BY COALESCE(dir.song_count, 0) DESC, artist_profiles.updated_at, artist_profiles.artist_key
                     LIMIT ?
                     """, (rs, index) -> rs.getString(1), safeLimit);
         } catch (DataAccessException failure) {
@@ -279,15 +288,151 @@ public class ArtistProfileService {
         }
     }
 
+    /** Returns song-count priority map for scheduling popular artists ahead of rare entries. */
+    public Map<String, Integer> artistSongPriorities(Collection<String> artistKeys) {
+        if (artistKeys == null || artistKeys.isEmpty()) return Map.of();
+        try {
+            List<String> keys = artistKeys.stream()
+                    .filter(k -> k != null && !k.isBlank())
+                    .distinct()
+                    .limit(10_000)
+                    .toList();
+            if (keys.isEmpty()) return Map.of();
+            Map<String, Integer> result = new LinkedHashMap<>();
+            for (int start = 0; start < keys.size(); start += PROFILE_PAGE_SIZE) {
+                List<String> batch = keys.subList(start, Math.min(keys.size(), start + PROFILE_PAGE_SIZE));
+                String placeholders = String.join(",", java.util.Collections.nCopies(batch.size(), "?"));
+                jdbc.query(
+                        "SELECT artist_key, song_count FROM artist_directory_stats WHERE artist_key IN (" + placeholders + ")",
+                        rs -> {
+                            result.put(rs.getString("artist_key"), Math.max(0, rs.getInt("song_count")));
+                        },
+                        batch.toArray());
+            }
+            return result;
+        } catch (DataAccessException failure) {
+            return Map.of();
+        }
+    }
+
+    /** Requeues one artist profile for fresh avatar scraping (clearing terminal error state). */
+    @Transactional
+    public boolean resetSingleArtistForScrape(String artistKey) {
+        if (artistKey == null || artistKey.isBlank()) return false;
+        int updated = jdbc.update("""
+                UPDATE artist_profiles
+                SET avatar_path=NULL, avatar_provider=NULL, avatar_external_id=NULL,
+                    avatar_status='PENDING', avatar_error=NULL, updated_at=now()
+                WHERE artist_key=? AND artist_kind IN ('PERSON', 'GROUP')
+                """, artistKey);
+        if (updated > 0 && directoryProjection != null) {
+            directoryProjection.updateAvatarPathAfterCommit(artistKey, null);
+        }
+        return updated > 0;
+    }
+
+    /**
+     * Checks previously cached NetEase avatars and resets flat grey silhouette placeholders
+     * so the repaired pipeline can re-scrape real artist portraits.
+     */
+    public int requeueSuspectNeteasePlaceholders(AssetWriter assets, int limit) {
+        if (assets == null) return 0;
+        int safeLimit = Math.max(1, Math.min(limit, 1000));
+        try {
+            List<Profile> candidates = jdbc.query("""
+                    SELECT artist_key, display_name, artist_kind, avatar_path,
+                           avatar_provider, avatar_external_id, avatar_status
+                    FROM artist_profiles
+                    WHERE artist_kind IN ('PERSON', 'GROUP')
+                      AND avatar_status = 'READY'
+                      AND avatar_provider = 'NETEASE'
+                      AND avatar_path IS NOT NULL
+                    ORDER BY updated_at ASC
+                    LIMIT ?
+                    """, (rs, index) -> new Profile(
+                    rs.getString("artist_key"), rs.getString("display_name"),
+                    rs.getString("artist_kind"), rs.getString("avatar_path"),
+                    rs.getString("avatar_provider"), rs.getString("avatar_external_id"),
+                    rs.getString("avatar_status")), safeLimit);
+            int resetCount = 0;
+            for (Profile profile : candidates) {
+                var path = assets.readableCachePath(profile.avatarPath()).orElse(null);
+                if (path == null || !com.homektv.musicsource.AvatarImageQualityValidator.isUsableCachedAvatarFile(path)) {
+                    if (resetSingleArtistForScrape(profile.artistKey())) {
+                        assets.deleteReadableCache(profile.avatarPath());
+                        jdbc.update("DELETE FROM artist_avatar_jobs WHERE artist_key=?", profile.artistKey());
+                        resetCount++;
+                    }
+                }
+            }
+            if (resetCount > 0) {
+                log.info("reset {} suspect NetEase placeholder artist avatar(s) for re-scraping", resetCount);
+            }
+            return resetCount;
+        } catch (DataAccessException failure) {
+            log.debug("placeholder avatar verification skipped: {}", failure.getMessage());
+            return 0;
+        }
+    }
+
+    public Map<String, Object> avatarProgressSummary() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        try {
+            jdbc.query("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE artist_kind IN ('PERSON', 'GROUP')) AS total_artists,
+                        COUNT(*) FILTER (WHERE artist_kind IN ('PERSON', 'GROUP') AND avatar_status = 'READY'
+                                         AND avatar_path IS NOT NULL AND trim(avatar_path) <> '') AS ready_count,
+                        COUNT(*) FILTER (WHERE artist_kind IN ('PERSON', 'GROUP') AND avatar_status IN ('PENDING', 'RETRY')) AS pending_count,
+                        COUNT(*) FILTER (WHERE artist_kind IN ('PERSON', 'GROUP') AND avatar_status IN ('REVIEW', 'FAILED', 'SKIPPED')
+                                         AND (avatar_path IS NULL OR trim(avatar_path) = '')) AS unresolved_count
+                    FROM artist_profiles
+                    """, rs -> {
+                out.put("totalArtists", rs.getLong("total_artists"));
+                out.put("readyCount", rs.getLong("ready_count"));
+                out.put("pendingCount", rs.getLong("pending_count"));
+                out.put("unresolvedCount", rs.getLong("unresolved_count"));
+            });
+            Long queuedJobs = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM artist_avatar_jobs WHERE status IN ('PENDING', 'PROCESSING')",
+                    Long.class);
+            out.put("queuedJobs", queuedJobs == null ? 0L : queuedJobs);
+            List<Map<String, Object>> recentErrors = jdbc.query("""
+                    SELECT artist_key, provider, last_error, updated_at
+                    FROM artist_avatar_jobs
+                    WHERE last_error IS NOT NULL AND trim(last_error) <> ''
+                      AND status IN ('FAILED', 'REVIEW', 'PENDING')
+                    ORDER BY updated_at DESC
+                    LIMIT 5
+                    """, (rs, index) -> {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("artistKey", rs.getString("artist_key"));
+                row.put("provider", rs.getString("provider"));
+                row.put("lastError", rs.getString("last_error"));
+                return row;
+            });
+            out.put("recentErrors", recentErrors);
+        } catch (DataAccessException failure) {
+            out.putIfAbsent("totalArtists", 0L);
+            out.putIfAbsent("readyCount", 0L);
+            out.putIfAbsent("pendingCount", 0L);
+            out.putIfAbsent("unresolvedCount", 0L);
+            out.putIfAbsent("queuedJobs", 0L);
+            out.putIfAbsent("recentErrors", List.of());
+        }
+        return out;
+    }
+
     /** Profiles that may be retried after an explicit provider configuration change. */
     public List<String> unresolvedAvatarKeys(int limit) {
         int safeLimit = Math.max(1, Math.min(limit, 10_000));
         try {
             return jdbc.query("""
-                    SELECT artist_key FROM artist_profiles
-                    WHERE artist_kind IN ('PERSON', 'GROUP')
-                      AND avatar_status IN ('PENDING', 'RETRY', 'REVIEW', 'SKIPPED')
-                    ORDER BY updated_at, artist_key
+                    SELECT artist_profiles.artist_key FROM artist_profiles
+                    LEFT JOIN artist_directory_stats dir ON dir.artist_key = artist_profiles.artist_key
+                    WHERE artist_profiles.artist_kind IN ('PERSON', 'GROUP')
+                      AND artist_profiles.avatar_status IN ('PENDING', 'RETRY', 'REVIEW', 'SKIPPED')
+                    ORDER BY COALESCE(dir.song_count, 0) DESC, artist_profiles.updated_at, artist_profiles.artist_key
                     LIMIT ?
                     """, (rs, index) -> rs.getString(1), safeLimit);
         } catch (DataAccessException failure) {
@@ -299,6 +444,35 @@ public class ArtistProfileService {
     public record Profile(String artistKey, String displayName, String artistKind,
                           String avatarPath, String avatarProvider,
                           String avatarExternalId, String avatarStatus) {}
+
+    public record AvatarDiagnostic(String avatarStatus, String avatarProvider, String avatarError) {}
+
+    public Map<String, AvatarDiagnostic> avatarDiagnostics(Collection<String> artistKeys) {
+        if (artistKeys == null || artistKeys.isEmpty()) return Map.of();
+        try {
+            List<String> keys = artistKeys.stream()
+                    .filter(k -> k != null && !k.isBlank())
+                    .distinct()
+                    .limit(PROFILE_PAGE_SIZE)
+                    .toList();
+            if (keys.isEmpty()) return Map.of();
+            String placeholders = String.join(",", java.util.Collections.nCopies(keys.size(), "?"));
+            Map<String, AvatarDiagnostic> out = new LinkedHashMap<>();
+            jdbc.query(
+                    "SELECT artist_key, avatar_status, avatar_provider, avatar_error FROM artist_profiles WHERE artist_key IN ("
+                            + placeholders + ")",
+                    rs -> {
+                        out.put(rs.getString("artist_key"), new AvatarDiagnostic(
+                                rs.getString("avatar_status"),
+                                rs.getString("avatar_provider"),
+                                rs.getString("avatar_error")));
+                    },
+                    keys.toArray());
+            return out;
+        } catch (DataAccessException failure) {
+            return Map.of();
+        }
+    }
 
     private record ProfileSeed(String artistKey, String displayName, String artistKind,
                                String pinyin, String initials) {}

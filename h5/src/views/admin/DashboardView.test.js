@@ -474,6 +474,18 @@ describe('DashboardView', () => {
     await flushUi()
   })
 
+  it('does not start polling when adminStartScan returns a non-running snapshot', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval')
+    apiMock.adminStartScan.mockResolvedValueOnce({ running: false, phase: 'IDLE', state: 'IDLE' })
+    await mount()
+
+    root.querySelector('.page-head .primary').click()
+    await flushUi()
+
+    expect(setIntervalSpy).not.toHaveBeenCalled()
+    expect(root.querySelector('.page-head .primary').disabled).toBe(false)
+  })
+
   it('ignores duplicate diagnostics downloads while the first request is pending', async () => {
     let rejectDownload
     apiMock.adminDownloadDiagnostics.mockReturnValueOnce(new Promise((_, reject) => { rejectDownload = reject }))

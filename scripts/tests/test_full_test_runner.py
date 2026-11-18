@@ -25,7 +25,6 @@ from scripts.full_test_runner import (
     CORE_BACKEND_TESTCONTAINER_TESTS,
     CORE_BACKEND_UNIT_TESTS,
     CORE_H5_TEST_FILES,
-    CORE_WINDOWS_TEST_CLASSES,
     CORE_BRANCH_COVERAGE_FILES,
     _jacoco_source_counts,
     default_parallel_jobs,
@@ -134,113 +133,6 @@ class CoreCoverageGateTest(unittest.TestCase):
         self.assertEqual([], missing)
         self.assertEqual((2, 0), counts[source])
 
-    def test_windows_gate_checks_allowlisted_source_branch_conditions(self):
-        with tempfile.TemporaryDirectory(prefix="ktv-coverage-gate-", dir=ROOT) as temporary:
-            coverage_root = Path(temporary) / "windows"
-            report = coverage_root / "TestResults" / "coverage.cobertura.xml"
-            report.parent.mkdir(parents=True)
-
-            def write_report(partial_index=None, invalid_index=None, no_branch_index=None):
-                classes = []
-                for index, source in enumerate(CORE_BRANCH_COVERAGE_FILES["windows"]):
-                    coverage = "50% (1/2)" if index == partial_index else "100% (2/2)"
-                    filename = f"drive//{source.replace('/', '//')}" if index == 1 else source
-                    branch_line = (
-                        "<line number=\"1\" branch=\"false\"/>"
-                        if index == no_branch_index
-                        else '<line number="1" branch="true" condition-coverage="invalid"/>'
-                        if index == invalid_index
-                        else f'<line number="1" branch="true" condition-coverage="{coverage}"/>'
-                    )
-                    classes.append(f'<class name="Core{index}" filename="{filename}"><lines>{branch_line}</lines></class>')
-                report.write_text(
-                    "<coverage><packages><package><classes>"
-                    + "".join(classes)
-                    + "</classes></package></packages></coverage>",
-                    encoding="utf-8",
-                )
-
-            write_report()
-            self.assertEqual([], validate_core_coverage("windows", coverage_root))
-            write_report(partial_index=0)
-
-            findings = validate_core_coverage("windows", coverage_root)
-
-        self.assertTrue(any(CORE_BRANCH_COVERAGE_FILES["windows"][0] in finding and "missed=1" in finding for finding in findings))
-
-        with tempfile.TemporaryDirectory(prefix="ktv-coverage-gate-", dir=ROOT) as temporary:
-            coverage_root = Path(temporary) / "windows"
-            report = coverage_root / "TestResults" / "coverage.cobertura.xml"
-            self.write_windows_report(report, no_branch_index=0)
-            findings = validate_core_coverage("windows", coverage_root)
-        self.assertTrue(any(CORE_BRANCH_COVERAGE_FILES["windows"][0] in finding and "missing branch data" in finding for finding in findings))
-
-        with tempfile.TemporaryDirectory(prefix="ktv-coverage-gate-", dir=ROOT) as temporary:
-            coverage_root = Path(temporary) / "windows"
-            report = coverage_root / "TestResults" / "coverage.cobertura.xml"
-            self.write_windows_report(report, invalid_index=0)
-            findings = validate_core_coverage("windows", coverage_root)
-        self.assertTrue(any(CORE_BRANCH_COVERAGE_FILES["windows"][0] in finding and "invalid branch data" in finding for finding in findings))
-
-    def test_windows_gate_aggregates_generated_types_by_source_file(self):
-        with tempfile.TemporaryDirectory(prefix="ktv-coverage-gate-", dir=ROOT) as temporary:
-            coverage_root = Path(temporary) / "windows"
-            report = coverage_root / "TestResults" / "coverage.cobertura.xml"
-            classes = []
-            first_source = CORE_BRANCH_COVERAGE_FILES["windows"][0]
-            for index, source in enumerate(CORE_BRANCH_COVERAGE_FILES["windows"]):
-                if index == 0:
-                    classes.append(
-                        f'<class name="Core{index}" filename="{source}"><lines>'
-                        '<line number="1" branch="true" condition-coverage="50% (1/2)"/>'
-                        '</lines></class>'
-                    )
-                    classes.append(
-                        f'<class name="GeneratedCore{index}" filename="{source}"><lines>'
-                        '<line number="2" branch="true" condition-coverage="100% (2/2)"/>'
-                        '</lines></class>'
-                    )
-                else:
-                    classes.append(
-                        f'<class name="Core{index}" filename="{source}"><lines>'
-                        '<line number="1" branch="true" condition-coverage="100% (2/2)"/>'
-                        '</lines></class>'
-                    )
-            report.parent.mkdir(parents=True)
-            report.write_text(
-                "<coverage><packages><package><classes>"
-                + "".join(classes)
-                + "</classes></package></packages></coverage>",
-                encoding="utf-8",
-            )
-
-            findings = validate_core_coverage("windows", coverage_root)
-
-        self.assertTrue(any(first_source in finding and "missed=1" in finding for finding in findings))
-
-    @staticmethod
-    def write_windows_report(report, *, no_branch_index=None, invalid_index=None):
-        report.parent.mkdir(parents=True, exist_ok=True)
-        classes = []
-        for index, source in enumerate(CORE_BRANCH_COVERAGE_FILES["windows"]):
-            branch_line = (
-                '<line number="1" branch="false"/>'
-                if index == no_branch_index
-                else '<line number="1" branch="true" condition-coverage="invalid"/>'
-                if index == invalid_index
-                else '<line number="1" branch="true" condition-coverage="100% (2/2)"/>'
-            )
-            classes.append(
-                f'<class name="Core{index}" filename="{source}"><lines>'
-                f'{branch_line}</lines></class>'
-            )
-        report.write_text(
-            "<coverage><packages><package><classes>"
-            + "".join(classes)
-            + "</classes></package></packages></coverage>",
-            encoding="utf-8",
-        )
-
     def test_core_task_fails_when_current_run_coverage_is_incomplete(self):
         with tempfile.TemporaryDirectory(prefix="ktv-runner-test-", dir=ROOT) as temporary:
             root = Path(temporary) / "repo"
@@ -335,10 +227,8 @@ class CoreCoverageGateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ktv-coverage-gate-", dir=ROOT) as temporary:
             coverage_root = Path(temporary)
             findings = validate_core_coverage("android", coverage_root)
-            windows_findings = validate_core_coverage("windows", coverage_root / "windows")
 
         self.assertTrue(any("report" in finding.lower() and "missing" in finding.lower() for finding in findings))
-        self.assertTrue(any("missing or ambiguous" in finding.lower() for finding in windows_findings))
 
         self.assertTrue(validate_core_coverage("unknown", Path("missing")))
 
@@ -416,7 +306,7 @@ class FullTestRunnerPlanTest(unittest.TestCase):
     def test_default_plan_uses_core_backend_and_gradle_daemon(self):
         tasks = build_task_specs(ROOT, backend_scope="all")
         self.assertEqual(
-            {"backend", "h5", "android", "windows", "scripts"},
+            {"backend", "h5", "android", "scripts"},
             {task.name for task in tasks},
         )
 
@@ -438,7 +328,8 @@ class FullTestRunnerPlanTest(unittest.TestCase):
         self.assertIn("MediaImportServiceTest", backend_test_filter)
         self.assertIn("LibraryScanCoordinatorTest", backend_test_filter)
         self.assertIn("AdminAuthInterceptorTest", backend_test_filter)
-        self.assertIn("PlaybackVariantStreamControllerTest", backend_test_filter)
+        self.assertIn("StreamControllerTest", backend_test_filter)
+        self.assertIn("PlaybackResolutionServiceTest", backend_test_filter)
         self.assertIn("QueueServiceConcurrencyTest", backend_test_filter)
         self.assertIn("QueuePlaybackIntegrationTest", backend_test_filter)
         self.assertIn("WebSocketIntegrationTest", backend_test_filter)
@@ -460,18 +351,11 @@ class FullTestRunnerPlanTest(unittest.TestCase):
         self.assertIn("--tests", android_argv)
         self.assertIn("com.homektv.tv.player.PlaybackCoordinatorTest", android_argv)
         self.assertIn("com.homektv.tv.net.AppConfigCredentialScopeContractTest", android_argv)
-        self.assertIn("com.homektv.tv.player.KtvChannelAudioProcessorTest", android_argv)
+        self.assertIn("com.homektv.tv.player.PcmChannelMapperTest", android_argv)
         self.assertIn("com.homektv.tv.net.PlaybackErrorOutboxTest", android_argv)
         self.assertNotIn(":app:lintDebug", android_argv)
         self.assertNotIn(":app:assembleDebug", android_argv)
         self.assertNotIn(":app:assembleDebugAndroidTest", android_argv)
-
-        windows = next(task for task in tasks if task.name == "windows")
-        windows_argv = windows.commands[0].argv
-        self.assertIn("--filter", windows_argv)
-        self.assertIn("KtvWebSocketClientTests", " ".join(windows_argv))
-        self.assertIn("PlaybackFailurePolicyTests", " ".join(windows_argv))
-        self.assertIn("MpvIpcProtocolTests", " ".join(windows_argv))
 
         scripts = next(task for task in tasks if task.name == "scripts")
         script_labels = tuple(command.label for command in scripts.commands)
@@ -490,7 +374,6 @@ class FullTestRunnerPlanTest(unittest.TestCase):
         backend_sources = {path.stem: path.read_text(encoding="utf-8") for path in backend_test_sources}
         self.assertIn("MediaProbeStageTest", CORE_BACKEND_UNIT_TESTS)
         self.assertIn("QueueServiceTest", CORE_BACKEND_UNIT_TESTS)
-        self.assertIn("PendingPlaybackReportTests", CORE_WINDOWS_TEST_CLASSES)
         self.assertEqual(
             [], [name for name in CORE_BACKEND_UNIT_TESTS if name not in backend_sources],
             "missing Backend test classes",
@@ -519,12 +402,6 @@ class FullTestRunnerPlanTest(unittest.TestCase):
         self.assertEqual(
             [], [name for name in CORE_ANDROID_TEST_CLASSES if name not in android_classes],
             "missing Android test classes",
-        )
-
-        windows_test_names = {path.stem for path in (ROOT / "windows-player/tests/HomeKtv.Windows.Tests").glob("*.cs")}
-        self.assertEqual(
-            [], [name for name in CORE_WINDOWS_TEST_CLASSES if name not in windows_test_names],
-            "missing Windows test classes",
         )
 
     def test_local_core_scope_omits_only_testcontainers_smoke_cases(self):
@@ -574,14 +451,6 @@ class FullTestRunnerPlanTest(unittest.TestCase):
         android_argv = by_name["android"].commands[0].argv
         self.assertIn(":app:createDebugUnitTestCoverageReport", android_argv)
         self.assertNotIn(":app:createDebugAndroidTestCoverageReport", android_argv)
-
-        windows_argv = by_name["windows"].commands[0].argv
-        self.assertIn("--collect:XPlat Code Coverage", windows_argv)
-        self.assertIn(
-            str(ROOT / "windows-player" / "tests" / "HomeKtv.Windows.Tests" / "HomeKtv.Windows.Tests.csproj"),
-            windows_argv,
-        )
-        self.assertNotIn(str(ROOT / "windows-player" / "HomeKtv.Windows.sln"), windows_argv)
 
         script_argv = [arg for command in by_name["scripts"].commands for arg in command.argv]
         self.assertIn("coverage", script_argv)
@@ -943,37 +812,6 @@ class FullTestRunnerPlanTest(unittest.TestCase):
         self.assertEqual(0, result.returncode)
         self.assertIn(f"-Pktv.coverage.buildDir={expected_build_dir}", " ".join(observed["argv"]))
 
-    def test_windows_coverage_task_adds_a_test_results_directory(self):
-        with tempfile.TemporaryDirectory(prefix="ktv-runner-test-", dir=ROOT) as temporary:
-            root = self.make_temp_root(temporary)
-            coverage_dir = root / "coverage"
-            log_dir = root / "logs"
-            log_dir.mkdir()
-            task = TaskSpec(
-                "windows",
-                root,
-                (CommandSpec(("dotnet", "test"), "windows tests"),),
-                "windows",
-                coverage=True,
-            )
-            process = Mock()
-            process.wait.return_value = 0
-            observed = {}
-
-            def capture(argv, **_kwargs):
-                observed["argv"] = argv
-                return process
-
-            with patch("scripts.full_test_runner.subprocess.Popen", side_effect=capture):
-                result = _run_task(task, log_dir, root, coverage_dir)
-            results_dir = coverage_dir / "windows" / "TestResults"
-            results_dir_exists = results_dir.is_dir()
-
-        self.assertEqual(0, result.returncode)
-        self.assertIn("--results-directory", observed["argv"])
-        self.assertTrue(results_dir_exists)
-        self.assertIn(str(results_dir), " ".join(observed["argv"]))
-
     def test_script_coverage_task_runs_reports_and_sets_coverage_file(self):
         with tempfile.TemporaryDirectory(prefix="ktv-runner-test-", dir=ROOT) as temporary:
             root = self.make_temp_root(temporary)
@@ -1074,7 +912,7 @@ class FullTestRunnerPlanTest(unittest.TestCase):
             self.assertEqual(0, result)
             self.assertTrue(generated_runs.is_dir())
             self.assertTrue(observed["coverage_dir"].is_dir())
-            self.assertEqual(5, len(observed["tasks"]))
+            self.assertEqual(4, len(observed["tasks"]))
 
     def test_main_reports_failed_task_logs_with_nonzero_exit(self):
         with tempfile.TemporaryDirectory(prefix="ktv-runner-test-", dir=ROOT) as temporary:

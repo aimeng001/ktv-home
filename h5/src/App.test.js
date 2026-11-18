@@ -35,15 +35,15 @@ describe('App startup registration', () => {
     localStorage.clear()
   })
 
-  it.each([
-    ['未注册身份', false, false],
-    ['只有本地身份', true, false]
-  ])('%s 时不启动网络会话', async (_label, registered, serverRegistered) => {
-    await mountApp({ registered, serverRegistered })
+  it('初次访问自动生成昵称与标识，向服务端注册并直达点歌大厅', async () => {
+    await mountApp({ registered: false, serverRegistered: false })
 
-    expect(apiMock.registerUser).not.toHaveBeenCalled()
-    expect(player.connect).not.toHaveBeenCalled()
-    expect(favorites.load).not.toHaveBeenCalled()
+    expect(user.clientToken).toBeTruthy()
+    expect(apiMock.registerUser).toHaveBeenCalledWith(user.clientToken, expect.stringMatching(/^家人\d{4}$/))
+    expect(user.nickname).toBe('服务端昵称')
+    expect(user.serverUserId).toBe(17)
+    expect(player.connect).toHaveBeenCalledOnce()
+    expect(favorites.load).toHaveBeenCalledWith(user.clientToken)
   })
 
   it('每次启动向服务端重新注册，再连接播放器并加载收藏', async () => {
@@ -61,28 +61,24 @@ describe('App startup registration', () => {
     expect(player.disconnect).toHaveBeenCalledOnce()
   })
 
-  it('服务端注册失败时清除写身份、断开播放器并返回入口页', async () => {
+  it('服务端注册失败时清除可写身份但仍保持 WebSocket 房间监控连接', async () => {
     apiMock.registerUser.mockRejectedValueOnce(new Error('server unavailable'))
     await mountApp({ registered: true, serverRegistered: true })
 
     expect(user.serverUserId).toBeNull()
     expect(localStorage.getItem('ktv_server_user_id')).toBeNull()
     expect(user.registrationError).toBe('server unavailable')
-    expect(player.connect).not.toHaveBeenCalled()
-    expect(player.disconnect).toHaveBeenCalledOnce()
-    expect(router.currentRoute.value.name).toBe('entry')
+    expect(player.connect).toHaveBeenCalledOnce()
   })
 
-  it('拒绝缺少有效用户身份的注册响应', async () => {
+  it('拒绝缺少有效用户身份的注册响应并记录错误', async () => {
     apiMock.registerUser.mockResolvedValueOnce({ id: 0, nickname: '' })
     await mountApp({ registered: true, serverRegistered: true })
 
     expect(user.serverUserId).toBeNull()
     expect(user.isReady).toBe(false)
     expect(user.registrationError).toBe('服务端未返回有效用户身份')
-    expect(player.connect).not.toHaveBeenCalled()
-    expect(player.disconnect).toHaveBeenCalledOnce()
-    expect(router.currentRoute.value.name).toBe('entry')
+    expect(player.connect).toHaveBeenCalledOnce()
   })
 
   async function mountApp({ registered, serverRegistered, favoritesLoadRejected = false }) {
@@ -106,7 +102,7 @@ describe('App startup registration', () => {
     router = createRouter({
       history: createMemoryHistory(),
       routes: [
-        { path: '/', name: 'entry', component: { template: '<div>entry</div>' } },
+        { path: '/', name: 'entry', component: { template: '<div>kiosk</div>' } },
         { path: '/home', name: 'home', component: { template: '<div>home</div>' } }
       ]
     })
@@ -119,10 +115,7 @@ describe('App startup registration', () => {
     app.use(pinia)
     app.use(router)
     app.mount(root)
-    await flushUi()
-  }
 
-  async function flushUi() {
     await Promise.resolve()
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 0))

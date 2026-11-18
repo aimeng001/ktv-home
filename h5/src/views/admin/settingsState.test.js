@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { canonicalizeSettings, releaseLabel, saveDirtySections, loadSettingsSections, canSaveSection, runSettingsAction, editableSettingsPayload, normalizeStandbySongIds, exceedsStandbySongLimit, describeSaveFailures, MAX_STANDBY_SONGS, failedSettingsSections, reconcileSettingsDraft } from './settingsState'
+import { canonicalizeSettings, releaseLabel, saveDirtySections, loadSettingsSections, canSaveSection, runSettingsAction, editableSettingsPayload, normalizeStandbySongIds, exceedsStandbySongLimit, describeSaveFailures, MAX_STANDBY_SONGS, failedSettingsSections, reconcileSettingsDraft, isAiConfigured, mergeSettingsSection, canStartSettingsSave } from './settingsState'
 
 describe('admin settings state', () => {
   it('strips internal runtime state from form submission payload', () => {
@@ -178,6 +178,13 @@ describe('admin settings state', () => {
       discovery_enabled: true,
       library_filename_metadata_preferred: false
     })
+    expect(canonicalizeSettings({
+      qr_address: null,
+      discovery_name: null
+    })).toEqual({
+      display_address: '',
+      discovery_name: '家庭KTV'
+    })
   })
 
   it('normalizes blank discovery name in editable settings payload', () => {
@@ -185,5 +192,21 @@ describe('admin settings state', () => {
       discovery_name: '   '
     })
     expect(payload.discovery_name).toBe('家庭KTV')
+  })
+
+  it('checks AI configuration completeness, section merging defaults, and save gating', () => {
+    expect(isAiConfigured(null)).toBe(false)
+    expect(isAiConfigured({ enabled: true, baseUrl: 'https://api.example.com', bulkModel: '' })).toBe(false)
+    expect(isAiConfigured({ enabled: true, baseUrl: 'https://api.example.com', bulkModel: 'gpt-4o-mini' })).toBe(true)
+
+    expect(mergeSettingsSection()).toEqual({})
+    expect(mergeSettingsSection(
+      { display_address: 'local', transcode_video_codec: 'h264' },
+      { display_address: 'server', transcode_video_codec: 'hevc' },
+      ['transcode_video_codec', 'missing_key']
+    )).toEqual({ display_address: 'local', transcode_video_codec: 'hevc' })
+
+    expect(canStartSettingsSave(false)).toBe(true)
+    expect(canStartSettingsSave(true)).toBe(false)
   })
 })

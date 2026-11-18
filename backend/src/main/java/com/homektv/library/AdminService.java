@@ -56,8 +56,14 @@ public class AdminService {
     private final SongProjectionService songProjectionService;
     private ManagedLibraryDeleteService managedLibraryDeleteService;
     private CatalogRevisionService catalogRevisionService;
+    private ArtistDirectoryProjectionService artistDirectoryProjectionService;
     private com.homektv.queue.SnapshotService snapshotService;
     private com.homektv.queue.PlaybackService playbackService;
+
+    @Autowired(required = false)
+    void setArtistDirectoryProjectionService(ArtistDirectoryProjectionService artistDirectoryProjectionService) {
+        this.artistDirectoryProjectionService = artistDirectoryProjectionService;
+    }
 
     @Autowired(required = false)
     void setSnapshotService(com.homektv.queue.SnapshotService snapshotService) {
@@ -127,16 +133,25 @@ public class AdminService {
     /** 仪表盘统计（P2.1） */
     @Transactional(readOnly = true)
     public DashboardDto dashboard() {
-        long total = songRepo.count();
+        SongRepository.DashboardSongCounts counts = songRepo.fetchDashboardSongCounts();
+        long total = counts != null && counts.getTotalCount() != null ? counts.getTotalCount() : songRepo.count();
+        long ktv = counts != null && counts.getKtvCount() != null
+                ? counts.getKtvCount() : songRepo.countByMediaType(MediaClassifier.KTV_VIDEO);
+        long mv = counts != null && counts.getMvCount() != null
+                ? counts.getMvCount() : songRepo.countByMediaType(MediaClassifier.MV);
+        long audio = counts != null && counts.getAudioCount() != null
+                ? counts.getAudioCount() : songRepo.countByMediaType(MediaClassifier.AUDIO);
+        long unrecognized = counts != null && counts.getUnrecognizedCount() != null
+                ? counts.getUnrecognizedCount() : songRepo.countByStatus("unrecognized");
         long externalFiles = LibraryModePolicy.isExternalReadOnly(props)
                 ? fileRepo.countByFileRoleAndValidTrue(LibraryModePolicy.EXTERNAL_FILE_ROLE)
                 : 0L;
         return new DashboardDto(
                 total,
-                songRepo.countByMediaType(MediaClassifier.KTV_VIDEO),
-                songRepo.countByMediaType(MediaClassifier.MV),
-                songRepo.countByMediaType(MediaClassifier.AUDIO),
-                songRepo.countByStatus("unrecognized"),
+                ktv,
+                mv,
+                audio,
+                unrecognized,
                 historyRepo.count(),
                 broadcaster.sessionCount(),
                 null, null,   // 播放状态由前端另查 /queue，避免重复
@@ -232,13 +247,17 @@ public class AdminService {
             song.setLyricType(LyricType.detect(req.lyricText()));
             song.setLyricSource(Song.LYRIC_SOURCE_MANUAL);
         }
+        boolean promotedToOk = manualIdentityEdited && "unrecognized".equals(song.getStatus());
         // 只有人工确认歌名或歌手时，才允许未识别歌曲转正
-        if (manualIdentityEdited && "unrecognized".equals(song.getStatus())) {
+        if (promotedToOk) {
             song.setStatus("ok");
         }
         Song saved = songRepo.save(song);
         if (artistEdited && artistCreditService != null) {
             artistCreditService.replace(saved.getId(), saved.getArtist());
+        }
+        if ((artistEdited || promotedToOk) && artistDirectoryProjectionService != null) {
+            artistDirectoryProjectionService.requestRefreshAfterCommit();
         }
         if (catalogRevisionService != null) {
             catalogRevisionService.bumpIfChanged(true);
@@ -253,8 +272,18 @@ public class AdminService {
     public Page<VocalReviewDto> listVocalReview(int page, int size) {
         int safeSize = Math.max(1, Math.min(size, MAX_VOCAL_REVIEW_PAGE_SIZE));
         Pageable pageable = PageRequest.of(Math.max(0, page), safeSize, Sort.by(Sort.Direction.ASC, "songId"));
-        return fileRepo.findByVocalConfidence("LOW", pageable).map(f -> {
-            Song s = songRepo.findById(f.getSongId()).orElse(null);
+        Page<SongFile> files = fileRepo.findByVocalConfidence("LOW", pageable);
+        List<Long> songIds = files.getContent().stream()
+                .map(SongFile::getSongId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, Song> songsById = new LinkedHashMap<>();
+        if (!songIds.isEmpty()) {
+            songRepo.findAllById(songIds).forEach(s -> songsById.put(s.getId(), s));
+        }
+        return files.map(f -> {
+            Song s = songsById.get(f.getSongId());
             return new VocalReviewDto(
                     f.getId(), f.getSongId(),
                     s != null ? s.getTitle() : null,
@@ -447,6 +476,10 @@ public class AdminService {
         if (assetCleanupService != null) {
             assetCleanupService.afterCommitIfUnreferenced(oldCoverPath, oldLyricPath);
         }
+        if (artistDirectoryProjectionService != null) {
+            artistDirectoryProjectionService.requestRefreshAfterCommit();
+        }
+        bumpCatalogRevision();
         if (!queueItems.isEmpty() && broadcaster != null && snapshotService != null) {
             afterCommitBroadcast(deletedCurrent);
         }
