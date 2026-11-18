@@ -191,12 +191,41 @@ case "${MVNW_PASSWORD:+has-password}" in
 has-password) [ -n "${MVNW_USERNAME-}" ] || MVNW_USERNAME='' MVNW_PASSWORD='' ;;
 esac
 
-if [ -z "${MVNW_USERNAME-}" ] && command -v wget >/dev/null; then
-  verbose "Found wget ... using wget"
-  wget ${__MVNW_QUIET_WGET:+"$__MVNW_QUIET_WGET"} "$distributionUrl" -O "$TMP_DOWNLOAD_DIR/$distributionUrlName" || die "wget: Failed to fetch $distributionUrl"
-elif [ -z "${MVNW_USERNAME-}" ] && command -v curl >/dev/null; then
-  verbose "Found curl ... using curl"
-  curl ${__MVNW_QUIET_CURL:+"$__MVNW_QUIET_CURL"} -f -L -o "$TMP_DOWNLOAD_DIR/$distributionUrlName" "$distributionUrl" || die "curl: Failed to fetch $distributionUrl"
+download_with_retries() {
+  _cmd="$1"
+  _attempt=1
+  while [ "$_attempt" -le 5 ]; do
+    case "$_cmd" in
+    wget)
+      if wget ${__MVNW_QUIET_WGET:+"$__MVNW_QUIET_WGET"} "$distributionUrl" -O "$TMP_DOWNLOAD_DIR/$distributionUrlName"; then
+        return 0
+      fi
+      ;;
+    curl)
+      if curl ${__MVNW_QUIET_CURL:+"$__MVNW_QUIET_CURL"} -f -L -o "$TMP_DOWNLOAD_DIR/$distributionUrlName" "$distributionUrl"; then
+        return 0
+      fi
+      ;;
+    esac
+    if [ "$_attempt" -lt 5 ]; then
+      sleep 3
+    fi
+    _attempt=$((_attempt + 1))
+  done
+  return 1
+}
+
+if [ -z "${MVNW_USERNAME-}" ] && { command -v wget >/dev/null || command -v curl >/dev/null; }; then
+  _downloaded=false
+  if command -v wget >/dev/null; then
+    verbose "Found wget ... using wget"
+    download_with_retries wget && _downloaded=true || :
+  fi
+  if [ "$_downloaded" != true ] && command -v curl >/dev/null; then
+    verbose "Found curl ... using curl"
+    download_with_retries curl && _downloaded=true || :
+  fi
+  [ "$_downloaded" = true ] || die "Failed to fetch $distributionUrl"
 elif set_java_home; then
   verbose "Falling back to use Java to download"
   javaSource="$TMP_DOWNLOAD_DIR/Downloader.java"

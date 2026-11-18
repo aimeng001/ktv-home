@@ -26,6 +26,11 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+      - name: Cache Maven wrapper distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/wrapper
+          key: ${{ runner.os }}-maven-wrapper-${{ hashFiles('backend/.mvn/wrapper/maven-wrapper.properties') }}
       - name: Verify POSIX entrypoints
         working-directory: .
         run: python scripts/repo_portability_test.py
@@ -46,6 +51,11 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+      - name: Cache Maven wrapper distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/wrapper
+          key: ${{ runner.os }}-maven-wrapper-${{ hashFiles('backend/.mvn/wrapper/maven-wrapper.properties') }}
       - name: Pre-pull postgres container image
         run: docker pull postgres:16-alpine
       - name: Run 10000-file scanAll test with constrained heap

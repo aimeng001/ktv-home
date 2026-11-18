@@ -120,6 +120,11 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+      - name: Cache Maven wrapper distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/wrapper
+          key: ${{ runner.os }}-maven-wrapper-${{ hashFiles('backend/.mvn/wrapper/maven-wrapper.properties') }}
       - name: Run backend tests
         run: ./mvnw --batch-mode -T 1C test
 
@@ -138,6 +143,11 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+      - name: Cache Maven wrapper distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/wrapper
+          key: ${{ runner.os }}-maven-wrapper-${{ hashFiles('backend/.mvn/wrapper/maven-wrapper.properties') }}
       - name: Pre-pull postgres container image
         run: docker pull postgres:16-alpine
       - name: Run 10000-file scanAll test with constrained heap
