@@ -170,6 +170,148 @@ class ArtistMetadataProvidersAndFallbackTest {
                 .containsExactly("https://img1.baidu.com/it/artist.jpg");
     }
 
+    @Test
+    void kugouUsesGatewayWithMobilecdnRouterAndEnrichesSingerInfoWhenAvatarMissing() throws Exception {
+        HttpClient client = mock(HttpClient.class);
+        List<HttpRequest> requests = new java.util.ArrayList<>();
+        when(client.send(any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenAnswer(inv -> {
+                    HttpRequest req = inv.getArgument(0);
+                    requests.add(req);
+                    String uri = req.uri().toString();
+                    if (uri.contains("/api/v3/search/singer")) {
+                        return jsonResponse("""
+                                {"status":1,"errcode":0,"data":[{"singername":"周杰伦","singerid":3520}]}
+                                """);
+                    }
+                    if (uri.contains("/api/v3/singer/info")) {
+                        return jsonResponse("""
+                                {"status":1,"errcode":0,"data":{"singerid":3520,"singername":"周杰伦",
+                                  "imgurl":"http://singerimg.kugou.com/uploadpic/softhead/{size}/20260324/jay.jpg"}}
+                                """);
+                    }
+                    return jsonResponse("{}");
+                });
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        MusicSourceHttp http = new MusicSourceHttp(
+                mapper, MusicProvider.KUGOU, Set.of("gateway.kugou.com"), client, null);
+        KugouArtistMetadataProvider provider = new KugouArtistMetadataProvider(http, config);
+
+        List<ExternalArtist> artists = provider.search("周杰伦", 5, Duration.ofSeconds(3));
+
+        assertThat(artists).singleElement().satisfies(artist -> {
+            assertThat(artist.externalId()).isEqualTo("3520");
+            assertThat(artist.displayName()).isEqualTo("周杰伦");
+            assertThat(artist.avatarUrl())
+                    .isEqualTo("https://singerimg.kugou.com/uploadpic/softhead/400/20260324/jay.jpg");
+        });
+        assertThat(requests).hasSize(2);
+        assertThat(requests.get(0).uri().toString()).startsWith("https://gateway.kugou.com/api/v3/search/singer");
+        assertThat(requests.get(0).headers().firstValue("x-router")).contains("mobilecdn.kugou.com");
+        assertThat(requests.get(1).uri().toString()).startsWith("https://gateway.kugou.com/api/v3/singer/info");
+        assertThat(requests.get(1).headers().firstValue("x-router")).contains("mobilecdn.kugou.com");
+    }
+
+    @Test
+    void kugouSongAuthorsFallbackReadsListsAndSingersField() throws Exception {
+        HttpClient client = mock(HttpClient.class);
+        when(client.send(any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenAnswer(inv -> {
+                    String uri = inv.getArgument(0, HttpRequest.class).uri().toString();
+                    if (uri.contains("/api/v3/search/singer")) {
+                        return jsonResponse("""
+                                {"status":1,"errcode":0,"data":[]}
+                                """);
+                    }
+                    return jsonResponse("""
+                            {"status":1,"error_code":0,"data":{"lists":[
+                              {"SongName":"发如雪","Singers":[{"id":3520,"name":"周杰伦"}],
+                               "Image":"http://imge.kugou.com/stdmusic/{size}/20250125/jay.jpg"}
+                            ]}}
+                            """);
+                });
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        when(config.getOrCreateKugouDeviceId()).thenReturn("DEVICE123");
+        MusicSourceHttp http = new MusicSourceHttp(
+                mapper, MusicProvider.KUGOU, Set.of("gateway.kugou.com"), client, null);
+        KugouArtistMetadataProvider provider = new KugouArtistMetadataProvider(http, config);
+
+        List<ExternalArtist> artists = provider.search("周杰伦", 5, Duration.ofSeconds(3));
+
+        assertThat(artists).singleElement().satisfies(artist -> {
+            assertThat(artist.externalId()).isEqualTo("3520");
+            assertThat(artist.displayName()).isEqualTo("周杰伦");
+            assertThat(artist.avatarUrl())
+                    .isEqualTo("https://imge.kugou.com/stdmusic/400/20250125/jay.jpg");
+        });
+    }
+
+    @Test
+    void qqFallsBackToClientSearchCpSingersWhenMusicuReturnsEmpty() throws Exception {
+        HttpClient client = mock(HttpClient.class);
+        when(client.send(any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenAnswer(inv -> {
+                    String uri = inv.getArgument(0, HttpRequest.class).uri().toString();
+                    if (uri.contains("smartbox_new.fcg")) {
+                        return jsonResponse("""
+                                {"data":{"singer":{"itemlist":[]}}}
+                                """);
+                    }
+                    if (uri.contains("musicu.fcg")) {
+                        return jsonResponse("""
+                                {"code":0,"req":{"code":500003,"subcode":860100001}}
+                                """);
+                    }
+                    return jsonResponse("""
+                            {"code":0,"data":{"song":{"list":[
+                              {"songmid":"s1","singer":[{"id":4558,"mid":"0025NhlN2yWrP4","name":"周杰伦"}]}
+                            ]}}}
+                            """);
+                });
+        MusicSourceHttp http = new MusicSourceHttp(
+                mapper, MusicProvider.QQ, Set.of("c.y.qq.com", "u.y.qq.com"), client, null);
+        QqArtistMetadataProvider provider = new QqArtistMetadataProvider(mapper, http);
+
+        List<ExternalArtist> artists = provider.search("周杰伦", 5, Duration.ofSeconds(3));
+
+        assertThat(artists).singleElement().satisfies(artist -> {
+            assertThat(artist.externalId()).isEqualTo("0025NhlN2yWrP4");
+            assertThat(artist.displayName()).isEqualTo("周杰伦");
+            assertThat(artist.avatarUrl())
+                    .isEqualTo("https://y.gtimg.cn/music/photo_new/T001R300x300M0000025NhlN2yWrP4.jpg");
+        });
+    }
+
+    @Test
+    void fallbackChainTriesBaiduBaikeBeforeOverseasSources() throws Exception {
+        HttpClient client = mock(HttpClient.class);
+        List<String> hosts = new java.util.ArrayList<>();
+        when(client.send(any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenAnswer(inv -> {
+                    String uri = inv.getArgument(0, HttpRequest.class).uri().toString();
+                    hosts.add(java.net.URI.create(uri).getHost());
+                    if (uri.contains("baike.baidu.com")) {
+                        return jsonResponse("""
+                                {"title":"周杰伦","desc":"华语流行乐男歌手","image":"https://bkimg.cdn.bcebos.com/pic/jay.jpg"}
+                                """);
+                    }
+                    throw new java.io.IOException("overseas host blocked");
+                });
+        ProviderCallGuard guard = new ProviderCallGuard();
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        when(config.isAvatarFallbackEnabled()).thenReturn(true);
+        ArtistAvatarFallbackChain chain = new ArtistAvatarFallbackChain(client, mapper, guard, config, 400);
+
+        List<String> urls = chain.findCandidateUrls("周杰伦", Duration.ofSeconds(2));
+
+        assertThat(urls).containsExactly("https://bkimg.cdn.bcebos.com/pic/jay.jpg");
+        assertThat(hosts).containsExactly("baike.baidu.com");
+    }
+
     private static HttpResponse<InputStream> jsonResponse(String json) {
         HttpResponse<InputStream> response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(200);

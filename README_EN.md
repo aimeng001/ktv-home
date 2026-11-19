@@ -47,6 +47,7 @@ Library metadata does not make a media file playable by itself. Home KTV retains
 
 ## Recent Updates & Android TV
 
+- **H5 Dual-Mode Player & Stability Hardening (v1.0.42–v1.0.43):** Rebuilt H5 into a dual-mode TV remote console + standalone Web KTV player and retired the legacy Windows client. Added `PlaybackDescriptor.format` with token-based native container detection, fixed category browsing `vocalForm` fallback (`'未知'` vs `ai_vocal_form`) with Flyway `V67` expression index, bounded AI repair/bulk task dispatch with background drain for 200k-song libraries, fixed H5 Web Audio attenuation / mirror transcode fallback / track-swap position preservation, enabled admin lyric clearing and `vocalForm` editing, and updated Android TV PiP player observer lifecycle.
 - **Search & Playback Readiness (v1.0.34):** Fast B-Tree prefix index path for single-letter searches (`a`–`z`), on-demand FFprobe probing via `SongProbeService` (`POST /api/admin/songs/{id}/probe` and pre-order probe), zero-disk-cache `pipe:1` live fMP4 transcoding for legacy formats/decoder fallback, and read-only external artist avatar matching via `/avatar-library` (`KTV_AVATAR_LIBRARY_DIR`).
 - **Android TV KTV UI (v1.0.34):** 10-tile Bento home dashboard + unified three-column 3×5 song browser with 5-mode soft keyboard, circular artist avatar/surname initial badges with display-title cleanup (`SongDisplayFormatter`), and purged legacy single-panel UI shells across clients.
 

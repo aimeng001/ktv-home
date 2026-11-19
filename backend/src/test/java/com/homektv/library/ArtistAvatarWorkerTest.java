@@ -443,4 +443,25 @@ class ArtistAvatarWorkerTest {
         verify(jdbc, org.mockito.Mockito.atLeastOnce()).update(sql.capture(), any(Object[].class));
         assertThat(sql.getAllValues()).anyMatch(s -> s.contains("status='SKIPPED'") && s.contains("id<>?"));
     }
+
+    @Test
+    void claimNextFiltersOutProvidersInCooldownOrAtDailyLimit() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        when(config.getConfig()).thenReturn(new MusicSourceConfig(
+                true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 5000, 0.95, 300));
+        when(jdbc.query(anyString(), org.mockito.ArgumentMatchers.<RowMapper<Object>>any(), any(Object[].class)))
+                .thenReturn(List.of());
+
+        new ArtistAvatarWorker(jdbc, profiles, config, mock(ExternalCoverService.class),
+                mock(AssetWriter.class), List.of(), Runnable::run).process();
+
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc).query(sql.capture(), org.mockito.ArgumentMatchers.<RowMapper<Object>>any(), any(Object[].class));
+        assertThat(sql.getValue())
+                .contains("music_provider_rate_state")
+                .contains("cooldown_until")
+                .contains("request_count");
+    }
 }

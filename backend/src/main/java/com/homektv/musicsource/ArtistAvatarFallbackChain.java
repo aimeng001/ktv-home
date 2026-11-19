@@ -93,20 +93,20 @@ public class ArtistAvatarFallbackChain {
                 ? Duration.ofSeconds(4) : safeTimeout;
         Set<String> urls = new LinkedHashSet<>();
 
-        tryCollect(urls, () -> searchDeezer(artistName, lookup, overseasTimeout));
+        tryCollect(urls, () -> searchBaiduBaike(artistName, lookup, safeTimeout));
+        if (urls.isEmpty()) {
+            tryCollect(urls, () -> searchDeezer(artistName, lookup, overseasTimeout));
+        }
         if (urls.isEmpty()) {
             tryCollect(urls, () -> searchWikipedia(artistName, lookup, "zh", overseasTimeout));
         }
         if (urls.isEmpty()) {
             tryCollect(urls, () -> searchWikipedia(artistName, lookup, "en", overseasTimeout));
         }
-        if (urls.isEmpty()) {
-            tryCollect(urls, () -> searchBaiduBaike(artistName, lookup, safeTimeout));
-        }
         if (urls.isEmpty() && lookup.length() >= 2) {
-            tryCollect(urls, () -> searchBaiduImages(lookup, safeTimeout));
+            tryCollect(urls, () -> searchBingImages(lookup, overseasTimeout));
             if (urls.size() < 2) {
-                tryCollect(urls, () -> searchBingImages(lookup, overseasTimeout));
+                tryCollect(urls, () -> searchBaiduImages(lookup, safeTimeout));
             }
         }
         return urls.stream().limit(5).toList();

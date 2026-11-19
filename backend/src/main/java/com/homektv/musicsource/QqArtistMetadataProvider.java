@@ -59,7 +59,48 @@ public class QqArtistMetadataProvider implements ArtistMetadataProvider {
         } catch (MusicSourceException ignored) {
             // Fall back to musicu singer search endpoint when smartbox is empty or temporarily failing.
         }
-        return searchViaMusicu(lookup, limit, timeout);
+        List<ExternalArtist> viaMusicu = List.of();
+        try {
+            viaMusicu = searchViaMusicu(lookup, limit, timeout);
+        } catch (ProviderRateLimitedException | ProviderRateStateUnavailableException ex) {
+            throw ex;
+        } catch (MusicSourceException ignored) {
+            // Fall through to client_search_cp song singer fallback.
+        }
+        if (!viaMusicu.isEmpty()) return viaMusicu;
+        return searchFromSongSingers(lookup, limit, timeout);
+    }
+
+    private List<ExternalArtist> searchFromSongSingers(String lookup, int limit, Duration timeout) {
+        Map<String, Object> query = new LinkedHashMap<>();
+        query.put("format", "json");
+        query.put("outCharset", "utf-8");
+        query.put("ct", 24);
+        query.put("qqmusic_ver", 1298);
+        query.put("remoteplace", "txt.yqq.song");
+        query.put("platform", "yqq.json");
+        query.put("aggr", 1);
+        query.put("cr", 1);
+        query.put("p", 1);
+        query.put("n", 5);
+        query.put("w", lookup);
+        JsonNode root = http.get(HOST + "/soso/fcgi-bin/client_search_cp?" + MusicSourceHttp.query(query),
+                Map.of("Referer", "https://y.qq.com/", "User-Agent", USER_AGENT), timeout);
+        JsonNode songs = root.path("data").path("song").path("list");
+        if (!songs.isArray()) return List.of();
+        List<ExternalArtist> singers = new ArrayList<>();
+        java.util.Set<String> seenIds = new java.util.LinkedHashSet<>();
+        for (JsonNode song : songs) {
+            JsonNode songSingers = song.path("singer");
+            if (!songSingers.isArray()) continue;
+            for (ExternalArtist parsed : parseArtists(songSingers, limit)) {
+                if (seenIds.add(parsed.externalId())) {
+                    singers.add(parsed);
+                    if (singers.size() >= limit) return singers;
+                }
+            }
+        }
+        return singers;
     }
 
     private List<ExternalArtist> searchViaMusicu(String lookup, int limit, Duration timeout) {

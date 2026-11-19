@@ -335,15 +335,32 @@ public class ArtistAvatarWorker {
 
     private Job claimNext() {
         try {
+            int effectiveDailyLimit = 300;
+            try {
+                MusicSourceConfig config = configService != null ? configService.getConfig() : null;
+                if (config != null && config.dailyLimit() > 0) {
+                    effectiveDailyLimit = config.dailyLimit();
+                }
+            } catch (RuntimeException ignored) {}
+            java.sql.Date todayUtc = java.sql.Date.valueOf(java.time.LocalDate.now(ZoneOffset.UTC));
             String claimToken = java.util.UUID.randomUUID().toString();
             List<Job> claimed = jdbc.query("""
                     WITH candidate AS (
                         SELECT job.id
                         FROM artist_avatar_jobs job
+                        LEFT JOIN music_provider_rate_state rate ON rate.provider = job.provider
                         WHERE (
                                 (job.status = 'PENDING' AND job.next_run_at <= now())
                                 OR (job.status = 'PROCESSING'
                                     AND COALESCE(job.lease_until, job.updated_at) <= now())
+                              )
+                          AND (
+                                job.provider = 'FALLBACK'
+                                OR rate.provider IS NULL
+                                OR (
+                                    (rate.cooldown_until IS NULL OR rate.cooldown_until <= now())
+                                    AND (rate.window_date_utc < ? OR rate.request_count < ?)
+                                )
                               )
                           AND NOT EXISTS (
                                 SELECT 1
@@ -354,7 +371,7 @@ public class ArtistAvatarWorker {
                                   AND active.lease_until > now()
                               )
                         ORDER BY job.priority DESC, job.tier DESC, job.id ASC
-                        FOR UPDATE SKIP LOCKED
+                        FOR UPDATE OF job SKIP LOCKED
                         LIMIT 1
                     )
                     UPDATE artist_avatar_jobs job
@@ -375,7 +392,7 @@ public class ArtistAvatarWorker {
                         return new Job(rs.getLong("id"), rs.getString("artist_key"),
                                 code, parsed, rs.getInt("attempts"), rs.getString("claim_token"));
                     },
-                    claimToken);
+                    todayUtc, effectiveDailyLimit, claimToken);
             return claimed.stream().findFirst().orElse(null);
         } catch (DataAccessException failure) {
             log.debug("artist avatar queue unavailable: {}", failure.getMessage());
