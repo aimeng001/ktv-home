@@ -19,6 +19,7 @@ public record AdminSongDto(
         String coverPath,
         String[] metadataLocks,
         String language,
+        String vocalForm,
         String artistGender,
         String[] tags,
         String mediaType,
@@ -31,6 +32,17 @@ public record AdminSongDto(
         int audioTracks,
         AudioLayoutDto audioLayout
 ) {
+    /** Source-compatible constructor for callers omitting vocalForm. */
+    public AdminSongDto(Long id, String title, String artist, String album, String releaseDate,
+                        String[] aliases, String coverPath, String[] metadataLocks, String language,
+                        String artistGender, String[] tags, String mediaType, String lyricType,
+                        int durationMs, int playCount, String filePath, String importSource,
+                        Long fileId, int audioTracks, AudioLayoutDto audioLayout) {
+        this(id, title, artist, album, releaseDate, aliases, coverPath, metadataLocks, language,
+                "未知", artistGender, tags, mediaType, lyricType, durationMs, playCount,
+                filePath, importSource, fileId, audioTracks, audioLayout);
+    }
+
     /**
      * 根据歌曲实体和文件实体构建管理后台歌曲 DTO，自动判断导入来源。
      *
@@ -47,7 +59,8 @@ public record AdminSongDto(
                 : file.getSourcePath() == null ? "UNKNOWN"
                 : file.isTranscodeRequired() ? "TRANSCODED" : "COPIED";
         return new AdminSongDto(song.getId(), song.getTitle(), song.getArtist(), song.getAlbum(), song.getReleaseDate(),
-                song.getAliases(), song.getCoverPath(), song.getMetadataLocks(), song.getLanguage(), song.getArtistGender(), song.getTags(),
+                song.getAliases(), song.getCoverPath(), song.getMetadataLocks(), song.getLanguage(),
+                song.getVocalForm(), song.getArtistGender(), song.getTags(),
                 song.getMediaType(), song.getLyricType(), song.getDurationMs(), song.getPlayCount(),
                 file == null ? null : file.getFilePath(), source,
                 file == null ? null : file.getId(),

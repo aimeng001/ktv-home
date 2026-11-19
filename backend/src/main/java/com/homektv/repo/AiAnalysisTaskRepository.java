@@ -27,6 +27,7 @@ public interface AiAnalysisTaskRepository extends JpaRepository<AiAnalysisTask, 
 
     List<AiAnalysisTask> findTop500ByStatusInAndCreatedAtBeforeOrderByCreatedAtAscIdAsc(
             List<String> statuses, OffsetDateTime createdAtCutoff);
+    List<AiAnalysisTask> findTop100ByStatusOrderByCreatedAtAscIdAsc(String status);
     List<AiAnalysisTask> findTop100ByOrderByCreatedAtDesc();
     List<AiAnalysisTask> findByBatchIdOrderByCreatedAtAsc(String batchId);
     boolean existsBySongIdAndStatusIn(Long songId, List<String> statuses);

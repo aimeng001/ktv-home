@@ -12,9 +12,15 @@ public record SongEditRequest(
         String[] tags,
         String lyricText,   // 可选：粘贴歌词 (Optional: paste lyrics)
         String vocalForm,
-        String artistGender
+        String artistGender,
+        Boolean clearLyric
     ) {
         public SongEditRequest(String title, String artist, String language, String[] tags, String lyricText) {
-        this(title, artist, language, tags, lyricText, null, null);
+        this(title, artist, language, tags, lyricText, null, null, null);
+    }
+
+    public SongEditRequest(String title, String artist, String language, String[] tags,
+                           String lyricText, String vocalForm, String artistGender) {
+        this(title, artist, language, tags, lyricText, vocalForm, artistGender, null);
     }
 }

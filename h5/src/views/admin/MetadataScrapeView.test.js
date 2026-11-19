@@ -1041,6 +1041,29 @@ describe('MetadataScrapeView', () => {
     expect(root.textContent).not.toContain('过时候选')
   })
 
+  it('enables saving when existing lyrics are cleared and sends clearLyric flag', async () => {
+    routeMock.query = { songIds: '42', review: '1' }
+    apiMock.adminSong.mockResolvedValue({
+      id: 42, title: '旧歌名', artist: '旧歌手', language: '国语', lyricType: 'line', filePath: '/music/song42.mp4'
+    })
+    apiMock.lyricText.mockResolvedValue('[00:01.00]错误歌词')
+    await mount()
+    await flushUi()
+
+    const lyricBox = root.querySelector('.lyric-field textarea')
+    expect(lyricBox.value).toContain('错误歌词')
+    lyricBox.value = ''
+    lyricBox.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+
+    const confirmBtn = root.querySelector('.review-modal footer .primary')
+    expect(confirmBtn.disabled).toBe(false)
+    confirmBtn.click()
+    await flushUi()
+
+    expect(apiMock.adminEditSong).toHaveBeenCalledWith(42, { language: '国语', clearLyric: true })
+  })
+
   function taskFixture(overrides = {}) {
     return {
       exists: true, batchId: 'batch-2', mode: 'ALL', status: 'COMPLETED', createdAt: '2026-01-01T00:00:00Z',

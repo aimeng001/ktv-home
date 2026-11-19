@@ -1671,6 +1671,49 @@ class AiLibraryServiceTest {
     }
 
     @Test
+    void repairBatchCapsImmediateDispatchSoLargeCatalogsRemainPendingInsteadOfFailing() {
+        SongRepository songs = mock(SongRepository.class);
+        AiAnalysisTaskRepository tasks = mock(AiAnalysisTaskRepository.class);
+        AiAnalysisWorker worker = mock(AiAnalysisWorker.class);
+        List<Song> pageSongs = new ArrayList<>();
+        for (long i = 1; i <= 250; i++) {
+            pageSongs.add(song(i, "曲目 " + i, "歌手"));
+        }
+        when(songs.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(pageSongs));
+        when(tasks.findSongIdsBySongIdInAndStatusIn(anyList(), anyList())).thenReturn(List.of());
+        when(tasks.saveAllAndFlush(anyList())).thenAnswer(invocation -> {
+            List<AiAnalysisTask> saved = invocation.getArgument(0);
+            for (AiAnalysisTask task : saved) {
+                ReflectionTestUtils.setField(task, "id", task.getSongId() + 1000L);
+            }
+            return saved;
+        });
+
+        AiLibraryService service = new AiLibraryService(tasks, songs, mock(PlaylistRepository.class),
+                mock(PlaylistSongRepository.class), worker, new ObjectMapper(), taskConfig(false),
+                mock(AssetWriter.class), mock(AiClassificationApplier.class),
+                mock(OpenAiCompatibleClient.class), mock(MediaImportRecordRepository.class),
+                mock(AiTaskDispatchFailureRecorder.class));
+
+        Map<String, Object> result = service.createRepairBatch();
+
+        assertThat(result).containsEntry("created", 250).containsEntry("dispatchRejected", 0);
+        verify(worker, times(AiLibraryService.MAX_IMMEDIATE_DISPATCH)).analyze(anyLong());
+
+        AiAnalysisTask t1 = new AiAnalysisTask();
+        ReflectionTestUtils.setField(t1, "id", 2001L);
+        AiAnalysisTask t2 = new AiAnalysisTask();
+        ReflectionTestUtils.setField(t2, "id", 2002L);
+        when(tasks.findTop100ByStatusOrderByCreatedAtAscIdAsc("pending")).thenReturn(List.of(t1, t2));
+        doThrow(new TaskRejectedException("queue full")).when(worker).analyze(2001L);
+
+        service.drainPendingTasks();
+
+        verify(worker).analyze(2001L);
+        verify(worker, never()).analyze(2002L);
+    }
+
+    @Test
     void resumeAndRetryRejectMissingRepairBatchesWithoutDispatching() {
         String batchId = "missing-batch";
         AiAnalysisTaskRepository taskRepository = mock(AiAnalysisTaskRepository.class);

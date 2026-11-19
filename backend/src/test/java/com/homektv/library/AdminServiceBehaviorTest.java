@@ -164,6 +164,23 @@ class AdminServiceBehaviorTest {
     }
 
     @Test
+    void clearLyricFlagClearsStoredLyricMetadataExplicitly() {
+        Song song = song(3L, "Title", "Artist", "ok");
+        song.setLyricPath("lyrics/old.lrc");
+        song.setLyricType("line");
+        song.setLyricSource(Song.LYRIC_SOURCE_MANUAL);
+        when(songRepo.findById(3L)).thenReturn(Optional.of(song));
+        when(songRepo.save(any(Song.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.editSong(3L, new SongEditRequest(null, null, "国语", null, null, null, null, true));
+
+        assertThat(song.getLyricPath()).isNull();
+        assertThat(song.getLyricType()).isEqualTo("none");
+        assertThat(song.getLyricSource()).isEqualTo(Song.LYRIC_SOURCE_NONE);
+        verify(assetWriter, never()).writeLyric(anyString(), anyString());
+    }
+
+    @Test
     void rejectsUnsupportedArtistGenderBeforeSaving() {
         Song song = song(1L, "Title", "Artist", "ok");
         when(songRepo.findById(1L)).thenReturn(Optional.of(song));

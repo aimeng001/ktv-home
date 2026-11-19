@@ -605,6 +605,19 @@ class CategoryBrowseServiceTest {
                 .hasMessageContaining("媒体格式");
     }
 
+    @Test
+    void songsPageEscapesSqlLikeMetacharactersBeforeDelegatingToRepository() {
+        SongRepository repository = mock(SongRepository.class);
+        when(repository.browseCategorySongs(any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(Page.empty());
+
+        new CategoryBrowseService(repository).songsPage(
+                "", "", "", "", "", "", "100%_hit\\mix", "", "hot", 0, 18);
+
+        verify(repository).browseCategorySongs(
+                eq(""), eq(""), eq(""), eq(""), eq(""), eq("100\\%\\_hit\\\\mix"), any(Pageable.class));
+    }
+
     private SongRepository.ArtistStatsProjection artistStatsRow(String artist, String key, String gender,
                                                                  String initial, Long count, String kind, String avatar) {
         SongRepository.ArtistStatsProjection row = mock(SongRepository.ArtistStatsProjection.class);

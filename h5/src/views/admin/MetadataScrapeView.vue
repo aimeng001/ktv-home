@@ -148,7 +148,7 @@ const taskThresholdDiffers=computed(()=>task.value&&Math.abs(task.value.autoAppl
 const taskTimeText=computed(()=>`${modeText(task.value.mode)} · ${formatTime(task.value.createdAt)}`)
 const reviewProviders=computed(()=>['NETEASE','QQ','KUGOU'].filter(provider=>reviewMatches.value.some(item=>item.track.provider===provider)))
 const filteredReviewMatches=computed(()=>reviewProvider.value?reviewMatches.value.filter(item=>item.track.provider===reviewProvider.value):reviewMatches.value)
-const reviewLocalChanged=computed(()=>reviewEdits.language!==reviewOriginal.language||(String(reviewEdits.lyricText||'').trim()&&String(reviewEdits.lyricText||'').trim()!==String(reviewOriginal.lyricText||'').trim()))
+const reviewLocalChanged=computed(()=>reviewEdits.language!==reviewOriginal.language||String(reviewEdits.lyricText||'').trim()!==String(reviewOriginal.lyricText||'').trim())
 const reviewCanApply=computed(()=>reviewApplyFields.value.some(key=>key==='cover'?reviewExternal(key):String(reviewEdits[key]||'').trim())||reviewLocalChanged.value)
 const reviewFileName=computed(()=>fileName(reviewSong.value?.filePath))
 const reviewCurrentCover=computed(()=>reviewSong.value?.coverPath?`/api/cover/${reviewSong.value.id}`:'')
@@ -242,7 +242,12 @@ async function applyReview(){
     }else if(metadataFields.length)await api.adminApplyMetadataScrapeItem(task.value.batchId,reviewing.value.id,{fields:metadataFields,overrides,provider:track?.provider||null,externalId:track?.externalId||null})
     if(reviewLocalChanged.value){
       const edit={language:reviewEdits.language}
-      if(String(reviewEdits.lyricText||'').trim()!==String(reviewOriginal.lyricText||'').trim())edit.lyricText=reviewEdits.lyricText
+      const nextLyric=String(reviewEdits.lyricText||'').trim()
+      const origLyric=String(reviewOriginal.lyricText||'').trim()
+      if(nextLyric!==origLyric){
+        if(nextLyric)edit.lyricText=reviewEdits.lyricText
+        else if(origLyric)edit.clearLyric=true
+      }
       await api.adminEditSong(reviewing.value.songId,edit)
     }
     if(!reviewing.value.standalone&&!metadataFields.length)await api.adminApplyMetadataScrapeItem(task.value.batchId,reviewing.value.id,{fields:[],overrides:{},completeOnly:true})

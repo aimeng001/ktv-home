@@ -26,6 +26,7 @@
         <label><span>歌名 <em class="req">*</em></span><input v-model.trim="editForm.title" required maxlength="100" placeholder="歌曲名称" /></label>
         <label><span>歌手 <em class="req">*</em></span><input v-model.trim="editForm.artist" required maxlength="100" placeholder="演唱者" /></label>
         <label><span>语种</span><input v-model.trim="editForm.language" maxlength="20" placeholder="如：国语、粤语、英语" /></label>
+        <label><span>演唱形式</span><select v-model="editForm.vocalForm"><option value="">保持不变</option><option value="独唱">独唱</option><option value="对唱">对唱</option><option value="合唱">合唱</option><option value="未知">未知</option></select></label>
         <label><span>标签 / 曲风</span><input v-model.trim="editForm.tags" placeholder="多个标签用逗号分隔，如：流行, 经典" /></label>
         <div class="modal-actions"><button type="button" class="secondary" :disabled="songSaving" @click="closeSongEditor">取消</button><button type="submit" class="primary" :disabled="songSaving || !editForm.title || !editForm.artist">{{ songSaving ? '保存中…' : '保存修改' }}</button></div>
       </form>
@@ -72,7 +73,7 @@ const router=useRouter()
 const playlistPickerOpen=ref(false),playlistPickerSong=ref(null),playlistOptions=ref([]),playlistLoading=ref(false),playlistAddingId=ref(null)
 const showAiTaskPanel=ref(false)
 const songEditorOpen=ref(false),editingSong=ref(null),songSaving=ref(false)
-const editForm=reactive({title:'',artist:'',language:'',tags:''})
+const editForm=reactive({title:'',artist:'',language:'',vocalForm:'',tags:''})
 const libraryMode=ref(null),loadError=ref('')
 const listRequests=createLatestRequest()
 const canDelete=computed(()=>canDeleteSongs(libraryMode.value))
@@ -116,6 +117,7 @@ function openSongEditor(song){
   editForm.title=song.title||''
   editForm.artist=song.artist||''
   editForm.language=song.language||''
+  editForm.vocalForm=song.vocalForm||''
   editForm.tags=(song.tags||[]).join(', ')
   songEditorOpen.value=true
 }

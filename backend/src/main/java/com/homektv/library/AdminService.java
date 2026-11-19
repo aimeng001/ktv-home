@@ -241,7 +241,11 @@ public class AdminService {
                     });
             song.setFingerprint(fingerprint);
         }
-        if (req.lyricText() != null && !req.lyricText().isBlank()) {
+        if (Boolean.TRUE.equals(req.clearLyric())) {
+            song.setLyricPath(null);
+            song.setLyricType("none");
+            song.setLyricSource(Song.LYRIC_SOURCE_NONE);
+        } else if (req.lyricText() != null && !req.lyricText().isBlank()) {
             String path = assetWriter.writeLyric(song.getFingerprint(), req.lyricText());
             song.setLyricPath(path);
             song.setLyricType(LyricType.detect(req.lyricText()));

@@ -131,6 +131,7 @@ const pipRect = ref(null)
 
 let pipObserver = null
 let idleFullscreenTimer = null
+let awaitingHostClaimToast = false
 
 function resetBrowserFilters() {
   browserQuery.value = ''
@@ -295,9 +296,11 @@ function toggleQuickMode() {
     return
   }
   if (player.isWebHost) {
+    awaitingHostClaimToast = false
     player.setModeOverride('console')
     toast('已切换为仅控制台模式（不再在网页出声）')
   } else {
+    awaitingHostClaimToast = true
     player.setModeOverride('host')
     toast('已申请接管本机作为 Web KTV 主播放端')
   }
@@ -308,8 +311,9 @@ function claimWebHost() {
     toast('TV 端在线期间不可抢占为主屏')
     return
   }
+  awaitingHostClaimToast = true
   player.setModeOverride('host')
-  toast('已接管本机为 Web KTV 主播放端')
+  toast('已发送主屏接管申请，等待房间状态确认…')
 }
 
 async function togglePlay() {
@@ -415,6 +419,16 @@ function onKeyDown(e) {
 }
 
 watch(() => route.fullPath, applyRouteIntent, { immediate: true })
+watch(() => player.webPlayerRole, (role) => {
+  if (!awaitingHostClaimToast) return
+  if (role === 'ACTIVE' && player.isWebHost) {
+    awaitingHostClaimToast = false
+    toast('已接管本机为 Web KTV 主播放端')
+  } else if (role === 'STANDBY' && player.modeOverride !== 'host') {
+    awaitingHostClaimToast = false
+    toast('未能接管为主屏，已保持控制台模式')
+  }
+})
 watch([viewMode, fullscreen], () => nextTick(updatePipRect))
 watch(
   [autoFullscreen, fullscreen, () => Boolean(player.nowPlaying), activeModal, drawerOpen],

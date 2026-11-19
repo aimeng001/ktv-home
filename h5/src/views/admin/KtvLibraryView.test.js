@@ -107,6 +107,16 @@ describe('KtvLibraryView', () => {
 
     expect(apiMock.adminEditSong).toHaveBeenCalledWith(7, { title: '新歌名', artist: '新歌手', language: '粤语', tags: ['流行', '经典', 'pop'] })
     expect(root.querySelector('.song-editor-modal')).toBeNull()
+
+    root.querySelector('.edit-link').click()
+    await nextTick()
+    const vocalSelect = root.querySelector('.song-editor-form select')
+    vocalSelect.value = '对唱'
+    vocalSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    await nextTick()
+    root.querySelector('.song-editor-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushUi()
+    expect(apiMock.adminEditSong).toHaveBeenLastCalledWith(7, expect.objectContaining({ vocalForm: '对唱' }))
   })
 
   it('initializes the editor with blank defaults for missing song metadata', async () => {

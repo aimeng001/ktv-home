@@ -1,5 +1,6 @@
 package com.homektv.web.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.homektv.domain.Song;
 import com.homektv.library.ArtistAvatarUrl;
 
@@ -27,8 +28,20 @@ public record SongDto(
         String titleInitials,
         String artistPinyin,
         String artistInitials,
-        String resolution
+        String resolution,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String vocalForm
 ) {
+    /** Source-compatible constructor for callers omitting vocalForm. */
+    public SongDto(Long id, String catalogNumber, String title, String artist, String artistGender,
+                   String mediaType, boolean hasVocalTrack, int durationMs, String lyricType,
+                   String coverUrl, int playCount, String artistAvatarUrl, boolean playable,
+                   String unavailableReason, String titlePinyin, String titleInitials,
+                   String artistPinyin, String artistInitials, String resolution) {
+        this(id, catalogNumber, title, artist, artistGender, mediaType, hasVocalTrack, durationMs,
+                lyricType, coverUrl, playCount, artistAvatarUrl, playable, unavailableReason,
+                titlePinyin, titleInitials, artistPinyin, artistInitials, resolution, "未知");
+    }
+
     /** Source-compatible constructor for the previous catalog DTO shape. */
     public SongDto(Long id, String catalogNumber, String title, String artist, String artistGender,
                    String mediaType, boolean hasVocalTrack, int durationMs, String lyricType,
@@ -36,7 +49,7 @@ public record SongDto(
                    String unavailableReason) {
         this(id, catalogNumber, title, artist, artistGender, mediaType, hasVocalTrack, durationMs,
                 lyricType, coverUrl, playCount, artistAvatarUrl, playable, unavailableReason,
-                "", "", "", "", null);
+                "", "", "", "", null, "未知");
     }
 
     /** Source-compatible constructor for callers that already supply pinyin metadata. */
@@ -47,7 +60,7 @@ public record SongDto(
                    String artistPinyin, String artistInitials) {
         this(id, catalogNumber, title, artist, artistGender, mediaType, hasVocalTrack, durationMs,
                 lyricType, coverUrl, playCount, artistAvatarUrl, playable, unavailableReason,
-                titlePinyin, titleInitials, artistPinyin, artistInitials, null);
+                titlePinyin, titleInitials, artistPinyin, artistInitials, null, "未知");
     }
 
     /** Source-compatible constructor for callers using the original protocol fields. */
@@ -104,8 +117,21 @@ public record SongDto(
                 orEmpty(s.getTitleInit()),
                 orEmpty(s.getArtistPy()),
                 orEmpty(s.getArtistInit()),
-                resolution
+                resolution,
+                effectiveVocalForm(s)
         );
+    }
+
+    private static String effectiveVocalForm(Song s) {
+        String local = s.getVocalForm();
+        if (local != null && !local.isBlank() && !"未知".equals(local.trim())) {
+            return local.trim();
+        }
+        String ai = s.getAiVocalForm();
+        if (ai != null && !ai.isBlank() && !"未知".equals(ai.trim())) {
+            return ai.trim();
+        }
+        return "未知";
     }
 
     private static String orEmpty(String value) {

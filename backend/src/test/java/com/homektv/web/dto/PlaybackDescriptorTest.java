@@ -34,12 +34,14 @@ class PlaybackDescriptorTest {
         assertThat(nativeSource.streamUrl()).isEqualTo("/api/stream/42");
         assertThat(nativeSource.audioTracks()).isEqualTo(3);
         assertThat(nativeSource.vocalTrackIndex()).isEqualTo(2);
+        assertThat(nativeSource.format()).isEqualTo("mp4");
         assertDualTrack(nativeSource.audioLayout());
 
         assertThat(live.kind()).isEqualTo("LIVE_TRANSCODE");
         assertThat(live.status()).isEqualTo("READY");
         assertThat(live.streamUrl()).isEqualTo("/api/stream/42?transcode=true");
         assertThat(live.audioTracks()).isEqualTo(3);
+        assertThat(live.format()).isEqualTo("mp4");
         assertDualTrack(live.audioLayout());
     }
 
@@ -59,9 +61,21 @@ class PlaybackDescriptorTest {
         assertStereo(withoutSource.audioLayout());
     }
 
+    @Test
+    void resolvedFormatFallsBackToFileExtensionWhenFormatIsUnknownOrBlank() {
+        SongFile unknownFormat = source();
+        unknownFormat.setFormat("unknown");
+        unknownFormat.setFilePath("/source-music/concert/test.MKV");
+
+        PlaybackDescriptor descriptor = PlaybackDescriptor.nativeSource(unknownFormat);
+
+        assertThat(descriptor.format()).isEqualTo("mkv");
+    }
+
     private static SongFile source() {
         SongFile file = new SongFile();
         file.setId(42L);
+        file.setFormat("mp4");
         file.setAudioTracks(3);
         file.setVocalTrackIndex(2);
         file.setAudioLayout(AudioLayout.DUAL_TRACK);

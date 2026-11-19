@@ -15,8 +15,12 @@ import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.domain.MediaImportRecord;
 import com.homektv.web.ApiException;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.core.task.TaskRejectedException;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -42,6 +46,8 @@ import java.util.function.Consumer;
 public class AiLibraryService {
     private static final List<String> ACTIVE_STATUSES = List.of("pending", "processing", "review");
     private static final int SONG_PAGE_SIZE = 500;
+    /** Bound synchronous worker handoff well below aiBulkExecutor's 1000-item queue; excess stays pending for scheduled draining. */
+    static final int MAX_IMMEDIATE_DISPATCH = 200;
     private static final int MAX_PLAYLIST_CANDIDATES = 5000;
     public static final int MAX_PLAYLIST_SONGS = 100;
 
@@ -55,6 +61,7 @@ public class AiLibraryService {
     private final AssetWriter assetWriter;
     private AssetCleanupService assetCleanupService;
     private CoverImageNormalizer coverImageNormalizer;
+    private ThreadPoolTaskExecutor aiBulkExecutor;
     private final AiClassificationApplier classificationApplier;
     private final OpenAiCompatibleClient aiClient;
     private final MediaImportRecordRepository importRecordRepository;
@@ -88,6 +95,11 @@ public class AiLibraryService {
     @org.springframework.beans.factory.annotation.Autowired
     void setCoverImageNormalizer(CoverImageNormalizer coverImageNormalizer) {
         this.coverImageNormalizer = coverImageNormalizer;
+    }
+
+    @Autowired(required = false)
+    void setAiBulkExecutor(@Qualifier("aiBulkExecutor") ThreadPoolTaskExecutor aiBulkExecutor) {
+        this.aiBulkExecutor = aiBulkExecutor;
     }
 
     /**
@@ -198,7 +210,7 @@ public class AiLibraryService {
             }
             newTasks.add(buildSongTask(song.getId(), null, config));
         }
-        BatchWriteResult writeResult = persistAndDispatchBatch(newTasks);
+        BatchWriteResult writeResult = persistAndDispatchBatch(newTasks, MAX_IMMEDIATE_DISPATCH);
         return Map.of("created", writeResult.created(),
                 "skipped", skipped + writeResult.skippedExisting(),
                 "dispatchRejected", writeResult.dispatchRejected());
@@ -211,6 +223,7 @@ public class AiLibraryService {
         int created = 0;
         int skippedExisting = 0;
         int dispatchRejected = 0;
+        int dispatchBudget = MAX_IMMEDIATE_DISPATCH;
         for (int pageNumber = 0; ; pageNumber++) {
             Page<Song> page = songPage(pageNumber);
             if (page == null || page.isEmpty()) break;
@@ -225,10 +238,11 @@ public class AiLibraryService {
                 }
                 newTasks.add(buildSongTask(song.getId(), batchId, config));
             }
-            BatchWriteResult pageResult = persistAndDispatchBatch(newTasks);
+            BatchWriteResult pageResult = persistAndDispatchBatch(newTasks, dispatchBudget);
             created += pageResult.created();
             skippedExisting += pageResult.skippedExisting();
             dispatchRejected += pageResult.dispatchRejected();
+            dispatchBudget = Math.max(0, dispatchBudget - pageResult.dispatchedAttempted());
             if (!page.hasNext()) break;
         }
         return Map.of("batchId", batchId, "created", created, "skippedExisting", skippedExisting,
@@ -246,25 +260,32 @@ public class AiLibraryService {
         return task;
     }
 
-    private BatchWriteResult persistAndDispatchBatch(List<AiAnalysisTask> newTasks) {
+    private BatchWriteResult persistAndDispatchBatch(List<AiAnalysisTask> newTasks, int dispatchBudget) {
         if (newTasks.isEmpty()) {
-            return new BatchWriteResult(0, 0, 0);
+            return new BatchWriteResult(0, 0, 0, 0);
         }
         int created = 0;
         int skippedExisting = 0;
         int dispatchRejected = 0;
+        int attempted = 0;
         try {
             List<AiAnalysisTask> persisted = taskRepository.saveAllAndFlush(newTasks);
             for (AiAnalysisTask task : persisted) {
-                if (!dispatchAfterCommit(task.getId())) dispatchRejected++;
+                if (attempted < dispatchBudget) {
+                    attempted++;
+                    if (!dispatchAfterCommit(task.getId())) dispatchRejected++;
+                }
                 created++;
             }
-            return new BatchWriteResult(created, 0, dispatchRejected);
+            return new BatchWriteResult(created, 0, dispatchRejected, attempted);
         } catch (DataIntegrityViolationException batchConflict) {
             for (AiAnalysisTask task : newTasks) {
                 try {
                     AiAnalysisTask saved = taskRepository.saveAndFlush(task);
-                    if (!dispatchAfterCommit(saved.getId())) dispatchRejected++;
+                    if (attempted < dispatchBudget) {
+                        attempted++;
+                        if (!dispatchAfterCommit(saved.getId())) dispatchRejected++;
+                    }
                     created++;
                 } catch (DataIntegrityViolationException conflict) {
                     // The pre-check closes the common case. The partial unique index
@@ -276,11 +297,38 @@ public class AiLibraryService {
                     }
                 }
             }
-            return new BatchWriteResult(created, skippedExisting, dispatchRejected);
+            return new BatchWriteResult(created, skippedExisting, dispatchRejected, attempted);
         }
     }
 
-    private record BatchWriteResult(int created, int skippedExisting, int dispatchRejected) {}
+    private record BatchWriteResult(int created, int skippedExisting, int dispatchRejected, int dispatchedAttempted) {}
+
+    /** Feeds pending backlog tasks into aiBulkExecutor without overflowing its bounded queue. */
+    @Scheduled(fixedDelayString = "${home-ktv.ai.pending-drain-delay-ms:2000}")
+    public void drainPendingTasks() {
+        int allowance = availablePendingDispatchAllowance();
+        if (allowance <= 0) return;
+        List<AiAnalysisTask> pending = taskRepository.findTop100ByStatusOrderByCreatedAtAscIdAsc("pending");
+        if (pending == null || pending.isEmpty()) return;
+        int limit = Math.min(allowance, pending.size());
+        for (int index = 0; index < limit; index++) {
+            AiAnalysisTask task = pending.get(index);
+            if (task == null || task.getId() == null) continue;
+            try {
+                worker.analyze(task.getId());
+            } catch (TaskRejectedException rejected) {
+                // Keep remaining backlog as pending rather than marking thousands failed.
+                break;
+            }
+        }
+    }
+
+    private int availablePendingDispatchAllowance() {
+        if (aiBulkExecutor == null) return 100;
+        int remaining = aiBulkExecutor.getThreadPoolExecutor().getQueue().remainingCapacity();
+        // Keep headroom for interactive single-song requests.
+        return Math.max(0, Math.min(100, remaining - 100));
+    }
 
     /**
      * Async workers must not observe a status change that is only flushed but
@@ -323,7 +371,8 @@ public class AiLibraryService {
         List<Long> targetIds = taskRepository.findIdsByBatchIdAndStatus(batchId, "paused");
         if (!targetIds.isEmpty()) {
             taskRepository.resetBatchStatusToPending(batchId, "paused");
-            for (Long id : targetIds) dispatchAfterCommit(id);
+            int limit = Math.min(targetIds.size(), MAX_IMMEDIATE_DISPATCH);
+            for (int index = 0; index < limit; index++) dispatchAfterCommit(targetIds.get(index));
         }
         return Map.of("batchId", batchId, "resumed", targetIds.size());
     }
@@ -334,7 +383,8 @@ public class AiLibraryService {
         List<Long> targetIds = taskRepository.findIdsByBatchIdAndStatus(batchId, "failed");
         if (!targetIds.isEmpty()) {
             taskRepository.resetBatchStatusToPending(batchId, "failed");
-            for (Long id : targetIds) dispatchAfterCommit(id);
+            int limit = Math.min(targetIds.size(), MAX_IMMEDIATE_DISPATCH);
+            for (int index = 0; index < limit; index++) dispatchAfterCommit(targetIds.get(index));
         }
         return Map.of("batchId", batchId, "retried", targetIds.size());
     }

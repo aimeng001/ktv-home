@@ -109,4 +109,22 @@ describe('streamSelection', () => {
       url: '/api/stream/18', liveTranscode: false, trackSwitchedByServer: false, isAudioOnly: false
     })
   })
+
+  it('uses playback.format for extensionless /api/stream/{id} URLs and keeps matroska on live transcode', () => {
+    const serverNativeMp4 = {
+      kind: 'NATIVE', status: 'READY', sourceFileId: 71,
+      streamUrl: '/api/stream/71', audioTracks: 1, format: 'mp4'
+    }
+    expect(buildWebStreamSpec({ playback: serverNativeMp4, song: { mediaType: 'KTV_VIDEO' } })).toEqual({
+      url: '/api/stream/71', liveTranscode: false, trackSwitchedByServer: false, isAudioOnly: false
+    })
+
+    const matroskaWithWebmAlias = {
+      kind: 'NATIVE', status: 'READY', sourceFileId: 72,
+      streamUrl: '/api/stream/72', audioTracks: 1, format: 'matroska,webm'
+    }
+    expect(buildWebStreamSpec({ playback: matroskaWithWebmAlias, song: { mediaType: 'MV' } })).toEqual({
+      url: '/api/stream/72?transcode=true', liveTranscode: true, trackSwitchedByServer: false, isAudioOnly: false
+    })
+  })
 })

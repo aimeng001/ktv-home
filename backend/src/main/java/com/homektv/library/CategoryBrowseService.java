@@ -220,7 +220,7 @@ public class CategoryBrowseService {
                 size <= 0 ? PUBLIC_SONG_PAGE_SIZE : size, MAX_PUBLIC_SONG_PAGE_SIZE));
         PageRequest request = PageRequest.of(safePage, safeSize, songSort(sort));
         String normalizedKey = ArtistCreditParser.key(artistKey);
-        String safeKeyword = normalize(keyword);
+        String safeKeyword = SearchKeyword.of(keyword, SearchKeyword.DEFAULT_MAX_LENGTH).likePattern();
         String safeMediaType = normalize(mediaType).toUpperCase(Locale.ROOT);
         if (!SUPPORTED_MEDIA_TYPES.contains(safeMediaType)) {
             throw new com.homektv.web.ApiException("INVALID_MEDIA_TYPE", "媒体格式筛选值无效");

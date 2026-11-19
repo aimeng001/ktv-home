@@ -7,6 +7,7 @@
 
 const BROWSER_NATIVE_EXT_RE = /\.(mp4|m4v|webm|mp3|flac|m4a|wav|ogg)(?:$|\?)/i
 const AUDIO_EXT_RE = /\.(mp3|flac|m4a|wav|ogg)(?:$|\?)/i
+const NATIVE_FORMAT_TOKENS = new Set(['mp4', 'm4v', 'mov', 'webm', 'mp3', 'flac', 'm4a', 'aac', 'ogg', 'wav'])
 
 export function resolveTargetAudioTrack(audioLayout, vocalMode) {
   if (!audioLayout || audioLayout.layout !== 'DUAL_TRACK') return null
@@ -23,9 +24,11 @@ export function isAudioOnlyPlayback(playback, song) {
 
 export function isBrowserNativeFormat(playback, song) {
   if (!playback || playback.kind === 'LIVE_TRANSCODE') return false
-  const fmt = String(song?.format || '').trim().toLowerCase()
-  if (fmt && ['mp4', 'm4v', 'mov', 'webm', 'mp3', 'flac', 'aac', 'ogg', 'wav'].some(ext => fmt.includes(ext))) {
-    return true
+  const fmt = String(playback.format || song?.format || '').trim().toLowerCase()
+  if (fmt) {
+    const tokens = fmt.split(/[\s,;/|]+/).filter(Boolean)
+    if (tokens.includes('matroska') || tokens.includes('mkv')) return false
+    if (tokens.some(token => NATIVE_FORMAT_TOKENS.has(token))) return true
   }
   const url = String(playback.streamUrl || '')
   return BROWSER_NATIVE_EXT_RE.test(url)

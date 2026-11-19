@@ -519,16 +519,19 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   )
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
-              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:vocalForm = '' OR LOWER(COALESCE(NULLIF(NULLIF(s.vocal_form, ''), '未知'), NULLIF(s.ai_vocal_form, ''), '未知')) = LOWER(:vocalForm))
               AND (:tag = '' OR EXISTS (
                   SELECT 1 FROM song_tag_index sti
                   WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
             """,
             countQuery = """
@@ -555,16 +558,19 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   )
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
-              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:vocalForm = '' OR LOWER(COALESCE(NULLIF(NULLIF(s.vocal_form, ''), '未知'), NULLIF(s.ai_vocal_form, ''), '未知')) = LOWER(:vocalForm))
               AND (:tag = '' OR EXISTS (
                   SELECT 1 FROM song_tag_index sti
                   WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
             """,
             nativeQuery = true)
@@ -613,16 +619,19 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   )
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
-              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:vocalForm = '' OR LOWER(COALESCE(NULLIF(NULLIF(s.vocal_form, ''), '未知'), NULLIF(s.ai_vocal_form, ''), '未知')) = LOWER(:vocalForm))
               AND (:tag = '' OR EXISTS (
                   SELECT 1 FROM song_tag_index sti
                   WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
             """,
             countQuery = """
@@ -656,16 +665,19 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   )
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
-              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:vocalForm = '' OR LOWER(COALESCE(NULLIF(NULLIF(s.vocal_form, ''), '未知'), NULLIF(s.ai_vocal_form, ''), '未知')) = LOWER(:vocalForm))
               AND (:tag = '' OR EXISTS (
                   SELECT 1 FROM song_tag_index sti
                   WHERE sti.song_id = s.id AND sti.tag_lower = LOWER(:tag)
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
             """,
             nativeQuery = true)
@@ -706,7 +718,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   )
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
-              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:vocalForm = '' OR LOWER(COALESCE(NULLIF(NULLIF(s.vocal_form, ''), '未知'), NULLIF(s.ai_vocal_form, ''), '未知')) = LOWER(:vocalForm))
               AND (:mediaType = '' OR LOWER(s.media_type) = LOWER(:mediaType))
               AND (:tag = '' OR EXISTS (
                   SELECT 1 FROM song_tag_index sti
@@ -714,9 +726,12 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
             """,
             countQuery = """
@@ -743,7 +758,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   )
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
-              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:vocalForm = '' OR LOWER(COALESCE(NULLIF(NULLIF(s.vocal_form, ''), '未知'), NULLIF(s.ai_vocal_form, ''), '未知')) = LOWER(:vocalForm))
               AND (:mediaType = '' OR LOWER(s.media_type) = LOWER(:mediaType))
               AND (:tag = '' OR EXISTS (
                   SELECT 1 FROM song_tag_index sti
@@ -751,9 +766,12 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
             """,
             nativeQuery = true)
@@ -797,7 +815,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   )
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
-              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:vocalForm = '' OR LOWER(COALESCE(NULLIF(NULLIF(s.vocal_form, ''), '未知'), NULLIF(s.ai_vocal_form, ''), '未知')) = LOWER(:vocalForm))
               AND (:mediaType = '' OR LOWER(s.media_type) = LOWER(:mediaType))
               AND (:tag = '' OR EXISTS (
                   SELECT 1 FROM song_tag_index sti
@@ -805,9 +823,12 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
             """,
             countQuery = """
@@ -841,7 +862,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   )
               )
               AND (:language = '' OR LOWER(s.language) = LOWER(:language))
-              AND (:vocalForm = '' OR LOWER(s.ai_vocal_form) = LOWER(:vocalForm))
+              AND (:vocalForm = '' OR LOWER(COALESCE(NULLIF(NULLIF(s.vocal_form, ''), '未知'), NULLIF(s.ai_vocal_form, ''), '未知')) = LOWER(:vocalForm))
               AND (:mediaType = '' OR LOWER(s.media_type) = LOWER(:mediaType))
               AND (:tag = '' OR EXISTS (
                   SELECT 1 FROM song_tag_index sti
@@ -849,9 +870,12 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%'
-                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%'
-                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%'
+                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
             """,
             nativeQuery = true)

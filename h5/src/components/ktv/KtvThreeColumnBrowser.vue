@@ -541,9 +541,18 @@ function filterAndSortClientSongs(list) {
   const kw = keyword.value.trim().toLowerCase()
   const filtered = (Array.isArray(list) ? list : []).filter((song) => {
     if (mediaFilter.value && song.mediaType !== mediaFilter.value) return false
-    if (vocalFormFilter.value && song.vocalForm !== vocalFormFilter.value) return false
+    if (vocalFormFilter.value && (song.vocalForm || '') !== vocalFormFilter.value) return false
     if (kw) {
-      const hay = `${song.title || ''} ${song.artist || ''} ${song.pinyin || ''} ${song.pinyinAbbr || ''}`.toLowerCase()
+      const hay = [
+        song.title,
+        song.artist,
+        song.titlePinyin,
+        song.titleInitials,
+        song.artistPinyin,
+        song.artistInitials,
+        song.pinyin,
+        song.pinyinAbbr,
+      ].filter(Boolean).join(' ').toLowerCase()
       if (!hay.includes(kw)) return false
     }
     return true

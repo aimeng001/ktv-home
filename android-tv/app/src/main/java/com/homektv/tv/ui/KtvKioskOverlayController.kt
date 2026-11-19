@@ -94,7 +94,7 @@ class KtvKioskOverlayController(
         kioskOverlayBinding.kioskTransientFeedback,
         activity.lifecycleScope,
     )
-    private val pipObservedPlayer = bottomDockController.playerView.player
+    private var pipObservedPlayer: Player? = bottomDockController.playerView.player
     private var queueDrawerVisible = false
     private var globalSearchReturnFocus: View? = null
     private val pipPlaybackListener = object : Player.Listener {
@@ -172,7 +172,7 @@ class KtvKioskOverlayController(
     private lateinit var browserBinding: ViewKtvThreeColumnBrowserBinding
 
     init {
-        pipObservedPlayer?.addListener(pipPlaybackListener)
+        syncObservedPipPlayer()
         setupViews()
         observeState()
     }
@@ -2783,8 +2783,19 @@ class KtvKioskOverlayController(
         }
     }
 
+    private fun syncObservedPipPlayer(): Player? {
+        val current = bottomDockController.playerView.player
+        if (current !== pipObservedPlayer) {
+            pipObservedPlayer?.removeListener(pipPlaybackListener)
+            pipObservedPlayer = current
+            current?.addListener(pipPlaybackListener)
+        }
+        return current
+    }
+
     private fun renderPipState() {
-        val locallyBuffering = pipObservedPlayer?.let {
+        val observed = syncObservedPipPlayer()
+        val locallyBuffering = observed?.let {
             it.playbackState == Player.STATE_BUFFERING && it.playWhenReady
         } == true
         val state = KioskPipDisplayPolicy.resolve(
@@ -2798,6 +2809,7 @@ class KtvKioskOverlayController(
     fun destroy() {
         transientFeedbackHost.clear()
         pipObservedPlayer?.removeListener(pipPlaybackListener)
+        pipObservedPlayer = null
         queueDialog?.dismiss()
         queueDialog = null
         songActionsDialog?.dismiss()

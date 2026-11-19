@@ -255,15 +255,28 @@ function syncAudioRouter() {
   const el = videoEl.value
   if (!el) return
   if (player.isWebHost) {
-    channelRouter.attach(el)
+    const routed = channelRouter.attach(el)
     channelRouter.setRouting(player.audioLayout, player.vocalMode)
     channelRouter.setGain(player.volume, effectiveMuted.value)
-    if (el.volume !== undefined) el.volume = Math.max(0, Math.min(1, (player.volume ?? 60) / 100))
+    // Web Audio GainNode scales amplitude once; keep native element gain at 1.0 when attached.
+    if (el.volume !== undefined) {
+      el.volume = routed ? 1 : Math.max(0, Math.min(1, (player.volume ?? 60) / 100))
+    }
     el.muted = effectiveMuted.value
   } else {
     channelRouter.setGain(0, true)
     el.muted = true
   }
+}
+
+function currentPlaybackSeconds() {
+  const el = videoEl.value
+  if (el && !awaitingMediaReload) {
+    const baseSec = streamSpec.value.liveTranscode ? liveStartSec.value : 0
+    const elSec = Number.isFinite(el.currentTime) ? el.currentTime : 0
+    if (baseSec + elSec > 0) return Math.max(0, baseSec + elSec)
+  }
+  return Math.max(0, (player.positionMs || 0) / 1000)
 }
 
 async function applyMediaSource() {
@@ -371,10 +384,6 @@ function onVideoEnded() {
 
 function onVideoError() {
   if (!streamSpec.value.url) return
-  if (!player.isWebHost) {
-    mirrorStreamFailed.value = true
-    return
-  }
   if (!forceTranscodeFallback.value && !isAudioOnly.value) {
     const startSec = Math.max(0, (player.positionMs || 0) / 1000)
     const fallbackSpec = buildWebStreamSpec({
@@ -390,6 +399,10 @@ function onVideoError() {
       forceTranscodeFallback.value = true
       return
     }
+  }
+  if (!player.isWebHost) {
+    mirrorStreamFailed.value = true
+    return
   }
   const fileId = player.playback?.sourceFileId ?? null
   const queueId = player.nowPlaying?.queueId
@@ -447,10 +460,25 @@ watch(() => player.nowPlaying?.queueId, (newId, oldId) => {
 watch(() => player.vocalMode, () => {
   syncAudioRouter()
   if (player.audioLayout?.layout === 'DUAL_TRACK' && player.nowPlaying) {
-    awaitingMediaReload = true
-    liveStartSec.value = Math.max(0, (player.positionMs || 0) / 1000)
+    liveStartSec.value = currentPlaybackSeconds()
   }
 })
+
+watch(
+  () => [
+    player.audioLayout?.layout,
+    player.audioLayout?.originalTrackIndex,
+    player.audioLayout?.accompanimentTrackIndex,
+    player.audioLayout?.originalChannel,
+    player.audioLayout?.accompanimentChannel,
+  ],
+  () => {
+    syncAudioRouter()
+    if (player.audioLayout?.layout === 'DUAL_TRACK' && player.nowPlaying) {
+      liveStartSec.value = currentPlaybackSeconds()
+    }
+  }
+)
 
 watch([() => streamSpec.value.url, () => player.nowPlaying?.queueId, streamReloadNonce], () => {
   applyMediaSource()

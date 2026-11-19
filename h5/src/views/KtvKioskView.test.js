@@ -464,4 +464,71 @@ describe('KtvKioskView', () => {
     await nextTick()
     expect(root.querySelector('.bento-dashboard')).not.toBeNull()
   })
+
+  it('prevents quadratic volume attenuation, enables mirror transcode fallback, and preserves position on DUAL_TRACK swap', async () => {
+    const splitter = { connect: vi.fn(), disconnect: vi.fn() }
+    const merger = { connect: vi.fn(), disconnect: vi.fn() }
+    const gainNode = { gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() }
+    const source = { connect: vi.fn(), disconnect: vi.fn() }
+    window.AudioContext = function FakeAudioContext() {
+      return {
+        state: 'running',
+        destination: {},
+        createMediaElementSource: () => source,
+        createChannelSplitter: () => splitter,
+        createChannelMerger: () => merger,
+        createGain: () => gainNode,
+        close: vi.fn(),
+        resume: vi.fn().mockResolvedValue()
+      }
+    }
+
+    // 1. Web Host with Web Audio active keeps <video>.volume at 1.0 (only gainNode scales volume)
+    player.handleEvent('sync_full', {
+      state: 'playing', volume: 50, muted: false, vocalMode: 'accompaniment',
+      tvOnline: false, stateRevision: 40, positionMs: 32000,
+      audioLayout: { layout: 'DUAL_TRACK', originalTrackIndex: 0, accompanimentTrackIndex: 1 },
+      playing: { queueId: 21, orderedByNick: '房客', song: { id: 101, title: '晴天', artist: '周杰伦', hasVocalTrack: true } },
+      list: [],
+      playback: { kind: 'NATIVE', status: 'READY', sourceFileId: 77, format: 'mp4', audioTracks: 2, vocalTrackIndex: 1 }
+    })
+    player.handleEvent('player_role', { role: 'ACTIVE', generation: 3, lease_ms: 45000 })
+    await nextTick()
+
+    const videoEl = root.querySelector('video.ktv-video')
+    expect(videoEl.volume).toBe(1)
+    expect(gainNode.gain.value).toBeCloseTo(0.5)
+
+    // 2. Swapping DUAL_TRACK audioLayout keeps playback offset via start= instead of resetting to 0
+    Object.defineProperty(videoEl, 'currentTime', { value: 5, configurable: true })
+    videoEl.dispatchEvent(new Event('loadedmetadata'))
+    await nextTick()
+    player.handleEvent('vocal_changed', {
+      state: 'playing', volume: 50, muted: false, vocalMode: 'accompaniment',
+      tvOnline: false, stateRevision: 41, positionMs: 32000,
+      audioLayout: { layout: 'DUAL_TRACK', originalTrackIndex: 1, accompanimentTrackIndex: 0 },
+      playing: { queueId: 21, orderedByNick: '房客', song: { id: 101, title: '晴天', artist: '周杰伦', hasVocalTrack: true } },
+      list: [],
+      playback: { kind: 'NATIVE', status: 'READY', sourceFileId: 77, format: 'mp4', audioTracks: 2, vocalTrackIndex: 0 }
+    })
+    await nextTick()
+    expect(videoEl.src).toContain('audioTrack=0')
+    expect(videoEl.src).toContain('start=37.000')
+
+    // 3. TV Console mirror falls back to transcode on decode error without reporting play_error
+    player.handleEvent('player_state', {
+      state: 'playing', volume: 50, muted: false, vocalMode: 'accompaniment',
+      tvOnline: true, stateRevision: 42, positionMs: 15000,
+      audioLayout: { layout: 'NORMAL_STEREO' },
+      playing: { queueId: 22, orderedByNick: '房客', song: { id: 102, title: '七里香', artist: '周杰伦' } },
+      list: [],
+      playback: { kind: 'NATIVE', status: 'READY', sourceFileId: 88, format: 'mp4', audioTracks: 1 }
+    })
+    await nextTick()
+    videoEl.dispatchEvent(new Event('error'))
+    await nextTick()
+    expect(videoEl.src).toContain('/api/stream/88?transcode=true')
+    expect(player.socket.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'play_error' }))
+    delete window.AudioContext
+  })
 })
