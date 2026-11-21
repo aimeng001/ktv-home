@@ -204,6 +204,48 @@ class FilenameParserTest {
     }
 
     @Test
+    void parses5To8DigitCatalogNumberAndStripsFromArtist() {
+        ParsedMeta parsedLegacy = FilenameParser.parse("51234-周杰伦-晴天.mp4");
+        assertThat(parsedLegacy.artist()).isEqualTo("周杰伦");
+        assertThat(parsedLegacy.title()).isEqualTo("晴天");
+        assertThat(parsedLegacy.catalogNumber()).isEqualTo("51234");
+        assertThat(parsedLegacy.recognized()).isTrue();
+
+        ParsedMeta parsedUnderscore = FilenameParser.parse("654321_张学友_吻别.mkv");
+        assertThat(parsedUnderscore.artist()).isEqualTo("张学友");
+        assertThat(parsedUnderscore.title()).isEqualTo("吻别");
+        assertThat(parsedUnderscore.catalogNumber()).isEqualTo("654321");
+        assertThat(parsedUnderscore.recognized()).isTrue();
+
+        ParsedMeta parsedStandard = FilenameParser.parse("654321-周杰伦-晴天-国语-流行.mkv");
+        assertThat(parsedStandard.artist()).isEqualTo("周杰伦");
+        assertThat(parsedStandard.title()).isEqualTo("晴天");
+        assertThat(parsedStandard.language()).isEqualTo("国语");
+        assertThat(parsedStandard.category()).isEqualTo("流行");
+        assertThat(parsedStandard.catalogNumber()).isEqualTo("654321");
+        assertThat(parsedStandard.recognized()).isTrue();
+
+        // 防回归：两段式纯数字乐队（1976）绝不能被误当成点歌号剥离
+        ParsedMeta numericBand = FilenameParser.parse("1976-方向感.mp4");
+        assertThat(numericBand.artist()).isEqualTo("1976");
+        assertThat(numericBand.title()).isEqualTo("方向感");
+        assertThat(numericBand.catalogNumber()).isEmpty();
+        assertThat(numericBand.recognized()).isTrue();
+    }
+
+    @Test
+    void inferDeterministicLanguageCorrectlyInfersJapaneseKoreanAndEnglish() {
+        assertThat(FilenameParser.inferDeterministicLanguage("恋愛サーキュレーション", "花澤香菜")).isEqualTo("日语");
+        assertThat(FilenameParser.inferDeterministicLanguage("夜に駆ける", "YOASOBI")).isEqualTo("日语");
+        assertThat(FilenameParser.inferDeterministicLanguage("강남스타일", "PSY")).isEqualTo("韩语");
+        assertThat(FilenameParser.inferDeterministicLanguage("Rolling in the Deep", "Adele")).isEqualTo("英语");
+
+        // 中文汉字不盲目假定为国语，返回空串以保护真实事实与现有契约
+        assertThat(FilenameParser.inferDeterministicLanguage("海阔天空", "Beyond")).isEmpty();
+        assertThat(FilenameParser.inferDeterministicLanguage("晴天", "周杰伦")).isEmpty();
+    }
+
+    @Test
     void rejectsAmbiguousNineAndTenDigitPrefixesAndCalendarDatesAsCatalogNumbers() {
         ParsedMeta nineDigit = FilenameParser.parse("123456789-周杰伦-晴天-国语-流行.mkv", EXISTING_ARTISTS);
         ParsedMeta tenDigit = FilenameParser.parse("0012345678.周杰伦-晴天-国语-流行.mkv", EXISTING_ARTISTS);

@@ -59,6 +59,9 @@ public class MusicSourceController {
     @PostMapping("/music-sources/test")
     public Map<String, Object> test(@RequestBody(required = false) ProviderRequest request) {
         Set<MusicProvider> providers = request == null ? Set.of() : parseProviders(request.providers());
+        if (rateLimiter != null) {
+            rateLimiter.resetCooldowns();
+        }
         return Map.of("results", searchService.test(providers), "providerStatus", configService.states());
     }
 

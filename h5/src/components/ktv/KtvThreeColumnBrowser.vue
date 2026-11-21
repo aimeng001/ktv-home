@@ -361,7 +361,7 @@
                 <span class="tag" :class="formatSongTypeBadge(song).cls">{{ formatSongTypeBadge(song).text }}</span>
               </div>
               <small class="card-sub">
-                {{ song.artist || '未知歌手' }} · {{ formatDurationMs(song.durationMs) }}
+                <span class="song-num">No.{{ formatSongNumber(song) }}</span> · {{ song.artist || '未知歌手' }} · {{ formatDurationMs(song.durationMs) }}
               </small>
             </div>
             <div class="card-actions">
@@ -417,6 +417,7 @@
         v-if="showKeyboard"
         ref="keyboardRef"
         v-model="keyword"
+        v-model:word-count="wordCount"
         class="right-keyboard"
         :class="{ 'mobile-open': mobileKbOpen }"
         @submit="triggerSearchNow"
@@ -434,6 +435,7 @@ import { useUserStore } from '../../stores/user'
 import { useOrderLock } from '../../composables/useOrderLock'
 import { useQueuedSongIds } from '../../composables/useQueuedSongIds'
 import { useToast } from '../../composables/useToast'
+import { useGlobalTypingCapture } from '../../composables/useGlobalTypingCapture'
 import { confirmDialog } from '../../composables/useDialog'
 import { createLatestRequest } from '../../views/latestRequest'
 import { loadAllFavoritePages } from '../../views/favoritesState'
@@ -451,6 +453,7 @@ import {
   VARIETY_PRESETS,
   VOCAL_FORM_FILTERS,
   formatDurationMs,
+  formatSongNumber,
   formatSongTypeBadge,
   formatTimeClock,
 } from './ktvCatalogPresets'
@@ -496,6 +499,7 @@ const SEARCH_PAGE_SIZE = 50
 
 const activeTab = ref(props.initialTab || 'song_name')
 const keyword = ref(props.initialQuery || '')
+const wordCount = ref(0)
 const mediaFilter = ref('')
 const vocalFormFilter = ref(props.initialVocalForm || '')
 const songSort = ref('hot')
@@ -552,6 +556,11 @@ function filterAndSortClientSongs(list) {
   const filtered = (Array.isArray(list) ? list : []).filter((song) => {
     if (mediaFilter.value && song.mediaType !== mediaFilter.value) return false
     if (vocalFormFilter.value && (song.vocalForm || '') !== vocalFormFilter.value) return false
+    if (wordCount.value > 0) {
+      const len = (song.title || '').trim().length
+      if (wordCount.value < 6 && len !== wordCount.value) return false
+      if (wordCount.value >= 6 && len < 6) return false
+    }
     if (kw) {
       const hay = [
         song.title,
@@ -616,6 +625,7 @@ function switchTab(nextTab) {
   activeTab.value = nextTab
   songPage.value = 0
   artistPage.value = 0
+  wordCount.value = 0
   approximateSearchPager.value = false
   searchHasMore.value = false
   loadError.value = ''
@@ -798,7 +808,7 @@ function loadSongsOnly() {
   if (activeTab.value === 'opera') {
     return loadVarietySongs()
   }
-  if ((activeTab.value === 'song_name' || activeTab.value === 'local') && keyword.value.trim() && !vocalFormFilter.value) {
+  if ((activeTab.value === 'song_name' || activeTab.value === 'local') && keyword.value.trim() && !vocalFormFilter.value && !wordCount.value) {
     return loadSongsBySearch()
   }
   return loadSongsByBrowse()
@@ -853,6 +863,7 @@ async function loadSongsByBrowse() {
     if (mediaFilter.value) params.mediaType = mediaFilter.value
     if (vocalFormFilter.value) params.vocalForm = vocalFormFilter.value
     if (keyword.value.trim()) params.keyword = keyword.value.trim()
+    if (wordCount.value > 0) params.wordCount = wordCount.value
     if (activeTab.value === 'hd') {
       params.tag = HIGH_DEFINITION_TAG
     } else if (activeTab.value === 'tiktok') {
@@ -919,6 +930,7 @@ async function loadVarietySongs() {
     if (mediaFilter.value) params.mediaType = mediaFilter.value
     if (vocalFormFilter.value) params.vocalForm = vocalFormFilter.value
     if (keyword.value.trim()) params.keyword = keyword.value.trim()
+    if (wordCount.value > 0) params.wordCount = wordCount.value
     const res = await api.browseSongPage(params, { signal: req.signal })
     if (!reqGate.isCurrent(req.id)) return
     songs.value = Array.isArray(res?.items) ? res.items : []
@@ -1267,6 +1279,11 @@ watch(keyword, () => {
   }, 280)
 })
 
+watch(wordCount, () => {
+  songPage.value = 0
+  loadSongsOnly()
+})
+
 watch(() => player.historyRevision, () => {
   if (activeTab.value === 'recent') loadRecentHistory()
 })
@@ -1302,12 +1319,27 @@ watch(
   }
 )
 
+let typingCapture = null
 onMounted(() => {
   reloadActive()
+  typingCapture = useGlobalTypingCapture({
+    onChar(ch) {
+      if (!showKeyboard.value) {
+        switchTab('song_name')
+      }
+      keyword.value = (keyword.value || '') + ch
+    },
+    onBackspace() {
+      if (keyword.value && keyword.value.length > 0) {
+        keyword.value = keyword.value.slice(0, -1)
+      }
+    }
+  })
 })
 
 onBeforeUnmount(() => {
   clearTimeout(debounceTimer)
+  typingCapture?.dispose()
 })
 
 defineExpose({ switchTab, focusSearchKeyboard })
@@ -1493,6 +1525,14 @@ defineExpose({ switchTab, focusSearchKeyboard })
 .card-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .card-title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-sub { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song-num {
+  font-family: monospace;
+  font-weight: 700;
+  color: var(--gold);
+  background: rgba(255, 198, 75, 0.12);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
 .card-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .fav-btn {
   width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;

@@ -93,6 +93,16 @@ export const CAPSULE_TABS = [
 export const HIGH_DEFINITION_TAG = '高清HD歌曲'
 export const TIKTOK_TAG = '抖音神曲'
 
+export const WORD_COUNT_OPTIONS = [
+  { value: 0, label: '全部' },
+  { value: 1, label: '1字' },
+  { value: 2, label: '2字' },
+  { value: 3, label: '3字' },
+  { value: 4, label: '4字' },
+  { value: 5, label: '5字' },
+  { value: 6, label: '多字' },
+]
+
 export const VARIETY_PRESETS = [
   { key: '我是歌手', label: '我是歌手', image: varietyWsgs },
   { key: '中国好声音', label: '中国好声音', image: varietyZghsy },
@@ -129,6 +139,29 @@ export const T9_KEYS = [
   { digit: '0', letters: '0', label: '0' },
   { digit: 'back', letters: '退格', label: '⌫', action: 'backspace' },
 ]
+
+export const NUMBER_KEYS = [
+  { digit: '1', label: '1' },
+  { digit: '2', label: '2' },
+  { digit: '3', label: '3' },
+  { digit: '4', label: '4' },
+  { digit: '5', label: '5' },
+  { digit: '6', label: '6' },
+  { digit: '7', label: '7' },
+  { digit: '8', label: '8' },
+  { digit: '9', label: '9' },
+  { digit: 'clear', label: '清空', action: 'clear' },
+  { digit: '0', label: '0' },
+  { digit: 'back', label: '⌫', action: 'backspace' },
+]
+
+export function formatSongNumber(song) {
+  if (!song) return '000000'
+  if (song.catalogNumber && song.catalogNumber.trim()) {
+    return song.catalogNumber.trim()
+  }
+  return String(song.id || 0).padStart(6, '0')
+}
 
 export const QWERTY_ROWS = [
   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],

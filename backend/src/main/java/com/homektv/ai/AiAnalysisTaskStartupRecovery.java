@@ -2,6 +2,7 @@ package com.homektv.ai;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
@@ -15,13 +16,24 @@ public class AiAnalysisTaskStartupRecovery implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(AiAnalysisTaskStartupRecovery.class);
 
     private final AiAnalysisTaskRecoveryService recoveryService;
+    private final AiConfigService configService;
 
     public AiAnalysisTaskStartupRecovery(AiAnalysisTaskRecoveryService recoveryService) {
+        this(recoveryService, null);
+    }
+
+    @Autowired
+    public AiAnalysisTaskStartupRecovery(AiAnalysisTaskRecoveryService recoveryService,
+                                         @Autowired(required = false) AiConfigService configService) {
         this.recoveryService = recoveryService;
+        this.configService = configService;
     }
 
     @Override
     public void run(ApplicationArguments args) {
+        if (configService != null && !configService.resolve().enabled()) {
+            return;
+        }
         int recovered = recoveryService.recoverOrphanedTasks(OffsetDateTime.now(ZoneOffset.UTC));
         if (recovered > 0) {
             log.warn("服务器重启后将 {} 个未完成的 AI 任务标记为可重试失败", recovered);

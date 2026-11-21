@@ -25,7 +25,7 @@ public record ParsedMeta(String title, String artist, String language, String ca
         vocalForm = vocalForm == null ? "" : vocalForm.trim();
         status = NEEDS_REVIEW.equals(status) ? NEEDS_REVIEW : RECOGNIZED;
         catalogNumber = catalogNumber == null ? "" : catalogNumber.trim();
-        if (!catalogNumber.isEmpty() && !catalogNumber.matches("[0-9]{8,10}")) {
+        if (!catalogNumber.isEmpty() && !catalogNumber.matches("[0-9]{5,10}")) {
             catalogNumber = "";
         }
     }

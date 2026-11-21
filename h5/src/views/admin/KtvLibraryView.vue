@@ -1,6 +1,6 @@
 <template>
   <AdminLayout active="ktv">
-    <header class="page-head"><div><h1>KTV曲库管理</h1><p>正式可播放曲库，手机点歌和 TV 播放均从这里读取</p></div><button class="secondary" @click="showAiTaskPanel=true">AI 任务</button></header>
+    <header class="page-head"><div><h1>KTV曲库管理</h1><p>正式可播放曲库，手机点歌和 TV 播放均从这里读取</p></div></header>
     <div v-if="loadError" class="notice error-notice" role="alert"><span>KTV曲库读取失败：{{ loadError }}</span><button class="text-btn" @click="load">重试</button></div>
     <div v-if="libraryMode === 'EXTERNAL_READ_ONLY'" class="readonly-notice">外部只读曲库不能在 Home KTV 中删除源歌曲；如需移除歌曲，请在 NAS 中处理后重新扫描。</div>
     <div v-else-if="libraryMode === null" class="readonly-notice">曲库模式尚未确认，删除操作已隐藏；请检查服务连接后重试。</div>
@@ -42,7 +42,6 @@
         </div>
       </div>
     </div></div>
-    <AiTaskPanel v-if="showAiTaskPanel" :selected-ids="Array.from(selected)" @close="showAiTaskPanel=false" @applied="load" />
   </AdminLayout>
 </template>
 
@@ -59,7 +58,6 @@ import { ChevronDown, ListPlus, Pencil, Tags, Trash2, X } from 'lucide-vue-next'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import AudioLayoutEditor from './AudioLayoutEditor.vue'
-import AiTaskPanel from '../../components/admin/AiTaskPanel.vue'
 import { audioLayoutLabel } from './audioLayout'
 import { canDeleteSongs } from './libraryMode'
 import { sourceLabel } from './librarySource'
@@ -71,7 +69,6 @@ import { createLatestRequest } from '../latestRequest'
 const songs=ref([]),total=ref(0),page=ref(0),totalPages=ref(1),selected=ref(new Set())
 const router=useRouter()
 const playlistPickerOpen=ref(false),playlistPickerSong=ref(null),playlistOptions=ref([]),playlistLoading=ref(false),playlistAddingId=ref(null)
-const showAiTaskPanel=ref(false)
 const songEditorOpen=ref(false),editingSong=ref(null),songSaving=ref(false)
 const editForm=reactive({title:'',artist:'',language:'',vocalForm:'',tags:''})
 const libraryMode=ref(null),loadError=ref('')
@@ -142,7 +139,7 @@ async function saveSongEdit(){
 }
 async function openPlaylistPicker(song){playlistPickerSong.value=song;playlistPickerOpen.value=true;playlistLoading.value=true;try{playlistOptions.value=await api.adminAiPlaylists()}catch(e){await alertDialog(e.message||'歌单加载失败')}finally{playlistLoading.value=false}}
 function closePlaylistPicker(){if(!playlistAddingId.value)playlistPickerOpen.value=false}
-function goToCreatePlaylist(){closePlaylistPicker();router.push({name:'admin-ai'})}
+function goToCreatePlaylist(){closePlaylistPicker();alertDialog('暂无歌单，可在手机/大屏点歌界面自建歌单')}
 async function addSongToPlaylist(playlist){if(!playlistPickerSong.value)return;playlistAddingId.value=playlist.id;try{const result=await api.adminAiAddPlaylistSong(playlist.id,playlistPickerSong.value.id);playlist.songCount=result?.songs?.length??result?.songCount??((playlist.songCount||0)+1);await alertDialog(`《${playlistPickerSong.value.title}》已加入歌单“${playlist.name}”`);playlistPickerOpen.value=false}catch(e){await alertDialog(e.message||'加入歌单失败')}finally{playlistAddingId.value=null}}
 /** 跳转到指定页 / Go to a specific page */
 function go(p){if(p>=0&&p<totalPages.value){page.value=p;load()}}

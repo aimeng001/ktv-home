@@ -9,6 +9,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CategoryBrowseControllerTest {
@@ -42,5 +43,18 @@ class CategoryBrowseControllerTest {
                 .songPage("", "", "", "", "高清HD歌曲", "", "", "MV", "hot", 0, 18);
 
         assertThat(result.size()).isEqualTo(18);
+    }
+
+    @Test
+    void songPageForwardsOptionalWordCount() {
+        CategoryBrowseService service = mock(CategoryBrowseService.class);
+        when(service.songsPage("", "", "", "", "", "", "周杰伦", "", 2, "hot", 0, 20))
+                .thenReturn(new CategoryBrowseService.SongPage(List.of(), 0, 0, 20));
+
+        CategoryBrowseService.SongPage result = new CategoryBrowseController(service)
+                .songPage("", "", "", "", "", "", "周杰伦", "", 2, "hot", 0, 20);
+
+        assertThat(result.size()).isEqualTo(20);
+        verify(service).songsPage("", "", "", "", "", "", "周杰伦", "", 2, "hot", 0, 20);
     }
 }

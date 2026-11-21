@@ -488,6 +488,17 @@ final class LibraryIngestionWriter {
         if (probe.language() != null && !probe.language().isBlank()) {
             return normalizeLanguage(probe.language());
         }
-        return filenameMeta.language().isBlank() ? "" : normalizeLanguage(filenameMeta.language());
+        if (filenameMeta != null && !filenameMeta.language().isBlank()) {
+            return normalizeLanguage(filenameMeta.language());
+        }
+        // 当显式语种均为空时，仅对高置信度确定性外语字符集（日/韩/英）应用自动推导；
+        // 中文字符曲库保持客观真实事实（返回空串使得实体保持"未知"），杜绝误判粤语/闽南语并保护系统既有测试契约
+        if (filenameMeta != null) {
+            String inferred = FilenameParser.inferDeterministicLanguage(filenameMeta.title(), filenameMeta.artist());
+            if (!inferred.isBlank()) {
+                return normalizeLanguage(inferred);
+            }
+        }
+        return "";
     }
 }

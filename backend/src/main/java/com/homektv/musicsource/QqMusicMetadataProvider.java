@@ -17,6 +17,8 @@ import java.util.Set;
 @Component
 public class QqMusicMetadataProvider implements MusicMetadataProvider {
     private static final String HOST = "https://c.y.qq.com";
+    private static final String USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     private final MusicSourceHttp http;
 
     @Autowired
@@ -37,7 +39,8 @@ public class QqMusicMetadataProvider implements MusicMetadataProvider {
         query.put("qqmusic_ver", 1298); query.put("remoteplace", "txt.yqq.song");
         query.put("platform", "yqq.json"); query.put("aggr", 1); query.put("cr", 1);
         query.put("p", 1); query.put("n", Math.min(limit, 50)); query.put("w", keyword);
-        JsonNode root = http.get(HOST + "/soso/fcgi-bin/client_search_cp?" + MusicSourceHttp.query(query), Map.of(), timeout);
+        JsonNode root = http.get(HOST + "/soso/fcgi-bin/client_search_cp?" + MusicSourceHttp.query(query),
+                Map.of("Referer", "https://y.qq.com/", "User-Agent", USER_AGENT), timeout);
         return parseSongs(root.path("data").path("song").path("list"), limit);
     }
 
@@ -45,7 +48,7 @@ public class QqMusicMetadataProvider implements MusicMetadataProvider {
     public ExternalTrack detail(String externalId, Duration timeout) {
         String url = HOST + "/v8/fcg-bin/fcg_play_single_song.fcg?format=json&platform=yqq&songmid="
                 + java.net.URLEncoder.encode(externalId, java.nio.charset.StandardCharsets.UTF_8);
-        JsonNode root = http.get(url, Map.of(), timeout);
+        JsonNode root = http.get(url, Map.of("Referer", "https://y.qq.com/", "User-Agent", USER_AGENT), timeout);
         List<ExternalTrack> tracks = parseSongs(root.path("data"), 1);
         if (tracks.isEmpty()) throw new MusicSourceException(provider(), "歌曲详情不存在");
         return tracks.getFirst();

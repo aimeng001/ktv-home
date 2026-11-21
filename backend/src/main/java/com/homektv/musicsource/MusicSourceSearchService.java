@@ -120,8 +120,12 @@ public class MusicSourceSearchService {
             List<CompletableFuture<TestResult>> futures = selected.stream().map(provider -> CompletableFuture.supplyAsync(() -> {
                 try {
                     MusicMetadataProvider.ProviderHealth health = providers.get(provider).health(Duration.ofSeconds(config.timeoutSeconds()));
-                    configService.recordSuccess(provider);
-                    return new TestResult(provider, provider.displayName(), health.healthy(), health.latencyMs(), null);
+                    if (health.healthy()) {
+                        configService.recordSuccess(provider);
+                    } else {
+                        configService.recordError(provider, health.error());
+                    }
+                    return new TestResult(provider, provider.displayName(), health.healthy(), health.latencyMs(), health.error());
                 } catch (RuntimeException ex) {
                     String error = publicError(ex); configService.recordError(provider, error);
                     return new TestResult(provider, provider.displayName(), false, 0, error);

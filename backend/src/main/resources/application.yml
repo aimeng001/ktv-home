@@ -53,6 +53,8 @@ app:
     fallback-enabled: ${KTV_ARTIST_AVATAR_FALLBACK_ENABLED:true}
     fallback-daily-limit: ${KTV_ARTIST_AVATAR_FALLBACK_DAILY_LIMIT:400}
   scan:
+    on-startup: ${KTV_SCAN_ON_STARTUP:true}
+    schedule-minutes: ${KTV_SCAN_SCHEDULE_MINUTES:60}
     fast-probe:
       enabled: ${KTV_SCAN_FAST_PROBE_ENABLED:true}
       probe-size: ${KTV_SCAN_FAST_PROBE_SIZE:1048576}

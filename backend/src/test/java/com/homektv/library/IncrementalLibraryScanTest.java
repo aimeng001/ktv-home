@@ -3787,6 +3787,22 @@ class IncrementalLibraryScanTest {
     }
 
     @Test
+    void recognizedSongWithDeterministicForeignCharactersInfersLanguageSafely() throws Exception {
+        Path file = Files.write(sourceDir.resolve("花澤香菜-恋愛サーキュレーション.mp3"), new byte[]{1, 2, 3});
+        TagInfo tag = new TagInfo();
+        tag.setTitle("恋愛サーキュレーション");
+        tag.setArtist("花澤香菜");
+        when(tagReader.read(file.toFile())).thenReturn(tag);
+
+        LibraryScanService.ScanResult result = scanService.scanAll();
+
+        Song song = songsById.values().stream().findFirst().orElseThrow();
+        assertThat(result.added()).isEqualTo(1);
+        assertThat(song.getStatus()).isEqualTo("ok");
+        assertThat(song.getLanguage()).isEqualTo("日语");
+    }
+
+    @Test
     void recognizedSongWithoutArtistIsQueuedForAiMetadataOptimization() throws Exception {
         Path file = Files.write(sourceDir.resolve("不可解析歌手格式.mp3"), new byte[]{1, 2, 3});
         TagInfo tag = new TagInfo();

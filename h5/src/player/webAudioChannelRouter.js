@@ -1,3 +1,5 @@
+import { createPitchShifter } from './pitchShifter'
+
 /**
  * Zero-latency browser audio channel router backed by Web Audio API.
  * For DUAL_CHANNEL files, routes Left-only or Right-only audio cleanly to both
@@ -18,6 +20,9 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
   let splitter = null
   let merger = null
   let gainNode = null
+  let analyserNode = null
+  let frequencyDataArray = null
+  let pitchShifter = null
   let attachedElement = null
   let lastLayout = null
   let lastMode = 'accompaniment'
@@ -43,9 +48,18 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
       splitter = ctx.createChannelSplitter(2)
       merger = ctx.createChannelMerger(2)
       gainNode = ctx.createGain()
+      pitchShifter = createPitchShifter(ctx)
       source.connect(splitter)
-      merger.connect(gainNode)
-      gainNode.connect(ctx.destination)
+      pitchShifter.connect(merger, gainNode)
+      if (typeof ctx.createAnalyser === 'function') {
+        analyserNode = ctx.createAnalyser()
+        analyserNode.fftSize = 128
+        frequencyDataArray = new Uint8Array(analyserNode.frequencyBinCount || 64)
+        gainNode.connect(analyserNode)
+        analyserNode.connect(ctx.destination)
+      } else {
+        gainNode.connect(ctx.destination)
+      }
       attachedElement = mediaElement
       applyRouting(lastLayout, lastMode)
       applyGain(lastVolume, lastMuted)
@@ -97,7 +111,9 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     try { source?.disconnect() } catch { /* ignore */ }
     try { splitter?.disconnect() } catch { /* ignore */ }
     try { merger?.disconnect() } catch { /* ignore */ }
+    try { pitchShifter?.dispose() } catch { /* ignore */ }
     try { gainNode?.disconnect() } catch { /* ignore */ }
+    try { analyserNode?.disconnect() } catch { /* ignore */ }
     if (ctx && typeof ctx.close === 'function') {
       try { ctx.close() } catch { /* ignore */ }
     }
@@ -105,7 +121,10 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     source = null
     splitter = null
     merger = null
+    pitchShifter = null
     gainNode = null
+    analyserNode = null
+    frequencyDataArray = null
     attachedElement = null
   }
 
@@ -113,6 +132,19 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     attach(mediaElement) { return ensureGraph(mediaElement) },
     setRouting(audioLayout, vocalMode) { return applyRouting(audioLayout, vocalMode) },
     setGain(volumePct, muted) { applyGain(volumePct, muted) },
+    setPitch(semitones) { pitchShifter?.setSemitones(semitones) },
+    getPitch() { return pitchShifter?.getSemitones() ?? 0 },
+    resetPitch() { pitchShifter?.reset() },
+    getFrequencyData() {
+      if (!analyserNode || !frequencyDataArray) return null
+      try {
+        analyserNode.getByteFrequencyData(frequencyDataArray)
+        return frequencyDataArray
+      } catch {
+        return null
+      }
+    },
+    getAnalyser() { return analyserNode },
     resume,
     dispose,
     isActive() { return Boolean(ctx) },

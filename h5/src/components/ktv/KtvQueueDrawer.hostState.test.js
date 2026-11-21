@@ -115,4 +115,39 @@ describe('KtvQueueDrawer 房主状态错误态', () => {
     expect(root.textContent).toContain('房主：小明')
     expect(root.textContent).not.toContain('房主状态获取失败')
   })
+
+  it('正在播放卡片提供重唱与切歌按钮并能正确触发 emit', async () => {
+    apiMock.roomHostStatus.mockResolvedValue({ claimed: true, hostUserId: 7, hostNickname: '小明', revision: 1 })
+    player.nowPlaying = {
+      queueId: 101,
+      orderedByNick: '歌神',
+      song: { id: 1, title: '海阔天空', artist: 'Beyond' }
+    }
+    const restartSpy = vi.fn()
+    const nextSpy = vi.fn()
+
+    if (app) app.unmount()
+    app = createApp(KtvQueueDrawer, {
+      open: true,
+      onRestart: restartSpy,
+      onNext: nextSpy
+    })
+    app.component('RouterLink', { render: () => h('a') })
+    app.use(pinia)
+    app.mount(root)
+    await nextTick()
+    await nextTick()
+
+    expect(root.textContent).toContain('海阔天空')
+    const restartBtn = buttonByText(root, '重唱')
+    const nextBtn = buttonByText(root, '切歌')
+    expect(restartBtn).not.toBeNull()
+    expect(nextBtn).not.toBeNull()
+
+    restartBtn.click()
+    expect(restartSpy).toHaveBeenCalledTimes(1)
+
+    nextBtn.click()
+    expect(nextSpy).toHaveBeenCalledTimes(1)
+  })
 })

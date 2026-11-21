@@ -9,6 +9,7 @@ const { apiMock, routerMock, toastSpy, media } = vi.hoisted(() => ({
     attach: vi.fn(),
     setRouting: vi.fn(),
     setGain: vi.fn(),
+    setPitch: vi.fn(),
     resume: vi.fn(() => Promise.resolve()),
     isSuspended: () => false,
     dispose: vi.fn()

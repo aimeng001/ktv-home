@@ -196,6 +196,32 @@ class JdbcLibraryScanSeenPathStoreTest {
         verify(jdbc).update("DELETE FROM library_scan_seen_paths WHERE scan_id = ?", SCAN_ID);
     }
 
+    @Test
+    void cleanOrphanSeenPathsDeletesOnlyNonActiveLeaseScans() {
+        UUID orphan1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID orphan2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        when(jdbc.queryForList(anyString(), eq(UUID.class))).thenReturn(List.of(orphan1, orphan2));
+        when(jdbc.update("DELETE FROM library_scan_seen_paths WHERE scan_id = ?", orphan1)).thenReturn(1000);
+        when(jdbc.update("DELETE FROM library_scan_seen_paths WHERE scan_id = ?", orphan2)).thenReturn(500);
+
+        int deleted = store.cleanOrphanSeenPaths();
+
+        assertThat(deleted).isEqualTo(1500);
+        verify(jdbc).update("DELETE FROM library_scan_seen_paths WHERE scan_id = ?", orphan1);
+        verify(jdbc).update("DELETE FROM library_scan_seen_paths WHERE scan_id = ?", orphan2);
+    }
+
+    @Test
+    void cleanOrphanSeenPathsReturnsZeroWhenNoOrphansFound() {
+        when(jdbc.queryForList(anyString(), eq(UUID.class))).thenReturn(List.of());
+
+        int deleted = store.cleanOrphanSeenPaths();
+
+        assertThat(deleted).isZero();
+        verify(jdbc, never()).update(eq("DELETE FROM library_scan_seen_paths WHERE scan_id = ?"), any(Object.class));
+    }
+
     private void assertMarkMissingRoot(String root, String expectedBackslashPrefix,
                                        String expectedSlashPrefix) throws Exception {
         PreparedStatement statement = mock(PreparedStatement.class);

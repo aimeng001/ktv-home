@@ -298,6 +298,16 @@ class MusicSourceSearchServiceTest {
             assertThat(result.error()).isEqualTo("provider offline");
         });
         verify(unhealthy.configService).recordError(MusicProvider.QQ, "provider offline");
+
+        Fixture emptyResult = fixture(config(true, Set.of(MusicProvider.QQ)));
+        when(emptyResult.provider.health(Duration.ofSeconds(5)))
+                .thenReturn(new MusicMetadataProvider.ProviderHealth(MusicProvider.QQ, false, 8, "未返回有效歌曲元数据"));
+        List<MusicSourceSearchService.TestResult> emptyProbe = emptyResult.service.test(null);
+        assertThat(emptyProbe).singleElement().satisfies(result -> {
+            assertThat(result.healthy()).isFalse();
+            assertThat(result.error()).isEqualTo("未返回有效歌曲元数据");
+        });
+        verify(emptyResult.configService).recordError(MusicProvider.QQ, "未返回有效歌曲元数据");
     }
 
     @Test

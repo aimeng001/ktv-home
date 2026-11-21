@@ -41,7 +41,10 @@
             <strong>{{ player.nowPlaying.song?.title }}</strong>
             <span>{{ player.nowPlaying.song?.artist }} · {{ player.nowPlaying.orderedByNick || '家人' }} 点</span>
           </div>
-          <button type="button" class="mini-btn danger" @click="$emit('next')">切歌</button>
+          <div class="now-actions">
+            <button type="button" class="mini-btn" @click="$emit('restart')">重唱</button>
+            <button type="button" class="mini-btn danger" @click="$emit('next')">切歌</button>
+          </div>
         </section>
 
         <div v-if="!player.queue.length" class="empty-tip">还没有待播歌曲，快去点几首歌吧</div>
@@ -102,7 +105,7 @@ import { formatTimeClock } from './ktvCatalogPresets'
 const props = defineProps({
   open: { type: Boolean, default: false }
 })
-defineEmits(['close', 'next'])
+defineEmits(['close', 'next', 'restart'])
 
 const player = usePlayerStore()
 const user = useUserStore()
@@ -348,6 +351,12 @@ async function repeatSong(entry) {
 .now-card small { color: var(--gold); font-size: 11px; font-weight: 700; display: block; }
 .now-card strong { display: block; font-size: 15px; margin: 2px 0; }
 .now-card span { font-size: 12px; color: var(--dim); }
+.now-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
 .queue-list { display: flex; flex-direction: column; gap: 8px; }
 .q-item {
   display: flex;

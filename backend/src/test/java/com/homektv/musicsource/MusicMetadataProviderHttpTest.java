@@ -72,11 +72,17 @@ class MusicMetadataProviderHttpTest {
     @Test
     void kugouDistinguishesMobileAndFallbackErrorsAndMissingDetails() throws Exception {
         MusicSourceHttp mobileFailureHttp = mock(MusicSourceHttp.class);
-        when(mobileFailureHttp.get(anyString(), any(), any())).thenReturn(json("{\"status\":0,\"error_code\":500}"));
+        when(mobileFailureHttp.get(anyString(), any(), any())).thenReturn(
+                json("{\"status\":0,\"error_code\":500}"),
+                json("""
+                        {"status":1,"error_code":0,"data":{"lists":[
+                          {"FileHash":"hash-fallback","SongName":"成都","singername":"赵雷","Duration":205}
+                        ]}}
+                        """));
         KugouMusicMetadataProvider mobileFailure = kugou(mobileFailureHttp);
-        assertThatThrownBy(() -> mobileFailure.search("x", 1, timeout))
-                .isInstanceOfSatisfying(MusicSourceException.class,
-                        failure -> assertThat(failure).hasMessage("酷狗搜索暂时不可用"));
+        var fallbackTracks = mobileFailure.search("成都", 1, timeout);
+        assertThat(fallbackTracks).hasSize(1);
+        assertThat(fallbackTracks.getFirst().externalId()).isEqualTo("hash-fallback");
 
         MusicSourceHttp fallbackFailureHttp = mock(MusicSourceHttp.class);
         when(fallbackFailureHttp.get(anyString(), any(), any())).thenReturn(
@@ -88,7 +94,9 @@ class MusicMetadataProviderHttpTest {
                         failure -> assertThat(failure).hasMessage("酷狗公开搜索暂时不可用"));
 
         MusicSourceHttp emptyHttp = mock(MusicSourceHttp.class);
-        when(emptyHttp.get(anyString(), any(), any())).thenReturn(json("{\"status\":1,\"error_code\":0,\"data\":{\"info\":[]}}"));
+        when(emptyHttp.get(anyString(), any(), any())).thenReturn(
+                json("{\"status\":1,\"error_code\":0,\"data\":{\"info\":[]}}"),
+                json("{\"status\":1,\"error_code\":0,\"data\":{\"lists\":[]}}"));
         assertThatThrownBy(() -> kugou(emptyHttp).detail("missing", timeout))
                 .isInstanceOfSatisfying(MusicSourceException.class,
                         failure -> assertThat(failure).hasMessage("歌曲详情不存在"));
@@ -114,10 +122,16 @@ class MusicMetadataProviderHttpTest {
                         failure -> assertThat(failure).hasMessage("歌曲详情不存在"));
 
         org.mockito.ArgumentCaptor<String> urls = org.mockito.ArgumentCaptor.forClass(String.class);
-        verify(http, times(3)).get(urls.capture(), any(), any());
+        @SuppressWarnings("rawtypes")
+        org.mockito.ArgumentCaptor<Map> headers = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(http, times(3)).get(urls.capture(), headers.capture(), any());
         assertThat(urls.getAllValues().get(0)).startsWith("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?")
                 .contains("n=4", "w=%E6%99%B4%E5%A4%A9");
+        assertThat(headers.getAllValues().get(0).get("Referer")).isEqualTo("https://y.qq.com/");
+        assertThat(headers.getAllValues().get(0).get("User-Agent").toString()).contains("Mozilla/5.0");
         assertThat(urls.getAllValues().get(1)).contains("songmid=mid+2");
+        assertThat(headers.getAllValues().get(1).get("Referer")).isEqualTo("https://y.qq.com/");
+        assertThat(headers.getAllValues().get(1).get("User-Agent").toString()).contains("Mozilla/5.0");
     }
 
     @Test
@@ -140,13 +154,19 @@ class MusicMetadataProviderHttpTest {
                         failure -> assertThat(failure).hasMessage("歌曲详情不存在"));
 
         org.mockito.ArgumentCaptor<String> urls = org.mockito.ArgumentCaptor.forClass(String.class);
-        @SuppressWarnings("unchecked")
-        org.mockito.ArgumentCaptor<Map<String, String>> forms = org.mockito.ArgumentCaptor.forClass(Map.class);
-        verify(http, times(3)).form(urls.capture(), forms.capture(), any(), any());
+        @SuppressWarnings("rawtypes")
+        org.mockito.ArgumentCaptor<Map> forms = org.mockito.ArgumentCaptor.forClass(Map.class);
+        @SuppressWarnings("rawtypes")
+        org.mockito.ArgumentCaptor<Map> headers = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(http, times(3)).form(urls.capture(), forms.capture(), headers.capture(), any());
         assertThat(urls.getAllValues().get(0)).isEqualTo("https://interfacepc.music.163.com/eapi/cloudsearch/pc");
         assertThat(forms.getAllValues().get(0)).containsKey("params");
+        assertThat(headers.getAllValues().get(0).get("Referer")).isEqualTo("https://music.163.com/");
+        assertThat(headers.getAllValues().get(0).get("User-Agent").toString()).contains("Mozilla/5.0");
         assertThat(urls.getAllValues().get(1)).isEqualTo("https://music.163.com/weapi/v3/song/detail");
         assertThat(forms.getAllValues().get(1).keySet()).containsExactlyInAnyOrder("params", "encSecKey");
+        assertThat(headers.getAllValues().get(1).get("Referer")).isEqualTo("https://music.163.com/");
+        assertThat(headers.getAllValues().get(1).get("User-Agent").toString()).contains("Mozilla/5.0");
     }
 
     private KugouMusicMetadataProvider kugou(MusicSourceHttp http) {

@@ -19,6 +19,13 @@ describe('webAudioChannelRouter', () => {
     const merger = { connect: vi.fn(), disconnect: vi.fn() }
     const gainNode = { gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() }
     const source = { connect: vi.fn(), disconnect: vi.fn() }
+    const analyserNode = {
+      fftSize: 128,
+      frequencyBinCount: 64,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      getByteFrequencyData: vi.fn(arr => { arr.fill(128) }),
+    }
     const fakeCtx = {
       state: 'running',
       destination: {},
@@ -26,6 +33,7 @@ describe('webAudioChannelRouter', () => {
       createChannelSplitter: vi.fn(() => splitter),
       createChannelMerger: vi.fn(() => merger),
       createGain: vi.fn(() => gainNode),
+      createAnalyser: vi.fn(() => analyserNode),
       close: vi.fn(),
       resume: vi.fn()
     }
@@ -34,6 +42,11 @@ describe('webAudioChannelRouter', () => {
     const router = createWebAudioChannelRouter({ AudioContextCtor: FakeAudioContext })
     expect(router.attach({ tagName: 'VIDEO' })).toBe(true)
     expect(router.isActive()).toBe(true)
+    expect(fakeCtx.createAnalyser).toHaveBeenCalled()
+
+    const freqData = router.getFrequencyData()
+    expect(freqData).not.toBeNull()
+    expect(freqData[0]).toBe(128)
 
     splitter.connect.mockClear()
     router.setRouting({ layout: 'DUAL_CHANNEL', originalChannel: 'LEFT', accompanimentChannel: 'RIGHT' }, 'accompaniment')
@@ -53,6 +66,14 @@ describe('webAudioChannelRouter', () => {
     expect(router.isSuspended()).toBe(false)
     fakeCtx.state = 'suspended'
     expect(router.isSuspended()).toBe(true)
+
+    expect(router.getPitch()).toBe(0)
+    router.setPitch(3)
+    expect(router.getPitch()).toBe(3)
+    router.resetPitch()
+    expect(router.getPitch()).toBe(3)
+    router.setPitch(0)
+    expect(router.getPitch()).toBe(0)
 
     router.dispose()
     expect(router.isActive()).toBe(false)

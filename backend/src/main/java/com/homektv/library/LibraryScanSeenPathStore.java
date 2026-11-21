@@ -21,5 +21,13 @@ public interface LibraryScanSeenPathStore {
 
     void delete(UUID scanId);
 
+    /**
+     * Cleans up orphan seen-path rows whose scan_id does not belong to any currently active
+     * heartbeat lease in library_scan_state. Returns the number of deleted rows.
+     */
+    default int cleanOrphanSeenPaths() {
+        return 0;
+    }
+
     record MissingFiles(int filesMarked, int songsMarked) {}
 }

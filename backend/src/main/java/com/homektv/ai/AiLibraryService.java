@@ -304,7 +304,7 @@ public class AiLibraryService {
     private record BatchWriteResult(int created, int skippedExisting, int dispatchRejected, int dispatchedAttempted) {}
 
     /** Feeds pending backlog tasks into aiBulkExecutor without overflowing its bounded queue. */
-    @Scheduled(fixedDelayString = "${home-ktv.ai.pending-drain-delay-ms:2000}")
+    @Scheduled(fixedDelayString = "${home-ktv.ai.pending-drain-delay-ms:60000}")
     public void drainPendingTasks() {
         int allowance = availablePendingDispatchAllowance();
         if (allowance <= 0) return;

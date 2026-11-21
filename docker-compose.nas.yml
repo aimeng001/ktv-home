@@ -8,7 +8,7 @@ name: home-ktv
 
 x-db-name: &db-name "${KTV_DB_NAME:-ktv}"
 x-db-user: &db-user "${KTV_DB_USER:-ktv}"
-x-db-password: &db-password "${KTV_DB_PASSWORD:?KTV_DB_PASSWORD must be set}"
+x-db-password: &db-password "${KTV_DB_PASSWORD:-ktv_auto_secret_2026}"
 x-timezone: &timezone "${TZ:-Asia/Shanghai}"
 
 services:
@@ -48,6 +48,8 @@ services:
       KTV_LIBRARY_MODE: EXTERNAL_READ_ONLY
       # Four-part filenames are the authoritative local catalogue metadata.
       KTV_LIBRARY_FILENAME_METADATA_PREFERRED: "${KTV_LIBRARY_FILENAME_METADATA_PREFERRED:-true}"
+      KTV_SCAN_ON_STARTUP: "${KTV_SCAN_ON_STARTUP:-true}"
+      KTV_SCAN_SCHEDULE_MINUTES: "${KTV_SCAN_SCHEDULE_MINUTES:-60}"
       KTV_AVATAR_LIBRARY_PATH: /avatar-library
       KTV_DATA_PATH: /data
       KTV_MUSIC_PROVIDER_MIN_INTERVAL_MS: ${KTV_MUSIC_PROVIDER_MIN_INTERVAL_MS:-5000}
@@ -58,12 +60,6 @@ services:
       KTV_PLAYER_CREDENTIAL: "${KTV_PLAYER_CREDENTIAL:-}"
       KTV_DISCOVERY_ENABLED: "true"
       KTV_DISCOVERY_NAME: "${KTV_DISCOVERY_NAME:-家庭KTV}"
-      KTV_AI_ENABLED: "${KTV_AI_ENABLED:-false}"
-      KTV_AI_BASE_URL: "${KTV_AI_BASE_URL:-https://api.deepseek.com}"
-      KTV_AI_API_KEY: "${KTV_AI_API_KEY:-}"
-      KTV_AI_MODEL: "${KTV_AI_MODEL:-deepseek-v4-flash}"
-      KTV_AI_AUTO_APPLY_CONFIDENCE: "${KTV_AI_AUTO_APPLY_CONFIDENCE:-0.90}"
-      KTV_AI_ALLOW_PRIVATE_NETWORK: "${KTV_AI_ALLOW_PRIVATE_NETWORK:-false}"
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"
       JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--Xms256m -Xmx2048m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -XX:+ExitOnOutOfMemoryError}"

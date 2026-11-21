@@ -20,6 +20,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -85,6 +86,9 @@ class MusicSourceControllerTest {
     @Test
     void testEndpointAcceptsMissingBodyAndParsesRequestedProviders() {
         Fixture fixture = fixture();
+        com.homektv.musicsource.ProviderRequestRateLimiter rateLimiter =
+                mock(com.homektv.musicsource.ProviderRequestRateLimiter.class);
+        fixture.controller.setRateLimiter(rateLimiter);
         when(fixture.config.states()).thenReturn(List.of(Map.of("provider", "QQ")));
         when(fixture.search.test(any())).thenReturn(List.of());
 
@@ -92,6 +96,7 @@ class MusicSourceControllerTest {
         assertThat(fixture.controller.test(new MusicSourceController.ProviderRequest(List.of("qq", "QQ"))))
                 .containsEntry("results", List.of());
 
+        verify(rateLimiter, times(2)).resetCooldowns();
         verify(fixture.search).test(Set.of());
         verify(fixture.search).test(Set.of(MusicProvider.QQ));
     }

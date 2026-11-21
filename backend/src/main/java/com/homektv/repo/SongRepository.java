@@ -572,6 +572,11 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
+              AND (
+                  :wordCount <= 0
+                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
+                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+              )
             """,
             nativeQuery = true)
     Page<Song> browseCategorySongs(@Param("artist") String artist,
@@ -580,11 +585,17 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                    @Param("tag") String tag,
                                    @Param("vocalForm") String vocalForm,
                                    @Param("keyword") String keyword,
+                                   @Param("wordCount") int wordCount,
                                    Pageable pageable);
 
     default Page<Song> browseCategorySongs(String artist, String artistGender, String language,
+                                           String tag, String vocalForm, String keyword, Pageable pageable) {
+        return browseCategorySongs(artist, artistGender, language, tag, vocalForm, keyword, 0, pageable);
+    }
+
+    default Page<Song> browseCategorySongs(String artist, String artistGender, String language,
                                            String tag, String vocalForm, Pageable pageable) {
-        return browseCategorySongs(artist, artistGender, language, tag, vocalForm, "", pageable);
+        return browseCategorySongs(artist, artistGender, language, tag, vocalForm, "", 0, pageable);
     }
 
     /** Public browse variant that follows the canonical song_artists identity key. */
@@ -679,6 +690,11 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
+              AND (
+                  :wordCount <= 0
+                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
+                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+              )
             """,
             nativeQuery = true)
     Page<Song> browseCategorySongsByArtistKey(@Param("artistKey") String artistKey,
@@ -687,11 +703,17 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                               @Param("tag") String tag,
                                               @Param("vocalForm") String vocalForm,
                                               @Param("keyword") String keyword,
+                                              @Param("wordCount") int wordCount,
                                               Pageable pageable);
 
     default Page<Song> browseCategorySongsByArtistKey(String artistKey, String artistGender, String language,
+                                                      String tag, String vocalForm, String keyword, Pageable pageable) {
+        return browseCategorySongsByArtistKey(artistKey, artistGender, language, tag, vocalForm, keyword, 0, pageable);
+    }
+
+    default Page<Song> browseCategorySongsByArtistKey(String artistKey, String artistGender, String language,
                                                       String tag, String vocalForm, Pageable pageable) {
-        return browseCategorySongsByArtistKey(artistKey, artistGender, language, tag, vocalForm, "", pageable);
+        return browseCategorySongsByArtistKey(artistKey, artistGender, language, tag, vocalForm, "", 0, pageable);
     }
 
     @Query(value = """
@@ -773,6 +795,11 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
+              AND (
+                  :wordCount <= 0
+                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
+                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+              )
             """,
             nativeQuery = true)
     Page<Song> browseCategorySongsWithMediaType(@Param("artist") String artist,
@@ -782,7 +809,14 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                                 @Param("vocalForm") String vocalForm,
                                                 @Param("keyword") String keyword,
                                                 @Param("mediaType") String mediaType,
+                                                @Param("wordCount") int wordCount,
                                                 Pageable pageable);
+
+    default Page<Song> browseCategorySongsWithMediaType(String artist, String artistGender, String language,
+                                                        String tag, String vocalForm, String keyword, String mediaType,
+                                                        Pageable pageable) {
+        return browseCategorySongsWithMediaType(artist, artistGender, language, tag, vocalForm, keyword, mediaType, 0, pageable);
+    }
 
     @Query(value = """
             SELECT * FROM songs s
@@ -877,6 +911,11 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
               )
+              AND (
+                  :wordCount <= 0
+                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
+                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+              )
             """,
             nativeQuery = true)
     Page<Song> browseCategorySongsByArtistKeyWithMediaType(@Param("artistKey") String artistKey,
@@ -886,7 +925,14 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                                            @Param("vocalForm") String vocalForm,
                                                            @Param("keyword") String keyword,
                                                            @Param("mediaType") String mediaType,
+                                                           @Param("wordCount") int wordCount,
                                                            Pageable pageable);
+
+    default Page<Song> browseCategorySongsByArtistKeyWithMediaType(String artistKey, String artistGender, String language,
+                                                                   String tag, String vocalForm, String keyword, String mediaType,
+                                                                   Pageable pageable) {
+        return browseCategorySongsByArtistKeyWithMediaType(artistKey, artistGender, language, tag, vocalForm, keyword, mediaType, 0, pageable);
+    }
 
     @Query(value = """
             SELECT sa.artist_name

@@ -21,8 +21,21 @@
       @playing="onVideoPlaying"
     />
 
-    <!-- 音频曲目 / 镜像流不可用降级封面展示 -->
-    <div v-if="song && (!hasVideoStream || mirrorStreamFailed || isAudioOnly)" class="poster-fallback">
+    <!-- 纯音频伴奏全屏动态频谱跳动与歌手写真舞台 (1:1 电视端全屏纯音频效果) -->
+    <div
+      v-if="song && fullscreen && (!hasVideoStream || mirrorStreamFailed || isAudioOnly)"
+      class="audio-spectrum-stage"
+    >
+      <div
+        class="spectrum-bg-kenburns"
+        :style="song.coverUrl ? { backgroundImage: `url(${song.coverUrl})` } : {}"
+      />
+      <div class="spectrum-scrim" />
+      <canvas ref="spectrumCanvas" class="spectrum-canvas" />
+    </div>
+
+    <!-- 音频曲目 / 镜像流不可用降级封面展示 (非全屏小窗时使用) -->
+    <div v-if="song && !fullscreen && (!hasVideoStream || mirrorStreamFailed || isAudioOnly)" class="poster-fallback">
       <img v-if="song.coverUrl" :src="song.coverUrl" alt="" class="poster-img" />
       <div class="poster-badge">
         <strong>{{ song.title }}</strong>
@@ -56,24 +69,33 @@
         </div>
       </div>
 
-      <!-- 实时滚动歌词 -->
+      <!-- 切歌与下一首顶部跑马灯横幅 -->
+      <transition name="marquee-slide">
+        <div v-if="songBanner" class="fs-marquee-banner" role="status" aria-live="polite">
+          <span class="marquee-icon">🎵</span>
+          <span class="marquee-text">{{ songBanner }}</span>
+        </div>
+      </transition>
+
+      <!-- 1:1 电视同款双行卡拉OK歌词 -->
       <div v-if="showLyrics && song" class="fs-lyrics" :class="{ 'audio-center': isAudioOnly || mirrorStreamFailed }">
         <div v-if="lyricError" class="lyric-empty">歌词加载失败 · <button type="button" @click.stop="retryLyric">重试</button></div>
-        <div v-else-if="!lyricLines.length" class="lyric-empty">暂无歌词，享受现场伴奏</div>
-        <div v-else class="lyric-window">
-          <div class="lyric-track" :style="{ transform: `translateY(${lyricOffsetPx}px)` }">
-            <div v-for="(line, idx) in lyricLines" :key="idx" class="lyric-line" :class="{ cur: idx === activeLyricIdx }">
-              <template v-if="idx === activeLyricIdx && line.words?.length">
-                <span v-for="(w, wi) in line.words" :key="wi" :class="{ sung: w.time <= displayPositionMs }">{{ w.text }}</span>
-              </template>
-              <template v-else>{{ line.text }}</template>
-            </div>
-          </div>
-        </div>
+        <KaraokeLyricSurface
+          v-else
+          :lyric-lines="lyricLines"
+          :position-ms="displayPositionMs"
+          :is-playing="player.isPlaying"
+        />
       </div>
 
       <!-- 全屏底部控台 -->
-      <div class="fs-bottom-panel" :class="{ hidden: !osdVisible }" @click.stop>
+      <div
+        class="fs-bottom-panel"
+        :class="{ hidden: !osdVisible }"
+        @click.stop="wakeOsd"
+        @mousemove="wakeOsd"
+        @pointerdown="wakeOsd"
+      >
         <div class="fs-progress-row">
           <button type="button" class="fs-seek-btn" aria-label="快退 10 秒" @click="seekBy(-10000)">-10s</button>
           <span class="time-lbl">{{ formatDurationMs(displayPositionMs) }}</span>
@@ -89,8 +111,17 @@
           />
           <span class="time-lbl">{{ formatDurationMs(durationMs) }}</span>
           <button type="button" class="fs-seek-btn" aria-label="快进 10 秒" @click="seekBy(10000)">+10s</button>
-          <button type="button" class="fs-seek-btn" aria-label="降调" @click="$emit('pitch-delta', -1)">降调</button>
-          <button type="button" class="fs-seek-btn" aria-label="升调" @click="$emit('pitch-delta', 1)">升调</button>
+          <button type="button" class="fs-seek-btn" aria-label="伴奏降调" @click="$emit('pitch-delta', -1)">♭ 降调</button>
+          <button
+            type="button"
+            class="pitch-tag-btn"
+            :class="{ active: (player.pitchSemitones || 0) !== 0 }"
+            :title="player.pitchSemitones ? '点击恢复原调' : '当前原调'"
+            @click="$emit('pitch-delta', -(player.pitchSemitones || 0))"
+          >
+            {{ pitchLabel }}
+          </button>
+          <button type="button" class="fs-seek-btn" aria-label="伴奏升调" @click="$emit('pitch-delta', 1)">♯ 升调</button>
         </div>
 
         <div class="fs-action-row">
@@ -136,6 +167,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Minimize2, Volume2 } from 'lucide-vue-next'
+import KaraokeLyricSurface from './KaraokeLyricSurface.vue'
 import { usePlayerStore } from '../../stores/player'
 import { parseLrc } from '../../composables/lrc'
 import { createLyricLoader } from '../../views/lyricLoader'
@@ -182,8 +214,19 @@ const scrubbingValue = ref(null)
 const osdVisible = ref(true)
 const showLyrics = ref(true)
 const effectBanner = ref('')
+const songBanner = ref('')
 let osdTimer = null
 let effectTimer = null
+let songBannerTimer = null
+
+function showSongMarquee(text) {
+  if (!text) return
+  songBanner.value = text
+  clearTimeout(songBannerTimer)
+  songBannerTimer = setTimeout(() => {
+    songBanner.value = ''
+  }, 3000)
+}
 let lastProgressSentAt = 0
 let lastAppliedSeq = -1
 let lastStreamKey = ''
@@ -239,11 +282,16 @@ const stageStyle = computed(() => {
   }
 })
 
+const pitchLabel = computed(() => {
+  const p = player.pitchSemitones || 0
+  return p === 0 ? '原调' : (p > 0 ? '+' : '') + p
+})
+
 function wakeOsd() {
   if (!props.fullscreen) return
   osdVisible.value = true
   clearTimeout(osdTimer)
-  osdTimer = setTimeout(() => { osdVisible.value = false }, 5000)
+  osdTimer = setTimeout(() => { osdVisible.value = false }, 3000)
 }
 
 function onStageClick() {
@@ -261,6 +309,7 @@ function syncAudioRouter() {
   if (player.isWebHost) {
     const routed = channelRouter.attach(el)
     channelRouter.setRouting(player.audioLayout, player.vocalMode)
+    channelRouter?.setPitch?.(player.pitchSemitones)
     channelRouter.setGain(player.volume, effectiveMuted.value)
     // Web Audio GainNode scales amplitude once; keep native element gain at 1.0 when attached.
     if (el.volume !== undefined) {
@@ -428,6 +477,7 @@ function onVideoError() {
 }
 
 function onScrubInput(e) {
+  wakeOsd()
   scrubbingValue.value = Number(e.target.value)
 }
 
@@ -470,8 +520,20 @@ watch(() => player.nowPlaying?.queueId, (newId, oldId) => {
     lastAppliedSeq = player.seekSequence
     if (song.value?.id) lyricLoader.load(song.value.id)
     else lyricLoader.dispose()
+
+    if (newId && song.value) {
+      const curText = `正在播放：${song.value.artist ? song.value.artist + ' - ' : ''}${song.value.title}`
+      const nxtText = nextSong.value ? `  |  下一首：${nextSong.value.artist ? nextSong.value.artist + ' - ' : ''}${nextSong.value.title}` : ''
+      showSongMarquee(`${curText}${nxtText}`)
+    }
   }
 }, { immediate: true })
+
+watch(() => nextSong.value?.id, (newNextId, oldNextId) => {
+  if (newNextId && newNextId !== oldNextId && song.value && !songBanner.value) {
+    showSongMarquee(`下一首：${nextSong.value.artist ? nextSong.value.artist + ' - ' : ''}${nextSong.value.title}`)
+  }
+})
 
 watch(() => player.vocalMode, () => {
   syncAudioRouter()
@@ -579,13 +641,135 @@ watch(() => props.fullscreen, (fs) => {
   else clearTimeout(osdTimer)
 })
 
+watch(() => player.pitchSemitones, (semitones) => {
+  if (player.isWebHost) {
+    channelRouter?.setPitch?.(semitones)
+  }
+})
+
+const spectrumCanvas = ref(null)
+let spectrumAnimId = null
+
+function renderSpectrumFrame() {
+  if (!spectrumCanvas.value) return
+  const canvas = spectrumCanvas.value
+  let ctx = null
+  try {
+    ctx = canvas.getContext ? canvas.getContext('2d') : null
+  } catch {
+    ctx = null
+  }
+  if (!ctx) return
+
+  const width = canvas.width || 600
+  const height = canvas.height || 180
+  if (typeof ctx.clearRect === 'function') {
+    ctx.clearRect(0, 0, width, height)
+  }
+
+  const isPlaying = Boolean(player.isPlaying)
+  const freqData = channelRouter?.getFrequencyData?.()
+  const barCount = 40
+  const barWidth = Math.max(3, (width / barCount) - 4)
+  const maxBarHeight = height * 0.75
+
+  if (typeof ctx.createLinearGradient === 'function') {
+    const gradient = ctx.createLinearGradient(0, height, 0, 0)
+    gradient.addColorStop(0, 'rgba(0, 229, 255, 0.7)')
+    gradient.addColorStop(0.5, 'rgba(168, 85, 247, 0.85)')
+    gradient.addColorStop(1, 'rgba(255, 215, 0, 0.95)')
+    ctx.fillStyle = gradient
+  } else {
+    ctx.fillStyle = '#00e5ff'
+  }
+
+  for (let i = 0; i < barCount; i++) {
+    let value = 0
+    if (isPlaying && freqData && freqData.length > 0) {
+      const freqIndex = Math.floor((i / barCount) * Math.min(freqData.length, 48))
+      value = (freqData[freqIndex] || 0) / 255
+    } else if (isPlaying) {
+      const t = Date.now() / 300
+      value = (Math.sin(t + i * 0.3) + 1) * 0.15 + 0.05
+    }
+    const barHeight = Math.max(4, value * maxBarHeight)
+    const x = i * (barWidth + 4) + (width - (barCount * (barWidth + 4))) / 2
+    const y = height - barHeight
+    
+    if (typeof ctx.beginPath === 'function') ctx.beginPath()
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(x, y, barWidth, barHeight, [4, 4, 0, 0])
+    } else if (typeof ctx.rect === 'function') {
+      ctx.rect(x, y, barWidth, barHeight)
+    }
+    if (typeof ctx.fill === 'function') ctx.fill()
+  }
+
+  if (props.fullscreen && (isAudioOnly.value || !hasVideoStream.value || mirrorStreamFailed.value) && player.isPlaying) {
+    spectrumAnimId = requestAnimationFrame(renderSpectrumFrame)
+  } else {
+    spectrumAnimId = null
+  }
+}
+
+function startSpectrumAnimation() {
+  stopSpectrumAnimation()
+  if (!props.fullscreen || !(isAudioOnly.value || !hasVideoStream.value || mirrorStreamFailed.value)) return
+  if (!player.isPlaying) return
+
+  if (spectrumCanvas.value) {
+    const rect = spectrumCanvas.value.getBoundingClientRect ? spectrumCanvas.value.getBoundingClientRect() : null
+    if (rect && rect.width > 0 && rect.height > 0) {
+      spectrumCanvas.value.width = rect.width
+      spectrumCanvas.value.height = rect.height
+    } else {
+      spectrumCanvas.value.width = 600
+      spectrumCanvas.value.height = 180
+    }
+  }
+  spectrumAnimId = requestAnimationFrame(renderSpectrumFrame)
+}
+
+function stopSpectrumAnimation() {
+  if (spectrumAnimId) {
+    cancelAnimationFrame(spectrumAnimId)
+    spectrumAnimId = null
+  }
+  if (spectrumCanvas.value) {
+    try {
+      const ctx = spectrumCanvas.value.getContext ? spectrumCanvas.value.getContext('2d') : null
+      if (ctx && typeof ctx.clearRect === 'function') {
+        ctx.clearRect(0, 0, spectrumCanvas.value.width || 0, spectrumCanvas.value.height || 0)
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
+
+watch([() => props.fullscreen, isAudioOnly, hasVideoStream, mirrorStreamFailed, () => player.isPlaying], () => {
+  if (props.fullscreen && (isAudioOnly.value || !hasVideoStream.value || mirrorStreamFailed.value) && player.isPlaying) {
+    startSpectrumAnimation()
+  } else {
+    stopSpectrumAnimation()
+  }
+}, { immediate: true })
+
+watch(spectrumCanvas, (canvas) => {
+  if (canvas && props.fullscreen && (isAudioOnly.value || !hasVideoStream.value || mirrorStreamFailed.value) && player.isPlaying) {
+    startSpectrumAnimation()
+  }
+})
+
 onMounted(() => {
   applyMediaSource()
 })
 
 onBeforeUnmount(() => {
+  stopSpectrumAnimation()
   clearTimeout(osdTimer)
   clearTimeout(effectTimer)
+  clearTimeout(songBannerTimer)
   lyricLoader.dispose()
   channelRouter.dispose()
 })
@@ -652,6 +836,44 @@ onBeforeUnmount(() => {
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
+.audio-spectrum-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  z-index: 1;
+}
+.spectrum-bg-kenburns {
+  position: absolute;
+  inset: -10%;
+  background-size: cover;
+  background-position: center;
+  filter: blur(20px) brightness(0.45);
+  animation: kenburnsBreath 18s ease-in-out infinite alternate;
+  will-change: transform;
+}
+@keyframes kenburnsBreath {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.08) translate(-1%, 1%); }
+  100% { transform: scale(1.15) translate(1%, -1%); }
+}
+.spectrum-scrim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(15, 23, 42, 0.3) 0%, rgba(5, 8, 22, 0.88) 100%);
+}
+.spectrum-canvas {
+  position: absolute;
+  bottom: 120px;
+  left: 5%;
+  width: 90%;
+  height: 180px;
+  pointer-events: none;
+  z-index: 2;
+}
+
 .poster-fallback {
   position: absolute;
   inset: 0;
@@ -804,6 +1026,16 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 700;
 }
+.pitch-tag {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 198, 75, 0.22);
+  border: 1px solid rgba(255, 198, 75, 0.45);
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
 .time-lbl { width: 46px; text-align: center; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .fs-slider { flex: 1; accent-color: var(--gold); }
 .fs-action-row {
@@ -827,4 +1059,61 @@ onBeforeUnmount(() => {
   font-weight: 800;
 }
 .fs-act:disabled { opacity: 0.45; }
+.pitch-tag-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.pitch-tag-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+.pitch-tag-btn.active {
+  background: rgba(255, 198, 75, 0.2);
+  color: var(--gold);
+  border-color: rgba(255, 198, 75, 0.5);
+}
+.fs-marquee-banner {
+  position: absolute;
+  top: 86px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(20, 26, 44, 0.95), rgba(30, 40, 68, 0.95));
+  border: 1px solid rgba(255, 198, 75, 0.45);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 16px rgba(255, 198, 75, 0.2);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 10;
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 90vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.marquee-icon { font-size: 16px; }
+.marquee-text { overflow: hidden; text-overflow: ellipsis; }
+.marquee-slide-enter-active,
+.marquee-slide-leave-active {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.marquee-slide-enter-from {
+  opacity: 0;
+  transform: translate(-50%, -16px);
+}
+.marquee-slide-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -10px);
+}
 </style>

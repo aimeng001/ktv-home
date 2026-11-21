@@ -86,9 +86,15 @@ public class AppProperties {
     }
 
     public static class Scan {
+        private boolean onStartup = true;
+        private int scheduleMinutes = 60;
         private MissingGuard missingGuard = new MissingGuard();
         private FastProbe fastProbe = new FastProbe();
 
+        public boolean isOnStartup() { return onStartup; }
+        public void setOnStartup(boolean onStartup) { this.onStartup = onStartup; }
+        public int getScheduleMinutes() { return scheduleMinutes; }
+        public void setScheduleMinutes(int scheduleMinutes) { this.scheduleMinutes = Math.max(1, scheduleMinutes); }
         public MissingGuard getMissingGuard() { return missingGuard; }
         public void setMissingGuard(MissingGuard missingGuard) { this.missingGuard = missingGuard; }
         public FastProbe getFastProbe() { return fastProbe; }

@@ -16,6 +16,8 @@ import java.util.Set;
 
 @Component
 public class NeteaseMusicMetadataProvider implements MusicMetadataProvider {
+    private static final String USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     private final ObjectMapper mapper;
     private final MusicSourceHttp http;
 
@@ -41,7 +43,8 @@ public class NeteaseMusicMetadataProvider implements MusicMetadataProvider {
         header.put("os", "pc"); header.put("appver", "3.1.0"); header.put("requestId", String.valueOf(System.currentTimeMillis()));
         String path = "/api/cloudsearch/pc";
         JsonNode root = http.form("https://interfacepc.music.163.com/eapi/cloudsearch/pc",
-                Map.of("params", NeteaseCrypto.eapi(path, compact(data))), Map.of("Referer", "https://music.163.com/"), timeout);
+                Map.of("params", NeteaseCrypto.eapi(path, compact(data))),
+                Map.of("Referer", "https://music.163.com/", "User-Agent", USER_AGENT), timeout);
         return parseSongs(root.path("result").path("songs"), limit);
     }
 
@@ -52,7 +55,7 @@ public class NeteaseMusicMetadataProvider implements MusicMetadataProvider {
         NeteaseCrypto.WeapiPayload encrypted = NeteaseCrypto.weapi(compact(data));
         JsonNode root = http.form("https://music.163.com/weapi/v3/song/detail",
                 Map.of("params", encrypted.params(), "encSecKey", encrypted.encSecKey()),
-                Map.of("Referer", "https://music.163.com/"), timeout);
+                Map.of("Referer", "https://music.163.com/", "User-Agent", USER_AGENT), timeout);
         List<ExternalTrack> tracks = parseSongs(root.path("songs"), 1);
         if (tracks.isEmpty()) throw new MusicSourceException(provider(), "歌曲详情不存在");
         return tracks.getFirst();

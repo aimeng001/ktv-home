@@ -6,12 +6,26 @@
         type="text"
         :value="modelValue"
         maxlength="40"
-        placeholder="输入歌名 / 歌手 / 拼音首字母"
+        :placeholder="kbMode === 'number' ? '输入 6 位歌曲编号（如 800101）直接秒定歌曲' : '输入歌名 / 歌手 / 拼音首字母'"
         @input="onManualInput"
         @keydown.enter.prevent="$emit('submit')"
       />
       <button v-if="modelValue" type="button" class="kb-clear-mini" aria-label="清空输入" @click="clearAll">
         <X :size="15" />
+      </button>
+    </div>
+
+    <!-- 字数筛选胶囊（对标 Android TV / IKTV 50.0.4 键盘上方常驻字数栏） -->
+    <div class="word-count-bar" aria-label="歌名字数过滤">
+      <button
+        v-for="opt in wordCountOptions"
+        :key="opt.value"
+        type="button"
+        class="word-count-chip"
+        :class="{ on: (wordCount ?? 0) === opt.value }"
+        @click="selectWordCount(opt.value)"
+      >
+        {{ opt.label }}
       </button>
     </div>
 
@@ -29,6 +43,13 @@
         @click="switchMode('t9')"
       >
         T9 九宫格
+      </button>
+      <button
+        type="button"
+        :class="{ on: kbMode === 'number' }"
+        @click="switchMode('number')"
+      >
+        数字小键盘
       </button>
     </div>
 
@@ -53,7 +74,7 @@
     </div>
 
     <!-- T9 九宫格（对标 Android TV 800ms Multi-Tap 连按循环字母） -->
-    <div v-else class="t9-wrap">
+    <div v-else-if="kbMode === 't9'" class="t9-wrap">
       <div class="t9-grid">
         <button
           v-for="item in t9Keys"
@@ -69,25 +90,50 @@
       </div>
       <p class="t9-hint">连按数字键可在 800ms 内循环切换字母，停顿后输入下一位</p>
     </div>
+
+    <!-- 数字小键盘（对标 Android TV / IKTV 50.0.4 6 位歌曲编号秒点） -->
+    <div v-else-if="kbMode === 'number'" class="number-wrap">
+      <div class="number-grid">
+        <button
+          v-for="item in numberKeys"
+          :key="item.digit"
+          type="button"
+          class="number-key"
+          :class="{ action: item.action }"
+          @click="onNumberPress(item)"
+        >
+          <strong>{{ item.label }}</strong>
+        </button>
+      </div>
+      <p class="number-hint">输入 6 位歌曲编号（如 800101）直接秒定歌曲</p>
+    </div>
   </aside>
 </template>
 
 <script setup>
 import { ref } from 'vue'
 import { X } from 'lucide-vue-next'
-import { QWERTY_ROWS, T9_DIGIT_MAP, T9_KEYS } from './ktvCatalogPresets'
+import { NUMBER_KEYS, QWERTY_ROWS, T9_DIGIT_MAP, T9_KEYS, WORD_COUNT_OPTIONS } from './ktvCatalogPresets'
 
 const MULTI_TAP_TIMEOUT_MS = 800
 
 const props = defineProps({
-  modelValue: { type: String, default: '' }
+  modelValue: { type: String, default: '' },
+  wordCount: { type: Number, default: 0 },
 })
-const emit = defineEmits(['update:modelValue', 'submit'])
+const emit = defineEmits(['update:modelValue', 'update:wordCount', 'submit'])
+
+const wordCountOptions = WORD_COUNT_OPTIONS
+
+function selectWordCount(val) {
+  emit('update:wordCount', val)
+}
 
 const kbMode = ref('qwerty')
 const inputEl = ref(null)
 const qwertyRows = QWERTY_ROWS
 const t9Keys = T9_KEYS
+const numberKeys = NUMBER_KEYS
 
 let lastT9Digit = null
 let lastT9TapAt = 0
@@ -102,6 +148,20 @@ function resetMultiTap() {
 function switchMode(mode) {
   kbMode.value = mode
   resetMultiTap()
+  if (mode === 'number') {
+    emit('update:wordCount', 0)
+  }
+}
+
+function onNumberPress(item) {
+  resetMultiTap()
+  if (item.action === 'clear') {
+    clearAll()
+  } else if (item.action === 'backspace') {
+    backspace()
+  } else if (item.digit) {
+    appendChar(item.digit)
+  }
 }
 
 function onManualInput(e) {
@@ -202,6 +262,34 @@ defineExpose({ focusInput })
   display: grid;
   place-items: center;
 }
+.word-count-bar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.word-count-chip {
+  height: 28px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--dim, #a8b7d4);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: grid;
+  place-items: center;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+.word-count-chip:hover {
+  color: #fff;
+  border-color: rgba(255, 198, 75, 0.4);
+}
+.word-count-chip.on {
+  color: #1a1505;
+  background: var(--gold, #ffc64b);
+  border-color: var(--gold, #ffc64b);
+  font-weight: 700;
+  box-shadow: 0 0 8px rgba(255, 198, 75, 0.4);
+}
 .kb-mode-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -287,4 +375,28 @@ defineExpose({ focusInput })
 .t9-key.action { background: rgba(255, 198, 75, 0.14); border-color: rgba(255, 198, 75, 0.3); }
 .t9-wrap { display: flex; flex-direction: column; gap: 6px; }
 .t9-hint { font-size: 10px; color: var(--dim); text-align: center; }
+
+.number-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.number-key {
+  height: 46px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.number-key strong { font-size: 18px; font-weight: 800; color: #fff; }
+.number-key.action { background: rgba(255, 198, 75, 0.14); border-color: rgba(255, 198, 75, 0.3); }
+.number-key.action strong { font-size: 14px; font-weight: 700; color: var(--gold); }
+.number-key:hover, .number-key:active {
+  background: rgba(255, 198, 75, 0.25);
+  border-color: var(--gold);
+}
+.number-wrap { display: flex; flex-direction: column; gap: 6px; }
+.number-hint { font-size: 11px; color: var(--dim); text-align: center; }
 </style>

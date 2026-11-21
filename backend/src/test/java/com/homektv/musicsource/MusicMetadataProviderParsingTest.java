@@ -44,6 +44,48 @@ class MusicMetadataProviderParsingTest {
     }
 
     @Test
+    void kugouParserSupportsAndroidGatewayListsFormatWithOriSongNameAndFileName() throws Exception {
+        KugouMusicMetadataProvider provider = new KugouMusicMetadataProvider(
+                mapper, new ProviderCallGuard(), mock(MusicSourceConfigService.class));
+        JsonNode songs = mapper.readTree("""
+                [
+                  {
+                    "FileHash": "B3A52A7A958BF0AED0EBFBA2E9A818B7",
+                    "FileName": "周杰伦 - 晴天",
+                    "OriSongName": "晴天",
+                    "SingerName": "周杰伦",
+                    "AlbumName": "叶惠美",
+                    "Duration": 269,
+                    "PublishDate": "2003-07-31",
+                    "Image": "http://imge.kugou.com/stdmusic/{size}/20230920/晴天.jpg"
+                  },
+                  {
+                    "FileHash": "1F7E7659B9FFF4FB6F71562A61BBC25F",
+                    "FileName": "陈奕迅 - 十年",
+                    "SingerName": "陈奕迅",
+                    "Duration": 205,
+                    "trans_param": {
+                      "union_cover": "http://imge.kugou.com/stdmusic/{size}/20240101/十年.jpg"
+                    }
+                  }
+                ]
+                """);
+
+        var tracks = provider.parseSongs(songs, 10);
+
+        assertThat(tracks).hasSize(2);
+        assertThat(tracks.get(0).title()).isEqualTo("晴天");
+        assertThat(tracks.get(0).artists()).containsExactly("周杰伦");
+        assertThat(tracks.get(0).album()).isEqualTo("叶惠美");
+        assertThat(tracks.get(0).coverUrl()).isEqualTo("https://imge.kugou.com/stdmusic/400/20230920/晴天.jpg");
+        assertThat(tracks.get(0).durationMs()).isEqualTo(269_000);
+
+        assertThat(tracks.get(1).title()).isEqualTo("十年");
+        assertThat(tracks.get(1).artists()).containsExactly("陈奕迅");
+        assertThat(tracks.get(1).coverUrl()).isEqualTo("https://imge.kugou.com/stdmusic/400/20240101/十年.jpg");
+    }
+
+    @Test
     void kugouSignatureIsIndependentOfParameterInsertionOrderAndIncludesBody() {
         Map<String, Object> first = new LinkedHashMap<>();
         first.put("keyword", "晴天");

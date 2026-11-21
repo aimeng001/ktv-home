@@ -1,0 +1,193 @@
+// @vitest-environment jsdom
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createApp, nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
+
+const { apiMock, routerMock, toastSpy, media } = vi.hoisted(() => ({
+  apiMock: {},
+  routerMock: {
+    attach: vi.fn(),
+    setRouting: vi.fn(),
+    setGain: vi.fn(),
+    setPitch: vi.fn(),
+    resume: vi.fn(() => Promise.resolve()),
+    isSuspended: () => false,
+    dispose: vi.fn()
+  },
+  toastSpy: vi.fn(),
+  media: { playImpl: () => Promise.resolve() }
+}))
+
+vi.mock('../../api/client', () => ({ default: apiMock }))
+vi.mock('../../player/webAudioChannelRouter', () => ({
+  createWebAudioChannelRouter: () => routerMock
+}))
+vi.mock('../../player/streamSelection', () => ({
+  buildWebStreamSpec: () => ({ url: '/api/stream/1', liveTranscode: false })
+}))
+vi.mock('../../composables/useToast', async () => {
+  const { ref } = await import('vue')
+  return { useToast: () => ({ message: ref(''), toast: toastSpy }) }
+})
+
+import KtvMediaSurface from './KtvMediaSurface.vue'
+import { usePlayerStore } from '../../stores/player'
+
+describe('KtvMediaSurface 全屏播控 3 秒自隐藏与跑马灯', () => {
+  let app
+  let root
+  let player
+  let pinia
+  let emittedPitchDelta = []
+
+  beforeAll(() => {
+    Object.defineProperty(window.HTMLMediaElement.prototype, 'play', {
+      configurable: true,
+      writable: true,
+      value: function play() { return media.playImpl() }
+    })
+    Object.defineProperty(window.HTMLMediaElement.prototype, 'pause', {
+      configurable: true,
+      writable: true,
+      value: function pause() {}
+    })
+    Object.defineProperty(window.HTMLMediaElement.prototype, 'load', {
+      configurable: true,
+      writable: true,
+      value: function load() {}
+    })
+  })
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    emittedPitchDelta = []
+    pinia = createPinia()
+    setActivePinia(pinia)
+    player = usePlayerStore()
+    player.tvOnline = false
+    player.webPlayerRole = 'ACTIVE'
+    player.modeOverride = 'auto'
+    player.state = 'playing'
+    player.nowPlaying = { queueId: 10, song: { id: 1, title: '海阔天空', artist: 'Beyond' } }
+    player.queue = [{ queueId: 11, song: { id: 2, title: '光辉岁月', artist: 'Beyond' } }]
+
+    root = document.createElement('div')
+    document.body.appendChild(root)
+  })
+
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+    if (app) app.unmount()
+    if (root) root.remove()
+    app = null
+    root = null
+    vi.clearAllMocks()
+  })
+
+  async function mountFullscreenSurface() {
+    app = createApp(KtvMediaSurface, {
+      fullscreen: true,
+      onPitchDelta: (delta) => emittedPitchDelta.push(delta)
+    })
+    app.use(pinia)
+    app.mount(root)
+    await nextTick()
+    await nextTick()
+  }
+
+  it('全屏下初始显示播控栏并在 3 秒无交互后自动隐藏', async () => {
+    await mountFullscreenSurface()
+
+    const bottomPanel = root.querySelector('.fs-bottom-panel')
+    const topBar = root.querySelector('.fs-topbar')
+    expect(bottomPanel).not.toBeNull()
+    expect(topBar).not.toBeNull()
+    expect(bottomPanel.classList.contains('hidden')).toBe(false)
+    expect(topBar.classList.contains('hidden')).toBe(false)
+
+    // 触发鼠标移动以启动 3000ms 计时
+    const stage = root.querySelector('.media-stage')
+    stage.dispatchEvent(new MouseEvent('mousemove'))
+    await nextTick()
+
+    // 前进 2900ms，仍然未隐藏
+    vi.advanceTimersByTime(2900)
+    await nextTick()
+    expect(bottomPanel.classList.contains('hidden')).toBe(false)
+
+    // 前进到 3000ms，自动隐藏
+    vi.advanceTimersByTime(200)
+    await nextTick()
+    expect(bottomPanel.classList.contains('hidden')).toBe(true)
+    expect(topBar.classList.contains('hidden')).toBe(true)
+  })
+
+  it('交互时能重新唤醒播控浮层并重置 3 秒计时器', async () => {
+    await mountFullscreenSurface()
+    const stage = root.querySelector('.media-stage')
+    const bottomPanel = root.querySelector('.fs-bottom-panel')
+
+    // 触发唤醒并等待其隐藏
+    stage.dispatchEvent(new MouseEvent('mousemove'))
+    vi.advanceTimersByTime(3100)
+    await nextTick()
+    expect(bottomPanel.classList.contains('hidden')).toBe(true)
+
+    // 在 stage 移动鼠标重新唤出
+    stage.dispatchEvent(new MouseEvent('mousemove'))
+    await nextTick()
+    expect(bottomPanel.classList.contains('hidden')).toBe(false)
+
+    // 2 秒后持续在控制板上移动鼠标，重置计时器
+    vi.advanceTimersByTime(2000)
+    await nextTick()
+    bottomPanel.dispatchEvent(new MouseEvent('mousemove'))
+    await nextTick()
+
+    // 再过 1.5 秒（距上一次已 3.5 秒，但距最近交互才 1.5 秒），依然处于显示状态
+    vi.advanceTimersByTime(1500)
+    await nextTick()
+    expect(bottomPanel.classList.contains('hidden')).toBe(false)
+
+    // 再过 2 秒（总共距最近交互 3.5 秒），平滑隐藏
+    vi.advanceTimersByTime(2000)
+    await nextTick()
+    expect(bottomPanel.classList.contains('hidden')).toBe(true)
+  })
+
+  it('全屏切歌时顶部滑入跑马灯横幅并在 3 秒后淡出', async () => {
+    await mountFullscreenSurface()
+
+    // 切换歌曲
+    player.nowPlaying = { queueId: 20, song: { id: 3, title: '吻别', artist: '张学友' } }
+    await nextTick()
+    await nextTick()
+
+    const marquee = root.querySelector('.fs-marquee-banner')
+    expect(marquee).not.toBeNull()
+    expect(marquee.textContent).toContain('正在播放：张学友 - 吻别')
+
+    // 3 秒后横幅离开（Vue 进入 leave-active 状态）
+    vi.advanceTimersByTime(3500)
+    await nextTick()
+    const leaving = root.querySelector('.fs-marquee-banner')
+    expect(!leaving || leaving.classList.contains('marquee-slide-leave-active')).toBe(true)
+  })
+
+  it('升降调控台支持点击恢复原调并正确触发 pitch-delta', async () => {
+    player.pitchSemitones = 2
+    await mountFullscreenSurface()
+
+    const pitchBtn = root.querySelector('.pitch-tag-btn')
+    expect(pitchBtn).not.toBeNull()
+    expect(pitchBtn.textContent).toContain('+2')
+    expect(pitchBtn.classList.contains('active')).toBe(true)
+
+    // 点击原调标签重置调门
+    pitchBtn.click()
+    await nextTick()
+
+    expect(emittedPitchDelta).toEqual([-2])
+  })
+})

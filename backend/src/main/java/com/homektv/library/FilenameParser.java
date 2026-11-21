@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
 public final class FilenameParser {
 
     private static final String DEFAULT_RULE = "artist_title";
-    private static final Pattern CATALOG_PREFIX = Pattern.compile("^\\s*([0-9]{8,10})\\s*[-._]\\s*");
+    private static final Pattern CATALOG_PREFIX = Pattern.compile("^\\s*([0-9]{5,10})\\s*[-._]\\s*");
 
     private static final Map<String, String> LANGUAGE_ALIASES = Map.ofEntries(
             Map.entry("国语", "国语"),
@@ -97,18 +97,29 @@ public final class FilenameParser {
     }
 
     static ParsedMeta parse(String filename, String rule, ArtistIndex artistIndex) {
-        Matcher catalogPrefix = CATALOG_PREFIX.matcher(filename == null ? "" : filename);
+        String safeName = filename == null ? "" : filename;
+        Matcher catalogPrefix = CATALOG_PREFIX.matcher(safeName);
         String catalogNumber = "";
-        String parseFilename = filename;
-        if (catalogPrefix.find()) {
+        String parseFilename = safeName;
+        boolean found = catalogPrefix.find();
+        if (found) {
             String candidate = catalogPrefix.group(1);
-            if (isTrustedCatalogPrefix(candidate)) catalogNumber = candidate;
-            parseFilename = filename.substring(catalogPrefix.end());
+            String remaining = safeName.substring(catalogPrefix.end());
+            String remainingBase = stripExtension(remaining).trim();
+            // 多段守卫：只有当剥离前缀后，剩余部分仍包含有效分隔符（即能至少解析出两段以上）时，才剥离前缀
+            if (remainingBase.contains("-") || remainingBase.contains("_") || remainingBase.contains("——")) {
+                if (isTrustedCatalogPrefix(candidate)) catalogNumber = candidate;
+                parseFilename = remaining;
+            }
         }
         return parseWithoutCatalog(parseFilename, rule, artistIndex).withCatalogNumber(catalogNumber);
     }
 
     private static boolean isTrustedCatalogPrefix(String candidate) {
+        if (candidate == null) return false;
+        if (candidate.length() >= 5 && candidate.length() <= 7) {
+            return true;
+        }
         if (candidate.length() != 8) return false;
         int year = Integer.parseInt(candidate.substring(0, 4));
         if (year < 1900 || year > 2100) return true;
@@ -185,7 +196,7 @@ public final class FilenameParser {
         }
 
         // 剥离可能存在的曲目序号前缀（例如："01-周杰伦-晴天-国语-流行"，此时 identity 有 3 段以上）
-        if (identity.size() >= 3 && identity.get(0).matches("^\\d{1,5}$")) {
+        if (identity.size() >= 3 && identity.get(0).matches("^\\d{1,8}$")) {
             identity.remove(0);
         }
 
@@ -218,7 +229,7 @@ public final class FilenameParser {
         }
 
         List<String> effectiveParts = new ArrayList<>(parts);
-        if (effectiveParts.size() >= 3 && effectiveParts.get(0).matches("^\\d{1,5}$")) {
+        if (effectiveParts.size() >= 3 && effectiveParts.get(0).matches("^\\d{1,8}$")) {
             effectiveParts.remove(0);
         }
 
@@ -306,6 +317,63 @@ public final class FilenameParser {
         String name = slash >= 0 ? filename.substring(slash + 1) : filename;
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    public static String inferDeterministicLanguage(String title, String artist) {
+        String text = (title == null ? "" : title) + " " + (artist == null ? "" : artist);
+        // 1. 日语假名检测：平假名 \u3040-\u309F，片假名 \u30A0-\u30FF
+        if (text.chars().anyMatch(c -> (c >= 0x3040 && c <= 0x30FF))) {
+            return "日语";
+        }
+        // 2. 韩文音节检测：\uAC00-\uD7AF, 字母 \u1100-\u11FF
+        if (text.chars().anyMatch(c -> (c >= 0xAC00 && c <= 0xD7AF) || (c >= 0x1100 && c <= 0x11FF))) {
+            return "韩语";
+        }
+        // 3. 若有英文字母且全为 ASCII/拉丁字符（无任何中日韩汉字），确定性推导为英语
+        if (text.chars().anyMatch(Character::isLetter)
+                && text.chars().allMatch(c -> c < 128 || Character.isWhitespace(c))) {
+            return "英语";
+        }
+        return "";
+    }
+
+    public static String inferLanguage(String title, String artist) {
+        String text = (title == null ? "" : title) + " " + (artist == null ? "" : artist);
+        // 1. 日语假名检测：平假名 \u3040-\u309F，片假名 \u30A0-\u30FF
+        if (text.chars().anyMatch(c -> (c >= 0x3040 && c <= 0x30FF))) {
+            return "日语";
+        }
+        // 2. 韩文音节检测：\uAC00-\uD7AF, 字母 \u1100-\u11FF
+        if (text.chars().anyMatch(c -> (c >= 0xAC00 && c <= 0xD7AF) || (c >= 0x1100 && c <= 0x11FF))) {
+            return "韩语";
+        }
+        // 3. 中文字符检测：\u4E00-\u9FA5
+        if (text.chars().anyMatch(c -> c >= 0x4E00 && c <= 0x9FA5)) {
+            return "国语";
+        }
+        // 4. 若有英文字母且全为 ASCII/拉丁字符，推导为英语
+        if (text.chars().anyMatch(Character::isLetter) && text.chars().allMatch(c -> c < 128 || Character.isWhitespace(c))) {
+            return "英语";
+        }
+        return "国语";
+    }
+
+    public static String inferCategory(String title, String artist) {
+        String text = (title == null ? "" : title) + " " + (artist == null ? "" : artist);
+        if (text.contains("儿歌") || text.contains("少儿") || text.contains("童谣")) {
+            return "儿歌";
+        }
+        if (text.contains("戏曲") || text.contains("京剧") || text.contains("豫剧") ||
+            text.contains("越剧") || text.contains("黄梅戏") || text.contains("评剧")) {
+            return "戏曲";
+        }
+        if (text.contains("军旅") || text.contains("红歌") || text.contains("革命")) {
+            return "红歌";
+        }
+        if (text.contains("抖音") || text.contains("神曲")) {
+            return "抖音";
+        }
+        return "";
     }
 
     private record MetadataSuffix(int languageIndex, String language, String category) {}

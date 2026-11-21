@@ -18,6 +18,7 @@ import java.util.Set;
 @Component
 public class KugouMusicMetadataProvider implements MusicMetadataProvider {
     private static final String SALT = "OIlwieks28dk2k092lksi2UIkp";
+    private static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     private final MusicSourceHttp http;
     private final MusicSourceConfigService configService;
 
@@ -48,24 +49,31 @@ public class KugouMusicMetadataProvider implements MusicMetadataProvider {
     }
 
     private List<ExternalTrack> doSearch(String keyword, int limit, Duration timeout) {
-        String mid = configService.getOrCreateKugouDeviceId();
-        String now = String.valueOf(System.currentTimeMillis() / 1000);
-        Map<String, String> params = new LinkedHashMap<>();
-        params.put("dfid", "-"); params.put("mid", mid); params.put("uuid", "-");
-        params.put("appid", "1005"); params.put("clientver", "20489"); params.put("clienttime", now);
-        params.put("albumhide", "0"); params.put("iscorrection", "1"); params.put("keyword", keyword);
-        params.put("nocollect", "0"); params.put("page", "1"); params.put("pagesize", String.valueOf(Math.min(limit, 50)));
-        params.put("platform", "AndroidFilter");
-        params.put("signature", androidSignature(params, ""));
-        JsonNode root = http.get("https://gateway.kugou.com/v3/search/song?" + MusicSourceHttp.query(params),
-                Map.of("x-router", "complexsearch.kugou.com", "dfid", "-", "mid", mid,
-                        "clienttime", now, "User-Agent", "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi"), timeout);
-        if (root.path("error_code").asInt(0) == 152) return webSearch(keyword, limit, timeout);
-        if (root.path("status").asInt(0) != 1 || root.path("error_code").asInt(0) != 0)
-            throw new MusicSourceException(provider(), "酷狗搜索暂时不可用");
-        JsonNode songs = root.path("data").path("info");
-        if (!songs.isArray()) songs = root.path("data").path("lists");
-        return parseSongs(songs, limit);
+        try {
+            String mid = configService.getOrCreateKugouDeviceId();
+            String now = String.valueOf(System.currentTimeMillis() / 1000);
+            Map<String, String> params = new LinkedHashMap<>();
+            params.put("dfid", "-"); params.put("mid", mid); params.put("uuid", "-");
+            params.put("appid", "1005"); params.put("clientver", "20489"); params.put("clienttime", now);
+            params.put("albumhide", "0"); params.put("iscorrection", "1"); params.put("keyword", keyword);
+            params.put("nocollect", "0"); params.put("page", "1"); params.put("pagesize", String.valueOf(Math.min(limit, 50)));
+            params.put("platform", "AndroidFilter");
+            params.put("signature", androidSignature(params, ""));
+            JsonNode root = http.get("https://gateway.kugou.com/v3/search/song?" + MusicSourceHttp.query(params),
+                    Map.of("x-router", "complexsearch.kugou.com", "dfid", "-", "mid", mid,
+                            "clienttime", now, "User-Agent", "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi"), timeout);
+            if (root.path("status").asInt(0) == 1 && root.path("error_code").asInt(0) == 0) {
+                JsonNode songs = root.path("data").path("info");
+                if (!songs.isArray()) songs = root.path("data").path("lists");
+                List<ExternalTrack> tracks = parseSongs(songs, limit);
+                if (!tracks.isEmpty()) return tracks;
+            }
+        } catch (ProviderRateLimitedException | ProviderRateStateUnavailableException ex) {
+            throw ex;
+        } catch (RuntimeException ignored) {
+            // Gateway search error or timeout, fall back to web search
+        }
+        return webSearch(keyword, limit, timeout);
     }
 
     private List<ExternalTrack> webSearch(String keyword, int limit, Duration timeout) {
@@ -73,7 +81,8 @@ public class KugouMusicMetadataProvider implements MusicMetadataProvider {
         query.put("keyword", keyword); query.put("page", "1"); query.put("pagesize", String.valueOf(Math.min(limit, 50)));
         query.put("userid", "-1"); query.put("clientver", ""); query.put("platform", "WebFilter");
         query.put("filter", "2"); query.put("iscorrection", "1"); query.put("privilege_filter", "0");
-        JsonNode root = http.get("https://songsearch.kugou.com/song_search_v2?" + MusicSourceHttp.query(query), Map.of(), timeout);
+        JsonNode root = http.get("https://songsearch.kugou.com/song_search_v2?" + MusicSourceHttp.query(query),
+                Map.of("User-Agent", USER_AGENT), timeout);
         if (root.path("status").asInt(0) != 1 || root.path("error_code").asInt(0) != 0)
             throw new MusicSourceException(provider(), "酷狗公开搜索暂时不可用");
         return parseSongs(root.path("data").path("lists"), limit);
@@ -84,10 +93,22 @@ public class KugouMusicMetadataProvider implements MusicMetadataProvider {
         if (!songs.isArray()) return result;
         for (JsonNode song : songs) {
             String id = first(song, "hash", "audio_id", "audioid", "FileHash");
-            String title = first(song, "songname", "song_name", "name", "SongName");
+            String title = first(song, "songname", "song_name", "name", "SongName", "OriSongName");
+            if (title == null) {
+                String fileName = first(song, "FileName");
+                if (fileName != null && fileName.contains(" - ")) {
+                    title = fileName.substring(fileName.indexOf(" - ") + 3).trim();
+                } else {
+                    title = fileName;
+                }
+            }
             List<String> artists = ProviderJson.names(song.path("authors"), song.path("authors").isArray() ? "author_name" : null);
+            if (artists.isEmpty()) artists = ProviderJson.names(song.path("Singers"), song.path("Singers").isArray() ? "name" : null);
             if (artists.isEmpty()) artists = ProviderJson.splitArtists(first(song, "singername", "author_name", "singer_name", "SingerName"));
             String coverRaw = first(song, "sizable_cover", "album_sizable_cover", "img", "Image", "AlbumImage");
+            if (coverRaw == null && song.has("trans_param")) {
+                coverRaw = first(song.path("trans_param"), "union_cover");
+            }
             if (coverRaw != null) coverRaw = coverRaw.replace("{size}", "400");
             String cover = ProviderJson.https(coverRaw, "kugou.com", "kugoucdn.com", "kgimg.com");
             Integer duration = null;

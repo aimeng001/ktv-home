@@ -163,7 +163,7 @@ describe('KtvKioskView', () => {
       playback: { kind: 'NATIVE', status: 'READY', sourceFileId: 55 }
     })
     await nextTick()
-    expect(root.querySelector('.mode-pill')?.textContent).toContain('TV控制台')
+    expect(root.querySelector('.mode-pill')?.textContent).toContain('正在控制电视')
     expect(root.querySelector('.queue-badge')?.textContent?.trim()).toBe('1')
 
     player.handleEvent('player_state', {
@@ -175,7 +175,7 @@ describe('KtvKioskView', () => {
     })
     player.handleEvent('player_role', { role: 'ACTIVE', generation: 2, lease_ms: 45000 })
     await nextTick()
-    expect(root.querySelector('.mode-pill')?.textContent).toContain('本机KTV主屏')
+    expect(root.querySelector('.mode-pill')?.textContent).toContain('本机大屏播放')
   })
 
   it('opens the 3-column browser from Bento tiles and loads songs and orders', async () => {

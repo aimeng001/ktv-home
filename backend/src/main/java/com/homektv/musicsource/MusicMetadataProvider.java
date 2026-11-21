@@ -10,8 +10,12 @@ public interface MusicMetadataProvider {
 
     default ProviderHealth health(Duration timeout) {
         long started = System.nanoTime();
-        search("周杰伦", 1, timeout);
-        return new ProviderHealth(provider(), true, (System.nanoTime() - started) / 1_000_000, null);
+        List<ExternalTrack> tracks = search("周杰伦", 1, timeout);
+        long latency = (System.nanoTime() - started) / 1_000_000;
+        if (tracks == null || tracks.isEmpty()) {
+            return new ProviderHealth(provider(), false, latency, "未返回有效歌曲元数据");
+        }
+        return new ProviderHealth(provider(), true, latency, null);
     }
 
     record ProviderHealth(MusicProvider provider, boolean healthy, long latencyMs, String error) {}

@@ -22,6 +22,7 @@ export const usePlayerStore = defineStore('player', {
     volume: 60,
     muted: false,
     vocalMode: 'accompaniment', // 伴唱模式 | original / accompaniment
+    pitchSemitones: 0,     // 伴奏升降调半音数 | -6 到 +6，0 为原调
     audioLayout: {
       layout: 'NORMAL_STEREO',
       originalTrackIndex: null,
@@ -193,10 +194,14 @@ export const usePlayerStore = defineStore('player', {
         return false
       }
       const prevTvOnline = this.tvOnline
+      const prevQueueId = this.nowPlaying?.queueId
       const playing = snap.playing ?? null
       this.nowPlaying = playing
         ? { queueId: playing.queueId, song: playing.song, orderedByNick: playing.orderedByNick }
         : null
+      if (playing?.queueId !== prevQueueId) {
+        this.resetPitch()
+      }
       this.state = snap.state ?? 'idle'
       if (typeof snap.positionMs === 'number') this.positionMs = Math.max(0, snap.positionMs)
       if (typeof snap.seekSequence === 'number') this.seekSequence = snap.seekSequence
@@ -238,7 +243,6 @@ export const usePlayerStore = defineStore('player', {
         }
         return
       }
-      if (this.tvOnline !== false) return
       if (this.modeOverride === 'console') {
         this.releaseWebPlayer()
         return
@@ -250,6 +254,19 @@ export const usePlayerStore = defineStore('player', {
       if (this.webPlayerRole !== 'ACTIVE') {
         this.claimWebPlayer(false)
       }
+    },
+
+    setPitch(semitones) {
+      const val = Number.isFinite(Number(semitones)) ? Math.round(Number(semitones)) : 0
+      this.pitchSemitones = Math.max(-6, Math.min(6, val))
+    },
+
+    adjustPitch(delta) {
+      this.setPitch(this.pitchSemitones + (Number(delta) || 0))
+    },
+
+    resetPitch() {
+      this.pitchSemitones = 0
     },
 
     claimWebPlayer(force = false) {

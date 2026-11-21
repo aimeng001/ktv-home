@@ -123,7 +123,7 @@ public class LibraryScanCoordinator {
         }
     }
 
-    private boolean hasActiveScan() {
+    public boolean hasActiveScan() {
         LibraryScanService.ScanProgress progress = scanService.getScanProgress();
         return scheduled.get() || (progress != null && progress.running()) || stateStore.hasActiveLease();
     }

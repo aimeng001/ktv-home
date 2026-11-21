@@ -71,6 +71,7 @@
       :open="drawerOpen"
       @close="drawerOpen = false"
       @next="confirmNext"
+      @restart="restartSong"
     />
 
     <KtvModals
@@ -87,6 +88,16 @@
       @pitch-reset="resetPitch"
       @effect="sendEffect"
     />
+
+    <KtvEffectOverlay ref="effectOverlayRef" />
+
+    <transition name="fade">
+      <KtvStandbyScreen
+        v-if="isStandby && !player.nowPlaying && !fullscreen"
+        :standby-logo-url="standbyLogoUrl"
+        @wake="wakeFromStandby"
+      />
+    </transition>
   </div>
 </template>
 
@@ -97,6 +108,8 @@ import api, { makeControls } from '../api/client'
 import { usePlayerStore } from '../stores/player'
 import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
+import { useGlobalTypingCapture } from '../composables/useGlobalTypingCapture'
+import { useStandbyState } from '../composables/useStandbyState'
 import { confirmDialog } from '../composables/useDialog'
 import { KTV_ASSETS } from '../components/ktv/ktvCatalogPresets'
 import KtvHeaderBar from '../components/ktv/KtvHeaderBar.vue'
@@ -106,12 +119,15 @@ import KtvBottomDock from '../components/ktv/KtvBottomDock.vue'
 import KtvMediaSurface from '../components/ktv/KtvMediaSurface.vue'
 import KtvQueueDrawer from '../components/ktv/KtvQueueDrawer.vue'
 import KtvModals from '../components/ktv/KtvModals.vue'
+import KtvEffectOverlay from '../components/ktv/KtvEffectOverlay.vue'
+import KtvStandbyScreen from '../components/ktv/KtvStandbyScreen.vue'
 
 const route = useRoute()
 const router = useRouter()
 const player = usePlayerStore()
 const user = useUserStore()
 const { toast } = useToast()
+const { isStandby, wake: wakeFromStandby } = useStandbyState(player, 60000)
 
 const assets = KTV_ASSETS
 const controls = makeControls(user.ensureToken(), { onResponse: res => player.applyControlResponse(res) })
@@ -135,11 +151,13 @@ const autoFullscreen = ref((() => {
 })())
 const browserRef = ref(null)
 const dockRef = ref(null)
+const effectOverlayRef = ref(null)
 const pipRect = ref(null)
 
 let pipObserver = null
 let idleFullscreenTimer = null
 let awaitingHostClaimToast = false
+let dashboardTypingCapture = null
 
 function resetBrowserFilters() {
   browserQuery.value = ''
@@ -418,24 +436,42 @@ async function toggleMute() {
   } catch (e) { toast(e.message || '静音切换失败') }
 }
 
-function adjustPitch() {
-  toast(player.isTvConsole
-    ? 'TV 端实时变调请在电视端调音菜单调节'
-    : '网页浏览器端暂不支持无变速实时升降调，请保持原调或切至 TV 端调节')
+function adjustPitch(delta = 1) {
+  if (player.isTvConsole) {
+    toast('TV 端实时变调请在电视端调音菜单调节')
+  } else {
+    player.adjustPitch(delta)
+    const pitch = player.pitchSemitones
+    toast(`已调整伴奏调门：${pitch > 0 ? '+' + pitch : pitch === 0 ? '原调' : pitch}`)
+  }
 }
 
 function resetPitch() {
-  toast(player.isTvConsole
-    ? '请在电视端调音菜单恢复原调'
-    : '当前网页端默认保持原调播放')
+  if (player.isTvConsole) {
+    toast('请在电视端调音菜单恢复原调')
+  } else {
+    player.resetPitch()
+    toast('已恢复伴奏原调')
+  }
 }
 
 async function sendEffect(fx) {
   try {
-    await controls.effect(fx.id)
-    toast(`已发送现场音效：${fx.label}`)
+    const effectId = typeof fx === 'string' ? fx : fx?.id
+    if (effectId) {
+      effectOverlayRef.value?.triggerEffect(effectId)
+      await controls.effect(effectId)
+      const label = typeof fx === 'object' && fx?.label ? fx.label : effectId
+      toast(`已发送现场音效：${label}`)
+    }
   } catch (e) { toast(e.message || '发送音效失败') }
 }
+
+watch(() => player.lastEffectSeq, () => {
+  if (player.lastEffect) {
+    effectOverlayRef.value?.triggerEffect(player.lastEffect)
+  }
+})
 
 function onKeyDown(e) {
   if (e.key === 'Escape') {
@@ -447,6 +483,11 @@ function onKeyDown(e) {
 }
 
 watch(() => route.fullPath, applyRouteIntent, { immediate: true })
+watch(() => player.tvOnline, (online, oldVal) => {
+  if (oldVal === true && online === false) {
+    toast('电视已离线，已切回本机播放')
+  }
+})
 watch(() => player.webPlayerRole, (role) => {
   if (!awaitingHostClaimToast) return
   if (role === 'ACTIVE' && player.isWebHost) {
@@ -471,6 +512,19 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('pointerdown', resetIdleFullscreenTimer, { passive: true })
   window.addEventListener('keydown', resetIdleFullscreenTimer, { passive: true })
+  dashboardTypingCapture = useGlobalTypingCapture({
+    onChar(ch) {
+      if (viewMode.value === 'dashboard') {
+        resetBrowserFilters()
+        browserQuery.value = ch
+        browserTab.value = 'song_name'
+        viewMode.value = 'browser'
+      }
+    },
+    isBlocked() {
+      return Boolean(activeModal.value || drawerOpen.value || fullscreen.value || viewMode.value !== 'dashboard')
+    }
+  })
   if (typeof ResizeObserver !== 'undefined') {
     pipObserver = new ResizeObserver(updatePipRect)
     if (dockRef.value?.pipSlotEl) pipObserver.observe(dockRef.value.pipSlotEl)
@@ -488,6 +542,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   clearTimeout(idleFullscreenTimer)
+  dashboardTypingCapture?.dispose()
   window.removeEventListener('resize', updatePipRect)
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('pointerdown', resetIdleFullscreenTimer)
@@ -501,6 +556,8 @@ onBeforeUnmount(() => {
 .ktv-kiosk-shell {
   height: 100vh;
   width: 100vw;
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   overflow: hidden;
   display: flex;
   flex-direction: column;

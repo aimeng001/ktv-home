@@ -149,4 +149,26 @@ public class JdbcLibraryScanSeenPathStore implements LibraryScanSeenPathStore {
     public void delete(UUID scanId) {
         jdbc.update("DELETE FROM library_scan_seen_paths WHERE scan_id = ?", scanId);
     }
+
+    @Override
+    public int cleanOrphanSeenPaths() {
+        List<UUID> orphanScanIds = jdbc.queryForList("""
+                SELECT DISTINCT seen.scan_id
+                  FROM library_scan_seen_paths seen
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM library_scan_state state
+                      WHERE state.scan_id = seen.scan_id
+                        AND state.state = 'RUNNING'
+                        AND state.heartbeat_at >= CURRENT_TIMESTAMP - (300 * INTERVAL '1 second')
+                 )
+                """, UUID.class);
+        if (orphanScanIds == null || orphanScanIds.isEmpty()) {
+            return 0;
+        }
+        int totalDeleted = 0;
+        for (UUID scanId : orphanScanIds) {
+            totalDeleted += jdbc.update("DELETE FROM library_scan_seen_paths WHERE scan_id = ?", scanId);
+        }
+        return totalDeleted;
+    }
 }

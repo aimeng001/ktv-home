@@ -86,6 +86,20 @@ public class CategoryBrowseController {
         return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, sort, page, size);
     }
 
+    public CategoryBrowseService.SongPage songPage(String artist,
+                                                   String artistKey,
+                                                   String artistGender,
+                                                   String language,
+                                                   String tag,
+                                                   String vocalForm,
+                                                   String keyword,
+                                                   String mediaType,
+                                                   String sort,
+                                                   int page,
+                                                   int size) {
+        return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, keyword, mediaType, sort, page, size);
+    }
+
     @GetMapping("/songs/page")
     public CategoryBrowseService.SongPage songPage(@RequestParam(required = false) String artist,
                                                    @RequestParam(required = false) String artistKey,
@@ -95,12 +109,16 @@ public class CategoryBrowseController {
                                                    @RequestParam(required = false) String vocalForm,
                                                    @RequestParam(required = false) String keyword,
                                                    @RequestParam(required = false) String mediaType,
+                                                   @RequestParam(required = false) Integer wordCount,
                                                    @RequestParam(defaultValue = "hot") String sort,
                                                    @RequestParam(defaultValue = "0") int page,
                                                    @RequestParam(defaultValue = "50") int size) {
-        if ((keyword == null || keyword.isBlank()) && (mediaType == null || mediaType.isBlank())) {
+        if ((keyword == null || keyword.isBlank()) && (mediaType == null || mediaType.isBlank()) && (wordCount == null || wordCount <= 0)) {
             return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, sort, page, size);
         }
-        return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, keyword, mediaType, sort, page, size);
+        if (wordCount == null || wordCount <= 0) {
+            return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, keyword, mediaType, sort, page, size);
+        }
+        return service.songsPage(artist, artistKey, artistGender, language, tag, vocalForm, keyword, mediaType, wordCount, sort, page, size);
     }
 }

@@ -650,4 +650,17 @@ class CategoryBrowseServiceTest {
         song.setArtistGender(gender);
         return song;
     }
+
+    @Test
+    void songsPage_forwardsWordCountFilterToRepository() {
+        SongRepository repository = mock(SongRepository.class);
+        when(repository.browseCategorySongs(eq(""), eq(""), eq(""), eq(""), eq(""), eq("周杰伦"), eq(2), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        CategoryBrowseService service = new CategoryBrowseService(repository);
+        CategoryBrowseService.SongPage page = service.songsPage("", "", "", "", "", "", "周杰伦", "", 2, "hot", 0, 20);
+
+        assertThat(page.total()).isEqualTo(0);
+        verify(repository).browseCategorySongs(eq(""), eq(""), eq(""), eq(""), eq(""), eq("周杰伦"), eq(2), any(Pageable.class));
+    }
 }
