@@ -145,24 +145,25 @@ public class StreamController {
             @org.springframework.web.bind.annotation.RequestParam(value = "start", required = false) Double startSeconds,
             @org.springframework.web.bind.annotation.RequestParam(value = "transcode", defaultValue = "false") boolean forceTranscode,
             @org.springframework.web.bind.annotation.RequestParam(value = "audioTrack", required = false) Integer audioTrack,
+            @org.springframework.web.bind.annotation.RequestParam(value = "mergeTracks", defaultValue = "false") boolean mergeTracks,
             HttpServletRequest request) {
-        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, audioTrack, request);
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, audioTrack, mergeTracks, request);
     }
 
     public ResponseEntity<StreamingResponseBody> stream(
             Long fileId, String rangeHeader, Double startSeconds) {
-        return streamInternal(fileId, rangeHeader, startSeconds, false, null, null);
+        return streamInternal(fileId, rangeHeader, startSeconds, false, null, false, null);
     }
 
     ResponseEntity<StreamingResponseBody> streamInternal(
             Long fileId, String rangeHeader, Double startSeconds, boolean forceTranscode) {
-        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null, null);
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null, false, null);
     }
 
     ResponseEntity<StreamingResponseBody> streamInternal(
             Long fileId, String rangeHeader, Double startSeconds, boolean forceTranscode,
             HttpServletRequest request) {
-        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null, request);
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null, false, request);
     }
 
     ResponseEntity<StreamingResponseBody> streamInternal(
@@ -171,6 +172,17 @@ public class StreamController {
             Double startSeconds,
             boolean forceTranscode,
             Integer audioTrack,
+            HttpServletRequest request) {
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, audioTrack, false, request);
+    }
+
+    ResponseEntity<StreamingResponseBody> streamInternal(
+            Long fileId,
+            String rangeHeader,
+            Double startSeconds,
+            boolean forceTranscode,
+            Integer audioTrack,
+            boolean mergeTracks,
             HttpServletRequest request) {
 
         SongFile sf = fileRepo.findById(fileId).orElse(null);
@@ -206,13 +218,14 @@ public class StreamController {
                 return ResponseEntity.badRequest().build();
             }
         }
-        if (PlaybackTransportPolicy.requiresLiveTranscode(sf, forceTranscode) || audioTrack != null) {
+        boolean effectiveMerge = mergeTracks && sf.getAudioTracks() >= 2;
+        if (PlaybackTransportPolicy.requiresLiveTranscode(sf, forceTranscode) || audioTrack != null || effectiveMerge) {
             if (startSeconds != null && (!Double.isFinite(startSeconds)
                     || startSeconds < 0 || startSeconds > MAX_TRANSCODE_START_SECONDS)) {
                 return ResponseEntity.badRequest().build();
             }
             boolean copyVideo = audioTrack != null && !forceTranscode && isBrowserCopySafeMp4(sf);
-            return serveOnTheFlyTranscodeStream(fileId, file, sf, startSeconds, audioTrack, copyVideo, request);
+            return serveOnTheFlyTranscodeStream(fileId, file, sf, startSeconds, audioTrack, copyVideo, effectiveMerge, request);
         }
 
         // 2. 99% 普通格式快路径：继续走 RandomAccessFile HTTP Range 流
@@ -227,14 +240,14 @@ public class StreamController {
 
     private ResponseEntity<StreamingResponseBody> serveOnTheFlyTranscodeStream(
             Long fileId, File file, SongFile sf, Double startSeconds, Integer audioTrack,
-            boolean copyVideo, HttpServletRequest request) {
+            boolean copyVideo, boolean mergeTracks, HttpServletRequest request) {
         MediaStreamLease mediaStreamLease = reserveMediaStream(request);
         if (mediaStreamLease == null) return tooManyStreamsResponse();
 
         LiveTranscodeSession session;
         try {
             List<String> command = transcodeCommandBuilder.build(
-                    file, sf, startSeconds, audioTrack, copyVideo);
+                    file, sf, startSeconds, audioTrack, copyVideo, mergeTracks);
             session = LiveTranscodeSession.tryReserve(
                     resourceBudget, processLauncher, command, fileId, startSeconds).orElse(null);
         } catch (RuntimeException | Error error) {

@@ -29,6 +29,18 @@ describe('KaraokeLyricSurface 双行卡拉OK平滑扫字歌词', () => {
     expect(root.textContent).toContain('暂无歌词，享受现场伴奏')
   })
 
+  it('空歌词时在播放超过 3.5 秒后自动隐藏提示文字，释放字幕安全区', async () => {
+    app = createApp(KaraokeLyricSurface, {
+      lyricLines: [],
+      positionMs: 4000,
+      isPlaying: true
+    })
+    app.mount(root)
+    await nextTick()
+
+    expect(root.textContent).not.toContain('暂无歌词，享受现场伴奏')
+  })
+
   it('双行交替渲染：当前行与下一预备行同时可见', async () => {
     const lines = [
       { startMs: 1000, endMs: 5000, text: '第一句歌词唱响' },

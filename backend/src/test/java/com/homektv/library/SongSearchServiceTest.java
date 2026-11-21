@@ -19,6 +19,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -45,23 +46,23 @@ class SongSearchServiceTest {
     @Test
     void search_truncatesKeywordToMax50Characters() {
         String longKeyword = "a".repeat(100);
-        when(searchRepo.search(any(), any(), any(), any(), any())).thenReturn(List.of(new Song()));
+        when(searchRepo.search(any(), any(), any(), anyLong(), any(), any())).thenReturn(List.of(new Song()));
 
         service.search(longKeyword, 0);
 
         ArgumentCaptor<String> kwCaptor = ArgumentCaptor.forClass(String.class);
-        verify(searchRepo).search(kwCaptor.capture(), any(String.class), any(String.class), eq(""), any(Pageable.class));
+        verify(searchRepo).search(kwCaptor.capture(), any(String.class), any(String.class), eq(0L), eq(""), any(Pageable.class));
 
         assertThat(kwCaptor.getValue()).hasSize(50).isEqualTo("a".repeat(50));
     }
 
     @Test
     void search_trimsAndConvertsToLowercase() {
-        when(searchRepo.search(eq("HELLO WORLD"), eq("hello world"), eq("hello world"), eq(""), any())).thenReturn(List.of(new Song()));
+        when(searchRepo.search(eq("HELLO WORLD"), eq("hello world"), eq("hello world"), eq(0L), eq(""), any())).thenReturn(List.of(new Song()));
 
         service.search("  HELLO WORLD  ", 0);
 
-        verify(searchRepo).search(eq("HELLO WORLD"), eq("hello world"), eq("hello world"), eq(""), any(Pageable.class));
+        verify(searchRepo).search(eq("HELLO WORLD"), eq("hello world"), eq("hello world"), eq(0L), eq(""), any(Pageable.class));
     }
 
     @Test
@@ -72,41 +73,41 @@ class SongSearchServiceTest {
         service.search("A", 0);
 
         verify(searchRepo).searchSingleInitial(eq("A"), eq("a"), eq("a"), eq(""), any(Pageable.class));
-        verify(searchRepo, never()).searchShort(any(), any(), any(), any(), any());
-        verify(searchRepo, never()).search(any(), any(), any(), any(), any());
+        verify(searchRepo, never()).searchShort(any(), any(), any(), anyLong(), any(), any());
+        verify(searchRepo, never()).search(any(), any(), any(), anyLong(), any(), any());
     }
 
     @Test
     void searchRoutesOneOrTwoCharacterKeywordsToIndexedTermQuery() {
-        when(searchRepo.searchShort(eq("天"), eq("天"), eq("天"), eq(""), any()))
+        when(searchRepo.searchShort(eq("天"), eq("天"), eq("天"), eq(0L), eq(""), any()))
                 .thenReturn(List.of(new Song()));
 
         service.search("天", 0);
 
-        verify(searchRepo).searchShort(eq("天"), eq("天"), eq("天"), eq(""), any(Pageable.class));
-        verify(searchRepo, never()).search(any(), any(), any(), any(), any());
+        verify(searchRepo).searchShort(eq("天"), eq("天"), eq("天"), eq(0L), eq(""), any(Pageable.class));
+        verify(searchRepo, never()).search(any(), any(), any(), anyLong(), any(), any());
     }
 
     @Test
     void searchPassesMediaTypeToTheDatabaseBeforePaging() {
-        when(searchRepo.search(eq("zhou"), eq("zhou"), eq("zhou"), eq("KTV_VIDEO"), any())).thenReturn(List.of(new Song()));
+        when(searchRepo.search(eq("zhou"), eq("zhou"), eq("zhou"), eq(0L), eq("KTV_VIDEO"), any())).thenReturn(List.of(new Song()));
 
         service.search("zhou", "KTV_VIDEO", 2);
 
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(searchRepo).search(eq("zhou"), eq("zhou"), eq("zhou"), eq("KTV_VIDEO"), pageable.capture());
+        verify(searchRepo).search(eq("zhou"), eq("zhou"), eq("zhou"), eq(0L), eq("KTV_VIDEO"), pageable.capture());
         assertThat(pageable.getValue().getPageNumber()).isEqualTo(2);
         assertThat(pageable.getValue().getPageSize()).isEqualTo(50);
     }
 
     @Test
     void searchNormalizesANullMediaTypeToNoFilter() {
-        when(searchRepo.search(eq("zhou"), eq("zhou"), eq("zhou"), eq(""), any()))
+        when(searchRepo.search(eq("zhou"), eq("zhou"), eq("zhou"), eq(0L), eq(""), any()))
                 .thenReturn(List.of(new Song()));
 
         service.search("zhou", (String) null, 0);
 
-        verify(searchRepo).search(eq("zhou"), eq("zhou"), eq("zhou"), eq(""), any(Pageable.class));
+        verify(searchRepo).search(eq("zhou"), eq("zhou"), eq("zhou"), eq(0L), eq(""), any(Pageable.class));
     }
 
     @Test
@@ -142,7 +143,7 @@ class SongSearchServiceTest {
     @Test
     void slowSearchLogContainsDiagnosticsWithoutRawKeyword() {
         String secretKeyword = "机密关键词";
-        when(searchRepo.search(any(), any(), any(), any(), any())).thenAnswer(invocation -> {
+        when(searchRepo.search(any(), any(), any(), anyLong(), any(), any())).thenAnswer(invocation -> {
             long deadline = System.nanoTime() + 550_000_000L;
             while (System.nanoTime() < deadline) {
                 Thread.onSpinWait();
@@ -172,11 +173,21 @@ class SongSearchServiceTest {
 
     @Test
     void repositoryFailureIsNotConvertedToAnEmptySearchResult() {
-        when(searchRepo.search(any(), any(), any(), any(), any()))
+        when(searchRepo.search(any(), any(), any(), anyLong(), any(), any()))
                 .thenThrow(new IllegalStateException("database unavailable"));
 
         assertThatThrownBy(() -> service.search("database", 0))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("database unavailable");
+    }
+
+    @Test
+    void searchParsesNumericCatalogNumberToNumericId() {
+        when(searchRepo.search(eq("046394"), eq("046394"), eq("046394"), eq(46394L), eq(""), any()))
+                .thenReturn(List.of(new Song()));
+
+        service.search("046394", 0);
+
+        verify(searchRepo).search(eq("046394"), eq("046394"), eq("046394"), eq(46394L), eq(""), any(Pageable.class));
     }
 }

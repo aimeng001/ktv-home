@@ -16,11 +16,16 @@ final class LiveTranscodeCommandBuilder {
     }
 
     List<String> build(File source, SongFile songFile, Double startSeconds) {
-        return build(source, songFile, startSeconds, null, false);
+        return build(source, songFile, startSeconds, null, false, false);
     }
 
     List<String> build(File source, SongFile songFile, Double startSeconds,
                        Integer audioTrack, boolean copyVideo) {
+        return build(source, songFile, startSeconds, audioTrack, copyVideo, false);
+    }
+
+    List<String> build(File source, SongFile songFile, Double startSeconds,
+                       Integer audioTrack, boolean copyVideo, boolean mergeTracks) {
         List<String> command = new ArrayList<>();
         command.add(ffmpegPath);
         command.add("-hide_banner");
@@ -33,21 +38,31 @@ final class LiveTranscodeCommandBuilder {
         command.add("-i");
         command.add(source.getAbsolutePath());
 
-        command.add("-map");
-        command.add("0:v:0");
-        if (audioTrack != null && audioTrack >= 0) {
+        boolean shouldMerge = mergeTracks && audioTrack == null && songFile.getAudioTracks() >= 2;
+        if (shouldMerge) {
+            command.add("-filter_complex");
+            command.add("[0:a:0]aformat=sample_rates=48000:channel_layouts=mono[a0];[0:a:1]aformat=sample_rates=48000:channel_layouts=mono[a1];[a0][a1]amerge=inputs=2[aout]");
             command.add("-map");
-            command.add("0:a:" + audioTrack);
+            command.add("0:v:0");
+            command.add("-map");
+            command.add("[aout]");
         } else {
-            int audioTracks = songFile.getAudioTracks();
-            if (audioTracks > 1) {
-                for (int index = 0; index < audioTracks; index++) {
-                    command.add("-map");
-                    command.add("0:a:" + index);
-                }
-            } else {
+            command.add("-map");
+            command.add("0:v:0");
+            if (audioTrack != null && audioTrack >= 0) {
                 command.add("-map");
-                command.add("0:a?");
+                command.add("0:a:" + audioTrack);
+            } else {
+                int audioTracks = songFile.getAudioTracks();
+                if (audioTracks > 1) {
+                    for (int index = 0; index < audioTracks; index++) {
+                        command.add("-map");
+                        command.add("0:a:" + index);
+                    }
+                } else {
+                    command.add("-map");
+                    command.add("0:a?");
+                }
             }
         }
 

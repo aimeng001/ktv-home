@@ -7,11 +7,24 @@ import { createPitchShifter } from './pitchShifter'
  */
 
 export function resolveActiveChannelIndex(audioLayout, vocalMode) {
-  if (!audioLayout || audioLayout.layout !== 'DUAL_CHANNEL') return null
-  const ch = vocalMode === 'original'
-    ? (audioLayout.originalChannel || 'LEFT')
-    : (audioLayout.accompanimentChannel || 'RIGHT')
-  return String(ch).toUpperCase() === 'RIGHT' ? 1 : 0
+  if (!audioLayout) return null
+  if (audioLayout.layout === 'DUAL_CHANNEL') {
+    const ch = vocalMode === 'original'
+      ? (audioLayout.originalChannel || 'LEFT')
+      : (audioLayout.accompanimentChannel || 'RIGHT')
+    return String(ch).toUpperCase() === 'RIGHT' ? 1 : 0
+  }
+  if (audioLayout.layout === 'DUAL_TRACK') {
+    const wantsOriginal = vocalMode === 'original'
+    const targetTrack = wantsOriginal
+      ? audioLayout.originalTrackIndex
+      : audioLayout.accompanimentTrackIndex
+    if (targetTrack === 0 || targetTrack === 1) {
+      return targetTrack
+    }
+    return wantsOriginal ? 0 : 1
+  }
+  return null
 }
 
 export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {

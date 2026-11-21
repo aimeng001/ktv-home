@@ -1,9 +1,11 @@
 <template>
   <div class="karaoke-surface" role="region" aria-label="双行卡拉OK歌词">
-    <div v-if="!lyricLines || !lyricLines.length" class="karaoke-empty">
-      <span>暂无歌词，享受现场伴奏</span>
-    </div>
-    <div v-else class="karaoke-duo-stage">
+    <transition name="fade">
+      <div v-if="showEmptyNotice" class="karaoke-empty">
+        <span>暂无歌词，享受现场伴奏</span>
+      </div>
+    </transition>
+    <div v-if="lyricLines && lyricLines.length" class="karaoke-duo-stage">
       <!-- 当前在唱行（左对齐，逐字平滑扫光） -->
       <div class="lyric-line active" :class="{ empty: !currentLine }">
         <span class="text-pending">{{ currentLine?.text || '…' }}</span>
@@ -40,6 +42,11 @@ const props = defineProps({
   lyricLines: { type: Array, default: () => [] },
   positionMs: { type: Number, default: 0 },
   isPlaying: { type: Boolean, default: false }
+})
+
+const showEmptyNotice = computed(() => {
+  if (props.lyricLines && props.lyricLines.length > 0) return false
+  return props.positionMs < 3500
 })
 
 function findCurrentIndex(lines, pos) {
@@ -161,6 +168,15 @@ const countdownProgress = computed(() => {
   font-weight: 700;
   color: rgba(255, 255, 255, 0.45);
   letter-spacing: 1px;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.5s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
 .karaoke-duo-stage {

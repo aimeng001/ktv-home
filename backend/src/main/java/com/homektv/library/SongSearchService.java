@@ -61,12 +61,13 @@ public class SongSearchService {
                 return searchRepo.searchSingleInitial(searchKeyword.raw(), lower,
                         searchKeyword.likePattern(), normalizedType, request);
             }
+            Long numericId = lower.matches("^[0-9]{1,10}$") ? Long.parseLong(lower) : 0L;
             if (lower.codePointCount(0, lower.length()) <= 2) {
                 return searchRepo.searchShort(searchKeyword.raw(), lower,
-                        searchKeyword.likePattern(), normalizedType, request);
+                        searchKeyword.likePattern(), numericId, normalizedType, request);
             }
             return searchRepo.search(searchKeyword.raw(), lower, searchKeyword.likePattern(),
-                    normalizedType, request);
+                    numericId, normalizedType, request);
         } finally {
             long duration = (System.nanoTime() - started) / 1_000_000L;
             if (duration >= SLOW_QUERY_THRESHOLD_MS) {

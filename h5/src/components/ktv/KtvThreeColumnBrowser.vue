@@ -1523,7 +1523,8 @@ defineExpose({ switchTab, focusSearchKeyboard })
 .card-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .card-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.card-title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.card-title-row .tag { flex-shrink: 0; }
 .card-sub { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song-num {
   font-family: monospace;
@@ -1532,8 +1533,9 @@ defineExpose({ switchTab, focusSearchKeyboard })
   background: rgba(255, 198, 75, 0.12);
   padding: 1px 4px;
   border-radius: 4px;
+  flex-shrink: 0;
 }
-.card-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.card-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .fav-btn {
   width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
   color: var(--dim); background: rgba(255, 255, 255, 0.06);
@@ -1621,7 +1623,7 @@ defineExpose({ switchTab, focusSearchKeyboard })
 .pager-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .pager-info { font-size: 12px; color: var(--dim); }
 
-@media (max-width: 1260px) {
+@media (max-width: 1440px) {
   .song-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .artist-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }

@@ -84,4 +84,35 @@ class LiveTranscodeCommandBuilderTest {
         assertThat(transcodeCommand).containsSubsequence("-map", "0:v:0", "-map", "0:a:0");
         assertThat(transcodeCommand).containsSubsequence("-c:v", "libx264");
     }
+
+    @Test
+    void mergesDualAudioTracksIntoStereoWhenMergeTracksIsTrue() {
+        File source = temp.resolve("dual-track.mkv").toFile();
+        SongFile song = new SongFile();
+        song.setAudioTracks(2);
+
+        List<String> command = builder.build(source, song, null, null, false, true);
+
+        assertThat(command).contains("-filter_complex");
+        assertThat(command).anyMatch(arg -> arg.contains("amerge=inputs=2"));
+        assertThat(command).containsSubsequence("-map", "0:v:0", "-map", "[aout]");
+        assertThat(command).doesNotContain("-map 0:a:0", "-map 0:a:1");
+    }
+
+    @Test
+    void fallsBackToDefaultMultiTrackMappingWhenMergeTracksIsFalseOrSingleTrack() {
+        File source = temp.resolve("dual-track.mkv").toFile();
+        SongFile song = new SongFile();
+        song.setAudioTracks(2);
+
+        List<String> command = builder.build(source, song, null, null, false, false);
+        assertThat(command).doesNotContain("-filter_complex");
+        assertThat(command).containsSubsequence("-map", "0:a:0", "-map", "0:a:1");
+
+        SongFile single = new SongFile();
+        single.setAudioTracks(1);
+        List<String> singleCommand = builder.build(source, single, null, null, false, true);
+        assertThat(singleCommand).doesNotContain("-filter_complex");
+        assertThat(singleCommand).contains("0:a?");
+    }
 }

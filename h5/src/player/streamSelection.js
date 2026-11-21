@@ -51,17 +51,13 @@ export function buildWebStreamSpec({
 
   const fileId = playback.sourceFileId
   const audioOnly = isAudioOnlyPlayback(playback, song)
-  const targetTrack = resolveTargetAudioTrack(audioLayout, vocalMode)
-  const needsLiveTranscode = Boolean(forceTranscode) || playback.kind === 'LIVE_TRANSCODE' || (!audioOnly && !isBrowserNativeFormat(playback, song))
-  const defaultTrack = Number.isInteger(playback.vocalTrackIndex)
-    ? playback.vocalTrackIndex
-    : audioLayout?.accompanimentTrackIndex
-  const trackNeedsServerSwitch = !audioOnly
-    && audioLayout?.layout === 'DUAL_TRACK'
-    && targetTrack !== null
-    && (needsLiveTranscode || targetTrack !== defaultTrack || playback.audioTracks > 1)
+  const isDualTrack = !audioOnly && audioLayout?.layout === 'DUAL_TRACK' && (playback.audioTracks == null || playback.audioTracks >= 2)
+  const needsLiveTranscode = Boolean(forceTranscode)
+    || playback.kind === 'LIVE_TRANSCODE'
+    || (!audioOnly && !isBrowserNativeFormat(playback, song))
+    || isDualTrack
 
-  if (!needsLiveTranscode && !trackNeedsServerSwitch) {
+  if (!needsLiveTranscode) {
     return {
       url: `/api/stream/${fileId}`,
       liveTranscode: false,
@@ -71,15 +67,17 @@ export function buildWebStreamSpec({
   }
 
   const params = new URLSearchParams()
-  if (needsLiveTranscode) params.set('transcode', 'true')
-  if (trackNeedsServerSwitch && targetTrack !== null) params.set('audioTrack', String(targetTrack))
+  params.set('transcode', 'true')
+  if (isDualTrack) {
+    params.set('mergeTracks', 'true')
+  }
   const clampedStart = Number.isFinite(startSeconds) && startSeconds > 0.5 ? startSeconds : 0
   if (clampedStart > 0) params.set('start', clampedStart.toFixed(3))
 
   return {
     url: `/api/stream/${fileId}?${params.toString()}`,
     liveTranscode: true,
-    trackSwitchedByServer: trackNeedsServerSwitch,
+    trackSwitchedByServer: isDualTrack,
     isAudioOnly: audioOnly,
   }
 }

@@ -92,6 +92,18 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
                 WHERE s.status = 'ok'
                   AND (:mediaType = '' OR s.media_type = :mediaType)
                   AND LOWER(sa.artist_py) LIKE :likeKw || '%' ESCAPE '\\'
+
+                UNION ALL
+
+                SELECT s.id AS song_id, 0 AS term_rank
+                FROM songs s
+                WHERE s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+                  AND (
+                      (:numericId > 0 AND s.id = :numericId)
+                      OR (s.catalog_number <> '' AND s.catalog_number = :kw)
+                      OR LPAD(s.id::text, 6, '0') = :kw
+                  )
             ), term_candidates AS (
                 SELECT term.song_id,
                        CASE
@@ -119,6 +131,8 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
             FROM candidate_ids c
             JOIN songs s ON s.id = c.song_id
             ORDER BY
+              (:numericId > 0 AND s.id = :numericId) DESC,
+              (s.catalog_number <> '' AND s.catalog_number = :kw) DESC,
               (LOWER(s.title) = :kw) DESC,
               (LOWER(s.title_init) = :kw) DESC,
               (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
@@ -256,6 +270,19 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
                       AND term.kind IN ('TITLE', 'ARTIST', 'LANGUAGE', 'TAG', 'ARTIST_CREDIT')
                       AND s.status = 'ok'
                       AND (:mediaType = '' OR s.media_type = :mediaType)
+
+                    UNION ALL
+
+                    -- 7. 纯数字点歌号或主键精准匹配
+                    SELECT s.id AS song_id
+                    FROM songs s
+                    WHERE s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+                      AND (
+                          (:numericId > 0 AND s.id = :numericId)
+                          OR (s.catalog_number <> '' AND s.catalog_number = :kw)
+                          OR LPAD(s.id::text, 6, '0') = :kw
+                      )
                 ) raw_candidates
                 GROUP BY song_id
             )
@@ -263,6 +290,8 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
             FROM candidate_ids c
             JOIN songs s ON s.id = c.song_id
             ORDER BY
+              (:numericId > 0 AND s.id = :numericId) DESC,
+              (s.catalog_number <> '' AND s.catalog_number = :kw) DESC,
               (s.title = :rawKw) DESC,
               (s.artist = :rawKw) DESC,
               (LOWER(s.title) = :kw) DESC,
@@ -301,16 +330,30 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
     List<Song> search(@Param("rawKw") String rawKeyword,
                       @Param("kw") String keyword,
                       @Param("likeKw") String likeKeyword,
+                      @Param("numericId") Long numericId,
                       @Param("mediaType") String mediaType,
                       Pageable pageable);
+
+    default List<Song> search(String rawKeyword, String keyword, String likeKeyword,
+                              String mediaType, Pageable pageable) {
+        Long numericId = keyword != null && keyword.matches("^[0-9]{1,10}$") ? Long.parseLong(keyword) : 0L;
+        return search(rawKeyword, keyword, likeKeyword, numericId, mediaType, pageable);
+    }
 
     /** Indexed one/two-character search backed by song_search_terms. */
     @Query(value = SHORT_SEARCH_SQL, nativeQuery = true)
     List<Song> searchShort(@Param("rawKw") String rawKeyword,
                            @Param("kw") String keyword,
                            @Param("likeKw") String likeKeyword,
+                           @Param("numericId") Long numericId,
                            @Param("mediaType") String mediaType,
                            Pageable pageable);
+
+    default List<Song> searchShort(String rawKeyword, String keyword, String likeKeyword,
+                                  String mediaType, Pageable pageable) {
+        Long numericId = keyword != null && keyword.matches("^[0-9]{1,10}$") ? Long.parseLong(keyword) : 0L;
+        return searchShort(rawKeyword, keyword, likeKeyword, numericId, mediaType, pageable);
+    }
 
     /**
      * Single-letter search served directly from text_pattern_ops prefix indexes

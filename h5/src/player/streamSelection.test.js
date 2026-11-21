@@ -35,22 +35,22 @@ describe('streamSelection', () => {
     })
   })
 
-  it('routes browser-incompatible containers and DUAL_TRACK selections to pipe:1 with seek start', () => {
+  it('routes browser-incompatible containers and DUAL_TRACK selections to pipe:1 with mergeTracks', () => {
     const mkv = {
       kind: 'NATIVE', status: 'READY', sourceFileId: 12,
       streamUrl: '/api/stream/12', audioTracks: 2, vocalTrackIndex: 1
     }
     const dualTrack = { layout: 'DUAL_TRACK', originalTrackIndex: 0, accompanimentTrackIndex: 1 }
 
-    const mkvSpec = buildWebStreamSpec({
+    const mkvSpecOrig = buildWebStreamSpec({
       playback: mkv, audioLayout: dualTrack, vocalMode: 'original', startSeconds: 45.2, song: { format: 'mkv' }
     })
-    expect(mkvSpec).toEqual({
-      url: '/api/stream/12?transcode=true&audioTrack=0&start=45.200',
-      liveTranscode: true,
-      trackSwitchedByServer: true,
-      isAudioOnly: false
+    const mkvSpecAcc = buildWebStreamSpec({
+      playback: mkv, audioLayout: dualTrack, vocalMode: 'accompaniment', startSeconds: 45.2, song: { format: 'mkv' }
     })
+    expect(mkvSpecOrig.url).toBe('/api/stream/12?transcode=true&mergeTracks=true&start=45.200')
+    expect(mkvSpecAcc.url).toBe(mkvSpecOrig.url)
+    expect(mkvSpecOrig.trackSwitchedByServer).toBe(true)
 
     const mp4DualTrack = buildWebStreamSpec({
       playback: { ...mkv, sourceFileId: 15, streamUrl: '/api/stream/15' },
@@ -59,12 +59,8 @@ describe('streamSelection', () => {
       startSeconds: 10.5,
       song: { format: 'mp4' }
     })
-    expect(mp4DualTrack).toEqual({
-      url: '/api/stream/15?audioTrack=0&start=10.500',
-      liveTranscode: true,
-      trackSwitchedByServer: true,
-      isAudioOnly: false
-    })
+    expect(mp4DualTrack.url).toBe('/api/stream/15?transcode=true&mergeTracks=true&start=10.500')
+    expect(mp4DualTrack.liveTranscode).toBe(true)
   })
 
   it('forces live transcode when browser decoder fallback triggers', () => {
@@ -74,7 +70,7 @@ describe('streamSelection', () => {
       playback: mp4, audioLayout: dualTrack, vocalMode: 'accompaniment',
       startSeconds: 22.0, forceTranscode: true, song: { format: 'mp4' }
     })
-    expect(spec.url).toBe('/api/stream/8?transcode=true&audioTrack=1&start=22.000')
+    expect(spec.url).toBe('/api/stream/8?transcode=true&mergeTracks=true&start=22.000')
     expect(spec.liveTranscode).toBe(true)
   })
 

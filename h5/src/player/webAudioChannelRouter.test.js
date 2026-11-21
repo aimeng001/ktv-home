@@ -80,4 +80,14 @@ describe('webAudioChannelRouter', () => {
     expect(router.isSuspended()).toBe(false)
     expect(fakeCtx.close).toHaveBeenCalledOnce()
   })
+
+  it("resolves channel index for DUAL_TRACK web-merged streams", () => {
+    const dualTrack = { layout: "DUAL_TRACK", originalTrackIndex: 0, accompanimentTrackIndex: 1 }
+    expect(resolveActiveChannelIndex(dualTrack, "original")).toBe(0)
+    expect(resolveActiveChannelIndex(dualTrack, "accompaniment")).toBe(1)
+
+    const reversedTrack = { layout: "DUAL_TRACK", originalTrackIndex: 1, accompanimentTrackIndex: 0 }
+    expect(resolveActiveChannelIndex(reversedTrack, "original")).toBe(1)
+    expect(resolveActiveChannelIndex(reversedTrack, "accompaniment")).toBe(0)
+  })
 })

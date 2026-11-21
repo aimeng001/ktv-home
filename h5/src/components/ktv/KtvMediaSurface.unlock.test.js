@@ -193,4 +193,23 @@ describe('KtvMediaSurface 解码失败时的上报兜底', () => {
       host.remove()
     }
   })
+
+  it("切换 vocalMode 时仅平移声道路由，不重载 video.src 且不改变流地址", async () => {
+    const { instance, host, scopedPlayer } = await mountSurface()
+    const videoEl = host.querySelector("video")
+    const initialSrc = videoEl.getAttribute("src") || videoEl.src
+
+    routerMock.setRouting.mockClear()
+    scopedPlayer.audioLayout = { layout: "DUAL_TRACK", originalTrackIndex: 0, accompanimentTrackIndex: 1 }
+    scopedPlayer.vocalMode = "original"
+    await nextTick()
+    await nextTick()
+
+    expect(routerMock.setRouting).toHaveBeenCalledWith(scopedPlayer.audioLayout, "original")
+    const currentSrc = videoEl.getAttribute("src") || videoEl.src
+    expect(currentSrc).toBe(initialSrc)
+
+    instance.unmount()
+    host.remove()
+  })
 })

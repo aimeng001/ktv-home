@@ -532,6 +532,9 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
+                  OR s.id::text = LOWER(:keyword)
+                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
               )
             """,
             countQuery = """
@@ -571,6 +574,9 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
+                  OR s.id::text = LOWER(:keyword)
+                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
               )
               AND (
                   :wordCount <= 0
@@ -643,6 +649,9 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
+                  OR s.id::text = LOWER(:keyword)
+                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
               )
             """,
             countQuery = """
@@ -689,6 +698,9 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
+                  OR s.id::text = LOWER(:keyword)
+                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
               )
               AND (
                   :wordCount <= 0
@@ -754,6 +766,9 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
+                  OR s.id::text = LOWER(:keyword)
+                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
               )
             """,
             countQuery = """
@@ -794,6 +809,9 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
+                  OR s.id::text = LOWER(:keyword)
+                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
               )
               AND (
                   :wordCount <= 0
@@ -863,6 +881,9 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
+                  OR s.id::text = LOWER(:keyword)
+                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
               )
             """,
             countQuery = """
@@ -910,6 +931,9 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
+                  OR s.id::text = LOWER(:keyword)
+                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
               )
               AND (
                   :wordCount <= 0

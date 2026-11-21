@@ -27,7 +27,7 @@ class SongAcronymSearchContractTest {
                 SongSearchRepository.class.getClassLoader(),
                 new Class<?>[]{SongSearchRepository.class},
                 (proxy, method, args) -> {
-                    if (method.getName().equals("search") && args != null && args.length == 5) {
+                    if (method.getName().equals("search") && args != null && (args.length == 5 || args.length == 6)) {
                         queriedKeyword.set((String) args[0]);
                         return List.of();
                     }

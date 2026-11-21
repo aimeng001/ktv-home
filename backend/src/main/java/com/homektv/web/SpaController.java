@@ -24,13 +24,13 @@ import org.springframework.web.bind.annotation.GetMapping;
 public class SpaController {
 
     /**
-     * 服务根路径直接进入管理后台。
-     * Root path redirects to the admin backend.
-     * @return redirect path to /m/admin
+     * 服务根路径直接进入大屏点歌主界面。
+     * Root path redirects to the KTV kiosk home.
+     * @return redirect path to /m/
      */
     @GetMapping("/")
     public String root() {
-        return "redirect:/m/admin";
+        return "redirect:/m/";
     }
 
     /**

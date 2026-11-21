@@ -537,9 +537,6 @@ watch(() => nextSong.value?.id, (newNextId, oldNextId) => {
 
 watch(() => player.vocalMode, () => {
   syncAudioRouter()
-  if (player.audioLayout?.layout === 'DUAL_TRACK' && player.nowPlaying) {
-    liveStartSec.value = currentPlaybackSeconds()
-  }
 })
 
 watch(
@@ -552,9 +549,6 @@ watch(
   ],
   () => {
     syncAudioRouter()
-    if (player.audioLayout?.layout === 'DUAL_TRACK' && player.nowPlaying) {
-      liveStartSec.value = currentPlaybackSeconds()
-    }
   }
 )
 

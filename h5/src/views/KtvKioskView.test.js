@@ -577,7 +577,7 @@ describe('KtvKioskView', () => {
     expect(videoEl.volume).toBe(1)
     expect(gainNode.gain.value).toBeCloseTo(0.5)
 
-    // 2. Swapping DUAL_TRACK audioLayout keeps playback offset via start= instead of resetting to 0
+    // 2. Swapping DUAL_TRACK audioLayout keeps playback stream stable with mergeTracks
     Object.defineProperty(videoEl, 'currentTime', { value: 5, configurable: true })
     videoEl.dispatchEvent(new Event('loadedmetadata'))
     await nextTick()
@@ -590,8 +590,7 @@ describe('KtvKioskView', () => {
       playback: { kind: 'NATIVE', status: 'READY', sourceFileId: 77, format: 'mp4', audioTracks: 2, vocalTrackIndex: 0 }
     })
     await nextTick()
-    expect(videoEl.src).toContain('audioTrack=0')
-    expect(videoEl.src).toContain('start=37.000')
+    expect(videoEl.src).toContain('mergeTracks=true')
 
     // 3. TV Console mirror falls back to transcode on decode error without reporting play_error
     player.handleEvent('player_state', {

@@ -11,12 +11,12 @@ import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standal
 
 class SpaControllerTest {
     @Test
-    void rootRedirectsToAdmin() throws Exception {
+    void rootRedirectsToKiosk() throws Exception {
         MockMvc mvc = standaloneSetup(new SpaController()).build();
 
         mvc.perform(get("/"))
                 .andExpect(status().isFound())
-                .andExpect(redirectedUrl("/m/admin"));
+                .andExpect(redirectedUrl("/m/"));
     }
 
     @Test
