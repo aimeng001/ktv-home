@@ -9,7 +9,7 @@ services:
     environment:
       POSTGRES_DB: ${KTV_DB_NAME:-ktv}
       POSTGRES_USER: ${KTV_DB_USER:-ktv}
-      POSTGRES_PASSWORD: "${KTV_DB_PASSWORD:-ktv_auto_secret_2026}"
+      POSTGRES_PASSWORD: "${KTV_DB_PASSWORD:?KTV_DB_PASSWORD must be set}"
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - type: bind
@@ -42,7 +42,7 @@ services:
       SERVER_PORT: ${KTV_HTTP_PORT:-8080}
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${KTV_DB_NAME:-ktv}
       SPRING_DATASOURCE_USERNAME: ${KTV_DB_USER:-ktv}
-      SPRING_DATASOURCE_PASSWORD: "${KTV_DB_PASSWORD:-ktv_auto_secret_2026}"
+      SPRING_DATASOURCE_PASSWORD: "${KTV_DB_PASSWORD:?KTV_DB_PASSWORD must be set}"
       KTV_SOURCE_LIBRARY_PATH: /source-music
       KTV_LIBRARY_PATH: /music
       KTV_LIBRARY_MODE: ${KTV_LIBRARY_MODE:-MANAGED}
@@ -57,6 +57,7 @@ services:
       KTV_PLAYER_CREDENTIAL: "${KTV_PLAYER_CREDENTIAL:-}"
       KTV_DISCOVERY_ENABLED: ${KTV_DISCOVERY_ENABLED:-true}
       KTV_DISCOVERY_NAME: ${KTV_DISCOVERY_NAME:-家庭KTV}
+      KTV_AI_ALLOW_PRIVATE_NETWORK: ${KTV_AI_ALLOW_PRIVATE_NETWORK:-false}
       JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--Xms256m -Xmx2048m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -XX:+ExitOnOutOfMemoryError}"
       TZ: ${TZ:-Asia/Shanghai}
     mem_limit: ${KTV_APP_MEMORY_LIMIT:-4g}

@@ -8,7 +8,7 @@ name: home-ktv
 
 x-db-name: &db-name "${KTV_DB_NAME:-ktv}"
 x-db-user: &db-user "${KTV_DB_USER:-ktv}"
-x-db-password: &db-password "${KTV_DB_PASSWORD:-ktv_auto_secret_2026}"
+x-db-password: &db-password "${KTV_DB_PASSWORD:?KTV_DB_PASSWORD must be set}"
 x-timezone: &timezone "${TZ:-Asia/Shanghai}"
 
 services:
@@ -60,6 +60,7 @@ services:
       KTV_PLAYER_CREDENTIAL: "${KTV_PLAYER_CREDENTIAL:-}"
       KTV_DISCOVERY_ENABLED: "true"
       KTV_DISCOVERY_NAME: "${KTV_DISCOVERY_NAME:-家庭KTV}"
+      KTV_AI_ALLOW_PRIVATE_NETWORK: "${KTV_AI_ALLOW_PRIVATE_NETWORK:-false}"
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"
       JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--Xms256m -Xmx2048m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -XX:+ExitOnOutOfMemoryError}"
