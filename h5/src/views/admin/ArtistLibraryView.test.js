@@ -102,7 +102,8 @@ describe('ArtistLibraryView', () => {
     artists = [
       { ...person('已确认歌手'), gender: '女歌手', reviewed: true, avatarUrl: '/avatar/confirmed.webp' },
       { ...person('群星'), artistKind: 'VARIOUS', songs: [] },
-      { ...person('未归属'), artistKind: 'UNATTRIBUTED', songs: null }
+      { ...person('未归属'), artistKind: 'UNATTRIBUTED', songs: null },
+      { ...person('双人组合'), artistKind: 'GROUP', songs: [], reviewed: true }
     ]
     apiMock.adminArtistPage.mockImplementation(async params => ({ items: artists, total: artists.length, page: params.page }))
     await mount()
@@ -112,11 +113,16 @@ describe('ArtistLibraryView', () => {
     expect(rows[0].textContent).toContain('已人工确认')
     expect(rows[0].querySelector('.status').classList.contains('blue')).toBe(true)
     expect(rows[0].querySelector('.link').disabled).toBe(false)
-    expect(rows[1].textContent).toContain('群星')
+    expect(rows[0].querySelector('.kind-note')).toBeNull()
+    expect(rows[1].querySelector('.kind-note').textContent).toBe('群星')
     expect(rows[1].querySelector('.link').disabled).toBe(true)
     expect(rows[2].textContent).toContain('未归属')
     expect(rows[2].textContent).toContain('暂无代表歌曲')
     expect(rows[2].querySelector('.link').disabled).toBe(true)
+    // GROUP 曾经被渲染成「未归属」，这里单列一条组合来钉住文案。
+    expect(rows[3].querySelector('.kind-note').textContent).toBe('组合')
+    expect(rows[3].textContent).not.toContain('未归属')
+    expect(rows[3].querySelector('.link').disabled).toBe(false)
   })
 
   it('uses safe review defaults for an artist with missing optional data and ignores detached actions', async () => {
@@ -770,6 +776,34 @@ describe('ArtistLibraryView', () => {
 
     expect(apiMock.adminScrapeArtistAvatar).toHaveBeenCalledWith('张三')
     expect(root.querySelector('.avatar-backfill-status').textContent).toContain('优先重刮任务')
+  })
+
+  it('进度拉取失败时显示错误与重试', async () => {
+    apiMock.adminArtistAvatarProgress.mockRejectedValue(new Error('progress down'))
+    await mount()
+    expect(root.querySelector('.avatar-progress-error')).not.toBeNull()
+    expect(root.querySelector('.avatar-progress-error').textContent).toContain('进度')
+    expect(root.querySelector('.avatar-progress-error').textContent).toContain('重试')
+  })
+
+  it('重试成功后恢复展示进度', async () => {
+    apiMock.adminArtistAvatarProgress
+      .mockRejectedValueOnce(new Error('progress down'))
+      .mockResolvedValue({ totalArtists: 2, readyCount: 1, pendingCount: 1, unresolvedCount: 0, queuedJobs: 2, recentErrors: [] })
+    await mount()
+    expect(root.querySelector('.avatar-progress-error')).not.toBeNull()
+
+    root.querySelector('.avatar-progress-error button').click()
+    await flushUi()
+    expect(root.querySelector('.avatar-progress-error')).toBeNull()
+    expect(root.textContent).toContain('已缓存')
+  })
+
+  it('列表加载不受进度失败影响', async () => {
+    apiMock.adminArtistAvatarProgress.mockRejectedValue(new Error('progress down'))
+    await mount()
+    expect(root.textContent).toContain('张三')
+    expect(root.textContent).toContain('李四')
   })
 
   async function mount() {

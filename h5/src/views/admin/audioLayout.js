@@ -24,3 +24,24 @@ export function createAudioLayoutDraft(value = {}) {
 export function audioLayoutLabel(value) {
   return AUDIO_LAYOUT_OPTIONS.find(item => item.value === value?.layout)?.label || '普通立体声'
 }
+
+/**
+ * 布局语义的来源，只读展示用（对应后端 `AudioLayoutSource`）。
+ *
+ * 不放进 `createAudioLayoutDraft`：那个对象会原样 PUT 给
+ * `/admin/files/{id}/audio-layout`，混入只读字段等于把来源标记当业务字段写回。
+ */
+export const AUDIO_LAYOUT_SOURCE_LABELS = {
+  LEGACY: '历史数据（未确认）',
+  AUTO_DEFAULT: '自动识别',
+  MANUAL: '管理员手动设置'
+}
+
+/**
+ * 取布局来源的中文文案，未知或缺失返回空串（不显示这一行）。
+ * @param {string} [source] 后端下发的来源码 / provenance code
+ * @returns {string} 中文文案 / readable provenance label
+ */
+export function audioLayoutSourceLabel(source) {
+  return AUDIO_LAYOUT_SOURCE_LABELS[source] || ''
+}

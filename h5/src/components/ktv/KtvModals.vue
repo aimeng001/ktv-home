@@ -11,14 +11,17 @@
       <!-- 系统信息 -->
       <div v-if="activeModal === 'system'" class="modal-body">
         <div class="kv-grid">
-          <div class="kv"><small>服务状态</small><strong>{{ healthInfo?.status || 'UP' }}</strong></div>
-          <div class="kv"><small>服务端版本</small><strong>{{ releaseInfo?.version || 'dev' }}</strong></div>
+          <div class="kv"><small>服务状态</small><strong :title="healthError">{{ systemInfoLoading ? '读取中…' : healthInfo?.status || (healthError ? '读取失败' : '未知') }}</strong></div>
+          <div class="kv"><small>服务端版本</small><strong :title="releaseError">{{ systemInfoLoading ? '读取中…' : releaseInfo?.version || (releaseError ? '读取失败' : '未知') }}</strong></div>
           <div class="kv"><small>物理 TV 状态</small><strong>{{ player.tvOnline ? '在线' : player.tvOnline === false ? '离线' : '同步中' }}</strong></div>
           <div class="kv"><small>当前网页模式</small><strong>{{ modeText }}</strong></div>
           <div class="kv"><small>在线网页/遥控器</small><strong>{{ player.connectedPhones }}</strong></div>
           <div class="kv"><small>当前曲库音频布局</small><strong>{{ player.audioLayout?.layout || 'NORMAL_STEREO' }}</strong></div>
         </div>
         <div class="modal-actions">
+          <button v-if="healthError || releaseError" type="button" class="btn ghost system-info-retry" :disabled="systemInfoLoading" @click="loadSystemInfo">
+            {{ systemInfoLoading ? '读取中…' : '重试读取' }}
+          </button>
           <router-link to="/admin" class="btn" @click="$emit('close')">打开管理后台</router-link>
         </div>
       </div>
@@ -27,6 +30,17 @@
       <div v-else-if="activeModal === 'qr'" class="modal-body qr-body">
         <img :src="qrUrl" alt="微信扫码点歌二维码" class="qr-img" />
         <p class="qr-tip">用微信或手机浏览器扫码，即可接入当前房间共同点歌与遥控</p>
+        <div v-if="shareUrlFallback" class="share-url-fallback" role="status">
+          <span>无法访问剪贴板，请长按下方地址手动复制</span>
+          <input
+            ref="shareUrlInput"
+            :value="shareUrlFallback"
+            aria-label="点歌地址"
+            readonly
+            @focus="$event.target.select()"
+            @click="$event.target.select()"
+          />
+        </div>
         <div class="modal-actions">
           <button type="button" class="btn ghost" @click="copyShareUrl">复制点歌地址</button>
         </div>
@@ -115,7 +129,7 @@
       <div v-else-if="activeModal === 'mixer'" class="modal-body">
         <div class="mixer-row">
           <span>房间音量 ({{ player.muted ? '已静音' : vol }})</span>
-          <input type="range" min="0" max="100" v-model.number="vol" @change="$emit('set-volume', vol)" />
+          <input type="range" min="0" max="100" aria-label="房间音量" v-model.number="vol" @change="$emit('set-volume', vol)" />
           <button type="button" class="mini-mute-btn" :class="{ on: player.muted }" @click="$emit('toggle-mute')">
             {{ player.muted ? '取消静音' : '静音' }}
           </button>
@@ -161,7 +175,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { GlassWater, Hand, Megaphone, PartyPopper, X } from 'lucide-vue-next'
 import api from '../../api/client'
@@ -195,6 +209,11 @@ const { toast } = useToast()
 
 const healthInfo = ref(null)
 const releaseInfo = ref(null)
+const healthError = ref('')
+const releaseError = ref('')
+const systemInfoLoading = ref(false)
+const shareUrlFallback = ref('')
+const shareUrlInput = ref(null)
 const nickDraft = ref(user.nickname || '')
 const wishDraft = ref('')
 const savingNick = ref(false)
@@ -209,14 +228,26 @@ watch(() => props.activeModal, async (modal) => {
     wishDraft.value = ''
   }
   if (modal === 'system') {
-    const [h, r] = await Promise.all([
-      api.health().catch(() => null),
-      api.releaseInfo().catch(() => null)
-    ])
-    healthInfo.value = h
-    releaseInfo.value = r
+    await loadSystemInfo()
   }
 })
+
+async function loadSystemInfo() {
+  systemInfoLoading.value = true
+  healthInfo.value = null
+  releaseInfo.value = null
+  healthError.value = ''
+  releaseError.value = ''
+  const [healthResult, releaseResult] = await Promise.allSettled([
+    api.health(),
+    api.releaseInfo()
+  ])
+  if (healthResult.status === 'fulfilled') healthInfo.value = healthResult.value
+  else healthError.value = healthResult.reason?.message || '读取失败'
+  if (releaseResult.status === 'fulfilled') releaseInfo.value = releaseResult.value
+  else releaseError.value = releaseResult.reason?.message || '读取失败'
+  systemInfoLoading.value = false
+}
 
 const modalTitle = computed(() => ({
   system: '系统信息',
@@ -254,12 +285,19 @@ async function saveNickname() {
     return
   }
   savingNick.value = true
+  const prev = { nickname: user.nickname, serverUserId: user.serverUserId }
   try {
-    user.register(next)
-    const res = await api.registerUser(user.clientToken, user.nickname)
+    user.ensureToken()
+    const res = await api.registerUser(user.clientToken, next)
     if (!user.markRegistrationSuccess(res)) throw new Error('昵称更新失败')
     toast(`已更新昵称：${user.nickname}`)
   } catch (e) {
+    // 昵称更新失败不得清空可写身份：register() 会置空 serverUserId，这里直接回滚。
+    if (prev.serverUserId) {
+      user.markRegistrationSuccess({ id: prev.serverUserId, nickname: prev.nickname || user.nickname })
+    } else {
+      user.setNickname(prev.nickname)
+    }
     toast(e.message || '保存昵称失败')
   } finally {
     savingNick.value = false
@@ -287,11 +325,24 @@ async function submitWishFeedback() {
 async function copyShareUrl() {
   const shareUrl = `${location.origin}/m/?room=default`
   try {
-    await navigator.clipboard?.writeText(shareUrl)
+    const clipboard = navigator.clipboard
+    if (typeof clipboard?.writeText !== 'function') {
+      await showShareUrlFallback(shareUrl)
+      return
+    }
+    await clipboard.writeText(shareUrl)
+    shareUrlFallback.value = ''
     toast('已复制点歌地址')
   } catch {
-    toast(shareUrl)
+    await showShareUrlFallback(shareUrl)
   }
+}
+
+async function showShareUrlFallback(shareUrl) {
+  shareUrlFallback.value = shareUrl
+  await nextTick()
+  shareUrlInput.value?.focus()
+  shareUrlInput.value?.select()
 }
 
 async function triggerScan() {
@@ -354,6 +405,8 @@ async function triggerScan() {
 .kv strong { font-size: 13px; margin-top: 4px; display: block; }
 .qr-body { align-items: center; text-align: center; }
 .qr-img { width: 220px; height: 220px; border-radius: 12px; background: #fff; padding: 8px; }
+.share-url-fallback { width: 100%; display: flex; flex-direction: column; gap: 6px; text-align: left; font-size: 12px; color: var(--dim); }
+.share-url-fallback input { width: 100%; height: 38px; border-radius: 8px; padding: 0 10px; user-select: all; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.14); color: var(--text); }
 .qr-tip, .scan-desc, .hint { font-size: 12px; color: var(--dim); line-height: 1.5; }
 .field-label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--dim); }
 .nick-row { display: flex; gap: 8px; }

@@ -58,14 +58,15 @@ import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog } from '../../composables/useDialog'
 import { normalizeScanProgress, scanPercent as calculateScanPercent, scanPhaseLabel, formatEta } from './scanProgress'
-import { recordScanPollFailure, recordScanPollSuccess } from './dashboardPollState'
+import { nextScanPollDelay, recordScanPollFailure, recordScanPollSuccess } from './dashboardPollState'
 import { createProgressPollGate } from './progressPollGate'
 const d=ref({}),queue=ref({}),progress=ref({}),scanning=ref(false),scanResult=ref(null),scanProgress=ref({}),sourceTotal=ref(0),pendingCount=ref(0)
 const downloadingDiag=ref(false)
 const libraryMode=ref('MANAGED')
 const loadError=ref(''),scanPollError=ref(''),scanPollFailures=ref(0)
 let scanTimer=null
-let scanPollRetryTimer=null
+let polling=false
+let scanPollAttempt=0
 let dashboardLoadGeneration=0
 const scanPollGate=createProgressPollGate()
 /**
@@ -136,7 +137,35 @@ async function load(){
  *
  * Start polling scan progress (once per second).
  */
-function startPolling(){if(!scanTimer)scanTimer=setInterval(pollScan,1000)}
+function startPolling(){
+  if(polling)return
+  polling=true
+  scanPollAttempt=0
+  scheduleNextPoll(0)
+}
+
+/**
+ * 递归 setTimeout，不用 setInterval。
+ *
+ * 直接给 setInterval 加退避公式会让两套定时器同时触发，产生双倍请求。
+ * 退避间隔见 nextScanPollDelay（1s → 1.2s → … → 5s 封顶）。
+ */
+function scheduleNextPoll(delay){
+  if(!polling)return
+  if(scanTimer)clearTimeout(scanTimer)
+  scanTimer=setTimeout(runScheduledPoll,delay)
+}
+
+/**
+ * 定时器到点后触发一次轮询。
+ *
+ * 返回 pollScan 的 Promise，便于调用方（含测试）等到这一拍真正结束。
+ * @returns {Promise<void>}
+ */
+function runScheduledPoll(){
+  scanTimer=null
+  return pollScan()
+}
 
 /**
  * 停止扫描进度轮询并清除定时器。
@@ -144,8 +173,8 @@ function startPolling(){if(!scanTimer)scanTimer=setInterval(pollScan,1000)}
  * Stop polling scan progress and clear the timer.
  */
 function stopPolling(){
-  if(scanTimer){clearInterval(scanTimer);scanTimer=null}
-  if(scanPollRetryTimer){clearTimeout(scanPollRetryTimer);scanPollRetryTimer=null}
+  polling=false
+  if(scanTimer){clearTimeout(scanTimer);scanTimer=null}
   scanPollGate.invalidate()
 }
 
@@ -182,10 +211,10 @@ async function pollScan(){
       scanResult.value=scanProgress.value
     }
   }finally{
-    const pollAgain=scanPollGate.finish(request)
-    if(pollAgain&&scanTimer){
-      if(scanPollRetryTimer)clearTimeout(scanPollRetryTimer)
-      scanPollRetryTimer=setTimeout(()=>{scanPollRetryTimer=null;pollScan()},0)
+    scanPollGate.finish(request)
+    if(polling){
+      scanPollAttempt+=1
+      scheduleNextPoll(nextScanPollDelay(scanPollAttempt-1))
     }
   }
 }
@@ -247,5 +276,5 @@ onMounted(load)
 onUnmounted(()=>{dashboardLoadGeneration+=1;stopPolling()})
 </script>
 <style scoped>
-.page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.page-head h1{font-size:22px}.page-head p{color:#64748b;font-size:13px;margin-top:6px}.header-actions{display:flex;align-items:center;gap:10px}.primary,.secondary{height:36px;padding:0 15px;border-radius:6px;font-size:13px}.primary{background:#2563eb;color:#fff}.secondary{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #cbd5e1;color:#334155}.primary:disabled,.secondary:disabled{opacity:.5}.error-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding:10px 13px;border:1px solid #fecaca;border-radius:7px;background:#fef2f2;color:#b91c1c;font-size:12px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}.stats article{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px}.stats span,.stats small{display:block;color:#64748b;font-size:12px}.stats strong{display:block;font-size:26px;margin:8px 0 6px}.stats small{color:#94a3b8}.scan-progress{padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:14px;color:#1e40af}.scan-progress.complete{background:#f0fdf4;border-color:#bbf7d0;color:#166534}.scan-progress.failed{background:#fef2f2;border-color:#fecaca;color:#991b1b}.scan-progress.failed .track{background:#fee2e2}.scan-progress.failed .track i{background:#dc2626}.error-msg{color:#b91c1c;font-weight:600}.progress-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.progress-head div{min-width:0}.progress-head strong,.progress-head span{display:block}.progress-head span{margin-top:4px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.progress-head b{font-size:18px}.track{height:7px;margin:12px 0 9px;background:#dbeafe;border-radius:4px;overflow:hidden}.complete .track{background:#dcfce7}.track i{display:block;height:100%;background:#2563eb;transition:width .25s}.complete .track i{background:#16a34a}.progress-meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px}.progress-meta .failed{color:#b91c1c;font-weight:700}.panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px}.panel-head{display:flex;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e2e8f0}.text-btn,.link{color:#2563eb;font-size:12px}.link:disabled{color:#94a3b8}table{width:100%;border-collapse:collapse;font-size:12px}th{padding:11px 14px;text-align:left;background:#f8fafc;color:#64748b}td{padding:13px 14px;border-top:1px solid #eef2f7;color:#475569}td strong,td small{display:block}td small{color:#94a3b8;margin-top:4px}.status{display:inline-flex;padding:3px 8px;border-radius:999px;font-weight:600}.green{background:#dcfce7;color:#166534}.blue{background:#dbeafe;color:#1d4ed8}.neutral{background:#f1f5f9;color:#475569}@media(max-width:900px){.stats{grid-template-columns:1fr 1fr}.panel{overflow:auto}table{min-width:760px}}
+.page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.page-head h1{font-size:22px}.page-head p{color:#64748b;font-size:13px;margin-top:6px}.header-actions{display:flex;align-items:center;gap:10px}.primary,.secondary{height:36px;padding:0 15px;border-radius:6px;font-size:13px}.primary{background:#2563eb;color:#fff}.secondary{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #cbd5e1;color:#334155}.primary:disabled,.secondary:disabled{opacity:.5}.error-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding:10px 13px;border:1px solid #fecaca;border-radius:7px;background:#fef2f2;color:#b91c1c;font-size:12px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}.stats article{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px}.stats span,.stats small{display:block;color:#64748b;font-size:12px}.stats strong{display:block;font-size:26px;margin:8px 0 6px}.stats small{color:#94a3b8}.scan-progress{padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:14px;color:#1e40af}.scan-progress.complete{background:#f0fdf4;border-color:#bbf7d0;color:#166534}.scan-progress.failed{background:#fef2f2;border-color:#fecaca;color:#991b1b}.scan-progress.failed .track{background:#fee2e2}.scan-progress.failed .track i{background:#dc2626}.error-msg{color:#b91c1c;font-weight:600}.progress-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.progress-head div{min-width:0}.progress-head strong,.progress-head span{display:block}.progress-head span{margin-top:4px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.progress-head b{font-size:18px}.track{height:7px;margin:12px 0 9px;background:#dbeafe;border-radius:4px;overflow:hidden}.complete .track{background:#dcfce7}.track i{display:block;height:100%;background:#2563eb;transition:width .25s}.complete .track i{background:#16a34a}.progress-meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px}.progress-meta .failed{color:#b91c1c;font-weight:700}.panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px}.panel-head{display:flex;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e2e8f0}.text-btn,.link{color:#2563eb;font-size:12px}.link:disabled{color:#94a3b8}table{width:100%;border-collapse:collapse;font-size:12px}th{padding:11px 14px;text-align:left;background:#f8fafc;color:#64748b}td{padding:13px 14px;border-top:1px solid #eef2f7;color:#475569}td strong,td small{display:block}td small{color:#5b6878;margin-top:4px;font-size:11px}.status{display:inline-flex;padding:3px 8px;border-radius:999px;font-weight:600}.green{background:#dcfce7;color:#166534}.blue{background:#dbeafe;color:#1d4ed8}.neutral{background:#f1f5f9;color:#475569}@media(max-width:900px){.stats{grid-template-columns:1fr 1fr}.panel{overflow:auto}table{min-width:760px}}
 </style>

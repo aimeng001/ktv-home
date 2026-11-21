@@ -13,7 +13,7 @@
       <section class="launch-band">
         <div class="threshold-control">
           <span>自动写入阈值</span>
-          <input v-model.number="threshold" type="range" min="0.5" max="1" step="0.01" />
+          <input v-model.number="threshold" type="range" aria-label="相似度阈值" min="0.5" max="1" step="0.01" />
           <strong>{{ formatPercent(threshold) }}</strong>
           <small>低于阈值的建议保留在人工审核中</small>
           <details class="score-rule">

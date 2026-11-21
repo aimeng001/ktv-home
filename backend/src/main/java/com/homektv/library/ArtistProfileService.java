@@ -431,7 +431,7 @@ public class ArtistProfileService {
                     SELECT artist_profiles.artist_key FROM artist_profiles
                     LEFT JOIN artist_directory_stats dir ON dir.artist_key = artist_profiles.artist_key
                     WHERE artist_profiles.artist_kind IN ('PERSON', 'GROUP')
-                      AND artist_profiles.avatar_status IN ('PENDING', 'RETRY', 'REVIEW', 'SKIPPED')
+                      AND artist_profiles.avatar_status IN ('PENDING', 'RETRY', 'REVIEW', 'SKIPPED', 'FAILED')
                     ORDER BY COALESCE(dir.song_count, 0) DESC, artist_profiles.updated_at, artist_profiles.artist_key
                     LIMIT ?
                     """, (rs, index) -> rs.getString(1), safeLimit);

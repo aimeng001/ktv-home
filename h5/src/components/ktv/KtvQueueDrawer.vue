@@ -29,6 +29,10 @@
           <button v-if="!host.claimed" type="button" class="mini-btn gold" @click="claimHost">认领房主</button>
           <button v-else-if="host.isHost" type="button" class="mini-btn" @click="releaseHost">释放</button>
           <button v-if="player.queue.length > 1" type="button" class="mini-btn" @click="shuffleQueue">智能打散</button>
+          <p v-if="hostStatus === 'error'" class="host-error">
+            房主状态获取失败
+            <button type="button" class="mini-btn" @click="refreshHost">重试</button>
+          </p>
         </section>
 
         <section v-if="player.nowPlaying" class="now-card">
@@ -114,6 +118,7 @@ const busyHistoryId = ref(null)
 let historyReqSeq = 0
 
 const host = ref({ claimed: false, isHost: false, hostNickname: null, revision: 0 })
+const hostStatus = ref('idle')
 
 function mergeHost(value) {
   if (!value || typeof value !== 'object') return
@@ -125,6 +130,19 @@ function mergeHost(value) {
     ...value,
     revision: Number.isFinite(incRev) ? incRev : curRev
   }
+  hostStatus.value = 'ready'
+}
+
+/** 拉取房主状态；失败置 error 但保留认领按钮，避免「取不到 → 无法认领 → 永不广播」死锁。 */
+async function refreshHost() {
+  hostStatus.value = 'loading'
+  try {
+    const value = await api.roomHostStatus(user.clientToken)
+    mergeHost(value)
+    hostStatus.value = 'ready'
+  } catch {
+    hostStatus.value = 'error'
+  }
 }
 
 watch(() => player.roomHost, value => mergeHost(value), { deep: true })
@@ -133,14 +151,14 @@ watch(() => player.historyRevision, () => {
 })
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
-    api.roomHostStatus(user.clientToken).then(mergeHost).catch(() => {})
+    refreshHost()
     loadHistory()
   }
 })
 
 onMounted(() => {
   if (user.clientToken) {
-    api.roomHostStatus(user.clientToken).then(mergeHost).catch(() => {})
+    refreshHost()
   }
 })
 
@@ -299,10 +317,20 @@ async function repeatSong(entry) {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   padding: 10px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.host-error {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  color: #f09595;
 }
 .host-bar > div { flex: 1; min-width: 0; }
 .host-bar strong { display: block; font-size: 13px; }

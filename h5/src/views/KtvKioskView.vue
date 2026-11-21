@@ -7,6 +7,13 @@
       @toggle-mode="toggleQuickMode"
     />
 
+    <div v-if="user.registrationError" class="identity-banner" role="alert">
+      身份初始化失败：{{ user.registrationError }}
+      <button type="button" :disabled="identityRetrying" @click="retryIdentity">
+        {{ identityRetrying ? '重试中…' : '重试' }}
+      </button>
+    </div>
+
     <main class="kiosk-stage">
       <KtvBentoDashboard
         v-if="viewMode === 'dashboard'"
@@ -121,6 +128,7 @@ const standbyLogoUrl = ref('')
 
 const fullscreen = ref(false)
 const drawerOpen = ref(false)
+const identityRetrying = ref(false)
 const activeModal = ref('')
 const autoFullscreen = ref((() => {
   try { return localStorage.getItem('ktv_auto_fullscreen') === 'true' } catch { return false }
@@ -151,6 +159,9 @@ function updatePipRect() {
 
 function applyRouteIntent() {
   const name = route.name
+  drawerOpen.value = false
+  activeModal.value = ''
+  fullscreen.value = false
   if (name === 'entry' || name === 'home') {
     viewMode.value = 'dashboard'
     resetBrowserFilters()
@@ -284,6 +295,23 @@ async function openGlobalSearch() {
 
 function openModal(name) {
   activeModal.value = name
+}
+
+/** 身份初始化失败后手动重试；成功后补齐可写身份并确保实时连接存在。 */
+async function retryIdentity() {
+  if (identityRetrying.value) return
+  identityRetrying.value = true
+  try {
+    const profile = await api.registerUser(user.clientToken, user.nickname)
+    if (!user.markRegistrationSuccess(profile)) throw new Error('服务端未返回有效用户身份')
+    player.connect()
+    toast(`身份已恢复：${user.nickname}`)
+  } catch (error) {
+    user.markRegistrationFailure(error)
+    toast(error.message || '身份初始化仍然失败，请稍后重试')
+  } finally {
+    identityRetrying.value = false
+  }
 }
 
 function toggleFullscreen() {
@@ -487,6 +515,33 @@ onBeforeUnmount(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+.identity-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 36px;
+  padding: 4px 16px;
+  font-size: 13px;
+  color: #4a1b0c;
+  background: #f5c4b3;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
+}
+.identity-banner button {
+  flex: none;
+  padding: 4px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.28);
+  background: rgba(255, 255, 255, 0.72);
+  color: #4a1b0c;
+  font-size: 12px;
+  cursor: pointer;
+}
+.identity-banner button:disabled {
+  opacity: 0.6;
+  cursor: progress;
 }
 
 @media (max-width: 899px) {

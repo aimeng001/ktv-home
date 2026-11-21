@@ -19,12 +19,16 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FavoriteControllerTest {
     private final List<Favorite> favorites = new ArrayList<>();
     private final Map<Long, Song> songs = new LinkedHashMap<>();
     private final AtomicInteger findByIdCalls = new AtomicInteger();
     private final AtomicInteger findAllByIdCalls = new AtomicInteger();
+    private final AtomicInteger resolveUserIdCalls = new AtomicInteger();
+    private final AtomicInteger resolveExistingUserCalls = new AtomicInteger();
+    private Long existingUserId = 7L;
     private FavoriteController controller;
 
     @BeforeEach
@@ -33,8 +37,19 @@ class FavoriteControllerTest {
         songs.clear();
         findByIdCalls.set(0);
         findAllByIdCalls.set(0);
+        resolveUserIdCalls.set(0);
+        resolveExistingUserCalls.set(0);
+        existingUserId = 7L;
         controller = new FavoriteController(favoriteRepository(), songRepository(), new UserService(null) {
-            @Override public Long resolveUserId(String clientToken) { return 7L; }
+            @Override public Long resolveUserId(String clientToken) {
+                resolveUserIdCalls.incrementAndGet();
+                return 7L;
+            }
+
+            @Override public Long resolveExistingUserId(String clientToken) {
+                resolveExistingUserCalls.incrementAndGet();
+                return existingUserId;
+            }
         });
     }
 
@@ -79,6 +94,44 @@ class FavoriteControllerTest {
     void removingFavoriteIsSafeWhenAlreadyMissing() {
         assertThat(controller.remove(10L, "token-1")).containsEntry("favorite", false);
         assertThat(favorites).isEmpty();
+    }
+
+    @Test
+    void listingFavoritesDoesNotCreateUserForUnknownToken() {
+        existingUserId = null;
+
+        assertThat(controller.list("never-registered-token", 0, 10)).isEmpty();
+        assertThat(resolveExistingUserCalls).hasValue(1);
+        assertThat(resolveUserIdCalls).hasValue(0);
+    }
+
+    @Test
+    void listingFavoriteIdsDoesNotCreateUserForUnknownToken() {
+        existingUserId = null;
+
+        assertThat(controller.ids("never-registered-token", 0, 10)).isEmpty();
+        assertThat(resolveUserIdCalls).hasValue(0);
+    }
+
+    @Test
+    void blankTokenIsStillRejectedOnReads() {
+        assertThatThrownBy(() -> controller.list("   ", 0, 10))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("clientToken");
+        assertThatThrownBy(() -> controller.ids(null, 0, 10))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("clientToken");
+        assertThat(resolveExistingUserCalls).hasValue(0);
+    }
+
+    @Test
+    void addingFavoriteStillCreatesTheUser() {
+        songs.put(10L, song(10L, "晴天"));
+
+        controller.add(10L, Map.of("clientToken", "brand-new-token"));
+
+        assertThat(resolveUserIdCalls).hasValue(1);
+        assertThat(favorites).hasSize(1);
     }
 
     @Test

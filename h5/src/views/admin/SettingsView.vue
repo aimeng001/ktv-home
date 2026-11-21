@@ -103,7 +103,7 @@
               <button class="btn ghost small" :disabled="testingMusic" @click="testMusic([item.provider])">测试连接</button>
             </div>
           </div>
-          <div class="section-actions"><button class="btn" :disabled="testingMusic || !musicForm.providers.length" @click="testMusic(musicForm.providers)"><TestTube2 :size="15" />{{ testingMusic ? '测试中…' : '测试歌曲元数据连通性' }}</button><span v-if="musicTestMessage" class="test-message">{{ musicTestMessage }}</span></div>
+          <div class="section-actions"><button class="btn" :disabled="testingMusic || !musicForm.providers.length" @click="testMusic(musicForm.providers)"><TestTube2 :size="15" />{{ testingMusic ? '测试中…' : '测试歌曲元数据连通性' }}</button><button class="btn ghost" :disabled="testingMusic" @click="resetMusicCooldowns">重置平台冷却</button><span v-if="musicTestMessage" class="test-message">{{ musicTestMessage }}</span></div>
         </section>
 
         <section v-show="section === 'transcode'" class="section" id="section-transcode">
@@ -424,6 +424,7 @@ function chooseModel(model){ if(modelTarget.value==='reasoning') aiForm.reasonin
 async function loadModels(target='bulk'){ modelTarget.value=target; try { models.value=(await api.adminAiModels()).models||[] } catch(e){ await alertDialog(e.message||'模型列表获取失败') } }
 async function testAi(){ testing.value=true; try { const result=await api.adminAiTestConfig(); testMessage.value=`连接成功，已检测 ${Object.keys(result.testedModels||{}).length} 个模型`; Object.assign(ai,await api.adminAiConfig()) } catch(e){ testMessage.value=e.message||'连接测试失败' } finally { testing.value=false } }
 async function testMusic(providers){testingMusic.value=true;try{const result=await api.adminTestMusicSources(providers);musicStatus.value=result.providerStatus||musicStatus.value;const success=(result.results||[]).filter(item=>item.healthy).length;musicTestMessage.value=`${success}/${(result.results||[]).length} 个平台连接成功`}catch(e){musicTestMessage.value=e.message||'平台连接测试失败'}finally{testingMusic.value=false}}
+async function resetMusicCooldowns(){testingMusic.value=true;try{const result=await api.adminResetMusicSourceCooldowns?.();musicStatus.value=result?.providerStatus||musicStatus.value;musicTestMessage.value='已清除平台错误冷却状态并重新唤醒队列'}catch(e){musicTestMessage.value=e.message||'重置冷却失败'}finally{testingMusic.value=false}}
 async function restoreTranscodeDefaults(){
   if(saving.value)return
   if(!await confirmDialog('恢复转码默认规则？',{title:'恢复默认'}))return

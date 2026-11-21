@@ -27,11 +27,17 @@ public class MusicSourceController {
     private final MusicSourceSearchService searchService;
     private final MusicMetadataApplyService applyService;
     private final ArtistAvatarJobService avatarJobs;
+    private com.homektv.musicsource.ProviderRequestRateLimiter rateLimiter;
 
     public MusicSourceController(MusicSourceConfigService configService, MusicSourceSearchService searchService,
                                  MusicMetadataApplyService applyService, ArtistAvatarJobService avatarJobs) {
         this.configService = configService; this.searchService = searchService; this.applyService = applyService;
         this.avatarJobs = avatarJobs;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRateLimiter(com.homektv.musicsource.ProviderRequestRateLimiter rateLimiter) {
+        this.rateLimiter = rateLimiter;
     }
 
     @GetMapping("/music-sources/config")
@@ -54,6 +60,15 @@ public class MusicSourceController {
     public Map<String, Object> test(@RequestBody(required = false) ProviderRequest request) {
         Set<MusicProvider> providers = request == null ? Set.of() : parseProviders(request.providers());
         return Map.of("results", searchService.test(providers), "providerStatus", configService.states());
+    }
+
+    @PostMapping("/music-sources/reset-cooldown")
+    public Map<String, Object> resetCooldown() {
+        if (rateLimiter != null) {
+            rateLimiter.resetCooldowns();
+        }
+        avatarJobs.enqueueUnresolvedProfilesAsync();
+        return Map.of("success", true, "providerStatus", configService.states());
     }
 
     @GetMapping("/songs/{songId}/external-matches")

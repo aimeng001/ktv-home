@@ -130,6 +130,21 @@ class MusicSourceControllerTest {
         verifyNoInteractions(fixture.avatarJobs);
     }
 
+    @Test
+    void resetCooldownEndpointClearsCooldownsAndReturnsProviderStatus() {
+        Fixture fixture = fixture();
+        com.homektv.musicsource.ProviderRequestRateLimiter rateLimiter =
+                mock(com.homektv.musicsource.ProviderRequestRateLimiter.class);
+        fixture.controller.setRateLimiter(rateLimiter);
+        when(fixture.config.states()).thenReturn(List.of(Map.of("provider", "KUGOU", "cooldownUntil", "")));
+
+        Map<String, Object> result = fixture.controller.resetCooldown();
+
+        verify(rateLimiter).resetCooldowns();
+        verify(fixture.avatarJobs).enqueueUnresolvedProfilesAsync();
+        assertThat(result).containsEntry("success", true).containsKey("providerStatus");
+    }
+
     private static Fixture fixture() {
         MusicSourceConfigService config = mock(MusicSourceConfigService.class);
         MusicSourceSearchService search = mock(MusicSourceSearchService.class);

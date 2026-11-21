@@ -294,8 +294,11 @@ class SnapshotServiceTest {
                 userRepository, broadcaster, fileRepository, playbackResolution).snapshot();
 
         assertThat(snapshot.playback().sourceFileId()).isEqualTo(ready.getId());
-        assertThat(snapshot.audioLayout()).isEqualTo(expectedLayout);
-        assertThat(snapshot.playback().audioLayout()).isEqualTo(expectedLayout);
+        // 只比对语义分量：source 是行上已有的来源标记，与「布局取自哪个文件」无关。
+        assertThat(snapshot.audioLayout()).usingRecursiveComparison()
+                .ignoringFields("source").isEqualTo(expectedLayout);
+        assertThat(snapshot.playback().audioLayout()).usingRecursiveComparison()
+                .ignoringFields("source").isEqualTo(expectedLayout);
         verify(playbackResolution).resolveReady(ready, false);
     }
 

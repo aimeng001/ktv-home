@@ -5,7 +5,7 @@
       <button type="button" class="back-hall-btn" @click="$emit('back-hall')">
         <ArrowLeft :size="15" /> 大厅
       </button>
-      <div class="capsule-scroll" role="tablist">
+      <div class="capsule-scroll">
         <button
           v-for="item in capsuleTabs"
           :key="item.key"
@@ -276,6 +276,14 @@
         </div>
 
         <!-- 加载 / 错误 / 空状态 -->
+        <div
+          v-if="activeTab === 'favorites' && favorites.loadFailed"
+          class="favorites-sync-error"
+          role="alert"
+        >
+          <span>收藏状态同步失败，收藏标记可能不准确</span>
+          <button type="button" class="btn ghost small" @click="syncFavorites">重新同步</button>
+        </div>
         <div v-if="loading && !hasItems" class="stage-state">加载中…</div>
         <div v-else-if="loadError && !hasItems" class="stage-state error">
           <span>{{ loadError }}</span>
@@ -380,6 +388,7 @@
                 class="order-btn"
                 :class="{ ordered: orderedIds.has(song.id), unavailable: song.playable === false }"
                 :disabled="song.playable === false"
+                :title="song.playable === false ? unavailableReasonLabel(song.unavailableReason) : ''"
                 @click="orderSong(song)"
               >
                 {{ song.playable === false ? '准备中' : orderedIds.has(song.id) ? '已点' : '点歌' }}
@@ -430,6 +439,7 @@ import { createLatestRequest } from '../../views/latestRequest'
 import { loadAllFavoritePages } from '../../views/favoritesState'
 import { avatarUrlFor, rememberAvatarFailure } from '../../views/artistAvatarState'
 import { formatOrderToast } from '../../views/orderFeedbackState'
+import { unavailableReasonLabel } from './songAvailability'
 import KtvSoftKeyboard from './KtvSoftKeyboard.vue'
 import {
   CAPSULE_TABS,
@@ -741,12 +751,20 @@ async function reloadActive() {
     return
   }
   if (t === 'language') {
-    await ensureLanguagesLoaded()
+    if (!await ensureLanguagesLoaded()) {
+      songs.value = []
+      songTotal.value = 0
+      return
+    }
     await loadSongsByBrowse()
     return
   }
   if (t === 'theme') {
-    await ensureTagsLoaded()
+    if (!await ensureTagsLoaded()) {
+      songs.value = []
+      songTotal.value = 0
+      return
+    }
     await loadSongsByBrowse()
     return
   }
@@ -974,24 +992,42 @@ async function loadArtistsOnly() {
 async function ensureLanguagesLoaded() {
   if (languages.value.length) {
     if (!selectedLanguage.value) selectedLanguage.value = languages.value[0].name
-    return
+    return Boolean(selectedLanguage.value)
   }
-  const list = await api.browseLanguages().catch(() => [])
-  languages.value = Array.isArray(list) ? list : []
-  if (languages.value.length && !selectedLanguage.value) {
-    selectedLanguage.value = languages.value[0].name
+  loading.value = true
+  try {
+    const list = await api.browseLanguages()
+    languages.value = Array.isArray(list) ? list : []
+    if (languages.value.length && !selectedLanguage.value) {
+      selectedLanguage.value = languages.value[0].name
+    }
+    return Boolean(selectedLanguage.value)
+  } catch (e) {
+    loadError.value = e.message || '语种目录读取失败'
+    return false
+  } finally {
+    loading.value = false
   }
 }
 
 async function ensureTagsLoaded() {
   if (tags.value.length) {
     if (!selectedTag.value) selectedTag.value = tags.value[0].name
-    return
+    return Boolean(selectedTag.value)
   }
-  const list = await api.browseTags().catch(() => [])
-  tags.value = Array.isArray(list) ? list : []
-  if (tags.value.length && !selectedTag.value) {
-    selectedTag.value = tags.value[0].name
+  loading.value = true
+  try {
+    const list = await api.browseTags()
+    tags.value = Array.isArray(list) ? list : []
+    if (tags.value.length && !selectedTag.value) {
+      selectedTag.value = tags.value[0].name
+    }
+    return Boolean(selectedTag.value)
+  } catch (e) {
+    loadError.value = e.message || '主题目录读取失败'
+    return false
+  } finally {
+    loading.value = false
   }
 }
 
@@ -1026,12 +1062,22 @@ async function loadFavorites() {
     if (!reqGate.isCurrent(req.id)) return
     songs.value = Array.isArray(res) ? res : []
     songTotal.value = songs.value.length
-    favorites.load(user.clientToken, true).catch(() => {})
+    // 这份列表就是完整的收藏集合，直接补齐 ID，省掉一次全量分页请求
+    favorites.hydrate(songs.value.map(song => song?.id).filter(id => id != null), user.clientToken)
   } catch (e) {
     if (!reqGate.isCurrent(req.id) || e.name === 'AbortError') return
     loadError.value = e.message || '收藏读取失败'
   } finally {
     if (reqGate.isCurrent(req.id)) loading.value = false
+  }
+}
+
+/** 重新同步收藏 ID；失败状态由 store 的 loadFailed 呈现，这里不再重复弹提示。 */
+async function syncFavorites() {
+  try {
+    await favorites.load(user.clientToken, true)
+  } catch {
+    // loadFailed 已标记，界面提示条会继续显示
   }
 }
 
@@ -1508,6 +1554,18 @@ defineExpose({ switchTab, focusSearchKeyboard })
   gap: 10px;
 }
 .stage-state.error { color: var(--coral-soft); }
+.favorites-sync-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--coral-soft);
+  background: rgba(216, 90, 48, 0.16);
+  border: 1px solid rgba(216, 90, 48, 0.4);
+}
 .pager-bar {
   display: flex;
   align-items: center;
@@ -1554,6 +1612,8 @@ defineExpose({ switchTab, focusSearchKeyboard })
     left: 10px;
     right: 10px;
     bottom: 126px;
+    /* dvh 在旧 WebView 上无效，先给 vh 回退再覆盖。 */
+    max-height: calc(100vh - 196px);
     max-height: calc(100dvh - 196px);
     overflow-y: auto;
     z-index: 45;
@@ -1563,6 +1623,7 @@ defineExpose({ switchTab, focusSearchKeyboard })
 @media (max-width: 759px) {
   .right-keyboard.mobile-open {
     bottom: calc(206px + var(--safe-bottom));
+    max-height: calc(100vh - 280px - var(--safe-bottom));
     max-height: calc(100dvh - 280px - var(--safe-bottom));
   }
 }

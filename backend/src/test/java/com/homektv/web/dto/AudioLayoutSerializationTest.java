@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.domain.AudioChannel;
 import com.homektv.domain.AudioLayout;
+import com.homektv.domain.AudioLayoutSource;
 import com.homektv.domain.PlayerState;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.Song;
@@ -39,7 +40,28 @@ class AudioLayoutSerializationTest {
         assertThat(fromNulls.originalChannel()).isEqualTo(AudioChannel.LEFT);
         assertThat(fromNulls.accompanimentChannel()).isEqualTo(AudioChannel.RIGHT);
         assertThat(missingFile).isEqualTo(AudioLayoutDto.normalStereo());
-        assertThat(unsetFile).isEqualTo(AudioLayoutDto.normalStereo());
+        // 带上 source 之后不再与合成默认值相等：这里改为逐字段比对语义。
+        assertThat(unsetFile.layout()).isEqualTo(AudioLayout.NORMAL_STEREO);
+        assertThat(unsetFile.originalChannel()).isEqualTo(AudioChannel.LEFT);
+        assertThat(unsetFile.accompanimentChannel()).isEqualTo(AudioChannel.RIGHT);
+    }
+
+    @Test
+    void audioLayoutDtoCarriesReadOnlyProvenance() throws Exception {
+        SongFile file = new SongFile();
+        assertThat(AudioLayoutDto.from(file).source()).isEqualTo(AudioLayoutSource.LEGACY);
+
+        file.setAudioLayoutSource(AudioLayoutSource.MANUAL);
+        AudioLayoutDto dto = AudioLayoutDto.from(file);
+        assertThat(dto.source()).isEqualTo(AudioLayoutSource.MANUAL);
+        assertThat(dto.layout()).isEqualTo(AudioLayout.NORMAL_STEREO);
+
+        // 无文件可依据时来源未知，不能假装是自动识别或历史数据。
+        assertThat(AudioLayoutDto.normalStereo().source()).isNull();
+        assertThat(AudioLayoutDto.from(null).source()).isNull();
+
+        JsonNode json = mapper.readTree(mapper.writeValueAsString(dto));
+        assertThat(json.path("source").asText()).isEqualTo("MANUAL");
     }
 
     @Test

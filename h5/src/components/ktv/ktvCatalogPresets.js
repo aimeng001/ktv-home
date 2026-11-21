@@ -56,8 +56,8 @@ export const KTV_ASSETS = {
   standbyBanner,
 }
 
-export const SINGER_PHOTO_CAROUSEL = [tileSinger1, tileSinger2, tileSinger3]
-export const SONG_PHOTO_CAROUSEL = [tileSong1, tileSong2, tileSong3]
+const SINGER_PHOTO_CAROUSEL = [tileSinger1, tileSinger2, tileSinger3]
+const SONG_PHOTO_CAROUSEL = [tileSong1, tileSong2, tileSong3]
 
 /**
  * 10 tiles matching Android TV `view_ktv_bento_dashboard.xml` and `KtvDashboardTile`.

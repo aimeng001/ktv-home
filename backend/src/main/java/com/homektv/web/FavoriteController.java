@@ -55,7 +55,8 @@ public class FavoriteController {
     public List<SongDto> list(@RequestParam String clientToken,
                               @RequestParam(defaultValue = "0") int page,
                               @RequestParam(defaultValue = "100") int size) {
-        Long userId = requireUser(clientToken);
+        Long userId = requireExistingUser(clientToken);
+        if (userId == null) return List.of();
         int safePage = Math.max(0, page);
         int safeSize = Math.max(1, Math.min(size <= 0 ? 100 : size, 200));
         List<Long> orderedIds = favoriteRepo.findByUserIdOrderByCreatedAtDesc(
@@ -69,7 +70,8 @@ public class FavoriteController {
 
     /** Compatibility helper for direct callers; HTTP requests use the bounded endpoint above. */
     public List<SongDto> list(String clientToken) {
-        Long userId = requireUser(clientToken);
+        Long userId = requireExistingUser(clientToken);
+        if (userId == null) return List.of();
         List<Long> orderedIds = favoriteRepo.findByUserIdOrderByCreatedAtDesc(userId).stream()
                 .map(Favorite::getSongId).filter(Objects::nonNull).toList();
         return loadSongsInOrder(orderedIds);
@@ -86,7 +88,8 @@ public class FavoriteController {
     public List<Long> ids(@RequestParam String clientToken,
                           @RequestParam(defaultValue = "0") int page,
                           @RequestParam(defaultValue = "100") int size) {
-        Long userId = requireUser(clientToken);
+        Long userId = requireExistingUser(clientToken);
+        if (userId == null) return List.of();
         int safePage = Math.max(0, page);
         int safeSize = Math.max(1, Math.min(size <= 0 ? 100 : size, 200));
         return favoriteRepo.findByUserIdOrderByCreatedAtDesc(
@@ -151,5 +154,20 @@ public class FavoriteController {
             throw new ApiException("INVALID_ARGUMENT", "缺少 clientToken");
         }
         return userService.resolveUserId(clientToken);
+    }
+
+    /**
+     * 读接口专用的用户解析：只查不建，查不到返回 null。
+     *
+     * 空白 token 仍按「参数缺失」报 400 —— 这是契约，不是「用户不存在」。
+     *
+     * Read-only variant: never creates a user and returns null when absent.
+     * A blank token is still a 400 argument error, not a "user not found".
+     */
+    private Long requireExistingUser(String clientToken) {
+        if (clientToken == null || clientToken.isBlank()) {
+            throw new ApiException("INVALID_ARGUMENT", "缺少 clientToken");
+        }
+        return userService.resolveExistingUserId(clientToken);
     }
 }

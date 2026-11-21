@@ -47,6 +47,7 @@ describe('AdminLayout', () => {
         { path: '/admin/ktv-library', name: 'admin-ktv-library', component: EmptyView },
         { path: '/admin/artists', name: 'admin-artists', component: EmptyView },
         { path: '/admin/ai', name: 'admin-ai', component: EmptyView },
+        { path: '/admin/iktv-fusion', name: 'admin-iktv-fusion', component: EmptyView },
         { path: '/admin/settings', name: 'admin-settings', component: EmptyView },
         { path: '/admin/login', name: 'admin-login', component: EmptyView }
       ]
@@ -67,7 +68,7 @@ describe('AdminLayout', () => {
     await mount('dashboard')
 
     expect(root.querySelector('.mi.on').textContent).toContain('仪表盘')
-    expect(root.querySelectorAll('nav .mi')).toHaveLength(6)
+    expect(root.querySelectorAll('nav .mi')).toHaveLength(7)
     expect(root.querySelector('.page-slot').textContent).toBe('管理页面')
     expect(root.querySelector('[role="dialog"]')).toBeNull()
     expect(apiMock.adminAuthStatus).toHaveBeenCalledOnce()

@@ -14,11 +14,14 @@ import com.homektv.web.dto.SongDto;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -35,6 +38,9 @@ import java.util.Set;
 @RestController
 @RequestMapping("/api")
 public class SongController {
+
+    /** 封面缓存 1 天：首屏 11 张图不再每次重新下载，同时保留「换封面次日生效」。 */
+    private static final Duration COVER_CACHE_TTL = Duration.ofDays(1);
 
     private final SongSearchService searchService;
     private final SongRepository songRepo;
@@ -160,7 +166,22 @@ public class SongController {
         return songRepo.findById(id)
                 .filter(s -> s.getCoverPath() != null)
                 .map(s -> serveFile(s.getCoverPath(), guessImageType(s.getCoverPath())))
+                .map(SongController::cacheableCover)
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * 给封面响应加 1 天公共缓存。
+     *
+     * 只在封面分支加：{@code serveFile} 同时服务歌词，歌词改了必须立刻生效。
+     * 也不用「不可变」语义——封面会被重新刮削替换，1 天后自然过期即可。
+     */
+    private static ResponseEntity<Resource> cacheableCover(ResponseEntity<Resource> response) {
+        if (response.getStatusCode() != HttpStatus.OK) return response;
+        return ResponseEntity.status(response.getStatusCode())
+                .headers(response.getHeaders())
+                .cacheControl(CacheControl.maxAge(COVER_CACHE_TTL).cachePublic())
+                .body(response.getBody());
     }
 
     /**

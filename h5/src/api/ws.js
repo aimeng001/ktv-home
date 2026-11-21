@@ -31,6 +31,10 @@ const SNAPSHOT_EVENTS = new Set([
   'vocal_changed',
 ])
 
+// 断线期间最多缓存多少条播放结果上报；同一 queueId 只保留一条。
+// Max number of playback reports buffered while offline; one entry per queueId.
+const MAX_PENDING_REPORTS = 20
+
 function utf8ByteCountAtMost(value, limit) {
   let bytes = 0
   for (let index = 0; index < value.length;) {
@@ -151,6 +155,7 @@ export class KtvSocket {
     this.reconnectTimer = null
     this.closed = false
     this.generation = 0
+    this.pendingReports = []
     this.snapshotChunks = new SnapshotChunkAssembler()
   }
 
@@ -218,17 +223,85 @@ export class KtvSocket {
    * 向服务端发送 JSON 消息。
    *
    * 仅在连接处于 OPEN 状态时发送，避免无效调用。
+   * 返回是否真的发出去了 —— 调用方（如播放结果上报）据此决定要不要排队重放。
    *
    * Sends a JSON message to the server.
    *
    * Only sends when the connection is in OPEN state to avoid invalid calls.
+   * Returns whether the frame actually went out, so callers such as playback
+   * reports can decide whether to buffer it for replay.
    *
    * @param {Object} obj - 要发送的消息对象 / Message object to send
+   * @returns {boolean} 已发送为 true / true when the frame was handed to the socket
    */
   send(obj) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(obj))
+      return true
     }
+    return false
+  }
+
+  /**
+   * 缓存一条待重放的播放结果上报。
+   *
+   * 只存「要做什么」（kind/queueId），不存消息体：上报载荷里带会话级 generation，
+   * 重连后旧 generation 一定会被服务端判为 STALE 丢弃。
+   *
+   * Buffers one playback report for replay.
+   *
+   * Stores intent only (kind/queueId), never the wire message: report payloads carry a
+   * session-scoped generation that the server rejects as STALE after a reconnect.
+   *
+   * @param {{kind: string, queueId: number, fileId?: number, message?: string}} descriptor 上报描述 / report descriptor
+   */
+  queueReport(descriptor) {
+    if (!descriptor || !descriptor.kind) return
+    const key = `${descriptor.kind}:${descriptor.queueId}`
+    if (this.pendingReports.some((item) => `${item.kind}:${item.queueId}` === key)) return
+    if (this.pendingReports.length >= MAX_PENDING_REPORTS) this.pendingReports.shift()
+    this.pendingReports.push({ ...descriptor })
+  }
+
+  /** 丢弃全部待重放条目（角色降级为 STANDBY 时调用）。 */
+  clearPendingReports() {
+    this.pendingReports = []
+  }
+
+  /** 待重放条目数量（测试与诊断用）。 */
+  get pendingReportCount() {
+    return this.pendingReports.length
+  }
+
+  /**
+   * 重放断线期间积压的上报。
+   *
+   * 先取出并清空队列再逐条回调，这样回调内部再次 send 失败时只会重新入队一次，
+   * 不会出现「重放 → 入队 → 再重放」的自我循环。
+   *
+   * Replays reports buffered while offline.
+   *
+   * Drains the queue before invoking the callback so a failing send inside the
+   * callback only re-queues once instead of looping forever.
+   *
+   * @param {Function} replay - 单条重放回调，入参为描述对象 / callback receiving one descriptor
+   * @returns {number} 实际重放条数 / how many descriptors were replayed
+   */
+  replayPending(replay) {
+    if (typeof replay !== 'function' || this.pendingReports.length === 0) return 0
+    const queued = this.pendingReports
+    this.pendingReports = []
+    let replayed = 0
+    for (const item of queued) {
+      try {
+        replay(item)
+        replayed++
+      } catch {
+        // 单条失败不影响其余条目；发送侧会自行重新入队
+        // One failure must not block the rest; the sender re-queues by itself.
+      }
+    }
+    return replayed
   }
 
   /**

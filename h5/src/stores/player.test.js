@@ -211,23 +211,6 @@ describe('usePlayerStore', () => {
     expect(p.tvOnline).toBe(false)
   })
 
-  it('derives ordered song ids from the current server snapshot', () => {
-    const p = usePlayerStore()
-    p.handleEvent('sync_full', snapshot)
-    expect([...p.orderedSongIds]).toEqual([10, 11])
-    p.handleEvent('queue_updated', { ...snapshot, playing: null, list: [] })
-    expect([...p.orderedSongIds]).toEqual([])
-  })
-
-  it('tolerates missing queues and non-song queue entries when deriving ordered ids', () => {
-    const p = usePlayerStore()
-    p.queue = null
-    expect([...p.orderedSongIds]).toEqual([])
-
-    p.queue = [null, {}, { song: { id: 'not-a-number' } }, { song: { id: '12' } }]
-    expect([...p.orderedSongIds]).toEqual([12])
-  })
-
   it('keeps newer playback state when an older control response arrives after the websocket snapshot', () => {
     const p = usePlayerStore()
     const newer = { ...snapshot, state: 'paused', volume: 90, stateRevision: 20 }
@@ -425,19 +408,6 @@ describe('usePlayerStore', () => {
     expect(p.modeOverride).toBe('host')
     p.handleEvent('player_state', { ...snapshot, tvOnline: true, stateRevision: 11 })
     expect(p.modeOverride).toBe('auto')
-  })
-
-  it('clamps pitch adjustment within -6 to +6 semitones', () => {
-    const p = usePlayerStore()
-    expect(p.adjustPitch(1)).toBe(1)
-    expect(p.adjustPitch(10)).toBe(6)
-    expect(p.adjustPitch(-20)).toBe(-6)
-    expect(p.setPitch(3.2)).toBe(3)
-    expect(p.setPitch(-99)).toBe(-6)
-    expect(p.setPitch('bad')).toBe(0)
-    expect(p.adjustPitch('bad')).toBe(0)
-    p.resetPitch()
-    expect(p.pitchSemitones).toBe(0)
   })
 
   it('wires socket connect callbacks, host registration lifecycle, and error/status edge branches', () => {

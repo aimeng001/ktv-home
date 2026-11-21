@@ -89,6 +89,37 @@ describe('AiTaskPanel', () => {
     expect(root.textContent).not.toContain('跳过')
   })
 
+  it('卸载后清理 flash 定时器，不在已销毁组件上写状态', async () => {
+    vi.useFakeTimers()
+    try {
+      apiMock.adminAiTasks.mockResolvedValue([])
+      apiMock.adminAiCreateTasks.mockResolvedValueOnce({ created: 1, skipped: 0, dispatchRejected: 0 })
+
+      root = document.createElement('div')
+      document.body.appendChild(root)
+      app = createApp({
+        render: () => h(AiTaskPanel, { selectedIds: [1], onClose: () => {} })
+      })
+      app.component('router-link', { props: ['to'], template: '<a><slot /></a>' })
+      app.mount(root)
+      await vi.advanceTimersByTimeAsync(0)
+      await nextTick()
+
+      root.querySelector('.batch-tools .button:not(.ghost)').click()
+      await vi.advanceTimersByTimeAsync(0)
+      await nextTick()
+      await nextTick()
+
+      expect(vi.getTimerCount()).toBeGreaterThan(0)   // flash 的 3 秒定时器已排上
+
+      app.unmount()
+      expect(vi.getTimerCount()).toBe(0)              // 卸载必须清掉，否则回调写到已销毁的 ref
+      app = null
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('creates unclassified tasks using the requested batch limit', async () => {
     apiMock.adminAiCreateUnclassified.mockResolvedValue({ created: 4 })
     await mount()

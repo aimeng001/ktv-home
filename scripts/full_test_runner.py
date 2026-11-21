@@ -699,6 +699,13 @@ def _run_task(
     environment = _task_environment(root)
     if task.name == "h5":
         environment["KTV_TEST_PROFILE"] = task.profile
+    if task.name == "android":
+        # Android Gradle plugin may create debug.keystore under this user
+        # directory. Keep concurrent/repeated test runs away from the shared
+        # administrator profile while preserving the existing Gradle cache.
+        android_user_home = (log_dir / "android-user-home").resolve()
+        android_user_home.mkdir(parents=True, exist_ok=True)
+        environment["ANDROID_USER_HOME"] = str(android_user_home)
     if task.name == "backend":
         maven_repo = Path(environment.get("KTV_MAVEN_REPO", Path.home() / ".m2" / "repository"))
         mockito_agent = _mockito_agent(maven_repo)

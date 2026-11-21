@@ -31,6 +31,26 @@ public class UserService {
                 .getId();
     }
 
+    /**
+     * 按 token 解析**已存在**用户的 id，只读、绝不创建。
+     *
+     * 供查询类接口使用：GET 不应产生写库副作用，否则任何未注册 token 都能把 app_user 表撑大。
+     * token 为空返回 null；token 未注册也返回 null。
+     *
+     * Resolves an **existing** user id by token without ever creating one.
+     *
+     * Used by read-only endpoints so that GET requests cannot grow app_user.
+     *
+     * @param clientToken 客户端令牌 / client token
+     * @return 已存在用户 id，查不到返回 null / existing user id, or null when absent
+     */
+    @Transactional(readOnly = true)
+    public Long resolveExistingUserId(String clientToken) {
+        if (clientToken == null || clientToken.isBlank()) return null;
+        validateClientToken(clientToken);
+        return userRepo.findByClientToken(clientToken).map(AppUser::getId).orElse(null);
+    }
+
     @Transactional
     public AppUser upsert(String clientToken, String nickname) {
         validateClientToken(clientToken);

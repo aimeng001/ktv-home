@@ -4,12 +4,6 @@ import { useUserStore } from './user'
 
 let nextToastSeq = 0
 
-function clampPitch(value) {
-  const num = Number(value)
-  if (!Number.isFinite(num)) return 0
-  return Math.max(-6, Math.min(6, Math.round(num)))
-}
-
 /**
  * 播放器/队列全局状态（详设§4.1：服务端为唯一事实源，此处镜像广播状态）。
  * 扩展支持双模式自动切换：
@@ -50,16 +44,12 @@ export const usePlayerStore = defineStore('player', {
     webPlayerActive: false,
     webPlayerHolderToken: null,
     modeOverride: 'auto', // 'auto' | 'console' | 'host'
-    pitchSemitones: 0,
-    audioBlockedByAutoplay: false
+    audioBlockedByAutoplay: false,
+    audioUnlockFailed: false
   }),
   getters: {
     queueCount: (s) => s.queue.length,
     isPlaying: (s) => s.state === 'playing',
-    orderedSongIds: (s) => new Set([
-      ...(s.nowPlaying?.song?.id != null ? [Number(s.nowPlaying.song.id)] : []),
-      ...(s.queue || []).map(item => Number(item?.song?.id)).filter(Number.isFinite)
-    ]),
     isTvConsole: (s) => s.tvOnline === true && s.modeOverride !== 'host',
     isWebHost: (s) => s.tvOnline !== true && s.webPlayerRole === 'ACTIVE' && s.modeOverride !== 'console',
     effectiveMode: (s) => {
@@ -156,6 +146,9 @@ export const usePlayerStore = defineStore('player', {
             if (role === 'STANDBY' && this.modeOverride === 'host') {
               this.modeOverride = 'auto'
             }
+            // 拿到新 generation 后才能重放：载荷必须用当前 generation 重建（见 replayPendingReports）
+            if (role === 'ACTIVE' && this.webPlayerGeneration > 0) this.replayPendingReports()
+            else this.socket?.clearPendingReports?.()
           }
           break
         case 'web_player_state':
@@ -200,14 +193,10 @@ export const usePlayerStore = defineStore('player', {
         return false
       }
       const prevTvOnline = this.tvOnline
-      const prevSongId = this.nowPlaying?.song?.id ?? null
       const playing = snap.playing ?? null
       this.nowPlaying = playing
         ? { queueId: playing.queueId, song: playing.song, orderedByNick: playing.orderedByNick }
         : null
-      if ((playing?.song?.id ?? null) !== prevSongId) {
-        this.pitchSemitones = 0
-      }
       this.state = snap.state ?? 'idle'
       if (typeof snap.positionMs === 'number') this.positionMs = Math.max(0, snap.positionMs)
       if (typeof snap.seekSequence === 'number') this.seekSequence = snap.seekSequence
@@ -225,6 +214,7 @@ export const usePlayerStore = defineStore('player', {
         this.webPlayerGeneration = 0
         this.webPlayerActive = false
         this.webPlayerHolderToken = null
+        this.socket?.clearPendingReports?.()
         if (this.modeOverride === 'host') {
           this.modeOverride = 'auto'
         }
@@ -295,40 +285,45 @@ export const usePlayerStore = defineStore('player', {
     },
 
     reportFinished(queueId) {
-      if (!this.isWebHost || !this.webPlayerGeneration) return
-      if (!Number.isInteger(queueId) || queueId <= 0) return
-      this.socket?.send({
+      if (!this.isWebHost || !this.webPlayerGeneration) return false
+      if (!Number.isInteger(queueId) || queueId <= 0) return false
+      const sent = this.socket?.send({
         type: 'finished',
         payload: { queue_id: queueId, generation: this.webPlayerGeneration }
-      })
+      }) === true
+      if (!sent) this.socket?.queueReport?.({ kind: 'finished', queueId })
+      return sent
     },
 
     reportPlayError(fileId, queueId, message) {
-      if (!this.isWebHost || !this.webPlayerGeneration) return
-      if (!Number.isInteger(queueId) || queueId <= 0) return
-      this.socket?.send({
+      if (!this.isWebHost || !this.webPlayerGeneration) return false
+      if (!Number.isInteger(queueId) || queueId <= 0) return false
+      const text = String(message || '媒体播放失败')
+      const sent = this.socket?.send({
         type: 'play_error',
         payload: {
           ...(fileId != null ? { file_id: fileId } : {}),
           queue_id: queueId,
-          message: String(message || '媒体播放失败'),
+          message: text,
           generation: this.webPlayerGeneration
         }
-      })
+      }) === true
+      if (!sent) this.socket?.queueReport?.({ kind: 'play_error', queueId, fileId, message: text })
+      return sent
     },
 
-    adjustPitch(delta) {
-      this.pitchSemitones = clampPitch(this.pitchSemitones + (Number(delta) || 0))
-      return this.pitchSemitones
-    },
-
-    setPitch(value) {
-      this.pitchSemitones = clampPitch(value)
-      return this.pitchSemitones
-    },
-
-    resetPitch() {
-      this.pitchSemitones = 0
+    /**
+     * 重放断线期间积压的播放结果上报。
+     *
+     * 必须用**当前** generation 重建载荷：重连后 sessionId 与 generation 都变了，
+     * 把旧消息体原样重发会被服务端判为 STALE 静默丢弃。
+     */
+    replayPendingReports() {
+      if (!this.isWebHost || !this.webPlayerGeneration) return 0
+      return this.socket?.replayPending?.((item) => {
+        if (item.kind === 'finished') this.reportFinished(item.queueId)
+        else if (item.kind === 'play_error') this.reportPlayError(item.fileId, item.queueId, item.message)
+      }) ?? 0
     }
   }
 })

@@ -158,6 +158,47 @@ describe('AudioLayoutEditor guarded actions', () => {
       app.unmount()
     }
   })
+
+  it('shows the persisted provenance as read-only and never writes it back', async () => {
+    const song = {
+      fileId: 21, title: '来源可追溯', artist: '歌手', audioTracks: 2,
+      audioLayout: { layout: 'DUAL_TRACK', originalTrackIndex: 0, accompanimentTrackIndex: 1, source: 'AUTO_DEFAULT' }
+    }
+    const { app, actions, host } = mountEditor(song)
+    api.adminUpdateAudioLayout.mockResolvedValueOnce({
+      layout: 'DUAL_TRACK', originalTrackIndex: 0, accompanimentTrackIndex: 1, source: 'MANUAL'
+    })
+
+    try {
+      actions.openEditor()
+      await nextTick()
+      expect(host.querySelector('.audio-layout-hint').textContent).toContain('自动识别')
+      // 只读来源标记不能混进会被 PUT 提交的草稿。
+      expect(actions.draft).not.toHaveProperty('source')
+
+      await actions.save()
+
+      expect(api.adminUpdateAudioLayout.mock.calls[0][1]).not.toHaveProperty('source')
+      expect(actions.sourceLabel).toBe('管理员手动设置')
+    } finally {
+      app.unmount()
+    }
+  })
+
+  it('hides the provenance row when the server sends no usable source', async () => {
+    const { app, actions, host } = mountEditor({
+      fileId: 22, title: '无来源标记', audioTracks: 0, audioLayout: { layout: 'NORMAL_STEREO' }
+    })
+    try {
+      actions.openEditor()
+      await nextTick()
+
+      expect(actions.sourceLabel).toBe('')
+      expect(host.querySelector('.audio-layout-hint').textContent).not.toContain('来源')
+    } finally {
+      app.unmount()
+    }
+  })
 })
 
 function mountEditor(song) {

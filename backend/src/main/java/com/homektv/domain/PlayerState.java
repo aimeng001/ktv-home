@@ -30,8 +30,12 @@ public class PlayerState {
     @Column(nullable = false)
     private String state = "idle";
 
+    /**
+     * 新建行的默认音量。与前端 {@code stores/player.js} 的初值 60 保持一致，
+     * 新装第一次打开不会直接满音量；老库里的值由用户自己调过，不受影响。
+     */
     @Column(nullable = false)
-    private int volume = 100;
+    private int volume = 60;
 
     @Column(nullable = false)
     private boolean muted = false;

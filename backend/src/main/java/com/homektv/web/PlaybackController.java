@@ -21,8 +21,7 @@ public class PlaybackController {
 
     @GetMapping("/resolve/{fileId}")
     public PlaybackDescriptor resolve(@PathVariable Long fileId,
-                                      @RequestParam(defaultValue = "false") boolean forceTranscode,
-                                      @RequestParam(defaultValue = "false") boolean retryFailed) {
+                                      @RequestParam(defaultValue = "false") boolean forceTranscode) {
         return playbackResolution.resolve(fileId, forceTranscode);
     }
 }

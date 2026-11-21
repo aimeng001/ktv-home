@@ -451,6 +451,24 @@ class ControlControllerTest {
         assertThat(events.get(4).payload()).isEqualTo(Map.of("effect_id", "applause"));
     }
 
+    /**
+     * effect 缺 effect_id 时必须在广播前拦住：Map.of 对 null 值会抛 NPE，
+     * 会被全局异常处理器当成 500，前端只能看到「服务器错误」。
+     */
+    @Test
+    void effectWithoutEffectIdIsRejectedBeforeBroadcasting() {
+        List<WsEvent> events = new ArrayList<>();
+        ControlController controller = new ControlController(
+                null, null, null, null, null, collectingBroadcaster(events), null);
+
+        assertThatThrownBy(() -> controller.control(new ControlRequest("effect", Map.of(), null)))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("INVALID_ACTION"));
+        assertThatThrownBy(() -> controller.control(new ControlRequest("effect", Map.of("effect_id", "   "), null)))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("INVALID_ACTION"));
+
+        assertThat(events).isEmpty();
+    }
+
     @Test
     void missingActionAndSeekPositionAreRejected() {
         AtomicBoolean resolved = new AtomicBoolean();

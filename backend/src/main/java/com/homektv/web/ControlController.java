@@ -164,8 +164,14 @@ public class ControlController {
                 broadcast(WsEvent.VOCAL_CHANGED, snapshot);
             }
             case "effect" -> {
+                // Map.of 不接受 null 值：缺 effect_id 会抛 NPE 被当成 500，
+                // 这里先显式校验，让前端拿到可读的 400。
+                String effectId = req.strParam("effect_id");
+                if (effectId == null || effectId.isBlank()) {
+                    throw new ApiException("INVALID_ACTION", "effect 缺少 effect_id");
+                }
                 broadcaster.broadcastPlayback(
-                        WsEvent.of(WsEvent.EFFECT_PLAY, java.util.Map.of("effect_id", req.strParam("effect_id"))));
+                        WsEvent.of(WsEvent.EFFECT_PLAY, java.util.Map.of("effect_id", effectId.trim())));
                 snapshot = snapshotService.snapshot();
             }
             default -> throw new ApiException("INVALID_ACTION", "未知指令：" + action);

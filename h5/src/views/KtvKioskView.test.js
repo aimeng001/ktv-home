@@ -53,6 +53,7 @@ vi.mock('../api/client', () => ({
 }))
 
 import KtvKioskView from './KtvKioskView.vue'
+import ToastHost from '../components/ToastHost.vue'
 import { usePlayerStore } from '../stores/player'
 import { useUserStore } from '../stores/user'
 
@@ -61,6 +62,8 @@ describe('KtvKioskView', () => {
   let root
   let player
   let router
+  let toastApp
+  let toastRoot
 
   beforeEach(async () => {
     vi.clearAllMocks()
@@ -118,6 +121,9 @@ describe('KtvKioskView', () => {
         { path: '/search', name: 'search', component: KtvKioskView },
         { path: '/browse', name: 'browse', component: KtvKioskView },
         { path: '/artist/:name', name: 'artist', component: KtvKioskView },
+        { path: '/queue', name: 'queue', component: KtvKioskView },
+        { path: '/remote', name: 'remote', component: KtvKioskView },
+        { path: '/lyric', name: 'lyric', component: KtvKioskView },
         { path: '/admin', name: 'admin-dashboard', component: { template: '<div>admin</div>' } },
       ]
     })
@@ -136,6 +142,9 @@ describe('KtvKioskView', () => {
   afterEach(() => {
     app?.unmount()
     root?.remove()
+    toastApp?.unmount()
+    toastRoot?.remove()
+    vi.unstubAllGlobals()
   })
 
   it('renders the 10-tile Android-TV Bento dashboard and 11-control bottom dock', () => {
@@ -200,6 +209,45 @@ describe('KtvKioskView', () => {
     expect(root.querySelector('.effects-grid')).not.toBeNull()
   })
 
+  it('provides a selectable share URL when browser clipboard access is unavailable', async () => {
+    vi.stubGlobal('navigator', { clipboard: undefined })
+    toastRoot = document.createElement('div')
+    document.body.appendChild(toastRoot)
+    toastApp = createApp(ToastHost)
+    toastApp.mount(toastRoot)
+
+    root.querySelector('button[aria-label="手机扫码点歌"]').click()
+    await nextTick()
+    root.querySelector('.qr-body .btn').click()
+    await new Promise(resolve => setTimeout(resolve, 15))
+    await nextTick()
+
+    expect(root.querySelector('.share-url-fallback')?.textContent).toContain('长按')
+    expect(root.querySelector('.share-url-fallback input')?.value).toBe(`${location.origin}/m/?room=default`)
+    expect(toastRoot.querySelector('.proto-toast')?.textContent).not.toBe('已复制点歌地址')
+  })
+
+  it('reports failed system-info requests and retries them instead of showing success defaults', async () => {
+    apiMock.health.mockRejectedValueOnce(new Error('health unavailable'))
+    apiMock.releaseInfo.mockRejectedValueOnce(new Error('release unavailable'))
+
+    root.querySelector('button[aria-label="系统信息"]').click()
+    await new Promise(resolve => setTimeout(resolve, 15))
+
+    const values = root.querySelectorAll('.kv strong')
+    expect(values[0].textContent).toBe('读取失败')
+    expect(values[1].textContent).toBe('读取失败')
+
+    apiMock.health.mockResolvedValueOnce({ status: 'UP' })
+    apiMock.releaseInfo.mockResolvedValueOnce({ version: '1.2.3' })
+    root.querySelector('.system-info-retry').click()
+    await new Promise(resolve => setTimeout(resolve, 15))
+
+    const retriedValues = root.querySelectorAll('.kv strong')
+    expect(retriedValues[0].textContent).toBe('UP')
+    expect(retriedValues[1].textContent).toBe('1.2.3')
+  })
+
   it('opens queue drawer and fullscreen MV overlay cleanly', async () => {
     root.querySelector('.queue-btn').click()
     await nextTick()
@@ -213,6 +261,21 @@ describe('KtvKioskView', () => {
     await nextTick()
     expect(root.querySelector('.media-stage.fullscreen')).not.toBeNull()
     expect(root.querySelector('.fs-topbar')).not.toBeNull()
+  })
+
+  it.each([
+    ['/queue', '.queue-drawer'],
+    ['/remote', '.effects-grid'],
+    ['/lyric', '.media-stage.fullscreen'],
+  ])('closes the route overlay after navigating from %s to home', async (path, selector) => {
+    await router.push(path)
+    await nextTick()
+    expect(root.querySelector(selector)).not.toBeNull()
+
+    await router.push('/home')
+    await nextTick()
+
+    expect(root.querySelector(selector)).toBeNull()
   })
 
   it('loads standby logo, displays effect banner, triggers mute control, and reports pitch support honestly', async () => {
@@ -350,6 +413,21 @@ describe('KtvKioskView', () => {
       expect.objectContaining({ mediaType: 'KTV_VIDEO' }),
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+  })
+
+  it.each([
+    ['语种', '/browse?tab=languages', 'browseLanguages', '语种目录不可用'],
+    ['主题', '/browse?tab=tags', 'browseTags', '主题目录不可用'],
+  ])('does not show unfiltered songs when the %s directory cannot load', async (_label, path, apiName, message) => {
+    apiMock[apiName].mockRejectedValueOnce(new Error(message))
+
+    await router.push(path)
+    await new Promise(resolve => setTimeout(resolve, 15))
+
+    const errorState = root.querySelector('.stage-state.error')
+    expect(errorState).not.toBeNull()
+    expect(errorState.textContent).toContain(message)
+    expect(apiMock.browseSongPage).not.toHaveBeenCalled()
   })
 
   it('hides media stage when idle, renders autoplay unlock independently, and resolves deep-link routes', async () => {

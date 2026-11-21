@@ -59,4 +59,19 @@ describe('admin light-surface text contrast contract', () => {
     expect(selectedColor).toBeTruthy()
     expect(contrastRatio(selectedColor, '#eff6ff')).toBeGreaterThanOrEqual(4.5)
   })
+
+  it('keeps admin table secondary text above the 4.5:1 threshold', () => {
+    const views = [
+      { name: 'AiLibraryView', source: fromHere('./AiLibraryView.vue') },
+      { name: 'ArtistLibraryView', source: fromHere('./ArtistLibraryView.vue') },
+      { name: 'DashboardView', source: fromHere('./DashboardView.vue') },
+      { name: 'KtvLibraryView', source: fromHere('./KtvLibraryView.vue') }
+    ]
+
+    for (const { name, source } of views) {
+      const color = colorDeclarations(source, 'td small').at(-1)
+      expect(color, `${name} 的 td small 必须显式声明颜色`).toBeTruthy()
+      expect(contrastRatio(color, '#ffffff'), `${name} 的 td small 在白底上的对比度`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
 })

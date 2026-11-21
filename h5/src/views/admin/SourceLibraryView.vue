@@ -4,7 +4,7 @@
     <header class="page-head">
       <div><h1>原始音乐管理</h1><p>管理扫描源路径中的素材、重复结果和转码入库任务</p></div>
       <div class="header-actions">
-        <template v-if="!externalMode"><button class="primary action-button" :disabled="progress.running || cleaning" @click="transcodeAll"><RefreshCw :size="15" />{{ progress.running ? '转码进行中' : '批量转码所有歌曲' }}</button>
+        <template v-if="managedMode"><button class="primary action-button" :disabled="progress.running || cleaning" @click="transcodeAll"><RefreshCw :size="15" />{{ progress.running ? '转码进行中' : '批量转码所有歌曲' }}</button>
         <button class="danger cleanup-button action-button" :disabled="progress.running || cleaning" @click="cleanupImported"><Trash2 :size="16" />{{ cleaning ? '清理中…' : '自动清理' }}</button></template>
       </div>
     </header>
@@ -13,7 +13,7 @@
     <section v-if="externalMode" class="readonly-panel"><strong>外部只读曲库</strong><span>当前 NAS 曲库仅允许扫描、索引和播放；转码、删除、移动和自动清理已禁用。</span></section>
 
     <!-- 筛选面板 / Filter panel -->
-    <section v-if="!externalMode" class="filter-panel">
+    <section v-if="managedMode" class="filter-panel">
       <label><span>关键词</span><input v-model.trim="filters.keyword" placeholder="歌名、歌手或文件名" @keyup.enter="search" /></label>
       <label><span>处理状态</span><span class="select-control"><select v-model="filters.status" @change="search"><option value="">全部状态</option><option value="pending">待转码</option><option value="duplicate">重复</option><option value="transcoded">已转码</option><option value="unrecognized">未识别</option><option value="failed">失败</option></select><ChevronDown :size="15" aria-hidden="true" /></span></label>
       <label><span>格式分析</span><span class="select-control"><select v-model="filters.formatAnalysis" @change="search"><option value="">全部格式</option><option value="DIRECT_COPY">可直拷</option><option value="TRANSCODE_REQUIRED">需转码</option></select><ChevronDown :size="15" aria-hidden="true" /></span></label>
@@ -21,7 +21,7 @@
     </section>
 
     <!-- 转码进度面板 / Transcode progress panel -->
-    <section v-if="!externalMode && (progress.running || progress.total)" class="progress-panel">
+    <section v-if="managedMode && (progress.running || progress.total)" class="progress-panel">
       <div class="progress-copy"><strong>批量转码进度</strong><span>{{ progress.completed || 0 }} / {{ progress.total || 0 }}，成功 {{ progress.transcoded || 0 }}，重复跳过 {{ (progress.skippedSourceDuplicate || 0) + (progress.skippedOutputDuplicate || 0) }}，失败 {{ progress.failed || 0 }}</span></div>
       <div class="progress-value">{{ progressPercent }}%</div>
       <div class="track"><i :style="{ width: progressPercent + '%' }"></i></div>
@@ -29,7 +29,7 @@
     </section>
 
     <!-- 源素材数据表格 / Source material data table -->
-    <section v-if="!externalMode" class="table-panel">
+    <section v-if="managedMode" class="table-panel">
       <div class="toolbar">
         <span>共 {{ total }} 条源素材</span>
         <div class="batch-actions">
@@ -79,7 +79,9 @@ import { createLatestRequest } from '../latestRequest'
 import { createProgressPollGate } from './progressPollGate'
 
 // 列表数据、分页、选中项 / List data, pagination, selected items
-const rows = ref([]), total = ref(0), page = ref(0), totalPages = ref(1), selected = ref([]), externalMode = ref(false)
+const rows = ref([]), total = ref(0), page = ref(0), totalPages = ref(1), selected = ref([]), libraryMode = ref(null)
+const externalMode = computed(() => libraryMode.value === 'EXTERNAL_READ_ONLY')
+const managedMode = computed(() => libraryMode.value === 'MANAGED')
 const cleaning = ref(false)
 const loadError = ref('')
 // 默认展示全部源素材；支持关键词、处理状态与格式分析筛选。
@@ -109,13 +111,29 @@ async function load() {
   try {
     const r = await api.adminSourceLibrary({ ...filters, page:page.value, size:20 }, { signal: request.signal })
     if (!listRequests.isCurrent(request.id)) return
-    externalMode.value=r.libraryMode==='EXTERNAL_READ_ONLY'
+    if (!['MANAGED', 'EXTERNAL_READ_ONLY'].includes(r?.libraryMode)) {
+      libraryMode.value=null
+      rows.value=[]
+      total.value=0
+      totalPages.value=1
+      selected.value=[]
+      loadError.value='服务端未返回有效的曲库模式，写操作已禁用'
+      return
+    }
+    libraryMode.value=r.libraryMode
     rows.value=r.content||[]
     total.value=r.total||0
     totalPages.value=r.totalPages||1
     selected.value=externalMode.value?[]:selected.value.filter(id=>rows.value.some(x=>x.id===id))
   } catch(e) {
-    if (listRequests.isCurrent(request.id) && e.name !== 'AbortError') loadError.value = e.message || '加载源素材失败'
+    if (listRequests.isCurrent(request.id) && e.name !== 'AbortError') {
+      libraryMode.value=null
+      rows.value=[]
+      total.value=0
+      totalPages.value=1
+      selected.value=[]
+      loadError.value = e.message || '加载源素材失败'
+    }
   }
 }
 

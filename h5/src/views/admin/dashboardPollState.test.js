@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_SCAN_POLL_FAILURES, recordScanPollFailure, recordScanPollSuccess } from './dashboardPollState'
+import {
+  MAX_SCAN_POLL_FAILURES,
+  nextScanPollDelay,
+  recordScanPollFailure,
+  recordScanPollSuccess
+} from './dashboardPollState'
 
 describe('dashboard scan polling state', () => {
   it('starts the failure count from zero when the state has no counter', () => {
@@ -28,5 +33,12 @@ describe('dashboard scan polling state', () => {
       stop: false,
       running: true
     })
+  })
+
+  it('递增扫描轮询间隔，并在 5 秒封顶', () => {
+    expect([0, 1, 2, 3, 4].map(nextScanPollDelay)).toEqual([1000, 1200, 1440, 1728, 2074])
+    // 20 万首扫描要跑很久，不能无限退避到「看起来卡住」
+    expect(nextScanPollDelay(10)).toBe(5000)
+    expect(nextScanPollDelay(50)).toBe(5000)
   })
 })

@@ -152,7 +152,10 @@ describe('api client admin authentication', () => {
     await api.adminSongExternalMatches(13)
 
     expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/songs?keyword=%E5%91%A8%E6%9D%B0%E4%BC%A6&page=0')
-    expect(fetchMock.mock.calls[0][1].signal).toBe(signal)
+    // 读接口带超时后会把调用方 signal 与超时 signal 合并（不再原样透传），
+    // 因此这里断言「中止会传播」而不是对象同一性。
+    expect(fetchMock.mock.calls[0][1].signal).toBeDefined()
+    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(false)
     expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/source-library?status=pending&format=rmvb&deleted=false')
     expect(fetchMock.mock.calls[1][1].signal).toBe(signal)
     expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({
@@ -403,5 +406,52 @@ describe('api client admin authentication', () => {
       params: { muted: true },
       client_token: 'client-999'
     })
+  })
+})
+
+describe('api client iktv reference fusion endpoints', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('requests fusion status with admin token', async () => {
+    localStorage.setItem('home-ktv.admin.token', 'admin-token')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ activeSnapshotVersion: 'v12' }))
+
+    await api.adminIktvFusionStatus()
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/iktv-reference/fusion/status')
+    expect(fetchMock.mock.calls[0][1].headers['X-Admin-Token']).toBe('admin-token')
+  })
+
+  it('requests one fusion batch by id', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ id: 7 }))
+
+    await api.adminIktvFusionBatch(7)
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/iktv-reference/fusion/batches/7')
+  })
+
+  it('posts resume as a mutation', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ batchId: 7 }))
+
+    await api.adminIktvFusionResume()
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/iktv-reference/fusion/resume')
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST')
+  })
+
+  it('posts rollback for the given batch', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ batchId: 7, conflictRows: 0 }))
+
+    await api.adminIktvFusionRollback(7)
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/iktv-reference/fusion/batches/7/rollback')
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST')
   })
 })

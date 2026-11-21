@@ -1,7 +1,7 @@
 <template>
   <button class="audio-layout-trigger" :disabled="!song?.fileId" title="配置原唱、伴唱和音频布局" @click="openEditor">音频设置</button>
   <div v-if="open" class="audio-layout-mask" @click.self="closeEditor">
-    <div class="audio-layout-modal" role="dialog" aria-modal="true" aria-labelledby="audio-layout-title">
+    <div ref="modalBox" class="audio-layout-modal" role="dialog" aria-modal="true" aria-labelledby="audio-layout-title">
       <div class="audio-layout-head">
         <div><h2 id="audio-layout-title">音频布局设置</h2><p>《{{ song.title }}》 · {{ song.artist || '未知歌手' }}</p></div>
         <button class="audio-layout-close" type="button" title="关闭" @click="closeEditor">×</button>
@@ -13,6 +13,7 @@
             <option v-for="item in AUDIO_LAYOUT_OPTIONS" :key="item.value" :value="item.value">{{ item.label }}</option>
           </select>
         </label>
+        <p v-if="sourceLabel" class="audio-layout-hint">当前布局来源：{{ sourceLabel }}（只读）</p>
         <template v-if="draft.layout === 'DUAL_TRACK'">
           <p class="audio-layout-hint">媒体检测到 {{ trackOptions.length }} 条音轨；请分别指定原唱和伴唱。</p>
           <label class="audio-layout-field">Original（原唱）
@@ -56,8 +57,10 @@ import api from '../../api/client'
 import {
   AUDIO_CHANNEL_OPTIONS,
   AUDIO_LAYOUT_OPTIONS,
+  audioLayoutSourceLabel,
   createAudioLayoutDraft
 } from './audioLayout'
+import { useFocusTrap } from '../../composables/useFocusTrap'
 
 const props = defineProps({ song: { type: Object, required: true } })
 const emit = defineEmits(['updated'])
@@ -65,11 +68,17 @@ const open = ref(false)
 const saving = ref(false)
 const error = ref('')
 const draft = ref(null)
+// 来源标记只读展示，单独存放：混进 draft 就会被当成写字段 PUT 回后端。
+const sourceLabel = ref('')
+const modalBox = ref(null)
+// 音频设置是模态框：Tab 只在框内循环，关闭后焦点回到「音频设置」按钮。
+useFocusTrap(modalBox, () => open.value)
 const trackOptions = computed(() => Array.from({ length: Math.max(0, Number(props.song.audioTracks) || 0) }, (_, index) => index))
 const canSwap = computed(() => draft.value?.layout === 'DUAL_CHANNEL' || draft.value?.layout === 'DUAL_TRACK')
 
 function openEditor() {
   draft.value = createAudioLayoutDraft(props.song.audioLayout)
+  sourceLabel.value = audioLayoutSourceLabel(props.song.audioLayout?.source)
   error.value = ''
   open.value = true
   ensureLayoutDefaults()
@@ -91,6 +100,7 @@ async function save() {
   try {
     const result = await api.adminUpdateAudioLayout(props.song.fileId, draft.value)
     draft.value = createAudioLayoutDraft(result)
+    sourceLabel.value = audioLayoutSourceLabel(result?.source)
     emit('updated', result)
     open.value = false
   } catch (e) { error.value = e.message || '音频布局保存失败' } finally { saving.value = false }
@@ -102,6 +112,7 @@ async function swap() {
   try {
     const result = await api.adminSwapAudioLayout(props.song.fileId)
     draft.value = createAudioLayoutDraft(result)
+    sourceLabel.value = audioLayoutSourceLabel(result?.source)
     emit('updated', result)
   } catch (e) { error.value = e.message || '原唱/伴唱交换失败' } finally { saving.value = false }
 }

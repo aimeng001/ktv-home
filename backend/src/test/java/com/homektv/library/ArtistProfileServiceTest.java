@@ -368,6 +368,20 @@ class ArtistProfileServiceTest {
         verify(projection).updateAvatarPathAfterCommit("zhoujielun", "artist-covers/jay2.jpg");
     }
 
+    @Test
+    void unresolvedAvatarKeysIncludesFailedProfiles() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.query(anyString(), org.mockito.ArgumentMatchers.<RowMapper<String>>any(),
+                org.mockito.ArgumentMatchers.any(Object[].class))).thenReturn(List.of("zhoujielun"));
+
+        new ArtistProfileService(jdbc).unresolvedAvatarKeys(100);
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).query(sql.capture(), org.mockito.ArgumentMatchers.<RowMapper<String>>any(),
+                org.mockito.ArgumentMatchers.any(Object[].class));
+        assertThat(sql.getValue()).contains("'FAILED'");
+    }
+
     private static ResultSet profileRow() throws Exception {
         ResultSet row = mock(ResultSet.class);
         when(row.getString("artist_key")).thenReturn("zhoujielun");

@@ -48,7 +48,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { CheckCircle2, Pause, Play, RefreshCw, Settings2, Sparkles, WandSparkles, X } from 'lucide-vue-next'
 import api from '../../api/client'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
@@ -84,7 +84,9 @@ function targetTitle(task){return task.targetTitle?`《${task.targetTitle}》`:(
 function targetArtist(task){return task.targetArtist||'未知歌手'}
 function targetId(task){return task.targetType==='IMPORT_RECORD'?`导入记录 #${task.targetId}`:`歌曲 #${task.songId}`}
 function friendlyError(value){return String(value||'').includes('Cannot deserialize')?'AI 返回的字段格式不兼容，可重试；新任务已支持数组和嵌套证据。':value}
-function flash(value){message.value=value;setTimeout(()=>message.value='',3000)}
+let flashTimer=null
+function flash(value){message.value=value;if(flashTimer)clearTimeout(flashTimer);flashTimer=setTimeout(()=>{message.value='';flashTimer=null},3000)}
+onBeforeUnmount(()=>{if(flashTimer){clearTimeout(flashTimer);flashTimer=null}})
 async function run(action){busy.value=true;try{await action()}catch(error){await alertDialog(error.message||'操作失败')}finally{busy.value=false}}
 async function createSelected(){await run(async()=>{const result=await api.adminAiCreateTasks(props.selectedIds);const created=Number(result?.created||0);const skipped=Number(result?.skipped||0);const rejected=Number(result?.dispatchRejected||0);flash(`已创建 ${created} 个任务${skipped?`，跳过 ${skipped} 首`:''}${rejected?`，${rejected} 个未能入队`:''}`);await refresh()})}
 async function createUnclassified(){await run(async()=>{const result=await api.adminAiCreateUnclassified(batchLimit.value);flash(`已创建 ${result.created} 个任务`);await refresh()})}

@@ -48,6 +48,20 @@ describe('SourceLibraryView', () => {
     expect(apiMock.adminDeleteSources).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['a failed library-mode request', () => apiMock.adminSourceLibrary.mockRejectedValueOnce(new Error('source list unavailable'))],
+    ['an unknown library mode', () => apiMock.adminSourceLibrary.mockResolvedValueOnce({ libraryMode: 'UNKNOWN', content: [pendingSource(1)], total: 1, totalPages: 1 })],
+  ])('hides all source write controls after %s', async (_scenario, configureResponse) => {
+    configureResponse()
+    await mount()
+
+    expect(root.querySelector('[role="alert"]')).not.toBeNull()
+    expect(root.querySelector('.header-actions .primary')).toBeNull()
+    expect(root.querySelector('.cleanup-button')).toBeNull()
+    expect(root.querySelector('.filter-panel')).toBeNull()
+    expect(root.querySelector('.table-panel')).toBeNull()
+  })
+
   it('defaults missing source-page fields and reports a zero-total running progress state', async () => {
     apiMock.adminSourceLibrary.mockResolvedValueOnce({ libraryMode: 'MANAGED' })
     apiMock.adminSourceTranscodeProgress.mockResolvedValueOnce({ running: true, total: 0, completed: 0 })

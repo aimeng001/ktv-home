@@ -19,6 +19,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.LongConsumer;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -489,18 +490,20 @@ class OpenAiCompatibleClientTest {
     @Test
     void stopsRetryingServerErrorsAfterFourAttempts() throws Exception {
         AtomicInteger requests = new AtomicInteger();
+        List<Long> retryDelays = new ArrayList<>();
         start(exchange -> {
             read(exchange);
             requests.incrementAndGet();
             respond(exchange, 503, "{\"error\":\"temporarily unavailable\"}");
         });
 
-        assertThatThrownBy(() -> clientWithLoopbackConfig(AiConfigService.JsonMode.PROMPT_ONLY)
+        assertThatThrownBy(() -> clientWithLoopbackConfig(AiConfigService.JsonMode.PROMPT_ONLY, retryDelays::add)
                 .completeJson("BULK", "system", "user", 100))
                 .isInstanceOf(OpenAiCompatibleClient.AiProviderException.class)
                 .hasFieldOrPropertyWithValue("code", "AI_PROVIDER_ERROR")
                 .hasFieldOrPropertyWithValue("status", 503);
         assertThat(requests.get()).isEqualTo(4);
+        assertThat(retryDelays).containsExactly(500L, 1_000L, 2_000L);
     }
 
     @Test
@@ -718,21 +721,33 @@ class OpenAiCompatibleClientTest {
     }
 
     private OpenAiCompatibleClient clientWithLoopbackConfig(AiConfigService.JsonMode mode) {
+        return clientWithLoopbackConfig(mode, ignored -> { });
+    }
+
+    private OpenAiCompatibleClient clientWithLoopbackConfig(
+            AiConfigService.JsonMode mode,
+            LongConsumer retrySleeper) {
         String host = server.getAddress().getAddress().getHostAddress();
         if (host.contains(":")) host = "[" + host + "]";
         AiConfigService.ResolvedConfig resolved = new AiConfigService.ResolvedConfig(
                 true, "http://" + host + ":" + server.getAddress().getPort() + "/v1", "test-model", "",
                 5, 0.97, 0.92, mode, 2, 1, "test-key");
-        return clientWithResolvedConfig(resolved);
+        return clientWithResolvedConfig(resolved, retrySleeper);
     }
 
     private OpenAiCompatibleClient clientWithResolvedConfig(AiConfigService.ResolvedConfig resolved) {
+        return clientWithResolvedConfig(resolved, ignored -> { });
+    }
+
+    private OpenAiCompatibleClient clientWithResolvedConfig(
+            AiConfigService.ResolvedConfig resolved,
+            LongConsumer retrySleeper) {
         AiConfigService configService = new AiConfigService(null, null, null, null, new ObjectMapper()) {
             @Override public void requireConfigured() { }
             @Override public AiConfigService.ResolvedConfig resolve() { return resolved; }
             @Override public void validateOutboundBaseUrl(String baseUrl) { }
         };
-        return new OpenAiCompatibleClient(configService, new ObjectMapper(), RestClient.builder(), null);
+        return new OpenAiCompatibleClient(configService, new ObjectMapper(), RestClient.builder(), null, retrySleeper);
     }
 
     private OpenAiCompatibleClient client(AiConfigService.JsonMode mode, SongFileRepository files) {
@@ -740,13 +755,13 @@ class OpenAiCompatibleClientTest {
         when(configService.resolve()).thenReturn(new AiConfigService.ResolvedConfig(
                 true, "http://localhost:" + server.getAddress().getPort() + "/v1", "vendor/model:any-v2", "",
                 5, 0.97, 0.92, mode, 2, 1, "test-key"));
-        return new OpenAiCompatibleClient(configService, new ObjectMapper(), RestClient.builder(), files);
+        return new OpenAiCompatibleClient(configService, new ObjectMapper(), RestClient.builder(), files, ignored -> { });
     }
 
     private OpenAiCompatibleClient client(AiConfigService.ResolvedConfig resolved, SongFileRepository files) {
         AiConfigService configService = mock(AiConfigService.class);
         when(configService.resolve()).thenReturn(resolved);
-        return new OpenAiCompatibleClient(configService, new ObjectMapper(), RestClient.builder(), files);
+        return new OpenAiCompatibleClient(configService, new ObjectMapper(), RestClient.builder(), files, ignored -> { });
     }
 
     private SongFile fileEvidence(String filePath, String relativePath) {

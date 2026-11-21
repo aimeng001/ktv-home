@@ -114,10 +114,57 @@ class AdminAuthServiceTest {
                     .isEqualTo("ADMIN_AUTH_INVALID");
         }
 
-        assertThatThrownBy(() -> service.login("correct-password", "unknown"))
+        // A-03：冷却期内「正确密码」必须放行（旧实现会在这里返回 429，把管理员关在门外）
+        assertThat(service.login("correct-password", "unknown")).isNotBlank();
+    }
+
+    @Test
+    void correctPasswordSucceedsDuringCooldown() {
+        properties.setAdminPassword("correct-password");
+
+        for (int attempt = 0; attempt < AdminAuthService.MAX_FAILED_ATTEMPTS; attempt++) {
+            assertThatThrownBy(() -> service.login("wrong-password", "locked-client"))
+                    .isInstanceOf(ApiException.class);
+        }
+
+        assertThat(service.login("correct-password", "locked-client")).isNotBlank();
+    }
+
+    @Test
+    void wrongPasswordStaysRejectedDuringCooldown() {
+        properties.setAdminPassword("correct-password");
+
+        for (int attempt = 0; attempt < AdminAuthService.MAX_FAILED_ATTEMPTS; attempt++) {
+            assertThatThrownBy(() -> service.login("wrong-password", "locked-client"))
+                    .isInstanceOf(ApiException.class);
+        }
+
+        assertThatThrownBy(() -> service.login("wrong-password", "locked-client"))
                 .isInstanceOf(ApiException.class)
                 .extracting(exception -> ((ApiException) exception).getCode())
                 .isEqualTo("ADMIN_AUTH_RATE_LIMITED");
+    }
+
+    @Test
+    void cooldownDoesNotExtendOnRepeatedAttempts() {
+        properties.setAdminPassword("correct-password");
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-30T00:00:00Z"));
+        service = new AdminAuthService(properties, clock);
+
+        for (int attempt = 0; attempt < AdminAuthService.MAX_FAILED_ATTEMPTS; attempt++) {
+            assertThatThrownBy(() -> service.login("wrong-password", "locked-client"))
+                    .isInstanceOf(ApiException.class);
+        }
+
+        // 冷却期内反复瞎试，不得把 60 秒窗口一直往后推
+        for (int attempt = 0; attempt < 5; attempt++) {
+            clock.advance(Duration.ofSeconds(10));
+            assertThatThrownBy(() -> service.login("wrong-password", "locked-client"))
+                    .isInstanceOf(ApiException.class);
+        }
+
+        clock.advance(Duration.ofSeconds(11));   // t0+61，原始冷却已过期
+        assertThat(service.login("correct-password", "locked-client")).isNotBlank();
     }
 
     @Test

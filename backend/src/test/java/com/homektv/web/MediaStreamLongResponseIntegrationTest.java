@@ -31,8 +31,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(
         classes = MediaStreamLongResponseIntegrationTest.TestApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "app.resource-budget.media-stream-limit=4")
+        properties = {
+                "app.resource-budget.media-stream-limit=4",
+                "spring.mvc.async.request-timeout=1000"
+        })
 class MediaStreamLongResponseIntegrationTest {
+    private static final long TEST_ASYNC_TIMEOUT_MILLIS = 1_000L;
     private static final byte[] EXPECTED_BODY = IntStream.range(0, 40)
             .mapToObj(value -> (byte) value)
             .collect(() -> new java.io.ByteArrayOutputStream(40),
@@ -53,13 +57,16 @@ class MediaStreamLongResponseIntegrationTest {
     }
 
     @Test
-    void rangeAndLivePipeStreamsFinishAfterTheContainerDefaultAsyncTimeout() throws Exception {
+    void rangeAndLivePipeStreamsFinishAfterTheConfiguredAsyncTimeout() throws Exception {
         HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        long startedAt = System.nanoTime();
         CompletableFuture<HttpResponse<byte[]>> range = sendSlowStream(client, "/api/stream/test-range");
         CompletableFuture<HttpResponse<byte[]>> pipe = sendSlowStream(client, "/api/stream/test-pipe");
 
-        CompletableFuture.allOf(range, pipe).get(45, TimeUnit.SECONDS);
+        CompletableFuture.allOf(range, pipe).get(10, TimeUnit.SECONDS);
 
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+        assertThat(elapsedMillis).isGreaterThan(TEST_ASYNC_TIMEOUT_MILLIS);
         assertThat(range.join().statusCode()).isEqualTo(200);
         assertThat(range.join().body()).containsExactly(EXPECTED_BODY);
         assertThat(pipe.join().statusCode()).isEqualTo(200);
@@ -68,7 +75,7 @@ class MediaStreamLongResponseIntegrationTest {
 
     private CompletableFuture<HttpResponse<byte[]>> sendSlowStream(HttpClient client, String path) {
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
-                .timeout(Duration.ofSeconds(45))
+                .timeout(Duration.ofSeconds(10))
                 .GET()
                 .build();
         return client.sendAsync(request, HttpResponse.BodyHandlers.ofByteArray());
@@ -102,7 +109,7 @@ class MediaStreamLongResponseIntegrationTest {
                     output.write(value);
                     output.flush();
                     try {
-                        Thread.sleep(850);
+                        Thread.sleep(50);
                     } catch (InterruptedException interrupted) {
                         Thread.currentThread().interrupt();
                         throw new java.io.IOException("slow stream interrupted", interrupted);

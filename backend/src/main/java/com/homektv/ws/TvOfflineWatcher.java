@@ -91,6 +91,20 @@ public class TvOfflineWatcher {
         log.info("TV 离线，{}ms 后若无重连将清空播放队列", OFFLINE_CLEAR_DELAY_MS);
     }
 
+    /**
+     * 是否有一个「TV 离线清空队列」的定时任务尚未执行。
+     *
+     * 供播放孤儿看门狗判断：TV 离线且无手机时，收尾工作已由本类的 180s 定时任务承担，
+     * 看门狗不必再插一次暂停（否则用户会先看到「已暂停」再看到「队列已清空」）。
+     *
+     * Whether a scheduled TV-offline queue clear is still pending.
+     *
+     * @return 存在未完成且未取消的任务时为 true / true while a pending clear is still armed
+     */
+    public synchronized boolean hasPendingClear() {
+        return pending != null && !pending.isDone() && !pending.isCancelled();
+    }
+
     private void clearIfStillOffline(long scheduledEpoch) {
         if (broadcaster.isTvOnline() || broadcaster.connectedPhonesCount() > 0) {
             return;

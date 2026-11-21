@@ -30,10 +30,17 @@ describe('DialogHost mounted behavior', () => {
     const dialog = document.body.querySelector('[role="dialog"]')
     expect(dialog.getAttribute('aria-label')).toBe('清理确认')
     expect(document.activeElement.hasAttribute('data-dialog-confirm')).toBe(true)
+    // 确认框默认使用 warning 色调图标，并渲染「取消 / 确认」两个动作。
+    expect(dialog.querySelector('.dialog-icon').classList.contains('warning')).toBe(true)
+    expect(dialog.querySelector('.dialog-btn.secondary').textContent).toBe('取消')
+    expect(dialog.querySelector('[data-dialog-confirm]').textContent).toBe('确认')
 
     document.body.querySelector('[data-dialog-confirm]').click()
     await flushUi()
     expect(await result).toBe(true)
+    await waitForTransition()
+    // 确认后弹窗必须真正从 DOM 移除，而不是仅隐藏。
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
     expect(document.activeElement).toBe(opener)
     opener.remove()
   })
@@ -85,13 +92,32 @@ describe('DialogHost mounted behavior', () => {
 
     const textarea = document.createElement('textarea')
     document.body.querySelector('[role="dialog"]').appendChild(textarea)
-    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    textarea.dispatchEvent(enter)
     await nextTick()
     expect(useDialog().state.open).toBe(true)
+    // textarea 里的 Enter 应交给控件自己处理，宿主不得 preventDefault。
+    expect(enter.defaultPrevented).toBe(false)
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    window.dispatchEvent(escape)
     await flushUi()
     expect(await result).toBe(false)
+    // Escape 必须被宿主 preventDefault，否则浏览器默认行为会穿透到页面。
+    expect(escape.defaultPrevented).toBe(true)
+
+    // 同一用例内再验证 success 色调：图标切换为 success，且只保留「知道了」一个动作。
+    const successResult = alertDialog('操作完成', { title: '完成', tone: 'success' })
+    await flushUi()
+    const successDialog = Array.from(document.body.querySelectorAll('[role="dialog"]')).pop()
+    expect(successDialog.getAttribute('aria-label')).toBe('完成')
+    expect(successDialog.querySelector('.dialog-icon').classList.contains('success')).toBe(true)
+    expect(successDialog.querySelector('.dialog-btn.secondary')).toBeNull()
+    expect(successDialog.querySelector('[data-dialog-confirm]').textContent).toBe('知道了')
+
+    successDialog.querySelector('[data-dialog-confirm]').click()
+    await flushUi()
+    expect(await successResult).toBe(true)
   })
 
   it('keeps keyboard focus in the dialog and restores the background inert state', async () => {
@@ -184,4 +210,9 @@ async function flushUi() {
   await nextTick()
   await new Promise(resolve => setTimeout(resolve, 0))
   await nextTick()
+}
+
+/** 等待 .dialog-fade 的 180ms 离场过渡结束，避免断言 DOM 移除时假红。 */
+function waitForTransition() {
+  return new Promise(resolve => setTimeout(resolve, 220))
 }

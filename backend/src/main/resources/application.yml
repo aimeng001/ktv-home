@@ -40,6 +40,9 @@ app:
   structured-filename-metadata-preferred: ${KTV_LIBRARY_FILENAME_METADATA_PREFERRED:false}
   avatar-library-path: ${KTV_AVATAR_LIBRARY_PATH:/avatar-library}
   data-path: ${KTV_DATA_PATH:./data}
+  playback:
+    # 播放孤儿看门狗 tick 间隔：45s 租约 + 两拍判定 ≈ 45-65s 内暂停
+    watchdog-interval-ms: ${KTV_PLAYBACK_WATCHDOG_INTERVAL_MS:10000}
   music-provider-rate-limit:
     min-interval-ms: ${KTV_MUSIC_PROVIDER_MIN_INTERVAL_MS:5000}
     daily-limit: ${KTV_MUSIC_PROVIDER_DAILY_LIMIT:300}

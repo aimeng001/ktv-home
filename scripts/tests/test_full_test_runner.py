@@ -576,6 +576,29 @@ class FullTestRunnerPlanTest(unittest.TestCase):
         self.assertEqual(str(temporary_directory), environment["TMPDIR"])
         self.assertTrue(temporary_directory.is_relative_to(ROOT.resolve()))
 
+    def test_android_task_uses_an_isolated_android_user_home_per_run(self):
+        with tempfile.TemporaryDirectory(prefix="ktv-android-user-home-test-", dir=ROOT) as temporary:
+            root = self.make_temp_root(temporary)
+            log_dir = root / "logs"
+            log_dir.mkdir()
+            task = TaskSpec(
+                "android",
+                root / "android-tv",
+                (CommandSpec((sys.executable, "-c", "pass"), "Android unit tests"),),
+                "Android unit tests",
+            )
+            process = Mock()
+            process.wait.return_value = 0
+            with patch.dict("os.environ", {"ANDROID_USER_HOME": "shared-android-home"}), patch(
+                "scripts.full_test_runner.subprocess.Popen", return_value=process
+            ) as start_process:
+                result = _run_task(task, log_dir, root)
+                environment = start_process.call_args.kwargs["env"]
+                expected_home = (log_dir / "android-user-home").resolve()
+                self.assertEqual(str(expected_home), environment["ANDROID_USER_HOME"])
+                self.assertTrue(expected_home.is_dir())
+        self.assertEqual(0, result.returncode)
+
     def test_unknown_profile_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "profile"):
             build_task_specs(ROOT, profile="unknown")

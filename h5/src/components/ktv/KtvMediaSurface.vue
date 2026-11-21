@@ -79,6 +79,7 @@
           <span class="time-lbl">{{ formatDurationMs(displayPositionMs) }}</span>
           <input
             type="range"
+            aria-label="播放进度"
             min="0"
             :max="durationMs || 1"
             :value="Math.min(displayPositionMs, durationMs || 1)"
@@ -105,8 +106,8 @@
           <button type="button" class="fs-act" @click="$emit('toggle-mute')">
             {{ player.muted ? '取消静音' : '静音' }}
           </button>
-          <button type="button" class="fs-act" @click="$emit('volume-delta', -10)">音量-</button>
-          <button type="button" class="fs-act" @click="$emit('volume-delta', 10)">音量+</button>
+          <button type="button" class="fs-act" @click="$emit('volume-delta', -VOLUME_STEP)">音量-</button>
+          <button type="button" class="fs-act" @click="$emit('volume-delta', VOLUME_STEP)">音量+</button>
           <button type="button" class="fs-act" @click="$emit('open-mixer')">音效</button>
           <button type="button" class="fs-act" @click="$emit('open-queue')">已点 ({{ player.queueCount }})</button>
           <button type="button" class="fs-act" @click="$emit('open-browser')">点歌台</button>
@@ -123,7 +124,7 @@
     class="autoplay-unlock"
     @click.stop="unlockAudio"
   >
-    <Volume2 :size="16" /> 点击开启 KTV 伴奏声音
+    <Volume2 :size="16" /> {{ player.audioUnlockFailed ? '声音开启失败，点击重试' : '点击开启 KTV 伴奏声音' }}
   </button>
 
   <!-- 现场氛围互动音效浮层（响应 WS effect_play） -->
@@ -140,7 +141,9 @@ import { parseLrc } from '../../composables/lrc'
 import { createLyricLoader } from '../../views/lyricLoader'
 import { currentLyricIndex } from '../../views/lyricState'
 import { buildWebStreamSpec } from '../../player/streamSelection'
+import { VOLUME_STEP } from './ktvControlSteps'
 import { createWebAudioChannelRouter } from '../../player/webAudioChannelRouter'
+import { useToast } from '../../composables/useToast'
 import { formatDurationMs } from './ktvCatalogPresets'
 
 const props = defineProps({
@@ -166,6 +169,7 @@ const emit = defineEmits([
 ])
 
 const player = usePlayerStore()
+const { toast } = useToast()
 const videoEl = ref(null)
 const channelRouter = createWebAudioChannelRouter()
 
@@ -322,6 +326,7 @@ async function attemptPlay() {
       player.audioBlockedByAutoplay = true
     } else if (player.isWebHost) {
       player.audioBlockedByAutoplay = false
+      player.audioUnlockFailed = false
     }
   } catch (err) {
     if (player.isWebHost && err?.name === 'NotAllowedError') {
@@ -333,14 +338,22 @@ async function attemptPlay() {
 }
 
 async function unlockAudio() {
-  player.audioBlockedByAutoplay = false
   const el = videoEl.value
   if (!el) return
   el.muted = player.muted
   syncAudioRouter()
-  await channelRouter.resume()
-  if (player.isPlaying) {
-    el.play().catch(() => {})
+  try {
+    await channelRouter.resume()
+    if (player.isPlaying) await el.play()
+    player.audioBlockedByAutoplay = false
+    player.audioUnlockFailed = false
+  } catch (e) {
+    player.audioBlockedByAutoplay = true
+    player.audioUnlockFailed = true
+    el.muted = true
+    toast(e?.name === 'NotAllowedError'
+      ? '浏览器仍拦截自动播放，请再点一次开启声音'
+      : '声音开启失败，请检查设备输出后重试')
   }
 }
 
@@ -407,7 +420,10 @@ function onVideoError() {
   const fileId = player.playback?.sourceFileId ?? null
   const queueId = player.nowPlaying?.queueId
   if (queueId) {
-    player.reportPlayError(fileId, queueId, '浏览器无法解码当前视频流')
+    const reported = player.reportPlayError(fileId, queueId, '浏览器无法解码当前视频流')
+    // 上报没发出去（WS 未连或非本端授权）时，服务端并不知道这一端已经播不动，
+    // 本地必须自己退到失败态，否则画面会一直停在黑屏/转圈。
+    if (!reported) mirrorStreamFailed.value = true
   }
 }
 
@@ -617,7 +633,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 .pip-overlay-caption small {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--gold2);
 }
 .effect-stage-toast {

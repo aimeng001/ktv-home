@@ -88,6 +88,14 @@ public class WsBroadcaster {
     private final Map<String, String> sessionTypes = new ConcurrentHashMap<>();
 
     /**
+     * 进程启动以来是否成功注册过任何 WebSocket 会话。
+     *
+     * 播放孤儿看门狗用它区分「服务刚起来、客户端还没连」与「客户端连过又全走了」：
+     * 前者不该触发任何自愈动作（对齐 {@code recoverAfterRestart} 的续播）。
+     */
+    private volatile boolean seenClient;
+
+    /**
      * 注册 WebSocket 会话。
      *
      * Registers a WebSocket session.
@@ -101,6 +109,18 @@ public class WsBroadcaster {
         if (previous != null && previous != outboundSession) closeOutboundQueue(session.getId());
         Object type = session.getAttributes().get("client_type");
         if (type != null) sessionTypes.put(session.getId(), type.toString());
+        seenClient = true;
+    }
+
+    /**
+     * 进程启动以来是否至少有过一个客户端会话。
+     *
+     * Whether any client session has been registered since process start.
+     *
+     * @return 曾经注册过会话即为 true / true once any session has registered
+     */
+    public boolean hasSeenClient() {
+        return seenClient;
     }
 
     /**

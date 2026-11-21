@@ -89,6 +89,20 @@ class SongControllerSecurityTest {
     }
 
     @Test
+    void coverIsCacheableForOneDayWhileLyricsStayUncached() throws Exception {
+        Files.write(dataRoot.resolve("covers/song1.jpg"), new byte[]{1, 2, 3});
+        Files.writeString(dataRoot.resolve("lyrics/song1.lrc"), "[00:01.00]Hello");
+        when(songRepo.findById(1L)).thenReturn(Optional.of(song(1L, "covers/song1.jpg", "lyrics/song1.lrc")));
+
+        ResponseEntity<Resource> cover = controller.cover(1L);
+        ResponseEntity<Resource> lyric = controller.lyric(1L);
+
+        assertThat(cover.getHeaders().getCacheControl()).contains("max-age=86400").contains("public");
+        // 歌词改了必须立刻生效；封面和歌词共用 serveFile，缓存只能加在封面分支。
+        assertThat(lyric.getHeaders().getCacheControl()).isNull();
+    }
+
+    @Test
     void coverRejectsTraversalOutsideDataRoot() {
         when(songRepo.findById(2L)).thenReturn(Optional.of(song(2L, "../../parent_secret.txt", null)));
 

@@ -160,4 +160,18 @@ describe('user identity store', () => {
     expect(user.nickname).toBe('最终昵称')
     expect(localStorage.getItem(NICK_KEY)).toBe('最终昵称')
   })
+
+  it('register() 保持清空服务端身份的语义（首次注册依赖）', () => {
+    localStorage.setItem(TOKEN_KEY, 'saved-token')
+    localStorage.setItem(NICK_KEY, '旧昵称')
+    localStorage.setItem(USER_ID_KEY, '17')
+    const user = useUserStore()
+
+    user.register('新昵称')
+
+    expect(user.nickname).toBe('新昵称')
+    expect(user.serverUserId).toBeNull()
+    expect(user.registrationError).toBe('')
+    expect(localStorage.getItem(USER_ID_KEY)).toBeNull()
+  })
 })

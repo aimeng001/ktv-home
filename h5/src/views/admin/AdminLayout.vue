@@ -15,6 +15,7 @@
         <router-link class="mi" :class="{ on: active === 'ktv' }" :to="{ name: 'admin-ktv-library' }"><span>♫</span>KTV曲库</router-link>
         <router-link class="mi" :class="{ on: active === 'artists' }" :to="{ name: 'admin-artists' }"><span>♙</span>歌手库</router-link>
         <router-link class="mi" :class="{ on: active === 'ai' }" :to="{ name: 'admin-ai' }"><span>✦</span>主题歌单</router-link>
+        <router-link class="mi" :class="{ on: active === 'iktv' }" :to="{ name: 'admin-iktv-fusion' }"><span>⧉</span>引用融合</router-link>
         <router-link class="mi" :class="{ on: active === 'settings' }" :to="{ name: 'admin-settings' }"><span>⚙</span>系统设置</router-link>
       </nav>
     </aside>
@@ -22,7 +23,7 @@
     <main class="main"><slot /></main>
 
     <div v-if="releaseNoticeOpen" class="notice-mask" @click.self="dismissReleaseNotice">
-      <section class="release-notice" role="dialog" aria-modal="true" aria-labelledby="release-notice-title">
+      <section ref="releaseNoticeBox" class="release-notice" role="dialog" aria-modal="true" aria-labelledby="release-notice-title">
         <header>
           <div class="notice-mark">TV</div>
           <div>
@@ -61,9 +62,10 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api/client'
 import { useAdminAuthStore } from '../../stores/adminAuth'
+import { useFocusTrap } from '../../composables/useFocusTrap'
 
 /**
- * active 当前激活的菜单项标识（dashboard | source | ktv | settings）
+ * active 当前激活的菜单项标识（dashboard | source | ktv | artists | ai | iktv | settings）
  *
  * @type {String}
  * active — identifier of the currently active menu item.
@@ -74,6 +76,9 @@ const READ_KEY = 'home-ktv.admin.releaseNoticeRead'
 const DISMISSED_KEY = 'home-ktv.admin.releaseNoticeDismissed'
 const releaseInfo = ref(null)
 const releaseNoticeOpen = ref(false)
+const releaseNoticeBox = ref(null)
+// 版本公告是模态框：打开期间把 Tab 焦点留在框内，关闭时归还。
+useFocusTrap(releaseNoticeBox, () => releaseNoticeOpen.value)
 const adminAuth = useAdminAuthStore()
 const router = useRouter()
 const route = useRoute()
@@ -134,7 +139,7 @@ function formatBytes(bytes) {
 
 <style scoped>
 .admin-shell { --admin-blue:#2563eb; --admin-border:#e2e8f0; --admin-muted:#64748b; display:flex; min-height:100vh; background:#f5f7fa; color:#172033; }
-.side { width:220px; flex:none; background:#fff; border-right:1px solid var(--admin-border); }
+.side { width:220px; flex:none; background:#fff; border-right:1px solid var(--admin-border); overflow-y:auto; }
 .brand { height:76px; padding:18px 20px; border-bottom:1px solid var(--admin-border); display:flex; flex-direction:column; justify-content:center; }
 .brand strong { font-size:18px; line-height:1; }.brand span { margin-top:7px; color:var(--admin-muted); font-size:11px; }
 .logout { align-self:flex-start; margin-top:9px; padding:0; border:0; background:transparent; color:#64748b; font-size:11px; cursor:pointer; }.logout:hover { color:#1d4ed8; }

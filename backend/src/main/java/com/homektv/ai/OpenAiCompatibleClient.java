@@ -11,6 +11,7 @@ import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -28,6 +29,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.function.LongConsumer;
 import java.util.regex.Pattern;
 
 @Component
@@ -49,13 +52,21 @@ public class OpenAiCompatibleClient {
     private final RestClient.Builder restClientBuilder;
     private final SongFileRepository fileRepository;
     private final HttpClient httpClient;
+    private final LongConsumer retrySleeper;
 
+    @Autowired
     public OpenAiCompatibleClient(AiConfigService configService, ObjectMapper mapper, RestClient.Builder restClientBuilder,
                                  SongFileRepository fileRepository) {
+        this(configService, mapper, restClientBuilder, fileRepository, OpenAiCompatibleClient::sleepThread);
+    }
+
+    OpenAiCompatibleClient(AiConfigService configService, ObjectMapper mapper, RestClient.Builder restClientBuilder,
+                          SongFileRepository fileRepository, LongConsumer retrySleeper) {
         this.configService = configService;
         this.mapper = mapper;
         this.restClientBuilder = restClientBuilder;
         this.fileRepository = fileRepository;
+        this.retrySleeper = Objects.requireNonNull(retrySleeper, "retrySleeper");
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30))
                 .followRedirects(HttpClient.Redirect.NEVER)
@@ -327,8 +338,16 @@ public class OpenAiCompatibleClient {
     }
 
     private void sleep(int attempt) {
-        try { Thread.sleep(500L * (1L << attempt)); }
-        catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AiProviderException("AI_INTERRUPTED", "AI 请求被中断", e); }
+        retrySleeper.accept(500L * (1L << attempt));
+    }
+
+    private static void sleepThread(long delayMillis) {
+        try {
+            Thread.sleep(delayMillis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AiProviderException("AI_INTERRUPTED", "AI 请求被中断", e);
+        }
     }
 
     private String extractJson(String content) {

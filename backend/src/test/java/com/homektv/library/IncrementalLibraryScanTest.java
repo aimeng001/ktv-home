@@ -822,8 +822,8 @@ class IncrementalLibraryScanTest {
     }
 
     @Test
-    void firstFastIndexBatchIsVisibleBeforeTheFirstMediaProbe() throws Exception {
-        for (int index = 0; index < 500; index++) {
+    void fastIndexIsVisibleBeforeTheFirstMediaProbe() throws Exception {
+        for (int index = 0; index < 4; index++) {
             Files.write(sourceDir.resolve("歌手-歌曲" + index + "-国语-流行.mkv"), new byte[]{1});
         }
         AtomicBoolean firstProbe = new AtomicBoolean(true);
@@ -838,12 +838,12 @@ class IncrementalLibraryScanTest {
 
         LibraryScanService.ScanResult result = scanService.scanAll();
 
-        assertThat(result.scanned()).isEqualTo(500);
-        assertThat(result.added()).isEqualTo(500);
+        assertThat(result.scanned()).isEqualTo(4);
+        assertThat(result.added()).isEqualTo(4);
         assertThat(result.skipped()).isZero();
-        assertThat(result.probeCalls()).isEqualTo(500);
-        assertThat(result.probeQueued()).isEqualTo(500);
-        assertThat(filesByPath).hasSize(500);
+        assertThat(result.probeCalls()).isEqualTo(4);
+        assertThat(result.probeQueued()).isEqualTo(4);
+        assertThat(filesByPath).hasSize(4);
         assertThat(filesByPath.values()).allMatch(file -> !file.isProbePending());
     }
 

@@ -15,7 +15,7 @@
       </button>
     </div>
 
-    <div class="kb-mode-tabs" role="tablist">
+    <div class="kb-mode-tabs">
       <button
         type="button"
         :class="{ on: kbMode === 'qwerty' }"
@@ -283,7 +283,7 @@ defineExpose({ focusInput })
   line-height: 1.1;
 }
 .t9-key strong { font-size: 15px; }
-.t9-key small { font-size: 9px; color: var(--dim); margin-top: 2px; }
+.t9-key small { font-size: 11px; color: var(--dim); margin-top: 2px; }
 .t9-key.action { background: rgba(255, 198, 75, 0.14); border-color: rgba(255, 198, 75, 0.3); }
 .t9-wrap { display: flex; flex-direction: column; gap: 6px; }
 .t9-hint { font-size: 10px; color: var(--dim); text-align: center; }

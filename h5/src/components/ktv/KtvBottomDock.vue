@@ -11,8 +11,13 @@
       <button
         type="button"
         class="dock-circle"
-        :class="{ active: player.vocalMode === 'accompaniment', disabled: !canVocal }"
-        :aria-label="player.vocalMode === 'original' ? '当前原唱，点击切换伴唱' : '当前伴唱，点击切换原唱'"
+        :class="{ active: player.vocalMode === 'accompaniment' }"
+        :disabled="!canVocal"
+        :aria-disabled="!canVocal"
+        :title="canVocal ? '' : '当前曲目无伴唱音轨'"
+        :aria-label="canVocal
+          ? (player.vocalMode === 'original' ? '当前原唱，点击切换伴唱' : '当前伴唱，点击切换原唱')
+          : '当前曲目无伴唱音轨'"
         @click="$emit('toggle-vocal')"
       >
         <Mic2 :size="20" />
@@ -29,7 +34,7 @@
         <span>切歌</span>
       </button>
 
-      <button type="button" class="dock-circle" aria-label="减小音量" @click="$emit('volume-delta', -8)">
+      <button type="button" class="dock-circle" aria-label="减小音量" @click="$emit('volume-delta', -VOLUME_STEP)">
         <img :src="assets.iconVolDown" alt="" class="dock-png" />
         <span>音量-</span>
       </button>
@@ -67,7 +72,7 @@
 
     <!-- 右侧 5 个圆形控制按钮 -->
     <div class="dock-group dock-right">
-      <button type="button" class="dock-circle" aria-label="增加音量" @click="$emit('volume-delta', 8)">
+      <button type="button" class="dock-circle" aria-label="增加音量" @click="$emit('volume-delta', VOLUME_STEP)">
         <img :src="assets.iconVolUp" alt="" class="dock-png" />
         <span>音量+</span>
       </button>
@@ -100,6 +105,7 @@
 import { computed, ref, watch } from 'vue'
 import { ListMusic, Mic2, Pause, Play } from 'lucide-vue-next'
 import { KTV_ASSETS } from './ktvCatalogPresets'
+import { VOLUME_STEP } from './ktvControlSteps'
 import { usePlayerStore } from '../../stores/player'
 
 const props = defineProps({
@@ -190,8 +196,9 @@ defineExpose({ pipSlotEl })
   border-color: rgba(255, 198, 75, 0.72);
   color: var(--gold2);
 }
-.dock-circle.disabled {
+.dock-circle:disabled {
   opacity: 0.55;
+  cursor: not-allowed;
 }
 .dock-png {
   width: 24px;
@@ -281,7 +288,7 @@ defineExpose({ pipSlotEl })
   text-overflow: ellipsis;
 }
 .pip-caption small {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--gold2);
 }
 

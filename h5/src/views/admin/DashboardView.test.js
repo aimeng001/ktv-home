@@ -155,11 +155,7 @@ describe('DashboardView', () => {
   })
 
   it('renders initial media-probe progress and active transcode details', async () => {
-    let poll
-    vi.spyOn(window, 'setInterval').mockImplementation(callback => {
-      poll = callback
-      return 90
-    })
+    const timers = installTimerMock()
     apiMock.adminSourceTranscodeProgress.mockResolvedValueOnce({ running: true, total: 4, completed: 2, currentFile: '' })
     apiMock.adminScanProgress.mockResolvedValueOnce({
       running: true, phase: 'MEDIA_PROBE', discovered: 8, fastIndexed: 8, probeQueued: 4,
@@ -167,7 +163,8 @@ describe('DashboardView', () => {
     })
     await mount()
 
-    expect(typeof poll).toBe('function')
+    expect(timers.pending()).toHaveLength(1)
+    expect(timers.delays()).toEqual([0])
     expect(root.querySelector('.scan-progress').textContent).toContain('正在读取媒体信息')
     expect(root.querySelector('.scan-progress').textContent).toContain('媒体探测 2 / 4')
     expect(root.querySelector('.scan-progress').textContent).toContain('速率 5 首/秒')
@@ -177,7 +174,7 @@ describe('DashboardView', () => {
   })
 
   it('uses the fast-index phase hint when a scan resumes from its initial snapshot', async () => {
-    vi.spyOn(window, 'setInterval').mockImplementation(() => 87)
+    installTimerMock()
     apiMock.adminScanProgress.mockResolvedValueOnce({ running: true, phase: 'FAST_INDEX', discovered: 4, fastIndexed: 1 })
     await mount()
 
@@ -186,7 +183,7 @@ describe('DashboardView', () => {
   })
 
   it('shows zero defaults for an active probe and formats a last transcode with zero counts', async () => {
-    vi.spyOn(window, 'setInterval').mockImplementation(() => 88)
+    installTimerMock()
     apiMock.adminSourceTranscodeProgress.mockResolvedValueOnce({ running: false, finishedAt: '2026-10-18T01:02:03Z' })
     apiMock.adminScanProgress.mockResolvedValueOnce({ running: true, phase: 'MEDIA_PROBE', probeQueued: 0, probeCompleted: 0 })
     await mount()
@@ -207,7 +204,7 @@ describe('DashboardView', () => {
   })
 
   it('uses the default scan hint for an unknown server phase', async () => {
-    vi.spyOn(window, 'setInterval').mockImplementation(() => 86)
+    installTimerMock()
     apiMock.adminScanProgress.mockResolvedValueOnce({ running: true, phase: 'FUTURE_PHASE', total: 4 })
     await mount()
 
@@ -259,12 +256,8 @@ describe('DashboardView', () => {
   })
 
   it('preserves partial-scan details when the completion refresh returns the terminal record', async () => {
-    let poll
+    const timers = installTimerMock()
     let resolveRefresh
-    vi.spyOn(window, 'setInterval').mockImplementation(callback => {
-      poll = callback
-      return 89
-    })
     await mount()
     root.querySelector('.page-head .primary').click()
     await flushUi()
@@ -272,7 +265,7 @@ describe('DashboardView', () => {
       .mockResolvedValueOnce({ running: false, state: 'PARTIAL', phase: 'COMPLETED', total: 2, completed: 1 })
       .mockReturnValueOnce(new Promise(resolve => { resolveRefresh = resolve }))
 
-    const pendingPoll = poll()
+    const pendingPoll = timers.fire()
     await flushUi()
 
     expect(root.querySelector('.scan-progress').textContent).toContain('部分扫描完成')
@@ -303,12 +296,7 @@ describe('DashboardView', () => {
   })
 
   it('starts scanning, polls to completion, stops the timer, and reloads dashboard summaries', async () => {
-    let poll
-    const setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation(callback => {
-      poll = callback
-      return 91
-    })
-    const clearIntervalSpy = vi.spyOn(window, 'clearInterval')
+    const timers = installTimerMock()
     await mount()
     apiMock.adminScanProgress.mockResolvedValueOnce({
       running: false, phase: 'COMPLETED', state: 'COMPLETED', finishedAt: '2026-10-18T01:02:03Z',
@@ -319,11 +307,13 @@ describe('DashboardView', () => {
     await flushUi()
     expect(apiMock.adminStartScan).toHaveBeenCalledOnce()
     expect(root.querySelector('.page-head .primary').disabled).toBe(true)
-    expect(typeof poll).toBe('function')
-    await poll()
+    expect(timers.pending()).toHaveLength(1)
+    await timers.fire()
     await flushUi()
 
-    expect(clearIntervalSpy).toHaveBeenCalledWith(91)
+    // 扫描结束后不再排下一拍，所以定时器列表停在首拍（延迟 0）。
+    expect(timers.delays()).toEqual([0])
+    expect(timers.pending()).toHaveLength(0)
     expect(apiMock.adminScanProgress).toHaveBeenCalledTimes(3)
     expect(apiMock.adminStatus).toHaveBeenCalledTimes(2)
     expect(root.querySelector('.scan-progress').textContent).toContain('扫描完成')
@@ -332,113 +322,71 @@ describe('DashboardView', () => {
   })
 
   it('marks scanning failed and stops polling after three consecutive progress errors', async () => {
-    let poll
-    const setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation(callback => {
-      poll = callback
-      return 92
-    })
-    const clearIntervalSpy = vi.spyOn(window, 'clearInterval')
+    const timers = installTimerMock()
     await mount()
     root.querySelector('.page-head .primary').click()
     await flushUi()
     apiMock.adminScanProgress.mockRejectedValueOnce({})
     apiMock.adminScanProgress.mockRejectedValue(new Error('temporary scan API outage'))
 
-    await poll()
+    await timers.fire()
     expect(root.querySelector('[role="alert"]').textContent).toContain('扫描进度读取失败，正在重试')
-    await poll()
-    await poll()
+    await timers.fire()
+    await timers.fire()
 
-    expect(clearIntervalSpy).toHaveBeenCalledWith(92)
+    // 退避排期：首拍 0ms，之后 1s、1.2s；第三次失败即停止，不再排第四拍。
+    expect(timers.delays()).toEqual([0, 1000, 1200])
+    expect(timers.pending()).toHaveLength(0)
     expect(root.querySelector('.scan-progress').classList.contains('failed')).toBe(true)
     expect(root.querySelector('.scan-progress').textContent).toContain('扫描进度连续读取失败')
     expect(root.querySelector('[role="alert"]').textContent).toContain('temporary scan API outage')
     expect(root.querySelector('.page-head .primary').disabled).toBe(false)
-    expect(setIntervalSpy).toHaveBeenCalledOnce()
   })
 
   it('discards an in-flight scan response after the dashboard unmounts', async () => {
-    let poll
+    const timers = installTimerMock()
     let resolvePendingPoll
-    const setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation(callback => {
-      poll = callback
-      return 93
-    })
-    const clearIntervalSpy = vi.spyOn(window, 'clearInterval')
     apiMock.adminScanProgress.mockResolvedValueOnce({ running: true, phase: 'FAST_INDEX', total: 1 })
     await mount()
     apiMock.adminScanProgress.mockReturnValueOnce(new Promise(resolve => { resolvePendingPoll = resolve }))
-    const pendingPoll = poll()
+    const pendingPoll = timers.fire()
     app.unmount()
     app = null
     resolvePendingPoll({ running: false, phase: 'COMPLETED', completed: 1 })
     await pendingPoll
 
-    expect(clearIntervalSpy).toHaveBeenCalledWith(93)
+    // 卸载后丢弃响应，也不能再排下一拍。
+    expect(timers.scheduled).toHaveLength(1)
+    expect(timers.pending()).toHaveLength(0)
     expect(apiMock.adminStatus).toHaveBeenCalledOnce()
     expect(apiMock.adminScanProgress).toHaveBeenCalledTimes(2)
-    setIntervalSpy.mockRestore()
-    clearIntervalSpy.mockRestore()
   })
 
-  it('coalesces overlapping scan polls and clears the queued retry on unmount', async () => {
-    let poll
-    let resolvePendingPoll
-    let resolveNextPoll
-    let queuedRetry
-    let nextTimerId = 95
-    const setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation(callback => {
-      poll = callback
-      return 94
-    })
-    const clearIntervalSpy = vi.spyOn(window, 'clearInterval')
-    const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation(callback => {
-      queuedRetry = callback
-      return nextTimerId++
-    })
-    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout')
-    apiMock.adminScanProgress.mockResolvedValueOnce({ running: true, phase: 'FAST_INDEX', total: 1 })
+  it('schedules one poll at a time and clears the pending timer on unmount', async () => {
+    const timers = installTimerMock()
+    apiMock.adminScanProgress.mockResolvedValue({ running: true, phase: 'FAST_INDEX', total: 1 })
     await mount()
-    apiMock.adminScanProgress.mockReturnValueOnce(new Promise(resolve => { resolvePendingPoll = resolve }))
 
-    const pendingPoll = poll()
-    await poll()
-    expect(apiMock.adminScanProgress).toHaveBeenCalledTimes(2)
-    resolvePendingPoll({ running: true, phase: 'FAST_INDEX', total: 1, fastIndexed: 1 })
-    await pendingPoll
+    await timers.fire()
     await flushUi()
-    expect(typeof queuedRetry).toBe('function')
-
-    apiMock.adminScanProgress.mockReturnValueOnce(new Promise(resolve => { resolveNextPoll = resolve }))
-    const secondPendingPoll = poll()
-    await poll()
-    resolveNextPoll({ running: true, phase: 'FAST_INDEX', total: 1, fastIndexed: 1 })
-    await secondPendingPoll
-    await flushUi()
-    expect(clearTimeoutSpy).toHaveBeenCalledWith(95)
-    expect(setTimeoutSpy).toHaveBeenCalledTimes(2)
+    // 上一拍结束之后才排下一拍，绝不会有两拍同时待执行。
+    expect(timers.pending()).toHaveLength(1)
+    expect(timers.delays()).toEqual([0, 1000])
 
     app.unmount()
     app = null
-    expect(clearIntervalSpy).toHaveBeenCalledWith(94)
-    expect(clearTimeoutSpy).toHaveBeenCalledWith(96)
-    setIntervalSpy.mockRestore()
-    clearIntervalSpy.mockRestore()
-    setTimeoutSpy.mockRestore()
-    clearTimeoutSpy.mockRestore()
+
+    expect(timers.pending()).toHaveLength(0)
+    expect(timers.clearTimeoutSpy).toHaveBeenCalledWith(timers.scheduled[1].id)
   })
 
   it('ignores an in-flight scan error after the dashboard unmounts', async () => {
-    let poll
+    const timers = installTimerMock()
     let rejectPendingPoll
-    vi.spyOn(window, 'setInterval').mockImplementation(callback => {
-      poll = callback
-      return 96
-    })
     apiMock.adminScanProgress.mockResolvedValueOnce({ running: true, phase: 'FAST_INDEX', total: 1 })
     await mount()
     apiMock.adminScanProgress.mockReturnValueOnce(new Promise((_, reject) => { rejectPendingPoll = reject }))
-    const pendingPoll = poll()
+    const pendingPoll = timers.fire()
     app.unmount()
     app = null
     rejectPendingPoll(new Error('late scan failure'))
@@ -475,14 +423,14 @@ describe('DashboardView', () => {
   })
 
   it('does not start polling when adminStartScan returns a non-running snapshot', async () => {
-    const setIntervalSpy = vi.spyOn(window, 'setInterval')
+    const timers = installTimerMock()
     apiMock.adminStartScan.mockResolvedValueOnce({ running: false, phase: 'IDLE', state: 'IDLE' })
     await mount()
 
     root.querySelector('.page-head .primary').click()
     await flushUi()
 
-    expect(setIntervalSpy).not.toHaveBeenCalled()
+    expect(timers.scheduled).toHaveLength(0)
     expect(root.querySelector('.page-head .primary').disabled).toBe(false)
   })
 
@@ -553,4 +501,38 @@ async function flushUi() {
   await nextTick()
   await Promise.resolve()
   await nextTick()
+}
+
+/**
+ * 用可控的 setTimeout 替换真实定时器。
+ *
+ * 扫描进度轮询改成了递归 setTimeout（1s→5s 退避），所以测试要能拿到「待执行的那一拍」
+ * 并手动触发，否则只能靠真实时间等待。
+ * @returns {object} 排期记录、待执行列表与触发方法 / scheduled entries and a fire helper
+ */
+function installTimerMock() {
+  const scheduled = []
+  const cleared = []
+  let nextId = 500
+  vi.spyOn(window, 'setTimeout').mockImplementation((callback, delay) => {
+    const entry = { id: nextId++, callback, delay, consumed: false }
+    scheduled.push(entry)
+    return entry.id
+  })
+  const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout').mockImplementation(id => { cleared.push(id) })
+  const pending = () => scheduled.filter(entry => !entry.consumed && !cleared.includes(entry.id))
+  return {
+    scheduled,
+    cleared,
+    clearTimeoutSpy,
+    delays: () => scheduled.map(entry => entry.delay),
+    pending,
+    /** 触发最近一次尚未执行的轮询，并等它结束。 / fire the next pending poll and await it */
+    fire() {
+      const [entry] = pending()
+      if (!entry) throw new Error('没有待执行的轮询定时器')
+      entry.consumed = true
+      return entry.callback()
+    }
+  }
 }

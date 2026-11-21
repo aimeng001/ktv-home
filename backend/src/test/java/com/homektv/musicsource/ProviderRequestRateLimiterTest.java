@@ -279,6 +279,25 @@ class ProviderRequestRateLimiterTest {
                 .isInstanceOf(ProviderRateLimitedException.class);
     }
 
+    @Test
+    void resetCooldownsClearsCooldownAndErrorsWhilePreservingDailyRequestCount() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(3);
+        ProviderRequestRateLimiter limiter = new ProviderRequestRateLimiter(
+                jdbc, Clock.fixed(NOW, ZoneOffset.UTC), 5_000, 300);
+
+        limiter.resetCooldowns();
+
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc).update(sql.capture(), any(Object[].class));
+        assertThat(sql.getValue())
+                .contains("cooldown_until = NULL")
+                .contains("failure_streak = 0")
+                .contains("last_http_status = NULL")
+                .contains("last_error = NULL")
+                .doesNotContain("request_count");
+    }
+
     private static ProviderRequestRateLimiter.RateState state(int count, Instant nextRequestAt) {
         return new ProviderRequestRateLimiter.RateState(
                 nextRequestAt == null ? NOW.minusSeconds(1) : nextRequestAt,

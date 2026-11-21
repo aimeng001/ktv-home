@@ -68,9 +68,17 @@ public class AdminAuthService {
 
         synchronized (authStateGate) {
             purgeExpired(now);
-            enforceCooldown(key);
+
+            // 冷却期只拦「密码错误」，不拦「密码正确」：先比对，再判冷却。
+            // 旧实现把 enforceCooldown 放在密码比对之前，导致冷却期内正确密码同样 429，
+            // 管理员被自己在别处输错的密码关在门外。
+            boolean inCooldown = isCoolingDown(key);
 
             if (!MessageDigest.isEqual(expected, supplied)) {
+                if (inCooldown) {
+                    // 冷却期内不再计数，避免反复尝试把 60 秒窗口无限续期
+                    throw new ApiException("ADMIN_AUTH_RATE_LIMITED", "登录尝试过多，请稍后再试");
+                }
                 recordFailedLogin(key, now);
                 throw new ApiException("ADMIN_AUTH_INVALID", "管理员密码错误");
             }
@@ -88,13 +96,10 @@ public class AdminAuthService {
         }
     }
 
-    private void enforceCooldown(String key) {
+    private boolean isCoolingDown(String key) {
         FailedLoginState state = failedLogins.get(key);
-        if (state == null) return;
         // login() purges expired states before this check, so any remaining cooldown is active.
-        if (state.blockedUntil() != null) {
-            throw new ApiException("ADMIN_AUTH_RATE_LIMITED", "登录尝试过多，请稍后再试");
-        }
+        return state != null && state.blockedUntil() != null;
     }
 
     private void recordFailedLogin(String key, Instant now) {

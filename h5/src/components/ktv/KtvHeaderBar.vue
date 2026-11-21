@@ -23,7 +23,15 @@
     </nav>
 
     <!-- 中央在播跑马灯 -->
-    <div class="marquee-box" @click="$emit('toggle-fullscreen')">
+    <div
+      class="marquee-box"
+      role="button"
+      tabindex="0"
+      aria-label="切换全屏"
+      @click="$emit('toggle-fullscreen')"
+      @keydown.enter.prevent="$emit('toggle-fullscreen')"
+      @keydown.space.prevent="$emit('toggle-fullscreen')"
+    >
       <span v-if="player.nowPlaying?.song" class="marquee-text">
         <b>正在演唱</b>
         {{ player.nowPlaying.song.title }} - {{ player.nowPlaying.song.artist || '未知歌手' }}
@@ -38,13 +46,13 @@
     <div class="right-group">
       <span
         class="ws-pill"
-        :class="{ ok: player.connected, offline: !player.connected }"
-        :title="player.connected ? 'WebSocket 实时同步已连接' : 'WebSocket 连接断开，正在自动重连'"
+        :class="{ ok: linkState.ok, offline: !linkState.ok }"
+        :title="linkState.title"
         aria-live="polite"
       >
-        <Wifi v-if="player.connected" :size="14" />
+        <Wifi v-if="linkState.ok" :size="14" />
         <WifiOff v-else :size="14" />
-        <span class="ws-text">{{ player.connected ? '在线' : '重连中' }}</span>
+        <span class="ws-text">{{ linkState.label }}</span>
       </span>
 
       <button
@@ -77,11 +85,13 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Info, SlidersHorizontal, Wifi, WifiOff } from 'lucide-vue-next'
 import { KTV_ASSETS } from './ktvCatalogPresets'
 import { usePlayerStore } from '../../stores/player'
+import { useNetStatusStore } from '../../stores/netStatus'
 import { useUserStore } from '../../stores/user'
 
 defineEmits(['open-modal', 'open-search', 'toggle-fullscreen', 'toggle-mode'])
 
 const player = usePlayerStore()
+const netStatus = useNetStatusStore()
 const user = useUserStore()
 const assets = KTV_ASSETS
 const nowRef = ref(new Date())
@@ -99,12 +109,29 @@ const clockDate = computed(() => {
 
 onMounted(() => {
   clockTimer = setInterval(() => { nowRef.value = new Date() }, 15000)
+  netStatus.start()
 })
 onBeforeUnmount(() => {
   if (clockTimer) {
     clearInterval(clockTimer)
     clockTimer = null
   }
+  netStatus.stop()
+})
+
+/**
+ * 顶栏连接状态：先看本机网络，再看 WebSocket。
+ *
+ * 网络断了时 WS 也会断，如果只显示「重连中」，用户会以为是服务端问题而一直等。
+ */
+const linkState = computed(() => {
+  if (!netStatus.online) {
+    return { ok: false, label: '离线', title: '网络已断开，请检查 Wi-Fi 或网线' }
+  }
+  if (player.connected) {
+    return { ok: true, label: '在线', title: 'WebSocket 实时同步已连接' }
+  }
+  return { ok: false, label: '重连中', title: 'WebSocket 连接断开，正在自动重连' }
 })
 
 const modeBadge = computed(() => {

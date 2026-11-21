@@ -146,6 +146,22 @@ public class ProviderRequestRateLimiter {
         }
     }
 
+    /** Clears error cooldowns and failure streaks so recovered/upgraded providers can resume immediately. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void resetCooldowns() {
+        Instant now = clock.instant();
+        Timestamp ts = Timestamp.from(now);
+        jdbc.update("""
+                UPDATE music_provider_rate_state
+                SET cooldown_until = NULL,
+                    failure_streak = 0,
+                    last_http_status = NULL,
+                    last_error = NULL,
+                    next_request_at = ?,
+                    updated_at = ?
+                """, ts, ts);
+    }
+
     private RateState lock(MusicProvider provider) {
         return jdbc.queryForObject("""
                 SELECT next_request_at, cooldown_until, window_date_utc, request_count,
