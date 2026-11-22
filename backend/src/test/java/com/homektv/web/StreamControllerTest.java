@@ -716,10 +716,19 @@ class StreamControllerTest {
         assertThat(result.getResponse().getStatus()).isEqualTo(HttpStatus.OK.value());
         assertThat(result.getResponse().getContentType()).startsWith("video/mp4");
         assertThat(result.getResponse().getContentAsByteArray()).containsExactly(fakeFmp4Data);
-        assertThat(executedCommand.get()).containsSequence("-c:v", "libx264");
+        assertThat(executedCommand.get()).containsSequence("-c:v", "copy");
         assertThat(executedCommand.get()).containsSequence("-c:a", "aac");
         assertThat(executedCommand.get()).contains("pipe:1");
         assertThat(Files.list(library).toList()).containsExactly(media);
+
+        // 验证显式请求 softVideo=true 时降级为 libx264 软编码
+        executedCommand.set(null);
+        MvcResult softResult = mvc.perform(get("/api/stream/13").param("transcode", "true").param("softVideo", "true")).andReturn();
+        if (softResult.getRequest().isAsyncStarted()) {
+            softResult = mvc.perform(asyncDispatch(softResult)).andReturn();
+        }
+        assertThat(softResult.getResponse().getStatus()).isEqualTo(HttpStatus.OK.value());
+        assertThat(executedCommand.get()).containsSequence("-c:v", "libx264");
     }
 
     @Test

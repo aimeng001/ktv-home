@@ -248,8 +248,7 @@ public class StreamController {
     static boolean shouldCopyVideo(SongFile sf, boolean forceTranscode, boolean effectiveMerge, Integer audioTrack, boolean softVideo) {
         if (softVideo) return false;
         if (PlaybackTransportPolicy.requiresLiveTranscode(sf, false)) return false;
-        if (effectiveMerge || audioTrack != null) return true;
-        return !forceTranscode;
+        return true;
     }
 
     private static boolean isBrowserCopySafeMp4(SongFile sf) {

@@ -252,4 +252,22 @@ describe('KtvMediaSurface 解码失败时的上报兜底', () => {
     instance.unmount()
     host.remove()
   })
+
+  it('普通单音轨立体声歌曲原调下直接走原生音量直通，避免被 Web Audio 劫持挂起', async () => {
+    media.playImpl = () => Promise.resolve()
+    const { instance, host, scopedPlayer } = await mountSurface()
+    scopedPlayer.audioLayout = { layout: 'NORMAL_STEREO' }
+    scopedPlayer.pitchSemitones = 0
+    scopedPlayer.volume = 80
+    routerMock.attach.mockClear()
+
+    await nextTick()
+    await nextTick()
+
+    const videoEl = host.querySelector('video')
+    expect(videoEl.volume).toBeCloseTo(0.8, 2)
+
+    instance.unmount()
+    host.remove()
+  })
 })

@@ -277,6 +277,13 @@ const canVocal = computed(() => (
   || ['DUAL_TRACK', 'DUAL_CHANNEL'].includes(player.audioLayout?.layout)
 ))
 
+const needsWebAudioRouting = computed(() => {
+  if (player.isTvConsole) return false
+  if (['DUAL_TRACK', 'DUAL_CHANNEL'].includes(player.audioLayout?.layout)) return true
+  if ((player.pitchSemitones || 0) !== 0) return true
+  return false
+})
+
 const streamSpec = computed(() => buildWebStreamSpec({
   playback: player.playback,
   audioLayout: player.audioLayout,
@@ -328,9 +335,13 @@ function wakeOsd() {
 }
 
 function triggerAudioWakeGesture() {
-  if (!player.isWebHost || player.isTvConsole) return
+  if (player.isTvConsole) return
   if (typeof channelRouter.resumeDirect === 'function') {
     channelRouter.resumeDirect()
+  }
+  const el = videoEl.value
+  if (el) {
+    el.muted = effectiveMuted.value
   }
   if (player.audioBlockedByAutoplay) {
     unlockAudio()
@@ -350,16 +361,23 @@ function onStageClick() {
 function syncAudioRouter() {
   const el = videoEl.value
   if (!el) return
-  if (player.isWebHost) {
-    const routed = channelRouter.attach(el)
-    channelRouter.setRouting(player.audioLayout, player.vocalMode)
-    channelRouter?.setPitch?.(player.pitchSemitones)
-    channelRouter.setGain(player.volume, effectiveMuted.value)
-    // Web Audio GainNode scales amplitude once; keep native element gain at 1.0 when attached.
-    if (el.volume !== undefined) {
-      el.volume = routed ? 1 : Math.max(0, Math.min(1, (player.volume ?? 60) / 100))
+  if (!player.isTvConsole) {
+    if (needsWebAudioRouting.value) {
+      const routed = channelRouter.attach(el)
+      channelRouter.setRouting(player.audioLayout, player.vocalMode)
+      channelRouter?.setPitch?.(player.pitchSemitones)
+      channelRouter.setGain(player.volume, effectiveMuted.value)
+      if (el.volume !== undefined) {
+        el.volume = routed ? 1 : Math.max(0, Math.min(1, (player.volume ?? 60) / 100))
+      }
+      el.muted = effectiveMuted.value
+    } else {
+      channelRouter.dispose()
+      if (el.volume !== undefined) {
+        el.volume = Math.max(0, Math.min(1, (player.volume ?? 60) / 100))
+      }
+      el.muted = effectiveMuted.value
     }
-    el.muted = effectiveMuted.value
   } else {
     channelRouter.setGain(0, true)
     el.muted = true
@@ -413,16 +431,18 @@ async function attemptPlay() {
   if (!el || !streamSpec.value.url) return
   try {
     syncAudioRouter()
-    if (player.isWebHost) await channelRouter.resume()
+    if (needsWebAudioRouting.value && typeof channelRouter.resumeDirect === 'function') {
+      channelRouter.resumeDirect()
+    }
     await el.play()
-    if (player.isWebHost && !player.muted && channelRouter.isSuspended()) {
+    if (!player.isTvConsole && !player.muted && needsWebAudioRouting.value && channelRouter.isSuspended()) {
       player.audioBlockedByAutoplay = true
-    } else if (player.isWebHost) {
+    } else if (!player.isTvConsole) {
       player.audioBlockedByAutoplay = false
       player.audioUnlockFailed = false
     }
   } catch (err) {
-    if (player.isWebHost && err?.name === 'NotAllowedError') {
+    if (!player.isTvConsole && err?.name === 'NotAllowedError') {
       player.audioBlockedByAutoplay = true
       el.muted = true
       try { await el.play() } catch { /* wait for user tap */ }
@@ -438,10 +458,9 @@ async function unlockAudio() {
   el.muted = player.muted
   syncAudioRouter()
   try {
-    if (typeof channelRouter.resumeDirect === 'function') {
+    if (needsWebAudioRouting.value && typeof channelRouter.resumeDirect === 'function') {
       channelRouter.resumeDirect()
     }
-    await channelRouter.resume()
     if (player.isPlaying) await el.play()
   } catch (e) {
     player.audioBlockedByAutoplay = true
