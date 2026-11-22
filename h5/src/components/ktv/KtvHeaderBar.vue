@@ -139,22 +139,22 @@ const modeBadge = computed(() => {
     return {
       cls: 'tv-console',
       label: '📺 正在控制电视',
-      title: '检测到 TV 大屏在线，当前控制电视播放（小窗静音镜像预览）'
+      title: '检测到 TV 大屏在线，当前控制电视播放（电视发声，网页静音预览）'
     }
   }
   if (player.effectiveMode === 'WEB_HOST') {
     return {
       cls: 'web-host',
       label: '💻 本机大屏播放',
-      title: '当前无 TV 在线，本机作为完整 KTV 主播放端（点击切换仅作控制台）'
+      title: '当前无 TV 在线，本机作为完整 KTV 主播放端（发声播放中）'
     }
   }
   return {
     cls: 'web-remote',
-    label: player.webPlayerActive ? '📱 遥控控制台' : '💻 本机大屏',
+    label: player.webPlayerActive ? '📱 遥控控制台' : '💻 本机大屏播放',
     title: player.webPlayerActive
       ? '房间已有其他网页作为主屏，点击接管本机作为 KTV 主播放端'
-      : '点击接管本机作为 Web KTV 主播放端'
+      : '当前无 TV 在线，本机作为完整 KTV 主播放端（发声播放中）'
   }
 })
 </script>

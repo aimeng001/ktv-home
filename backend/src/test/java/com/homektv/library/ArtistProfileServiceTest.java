@@ -4,21 +4,25 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.core.RowMapper;
 
 import java.sql.ResultSet;
 import java.util.Collection;
-import java.util.List;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -380,6 +384,40 @@ class ArtistProfileServiceTest {
         verify(jdbc).query(sql.capture(), org.mockito.ArgumentMatchers.<RowMapper<String>>any(),
                 org.mockito.ArgumentMatchers.any(Object[].class));
         assertThat(sql.getValue()).contains("'FAILED'");
+        assertThat(sql.getValue()).contains("'AUTO_INITIAL'");
+    }
+
+    @Test
+    void avatarProgressSummaryIncludesAutoInitialCountAndQueuedArtists() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            RowCallbackHandler rch = invocation.getArgument(1);
+            ResultSet rs = mock(ResultSet.class);
+            when(rs.getLong("total_artists")).thenReturn(46937L);
+            when(rs.getLong("ready_count")).thenReturn(9101L);
+            when(rs.getLong("auto_initial_count")).thenReturn(37800L);
+            when(rs.getLong("pending_count")).thenReturn(36L);
+            when(rs.getLong("unresolved_count")).thenReturn(0L);
+            rch.processRow(rs);
+            return null;
+        }).when(jdbc).query(org.mockito.ArgumentMatchers.contains("auto_initial_count"), any(RowCallbackHandler.class));
+
+        when(jdbc.queryForObject(org.mockito.ArgumentMatchers.contains("COUNT(*) FROM artist_avatar_jobs"), eq(Long.class)))
+                .thenReturn(121819L);
+        when(jdbc.queryForObject(org.mockito.ArgumentMatchers.contains("COUNT(DISTINCT artist_key) FROM artist_avatar_jobs"), eq(Long.class)))
+                .thenReturn(30454L);
+        when(jdbc.query(org.mockito.ArgumentMatchers.contains("recentErrors"), any(RowMapper.class)))
+                .thenReturn(List.of());
+
+        Map<String, Object> summary = new ArtistProfileService(jdbc).avatarProgressSummary();
+
+        assertThat(summary.get("totalArtists")).isEqualTo(46937L);
+        assertThat(summary.get("readyCount")).isEqualTo(9101L);
+        assertThat(summary.get("autoInitialCount")).isEqualTo(37800L);
+        assertThat(summary.get("pendingCount")).isEqualTo(36L);
+        assertThat(summary.get("unresolvedCount")).isEqualTo(0L);
+        assertThat(summary.get("queuedJobs")).isEqualTo(121819L);
+        assertThat(summary.get("queuedArtists")).isEqualTo(30454L);
     }
 
     private static ResultSet profileRow() throws Exception {

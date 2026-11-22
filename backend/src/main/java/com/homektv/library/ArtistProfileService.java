@@ -383,13 +383,15 @@ public class ArtistProfileService {
                         COUNT(*) FILTER (WHERE artist_kind IN ('PERSON', 'GROUP')) AS total_artists,
                         COUNT(*) FILTER (WHERE artist_kind IN ('PERSON', 'GROUP') AND avatar_status = 'READY'
                                          AND avatar_path IS NOT NULL AND trim(avatar_path) <> '') AS ready_count,
+                        COUNT(*) FILTER (WHERE artist_kind IN ('PERSON', 'GROUP') AND avatar_status = 'AUTO_INITIAL') AS auto_initial_count,
                         COUNT(*) FILTER (WHERE artist_kind IN ('PERSON', 'GROUP') AND avatar_status IN ('PENDING', 'RETRY')) AS pending_count,
-                        COUNT(*) FILTER (WHERE artist_kind IN ('PERSON', 'GROUP') AND avatar_status IN ('REVIEW', 'FAILED', 'SKIPPED')
+                        COUNT(*) FILTER (WHERE artist_kind IN ('PERSON', 'GROUP') AND avatar_status IN ('REVIEW', 'FAILED')
                                          AND (avatar_path IS NULL OR trim(avatar_path) = '')) AS unresolved_count
                     FROM artist_profiles
                     """, rs -> {
                 out.put("totalArtists", rs.getLong("total_artists"));
                 out.put("readyCount", rs.getLong("ready_count"));
+                out.put("autoInitialCount", rs.getLong("auto_initial_count"));
                 out.put("pendingCount", rs.getLong("pending_count"));
                 out.put("unresolvedCount", rs.getLong("unresolved_count"));
             });
@@ -397,12 +399,20 @@ public class ArtistProfileService {
                     "SELECT COUNT(*) FROM artist_avatar_jobs WHERE status IN ('PENDING', 'PROCESSING')",
                     Long.class);
             out.put("queuedJobs", queuedJobs == null ? 0L : queuedJobs);
+
+            Long queuedArtists = jdbc.queryForObject(
+                    "SELECT COUNT(DISTINCT artist_key) FROM artist_avatar_jobs WHERE status IN ('PENDING', 'PROCESSING')",
+                    Long.class);
+            out.put("queuedArtists", queuedArtists == null ? 0L : queuedArtists);
+
             List<Map<String, Object>> recentErrors = jdbc.query("""
-                    SELECT artist_key, provider, last_error, updated_at
-                    FROM artist_avatar_jobs
-                    WHERE last_error IS NOT NULL AND trim(last_error) <> ''
-                      AND status IN ('FAILED', 'REVIEW', 'PENDING')
-                    ORDER BY updated_at DESC
+                    SELECT job.artist_key, job.provider, job.last_error, job.updated_at
+                    FROM artist_avatar_jobs job
+                    JOIN artist_profiles p ON p.artist_key = job.artist_key
+                    WHERE job.last_error IS NOT NULL AND trim(job.last_error) <> ''
+                      AND job.status IN ('FAILED', 'REVIEW')
+                      AND p.avatar_status NOT IN ('READY', 'AUTO_INITIAL')
+                    ORDER BY job.updated_at DESC
                     LIMIT 5
                     """, (rs, index) -> {
                 Map<String, Object> row = new LinkedHashMap<>();
@@ -415,9 +425,11 @@ public class ArtistProfileService {
         } catch (DataAccessException failure) {
             out.putIfAbsent("totalArtists", 0L);
             out.putIfAbsent("readyCount", 0L);
+            out.putIfAbsent("autoInitialCount", 0L);
             out.putIfAbsent("pendingCount", 0L);
             out.putIfAbsent("unresolvedCount", 0L);
             out.putIfAbsent("queuedJobs", 0L);
+            out.putIfAbsent("queuedArtists", 0L);
             out.putIfAbsent("recentErrors", List.of());
         }
         return out;
@@ -431,7 +443,9 @@ public class ArtistProfileService {
                     SELECT artist_profiles.artist_key FROM artist_profiles
                     LEFT JOIN artist_directory_stats dir ON dir.artist_key = artist_profiles.artist_key
                     WHERE artist_profiles.artist_kind IN ('PERSON', 'GROUP')
-                      AND artist_profiles.avatar_status IN ('PENDING', 'RETRY', 'REVIEW', 'SKIPPED', 'FAILED')
+                      AND (artist_profiles.avatar_status IN ('PENDING', 'RETRY', 'REVIEW', 'SKIPPED', 'FAILED', 'AUTO_INITIAL')
+                           OR artist_profiles.avatar_path IS NULL OR trim(artist_profiles.avatar_path) = '')
+                      AND (artist_profiles.avatar_status <> 'READY' OR artist_profiles.avatar_path IS NULL)
                     ORDER BY COALESCE(dir.song_count, 0) DESC, artist_profiles.updated_at, artist_profiles.artist_key
                     LIMIT ?
                     """, (rs, index) -> rs.getString(1), safeLimit);

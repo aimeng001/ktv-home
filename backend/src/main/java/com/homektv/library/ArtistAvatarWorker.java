@@ -252,7 +252,7 @@ public class ArtistAvatarWorker {
     private void processFallback(Job job, ArtistProfileService.Profile profile, Duration timeout) {
         if (fallbackChain == null || !fallbackChain.isEnabled()) {
             if (!hasRemainingActiveJobs(profile.artistKey(), job.id())) {
-                profiles.markAvatarStatusIfClaimed(profile.artistKey(), "SKIPPED", "兜底刮削未启用",
+                profiles.markAvatarStatusIfClaimed(profile.artistKey(), "AUTO_INITIAL", "兜底刮削未启用",
                         job.id(), job.claimToken());
             }
             finish(job, "SKIPPED", "兜底刮削未启用");
@@ -304,9 +304,9 @@ public class ArtistAvatarWorker {
 
     private void markUnresolvedIfLastSource(Job job, String artistKey, String reason) {
         if (!hasRemainingActiveJobs(artistKey, job.id())) {
-            profiles.markAvatarStatusIfClaimed(artistKey, "REVIEW", reason, job.id(), job.claimToken());
+            profiles.markAvatarStatusIfClaimed(artistKey, "AUTO_INITIAL", reason, job.id(), job.claimToken());
         }
-        finish(job, "REVIEW", reason);
+        finish(job, "SKIPPED", reason != null ? reason : "未找到肖像，已自动使用首字徽章");
     }
 
     private boolean hasRemainingActiveJobs(String artistKey, long currentJobId) {

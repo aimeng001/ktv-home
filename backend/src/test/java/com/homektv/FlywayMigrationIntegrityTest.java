@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FlywayMigrationIntegrityTest {
 
     private static final Pattern MIGRATION_FILE_PATTERN = Pattern.compile("^V(\\d+)__(.+)\\.sql$");
-    private static final int CURRENT_LATEST_VERSION = 68;
+    private static final int CURRENT_LATEST_VERSION = 69;
 
     @Test
     void allMigrationVersionsFromOneToLatestArePresentAndContiguous() throws Exception {
@@ -149,6 +149,9 @@ class FlywayMigrationIntegrityTest {
         String v68Content = Files.readString(v68Path);
         assertThat(v68Content).contains("audio_codec", "video_codec");
 
+        Path v69Path = findMigrationPath(migrationDirectory, 69);
+        String v69Content = Files.readString(v69Path);
+        assertThat(v69Content).contains("AUTO_INITIAL", "artist_avatar_jobs");
     }
 
     private Path findMigrationPath(Path migrationDirectory, int version) throws Exception {

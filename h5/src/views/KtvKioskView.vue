@@ -344,7 +344,7 @@ function toggleQuickMode() {
   if (player.isWebHost) {
     awaitingHostClaimToast = false
     player.setModeOverride('console')
-    toast('已切换为仅控制台模式（不再在网页出声）')
+    toast('已切换为控制台模式')
   } else {
     awaitingHostClaimToast = true
     player.setModeOverride('host')

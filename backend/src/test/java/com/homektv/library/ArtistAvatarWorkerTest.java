@@ -464,4 +464,36 @@ class ArtistAvatarWorkerTest {
                 .contains("cooldown_until")
                 .contains("request_count");
     }
+
+    @Test
+    void fallbackExhaustedMarksProfileAutoInitialAndFinishesSkipped() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        ExternalCoverService covers = mock(ExternalCoverService.class);
+        AssetWriter assets = mock(AssetWriter.class);
+        com.homektv.musicsource.ArtistAvatarFallbackChain chain = mock(com.homektv.musicsource.ArtistAvatarFallbackChain.class);
+        ResultSet row = claimRow("jinxuannian", "FALLBACK", "lease-token");
+        when(profiles.find("jinxuannian")).thenReturn(Optional.of(new ArtistProfileService.Profile(
+                "jinxuannian", "金玄念", "PERSON", null, null, null, "PENDING")));
+        when(config.getConfig()).thenReturn(new MusicSourceConfig(
+                true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 5000, 0.95));
+        when(chain.isEnabled()).thenReturn(true);
+        when(chain.findCandidateUrls(eq("金玄念"), any())).thenReturn(List.of());
+        stubOneClaimThenEmpty(jdbc, row);
+        when(jdbc.queryForObject(org.mockito.ArgumentMatchers.contains("SELECT COUNT(*) FROM artist_avatar_jobs"),
+                eq(Integer.class), eq("jinxuannian"), eq(1L))).thenReturn(0);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+
+        ArtistAvatarWorker worker = new ArtistAvatarWorker(
+                jdbc, profiles, config, covers, assets, List.of(), Runnable::run);
+        worker.setFallbackChain(chain);
+        worker.process();
+
+        verify(profiles).markAvatarStatusIfClaimed("jinxuannian", "AUTO_INITIAL", "未找到高置信度歌手头像", 1L, "lease-token");
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<Object[]> arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
+        verify(jdbc, org.mockito.Mockito.atLeastOnce()).update(sql.capture(), arguments.capture());
+        assertThat(sql.getAllValues()).anyMatch(s -> s.contains("status=?") && s.contains("claim_token=?::uuid"));
+    }
 }
