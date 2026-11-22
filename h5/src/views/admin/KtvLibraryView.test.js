@@ -370,6 +370,22 @@ describe('KtvLibraryView', () => {
     expect(root.querySelector('.playlist-picker-modal')).not.toBeNull()
   })
 
+  it('navigates to admin-ai when clicking goToCreatePlaylist from empty playlist picker', async () => {
+    apiMock.adminAiPlaylists.mockResolvedValueOnce([])
+    await mount()
+    root.querySelector('.playlist-link').click()
+    await flushUi()
+
+    expect(root.querySelector('.match-empty').textContent).toContain('暂无已有歌单')
+    const createBtn = root.querySelector('.match-empty button')
+    expect(createBtn.textContent).toContain('前往主题歌单')
+    createBtn.click()
+    await flushUi()
+
+    expect(routerMock.push).toHaveBeenCalledWith({ name: 'admin-ai' })
+    expect(root.querySelector('.playlist-picker-modal')).toBeNull()
+  })
+
   it('renders each audio layout and selects or clears the current page for scraping', async () => {
     const channelSong = {
       ...song,

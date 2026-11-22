@@ -139,7 +139,7 @@ async function saveSongEdit(){
 }
 async function openPlaylistPicker(song){playlistPickerSong.value=song;playlistPickerOpen.value=true;playlistLoading.value=true;try{playlistOptions.value=await api.adminAiPlaylists()}catch(e){await alertDialog(e.message||'歌单加载失败')}finally{playlistLoading.value=false}}
 function closePlaylistPicker(){if(!playlistAddingId.value)playlistPickerOpen.value=false}
-function goToCreatePlaylist(){closePlaylistPicker();alertDialog('暂无歌单，可在手机/大屏点歌界面自建歌单')}
+function goToCreatePlaylist(){closePlaylistPicker();router.push({name:'admin-ai'})}
 async function addSongToPlaylist(playlist){if(!playlistPickerSong.value)return;playlistAddingId.value=playlist.id;try{const result=await api.adminAiAddPlaylistSong(playlist.id,playlistPickerSong.value.id);playlist.songCount=result?.songs?.length??result?.songCount??((playlist.songCount||0)+1);await alertDialog(`《${playlistPickerSong.value.title}》已加入歌单“${playlist.name}”`);playlistPickerOpen.value=false}catch(e){await alertDialog(e.message||'加入歌单失败')}finally{playlistAddingId.value=null}}
 /** 跳转到指定页 / Go to a specific page */
 function go(p){if(p>=0&&p<totalPages.value){page.value=p;load()}}

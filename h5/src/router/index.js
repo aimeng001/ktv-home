@@ -29,7 +29,7 @@ const routes = [
   { path: '/admin/artists', name: 'admin-artists', component: () => import('../views/admin/ArtistLibraryView.vue'), meta: { public: true, admin: true } },
   { path: '/admin/ktv-library/metadata-scrape', name: 'admin-metadata-scrape', component: () => import('../views/admin/MetadataScrapeView.vue'), meta: { public: true, admin: true } },
   { path: '/admin/songs', redirect: { name: 'admin-ktv-library' } },
-  { path: '/admin/ai', redirect: { name: 'admin-ktv-library' } },
+  { path: '/admin/ai', name: 'admin-ai', component: () => import('../views/admin/AiLibraryView.vue'), meta: { public: true, admin: true } },
   { path: '/admin/iktv-fusion', name: 'admin-iktv-fusion', component: () => import('../views/admin/IktvFusionView.vue'), meta: { public: true, admin: true } },
   { path: '/admin/settings', name: 'admin-settings', component: () => import('../views/admin/SettingsView.vue'), meta: { public: true, admin: true } }
 ]

@@ -71,4 +71,23 @@ describe('pitchShifter 纯前端 Web Audio 变调器', () => {
     const shifter = createPitchShifter(mockContext)
     expect(() => shifter.reset()).not.toThrow()
   })
+
+  it('处于 bypass 状态时 processAudio 立即跳过计算，0 CPU 占用', () => {
+    const shifter = createPitchShifter(mockContext)
+    shifter.connect(mockInputNode, mockOutputNode)
+    const scriptProcessor = mockContext.createScriptProcessor.mock.results[0].value
+    const inputL = { length: 4096 }
+    const event = {
+      inputBuffer: {
+        getChannelData: vi.fn(() => inputL),
+        numberOfChannels: 1
+      },
+      outputBuffer: {
+        getChannelData: vi.fn(() => ({ length: 4096 }))
+      }
+    }
+    // 原调时调用
+    scriptProcessor.onaudioprocess(event)
+    expect(event.inputBuffer.getChannelData).not.toHaveBeenCalled()
+  })
 })

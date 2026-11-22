@@ -150,7 +150,14 @@
             <div class="group-head"><strong>待机品牌</strong><span>欢迎语和 Logo 会显示在 TV 待机页</span></div>
             <SettingRow label="待机欢迎语"><input v-model="form.standby_welcome" class="input wide" /></SettingRow>
             <SettingRow label="欢迎语副标题"><textarea v-model="form.standby_subtitle" class="input wide" rows="2"></textarea></SettingRow>
-            <SettingRow id="standby_logo" label="待机 Logo" :hint="form.standby_logo_configured ? '已配置自定义 Logo' : '使用默认 Logo'"><label class="upload-btn">上传图片<input type="file" accept="image/png,image/jpeg,image/webp" @change="uploadStandbyLogo" /></label></SettingRow>
+            <SettingRow id="standby_logo" label="待机 Logo" :hint="form.standby_logo_configured ? '已配置自定义 Logo' : '使用默认 Logo'">
+              <div class="logo-actions">
+                <label class="upload-btn">上传图片<input type="file" accept="image/png,image/jpeg,image/webp" @change="uploadStandbyLogo" /></label>
+                <button v-if="form.standby_logo_configured" type="button" class="btn ghost small" :disabled="resettingLogo" @click="resetStandbyLogo">
+                  {{ resettingLogo ? '恢复中…' : '恢复默认' }}
+                </button>
+              </div>
+            </SettingRow>
           </div>
         </section>
 
@@ -445,7 +452,23 @@ const standbySongsHint = computed(() => standbySongsTruncated.value
   ? `已超过上限，仅保留前 ${MAX_STANDBY_SONGS} 首（后端最多接受 ${MAX_STANDBY_SONGS} 首）`
   : `用逗号分隔多个歌曲 ID，最多 ${MAX_STANDBY_SONGS} 首`)
 function setStandbySongIds(value){ standbySongsTruncated.value=exceedsStandbySongLimit(value); form.standby_song_ids=normalizeStandbySongIds(value) }
+const resettingLogo = ref(false)
 async function uploadStandbyLogo(event){ const file=event.target.files?.[0]; if(!file)return; try{const uploaded=await api.adminUploadStandbyLogo(file); const baseline=original.value?JSON.parse(original.value):{...form}; const configured=Boolean(uploaded?.logoUrl); form.standby_logo_configured=configured; baseline.standby_logo_configured=configured; original.value=snapshot(baseline)}catch(e){await alertDialog(e.message||'Logo 上传失败')}finally{event.target.value=''} }
+async function resetStandbyLogo(){
+  if(!await confirmDialog('确定清除自定义待机 Logo 并恢复为默认系统 Logo？', { title: '恢复默认 Logo' })) return
+  resettingLogo.value = true
+  try {
+    await api.adminResetStandbyLogo()
+    form.standby_logo_configured = false
+    const baseline = original.value ? JSON.parse(original.value) : { ...form }
+    baseline.standby_logo_configured = false
+    original.value = snapshot(baseline)
+  } catch(e) {
+    await alertDialog(e.message || '恢复默认 Logo 失败')
+  } finally {
+    resettingLogo.value = false
+  }
+}
 
 const wishesModalOpen = ref(false)
 const exportingWishes = ref(false)
@@ -654,4 +677,5 @@ textarea.input{height:auto;min-height:58px;padding:8px 10px;resize:vertical}
   .checks{max-width:none}.checks :deep(.check-chip){min-height:30px}
   .section-actions{align-items:flex-start;flex-direction:column;margin:16px}.save-bar{right:10px;bottom:8px;width:calc(100vw - 20px);flex-wrap:wrap}.save-bar>span{width:100%;margin-bottom:2px}.save-bar .btn{flex:1}
 }
+.logo-actions{display:inline-flex;align-items:center;gap:8px}
 </style>

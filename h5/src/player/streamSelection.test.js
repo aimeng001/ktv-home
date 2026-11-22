@@ -123,4 +123,15 @@ describe('streamSelection', () => {
       url: '/api/stream/72?transcode=true', liveTranscode: true, trackSwitchedByServer: false, isAudioOnly: false
     })
   })
+
+  it('appends softVideo=true when softVideo fallback is requested', () => {
+    const mp4 = { kind: 'NATIVE', status: 'READY', sourceFileId: 88, streamUrl: '/api/stream/88', audioTracks: 1 }
+    const spec = buildWebStreamSpec({
+      playback: mp4,
+      softVideo: true,
+      song: { format: 'mp4' }
+    })
+    expect(spec.url).toBe('/api/stream/88?transcode=true&softVideo=true')
+    expect(spec.liveTranscode).toBe(true)
+  })
 })

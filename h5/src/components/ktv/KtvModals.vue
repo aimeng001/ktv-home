@@ -154,7 +154,7 @@
           </div>
         </div>
         <p class="hint">
-          {{ player.isTvConsole ? 'TV 端变调请在电视调音界面调节。' : '提示：网页浏览器端暂不支持无变速实时升降调，保持原调输出。' }}
+          {{ player.isTvConsole ? 'TV 端变调请在电视调音界面调节。' : '提示：电脑浏览器端支持伴奏实时无变速升降调；原调输出时自动直通。' }}
         </p>
 
         <div class="effects-grid">

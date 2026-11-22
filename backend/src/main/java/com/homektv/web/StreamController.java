@@ -146,24 +146,25 @@ public class StreamController {
             @org.springframework.web.bind.annotation.RequestParam(value = "transcode", defaultValue = "false") boolean forceTranscode,
             @org.springframework.web.bind.annotation.RequestParam(value = "audioTrack", required = false) Integer audioTrack,
             @org.springframework.web.bind.annotation.RequestParam(value = "mergeTracks", defaultValue = "false") boolean mergeTracks,
+            @org.springframework.web.bind.annotation.RequestParam(value = "softVideo", defaultValue = "false") boolean softVideo,
             HttpServletRequest request) {
-        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, audioTrack, mergeTracks, request);
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, audioTrack, mergeTracks, softVideo, request);
     }
 
     public ResponseEntity<StreamingResponseBody> stream(
             Long fileId, String rangeHeader, Double startSeconds) {
-        return streamInternal(fileId, rangeHeader, startSeconds, false, null, false, null);
+        return streamInternal(fileId, rangeHeader, startSeconds, false, null, false, false, null);
     }
 
     ResponseEntity<StreamingResponseBody> streamInternal(
             Long fileId, String rangeHeader, Double startSeconds, boolean forceTranscode) {
-        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null, false, null);
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null, false, false, null);
     }
 
     ResponseEntity<StreamingResponseBody> streamInternal(
             Long fileId, String rangeHeader, Double startSeconds, boolean forceTranscode,
             HttpServletRequest request) {
-        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null, false, request);
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, null, false, false, request);
     }
 
     ResponseEntity<StreamingResponseBody> streamInternal(
@@ -173,7 +174,7 @@ public class StreamController {
             boolean forceTranscode,
             Integer audioTrack,
             HttpServletRequest request) {
-        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, audioTrack, false, request);
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, audioTrack, false, false, request);
     }
 
     ResponseEntity<StreamingResponseBody> streamInternal(
@@ -183,6 +184,18 @@ public class StreamController {
             boolean forceTranscode,
             Integer audioTrack,
             boolean mergeTracks,
+            HttpServletRequest request) {
+        return streamInternal(fileId, rangeHeader, startSeconds, forceTranscode, audioTrack, mergeTracks, false, request);
+    }
+
+    ResponseEntity<StreamingResponseBody> streamInternal(
+            Long fileId,
+            String rangeHeader,
+            Double startSeconds,
+            boolean forceTranscode,
+            Integer audioTrack,
+            boolean mergeTracks,
+            boolean softVideo,
             HttpServletRequest request) {
 
         SongFile sf = fileRepo.findById(fileId).orElse(null);
@@ -224,12 +237,19 @@ public class StreamController {
                     || startSeconds < 0 || startSeconds > MAX_TRANSCODE_START_SECONDS)) {
                 return ResponseEntity.badRequest().build();
             }
-            boolean copyVideo = audioTrack != null && !forceTranscode && isBrowserCopySafeMp4(sf);
+            boolean copyVideo = shouldCopyVideo(sf, forceTranscode, effectiveMerge, audioTrack, softVideo);
             return serveOnTheFlyTranscodeStream(fileId, file, sf, startSeconds, audioTrack, copyVideo, effectiveMerge, request);
         }
 
         // 2. 99% 普通格式快路径：继续走 RandomAccessFile HTTP Range 流
         return serveStaticRangeStream(file, sf, rangeHeader, request);
+    }
+
+    static boolean shouldCopyVideo(SongFile sf, boolean forceTranscode, boolean effectiveMerge, Integer audioTrack, boolean softVideo) {
+        if (softVideo) return false;
+        if (PlaybackTransportPolicy.requiresLiveTranscode(sf, false)) return false;
+        if (effectiveMerge || audioTrack != null) return true;
+        return !forceTranscode;
     }
 
     private static boolean isBrowserCopySafeMp4(SongFile sf) {

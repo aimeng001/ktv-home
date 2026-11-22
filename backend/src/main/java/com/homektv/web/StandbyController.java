@@ -54,6 +54,18 @@ public class StandbyController {
     }
 
     /**
+     * 重置待机画面 Logo 图片为默认（清空自定义 Logo）。
+     *
+     * Reset standby logo image to default (clearing custom logo).
+     * @return 更新后的待机画面内容 / updated standby content
+     */
+    @DeleteMapping("/admin/standby/logo")
+    public Map<String, Object> resetLogo() {
+        service.resetLogo();
+        return service.content();
+    }
+
+    /**
      * 获取待机画面 Logo 图片。
      *
      * Serve standby logo image.

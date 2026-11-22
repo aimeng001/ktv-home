@@ -56,8 +56,8 @@
               <small>{{ item.song?.artist }} · {{ item.orderedByNick || '他人' }} 点</small>
             </div>
             <div v-if="isMine(item) || host.isHost" class="q-ops">
-              <button type="button" class="mini-btn gold" @click="topItem(item)">顶歌</button>
-              <button type="button" class="mini-btn" @click="cancelItem(item)">删除</button>
+              <button type="button" class="mini-btn gold" :disabled="busyQueueId === item.queueId" @click="topItem(item)">{{ busyQueueId === item.queueId ? '置顶中' : '顶歌' }}</button>
+              <button type="button" class="mini-btn" :disabled="busyQueueId === item.queueId" @click="cancelItem(item)">{{ busyQueueId === item.queueId ? '删除中' : '删除' }}</button>
             </div>
             <span v-else class="other-tag">他人点唱</span>
           </article>
@@ -118,6 +118,7 @@ const historyStatus = ref('idle')
 const historyError = ref(null)
 const mineOnly = ref(false)
 const busyHistoryId = ref(null)
+const busyQueueId = ref(null)
 let historyReqSeq = 0
 
 const host = ref({ claimed: false, isHost: false, hostNickname: null, revision: 0 })
@@ -217,17 +218,29 @@ async function shuffleQueue() {
 }
 
 async function topItem(item) {
+  if (busyQueueId.value) return
+  busyQueueId.value = item.queueId
   try {
     await controls.top(item.queueId)
     toast(`已置顶《${item.song?.title || ''}》`)
-  } catch (e) { toast(e.message || '置顶失败') }
+  } catch (e) {
+    toast(e.message || '置顶失败')
+  } finally {
+    busyQueueId.value = null
+  }
 }
 
 async function cancelItem(item) {
+  if (busyQueueId.value) return
+  busyQueueId.value = item.queueId
   try {
     await controls.cancel(item.queueId)
     toast(`已移除《${item.song?.title || ''}》`)
-  } catch (e) { toast(e.message || '移除失败') }
+  } catch (e) {
+    toast(e.message || '移除失败')
+  } finally {
+    busyQueueId.value = null
+  }
 }
 
 async function repeatSong(entry) {

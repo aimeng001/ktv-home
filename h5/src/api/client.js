@@ -273,6 +273,7 @@ export const api = {
     body.append('file', file)
     return request('/admin/standby/logo', { method: 'POST', body })
   },
+  adminResetStandbyLogo: () => request('/admin/standby/logo', { method: 'DELETE' }),
   adminWishes: () => request('/admin/wishes'),
   adminDeleteWish: (id) => request(`/admin/wishes/${id}`, { method: 'DELETE' }),
   adminExportWishesCsv: () => requestBlob('/admin/wishes/export'),

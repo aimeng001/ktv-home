@@ -85,7 +85,9 @@ class ArtistDirectoryProjectionServiceTest {
         assertThat(ArtistDirectoryProjectionService.REFRESH_SQL)
                 .contains("credit_count = 1")
                 .contains("count(DISTINCT artist_gender) = 1")
-                .contains("gender_status = 'MANUAL'");
+                .contains("gender_status = 'MANUAL'")
+                .contains("Various Artists")
+                .contains("UNATTRIBUTED");
     }
 
     @Test

@@ -11,7 +11,11 @@ const { apiMock, controlsMock } = vi.hoisted(() => ({
     releaseRoomHost: vi.fn(),
     repeatHistory: vi.fn()
   },
-  controlsMock: { effect: vi.fn() }
+  controlsMock: {
+    effect: vi.fn(),
+    top: vi.fn(() => Promise.resolve()),
+    cancel: vi.fn(() => Promise.resolve())
+  }
 }))
 
 vi.mock('../../api/client', () => ({
@@ -149,5 +153,33 @@ describe('KtvQueueDrawer 房主状态错误态', () => {
 
     nextBtn.click()
     expect(nextSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('队列顶歌与删除具备防抖禁用态并在异常时强制复位', async () => {
+    let resolveTop
+    const pendingTop = new Promise(resolve => { resolveTop = resolve })
+    controlsMock.top.mockImplementationOnce(() => pendingTop)
+
+    player.queue = [
+      { queueId: 201, orderedBy: 9, orderedByNick: '点歌人', song: { id: 2, title: '光辉岁月' } }
+    ]
+    await mountDrawer()
+
+    const topBtn = buttonByText(root, '顶歌')
+    expect(topBtn).not.toBeNull()
+    expect(topBtn.disabled).toBe(false)
+
+    topBtn.click()
+    await nextTick()
+
+    expect(topBtn.disabled).toBe(true)
+    expect(topBtn.textContent).toContain('置顶中')
+
+    resolveTop({})
+    await nextTick()
+    await nextTick()
+
+    expect(topBtn.disabled).toBe(false)
+    expect(topBtn.textContent).toContain('顶歌')
   })
 })

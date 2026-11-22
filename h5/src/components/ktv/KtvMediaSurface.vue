@@ -152,6 +152,24 @@
           <button type="button" class="fs-act" @click="$emit('open-home')">首页</button>
         </div>
       </div>
+
+      <!-- 全屏模式下醒目的自动播放伴奏声音锁定解锁横幅 -->
+      <transition name="fade-fast">
+        <div
+          v-if="fullscreen && player.isWebHost && !player.isTvConsole && player.audioBlockedByAutoplay && song"
+          class="fs-autoplay-banner"
+          role="alert"
+          @click.stop="unlockAudio"
+        >
+          <div class="banner-box">
+            <Volume2 :size="24" class="banner-icon pulse" />
+            <div class="banner-texts">
+              <strong>浏览器已自动静音伴奏</strong>
+              <small>点击画面任意位置或点击此处立即开启声音</small>
+            </div>
+          </div>
+        </div>
+      </transition>
     </template>
   </div>
 
@@ -213,6 +231,7 @@ const videoEl = ref(null)
 const channelRouter = createWebAudioChannelRouter()
 
 const forceTranscodeFallback = ref(false)
+const forceSoftVideoFallback = ref(false)
 const mirrorStreamFailed = ref(false)
 const isSeekingTranscode = ref(false)
 const liveStartSec = ref(0)
@@ -264,6 +283,7 @@ const streamSpec = computed(() => buildWebStreamSpec({
   vocalMode: player.vocalMode,
   startSeconds: liveStartSec.value,
   forceTranscode: forceTranscodeFallback.value,
+  softVideo: forceSoftVideoFallback.value,
   song: song.value,
 }))
 
@@ -307,7 +327,18 @@ function wakeOsd() {
   osdTimer = setTimeout(() => { osdVisible.value = false }, 3000)
 }
 
+function triggerAudioWakeGesture() {
+  if (!player.isWebHost || player.isTvConsole) return
+  if (typeof channelRouter.resumeDirect === 'function') {
+    channelRouter.resumeDirect()
+  }
+  if (player.audioBlockedByAutoplay) {
+    unlockAudio()
+  }
+}
+
 function onStageClick() {
+  triggerAudioWakeGesture()
   if (!props.fullscreen) {
     emit('enter-fullscreen')
     return
@@ -401,14 +432,17 @@ async function attemptPlay() {
 
 async function unlockAudio() {
   const el = videoEl.value
-  if (!el) return
+  if (!el || player.isTvConsole) return
+  player.audioBlockedByAutoplay = false
+  player.audioUnlockFailed = false
   el.muted = player.muted
   syncAudioRouter()
   try {
+    if (typeof channelRouter.resumeDirect === 'function') {
+      channelRouter.resumeDirect()
+    }
     await channelRouter.resume()
     if (player.isPlaying) await el.play()
-    player.audioBlockedByAutoplay = false
-    player.audioUnlockFailed = false
   } catch (e) {
     player.audioBlockedByAutoplay = true
     player.audioUnlockFailed = true
@@ -461,7 +495,7 @@ function onVideoEnded() {
 
 function onVideoError() {
   if (!streamSpec.value.url) return
-  if (!forceTranscodeFallback.value && !isAudioOnly.value) {
+  if ((!forceTranscodeFallback.value || !forceSoftVideoFallback.value) && !isAudioOnly.value) {
     const startSec = Math.max(0, (player.positionMs || 0) / 1000)
     const fallbackSpec = buildWebStreamSpec({
       playback: player.playback,
@@ -469,11 +503,13 @@ function onVideoError() {
       vocalMode: player.vocalMode,
       startSeconds: startSec,
       forceTranscode: true,
+      softVideo: true,
       song: song.value,
     })
     if (fallbackSpec.url && fallbackSpec.url !== streamSpec.value.url) {
       liveStartSec.value = startSec
       forceTranscodeFallback.value = true
+      forceSoftVideoFallback.value = true
       return
     }
   }
@@ -529,6 +565,7 @@ watch(() => player.nowPlaying?.queueId, (newId, oldId) => {
   if (newId !== oldId) {
     awaitingMediaReload = Boolean(newId)
     forceTranscodeFallback.value = false
+    forceSoftVideoFallback.value = false
     mirrorStreamFailed.value = false
     liveStartSec.value = newId ? resolveInitialLiveStartSec() : 0
     detectedDurationMs.value = 0
@@ -772,25 +809,14 @@ watch(spectrumCanvas, (canvas) => {
 })
 
 function onGlobalUserGesture() {
-  if (channelRouter.isSuspended()) {
-    channelRouter.resume().then(() => {
-      if (player.audioBlockedByAutoplay) {
-        player.audioBlockedByAutoplay = false
-        player.audioUnlockFailed = false
-        const el = videoEl.value
-        if (el && !effectiveMuted.value) {
-          el.muted = false
-          syncAudioRouter()
-        }
-      }
-    }).catch(() => {})
-  }
+  triggerAudioWakeGesture()
 }
 
 onMounted(() => {
   applyMediaSource()
   if (typeof window !== 'undefined') {
     window.addEventListener('pointerdown', onGlobalUserGesture, { capture: true })
+    window.addEventListener('click', onGlobalUserGesture, { capture: true })
     window.addEventListener('keydown', onGlobalUserGesture, { capture: true })
   }
 })
@@ -798,6 +824,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
     window.removeEventListener('pointerdown', onGlobalUserGesture, { capture: true })
+    window.removeEventListener('click', onGlobalUserGesture, { capture: true })
     window.removeEventListener('keydown', onGlobalUserGesture, { capture: true })
   }
   stopSpectrumAnimation()
@@ -1176,5 +1203,56 @@ onBeforeUnmount(() => {
 .marquee-slide-leave-to {
   opacity: 0;
   transform: translate(-50%, -10px);
+}
+
+.fs-autoplay-banner {
+  position: absolute;
+  top: 22%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 45;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.banner-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(18, 24, 38, 0.9);
+  border: 1px solid rgba(255, 198, 75, 0.5);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 16px rgba(255, 198, 75, 0.25);
+  padding: 12px 22px;
+  border-radius: 999px;
+  color: #fff;
+  transition: all 0.2s ease;
+}
+.banner-box:hover {
+  background: rgba(28, 36, 56, 0.98);
+  border-color: #ffc64b;
+  transform: scale(1.03);
+}
+.banner-icon {
+  color: #ffc64b;
+  flex-shrink: 0;
+}
+.pulse {
+  animation: banner-pulse 1.6s infinite;
+}
+@keyframes banner-pulse {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+.banner-texts {
+  display: flex;
+  flex-direction: column;
+}
+.banner-texts strong {
+  font-size: 14px;
+  color: #ffc64b;
+}
+.banner-texts small {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
 }
 </style>

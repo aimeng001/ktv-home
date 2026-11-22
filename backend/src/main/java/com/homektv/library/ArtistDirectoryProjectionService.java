@@ -79,7 +79,13 @@ public class ArtistDirectoryProjectionService {
                         ELSE upper(left(a.artist_init, 1)) END,
                    COALESCE(NULLIF(p.gender, '未知'), inferred.gender, '未知'),
                    a.song_count,
-                   COALESCE(p.gender_status = 'MANUAL' AND NULLIF(p.gender, '未知') IS NOT NULL, false),
+                   COALESCE(
+                       (p.gender_status = 'MANUAL' AND NULLIF(p.gender, '未知') IS NOT NULL)
+                       OR (NULLIF(p.gender, '未知') IS NOT NULL)
+                       OR (inferred.gender IS NOT NULL)
+                       OR (a.name IN ('群星', '多人', 'Various Artists'))
+                       OR (lower(a.name) IN ('佚名', '未知', '未知歌手', 'unknown', 'anonymous')),
+                       false),
                    COALESCE(p.artist_kind,
                             CASE WHEN a.name IN ('群星', '多人', 'Various Artists') THEN 'VARIOUS'
                                  WHEN lower(a.name) IN ('佚名', '未知', '未知歌手', 'unknown', 'anonymous')

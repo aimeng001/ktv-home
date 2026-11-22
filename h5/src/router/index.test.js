@@ -32,4 +32,11 @@ describe('application navigation guards', () => {
 
     expect(router.currentRoute.value.name).toBe('admin-dashboard')
   })
+
+  it('allows authenticated admin to navigate to admin-ai playlist view', async () => {
+    useAdminAuthStore().setToken('test-admin-token')
+    await router.push('/admin/ai')
+
+    expect(router.currentRoute.value.name).toBe('admin-ai')
+  })
 })

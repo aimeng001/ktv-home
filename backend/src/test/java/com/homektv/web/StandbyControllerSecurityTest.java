@@ -138,5 +138,20 @@ class StandbyControllerSecurityTest {
             uploaded = file;
             return "standby/logo.png";
         }
+
+        private boolean resetCalled;
+
+        @Override
+        public void resetLogo() {
+            resetCalled = true;
+        }
+    }
+
+    @Test
+    void resetLogoEndpointClearsLogoAndReturnsUpdatedContent() {
+        Map<String, Object> result = controller.resetLogo();
+
+        assertThat(standbyService.resetCalled).isTrue();
+        assertThat(result).isEqualTo(content);
     }
 }

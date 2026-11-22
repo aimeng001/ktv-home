@@ -82,6 +82,7 @@ export function createPitchShifter(audioContext) {
   }
 
   function processAudio(event) {
+    if (isBypassed()) return
     const inputL = event.inputBuffer.getChannelData(0)
     const inputR = event.inputBuffer.numberOfChannels > 1 ? event.inputBuffer.getChannelData(1) : inputL
     const outputL = event.outputBuffer.getChannelData(0)

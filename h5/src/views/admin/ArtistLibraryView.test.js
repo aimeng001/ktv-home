@@ -806,6 +806,28 @@ describe('ArtistLibraryView', () => {
     expect(root.textContent).toContain('李四')
   })
 
+  it('筛选下拉框选项文本去歧义且群星显示免复核', async () => {
+    artists = [
+      { ...person('群星'), artistKind: 'VARIOUS', songs: [], reviewed: true },
+      { ...person('未知流派'), gender: '未知', reviewed: false, artistKind: 'PERSON' }
+    ]
+    apiMock.adminArtistPage.mockImplementation(async params => ({ items: artists, total: artists.length, page: params.page }))
+    await mount()
+
+    const selects = root.querySelectorAll('.filter-panel select')
+    const genderSelect = selects[0]
+    const reviewedSelect = selects[1]
+
+    expect(genderSelect.textContent).toContain('未知/未归属')
+    expect(genderSelect.textContent).not.toContain('待复核')
+    expect(reviewedSelect.textContent).toContain('待人工复核')
+    expect(reviewedSelect.textContent).toContain('已就绪')
+
+    const rows = root.querySelectorAll('tbody tr')
+    expect(rows[0].textContent).toContain('免复核')
+    expect(rows[1].textContent).toContain('待复核')
+  })
+
   async function mount() {
     app?.unmount()
     root?.remove()

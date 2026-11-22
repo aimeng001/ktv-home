@@ -22,7 +22,8 @@ const { apiMock, alertDialogMock, confirmDialogMock } = vi.hoisted(() => ({
     adminResetTranscodeDefaults: vi.fn(),
     adminDeleteWish: vi.fn(),
     adminExportWishesCsv: vi.fn(),
-    adminDownloadDiagnostics: vi.fn()
+    adminDownloadDiagnostics: vi.fn(),
+    adminResetStandbyLogo: vi.fn()
   },
   alertDialogMock: vi.fn(),
   confirmDialogMock: vi.fn()
@@ -795,6 +796,21 @@ describe('SettingsView standby logo upload', () => {
     expect(apiMock.adminPutSettings).not.toHaveBeenCalled()
     resolveRestore({})
     await flushUi()
+  })
+
+  it('renders reset logo button when logo is configured and resets without marking form dirty', async () => {
+    confirmDialogMock.mockResolvedValueOnce(true)
+    apiMock.adminResetStandbyLogo.mockResolvedValueOnce({ logoUrl: null })
+    await resetHarness({ section: 'tv', settings: { standby_logo_configured: true } })
+
+    const resetBtn = findButton(root.querySelector('#standby_logo'), '恢复默认')
+    expect(resetBtn).not.toBeNull()
+    resetBtn.click()
+    await flushUi()
+
+    expect(confirmDialogMock).toHaveBeenCalledWith('确定清除自定义待机 Logo 并恢复为默认系统 Logo？', expect.any(Object))
+    expect(apiMock.adminResetStandbyLogo).toHaveBeenCalledOnce()
+    expect(root.querySelector('.save-bar')).toBeNull()
   })
 })
 

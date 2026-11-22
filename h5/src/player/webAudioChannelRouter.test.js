@@ -90,4 +90,23 @@ describe('webAudioChannelRouter', () => {
     expect(resolveActiveChannelIndex(reversedTrack, "original")).toBe(1)
     expect(resolveActiveChannelIndex(reversedTrack, "accompaniment")).toBe(0)
   })
+
+  it('triggers synchronous resume via resumeDirect without unhandled promise rejections', () => {
+    const fakeCtx = {
+      state: 'suspended',
+      destination: {},
+      createMediaElementSource: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
+      createChannelSplitter: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
+      createChannelMerger: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
+      createGain: vi.fn(() => ({ gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() })),
+      close: vi.fn(),
+      resume: vi.fn(() => Promise.reject(new Error('pending gesture')))
+    }
+    const router = createWebAudioChannelRouter({ AudioContextCtor: function() { return fakeCtx } })
+    router.attach({ tagName: 'VIDEO' })
+    expect(router.isSuspended()).toBe(true)
+
+    expect(() => router.resumeDirect()).not.toThrow()
+    expect(fakeCtx.resume).toHaveBeenCalled()
+  })
 })

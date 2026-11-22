@@ -110,6 +110,19 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     gainNode.gain.value = lastMuted ? 0 : lastVolume / 100
   }
 
+  function resumeDirect() {
+    if (ctx && ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+      try {
+        const p = ctx.resume()
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {})
+        }
+      } catch {
+        // user gesture may still be pending
+      }
+    }
+  }
+
   async function resume() {
     if (ctx && ctx.state === 'suspended') {
       try {
@@ -159,6 +172,7 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     },
     getAnalyser() { return analyserNode },
     resume,
+    resumeDirect,
     dispose,
     isActive() { return Boolean(ctx) },
     isSuspended() { return Boolean(ctx && ctx.state === 'suspended') },

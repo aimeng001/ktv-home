@@ -11,6 +11,7 @@ const { apiMock, routerMock, toastSpy, media } = vi.hoisted(() => ({
     setGain: vi.fn(),
     setPitch: vi.fn(),
     resume: vi.fn(() => Promise.resolve()),
+    resumeDirect: vi.fn(),
     isSuspended: () => false,
     dispose: vi.fn()
   },
@@ -208,6 +209,45 @@ describe('KtvMediaSurface 解码失败时的上报兜底', () => {
     expect(routerMock.setRouting).toHaveBeenCalledWith(scopedPlayer.audioLayout, "original")
     const currentSrc = videoEl.getAttribute("src") || videoEl.src
     expect(currentSrc).toBe(initialSrc)
+
+    instance.unmount()
+    host.remove()
+  })
+
+  it('点击舞台手势在 WebHost 模式下自动触发 resumeDirect 并尝试解锁', async () => {
+    media.playImpl = () => Promise.resolve()
+    const { instance, host, scopedPlayer } = await mountSurface()
+    scopedPlayer.audioBlockedByAutoplay = true
+    routerMock.resumeDirect.mockClear()
+
+    const stage = host.querySelector('.media-stage')
+    stage.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+    await nextTick()
+
+    expect(routerMock.resumeDirect).toHaveBeenCalled()
+    expect(scopedPlayer.audioBlockedByAutoplay).toBe(false)
+
+    instance.unmount()
+    host.remove()
+  })
+
+  it('在 isTvConsole 模式下点击手势绝不出声，坚决防止回音串音', async () => {
+    media.playImpl = () => Promise.resolve()
+    const { instance, host, scopedPlayer } = await mountSurface()
+    scopedPlayer.tvOnline = true
+    scopedPlayer.webPlayerRole = 'PASSIVE'
+    scopedPlayer.audioBlockedByAutoplay = true
+    expect(scopedPlayer.isTvConsole).toBe(true)
+    routerMock.resumeDirect.mockClear()
+
+    const stage = host.querySelector('.media-stage')
+    stage.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+    await nextTick()
+
+    expect(routerMock.resumeDirect).not.toHaveBeenCalled()
+    expect(scopedPlayer.audioBlockedByAutoplay).toBe(true)
 
     instance.unmount()
     host.remove()

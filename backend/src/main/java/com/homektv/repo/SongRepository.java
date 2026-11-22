@@ -157,7 +157,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                    a.name AS "name",
                    COALESCE(NULLIF(p.gender, '未知'), '未知') AS "gender",
                    a.song_count AS "songCount",
-                   COALESCE(p.gender_status = 'MANUAL' AND NULLIF(p.gender, '未知') IS NOT NULL, false) AS "reviewed",
+                   COALESCE((p.gender_status = 'MANUAL' AND NULLIF(p.gender, '未知') IS NOT NULL) OR NULLIF(p.gender, '未知') IS NOT NULL OR a.name IN ('群星', '多人', 'Various Artists') OR lower(a.name) IN ('佚名', '未知', '未知歌手', 'unknown', 'anonymous'), false) AS "reviewed",
                    COALESCE(p.artist_kind,
                             CASE WHEN a.name IN ('群星', '多人', 'Various Artists') THEN 'VARIOUS'
                                  WHEN lower(a.name) IN ('佚名', '未知', '未知歌手', 'unknown', 'anonymous') THEN 'UNATTRIBUTED'
@@ -167,7 +167,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
             LEFT JOIN artist_profiles p ON p.artist_key = a.artist_key
             WHERE (:keyword = '' OR a.name ILIKE '%' || :keyword || '%' OR a.artist_key ILIKE '%' || :keyword || '%')
               AND (:gender = '' OR COALESCE(NULLIF(p.gender, '未知'), '未知') = :gender)
-              AND (:reviewed IS NULL OR COALESCE(p.gender_status = 'MANUAL' AND NULLIF(p.gender, '未知') IS NOT NULL, false) = :reviewed)
+              AND (:reviewed IS NULL OR COALESCE((p.gender_status = 'MANUAL' AND NULLIF(p.gender, '未知') IS NOT NULL) OR NULLIF(p.gender, '未知') IS NOT NULL OR a.name IN ('群星', '多人', 'Various Artists') OR lower(a.name) IN ('佚名', '未知', '未知歌手', 'unknown', 'anonymous'), false) = :reviewed)
             ORDER BY a.song_count DESC, a.name ASC, a.artist_key ASC
             """,
             countQuery = """
@@ -195,7 +195,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
             LEFT JOIN artist_profiles p ON p.artist_key = a.artist_key
             WHERE (:keyword = '' OR a.name ILIKE '%' || :keyword || '%' OR a.artist_key ILIKE '%' || :keyword || '%')
               AND (:gender = '' OR COALESCE(NULLIF(p.gender, '未知'), '未知') = :gender)
-              AND (:reviewed IS NULL OR COALESCE(p.gender_status = 'MANUAL' AND NULLIF(p.gender, '未知') IS NOT NULL, false) = :reviewed)
+              AND (:reviewed IS NULL OR COALESCE((p.gender_status = 'MANUAL' AND NULLIF(p.gender, '未知') IS NOT NULL) OR NULLIF(p.gender, '未知') IS NOT NULL OR a.name IN ('群星', '多人', 'Various Artists') OR lower(a.name) IN ('佚名', '未知', '未知歌手', 'unknown', 'anonymous'), false) = :reviewed)
             """, nativeQuery = true)
     Page<ArtistDirectoryProjection> pageArtistDirectory(@Param("status") String status,
                                                         @Param("keyword") String keyword,

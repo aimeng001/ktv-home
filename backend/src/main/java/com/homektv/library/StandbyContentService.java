@@ -100,6 +100,16 @@ public class StandbyContentService {
         }
     }
 
+    @Transactional
+    public void resetLogo() {
+        Object oldValue = settingService.getAll().get("standby_logo_path");
+        String oldPath = oldValue == null ? "" : oldValue.toString();
+        settingService.putInternal("standby_logo_path", "");
+        if (assetCleanupService != null && !oldPath.isBlank()) {
+            assetCleanupService.afterCommitIfUnreferenced(oldPath);
+        }
+    }
+
     private byte[] normalizeUploadedImage(byte[] source) {
         if (coverImageNormalizer == null) return source;
         try {

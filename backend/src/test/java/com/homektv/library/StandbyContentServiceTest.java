@@ -67,6 +67,21 @@ class StandbyContentServiceTest {
     }
 
     @Test
+    void resetLogoClearsSettingAndSchedulesThePreviousAssetForCleanup() {
+        SettingService settings = mock(SettingService.class);
+        when(settings.getAll()).thenReturn(Map.of("standby_logo_path", "standby/logo-old.png"));
+        AssetCleanupService cleanup = mock(AssetCleanupService.class);
+        StandbyContentService service = new StandbyContentService(settings,
+                mock(SongRepository.class), mock(PlayHistoryRepository.class), mock(AssetWriter.class));
+        service.setAssetCleanupService(cleanup);
+
+        service.resetLogo();
+
+        verify(settings).putInternal("standby_logo_path", "");
+        verify(cleanup).afterCommitIfUnreferenced("standby/logo-old.png");
+    }
+
+    @Test
     void hotSongsIgnoreMalformedRanksAndUnavailableSongsButKeepRankingOrder() {
         SettingService settings = mock(SettingService.class);
         PlayHistoryRepository history = mock(PlayHistoryRepository.class);

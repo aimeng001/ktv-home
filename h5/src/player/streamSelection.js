@@ -43,6 +43,7 @@ export function buildWebStreamSpec({
   vocalMode = 'accompaniment',
   startSeconds = 0,
   forceTranscode = false,
+  softVideo = false,
   song = null,
 } = {}) {
   if (!playback || playback.status !== 'READY' || !playback.sourceFileId) {
@@ -53,6 +54,7 @@ export function buildWebStreamSpec({
   const audioOnly = isAudioOnlyPlayback(playback, song)
   const isDualTrack = !audioOnly && audioLayout?.layout === 'DUAL_TRACK' && (playback.audioTracks == null || playback.audioTracks >= 2)
   const needsLiveTranscode = Boolean(forceTranscode)
+    || Boolean(softVideo)
     || playback.kind === 'LIVE_TRANSCODE'
     || (!audioOnly && !isBrowserNativeFormat(playback, song))
     || isDualTrack
@@ -70,6 +72,9 @@ export function buildWebStreamSpec({
   params.set('transcode', 'true')
   if (isDualTrack) {
     params.set('mergeTracks', 'true')
+  }
+  if (softVideo) {
+    params.set('softVideo', 'true')
   }
   const clampedStart = Number.isFinite(startSeconds) && startSeconds > 0.5 ? startSeconds : 0
   if (clampedStart > 0) params.set('start', clampedStart.toFixed(3))

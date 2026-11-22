@@ -1613,6 +1613,62 @@ class StreamControllerTest {
         assertThat(capturedCommand.get()).containsSubsequence("-ss", "25.000");
     }
 
+    @Test
+    void mkvDualTrackMergeDefaultsToCopyVideoForZeroCpuStreaming() throws Exception {
+        Path library = tempDir.resolve("mkv-library");
+        Files.createDirectories(library);
+        Path media = library.resolve("song-303.mkv");
+        Files.write(media, new byte[]{0x1a, 0x45, (byte) 0xdf, (byte) 0xa3});
+
+        SongFile songFile = new SongFile();
+        songFile.setId(303L);
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("matroska,webm");
+        songFile.setMediaType("MV");
+        songFile.setAudioTracks(2);
+        songFile.setValid(true);
+
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(303L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+
+        AtomicReference<List<String>> capturedCommand = new AtomicReference<>();
+        ResourceBudget budget = new ResourceBudget(1, 1, 2, 1, 2, () -> false);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), "ffmpeg-test",
+                builder -> {
+                    capturedCommand.set(List.copyOf(builder.command()));
+                    Process process = mock(Process.class);
+                    when(process.getInputStream()).thenReturn(new ByteArrayInputStream(new byte[]{0x00, 0x01}));
+                    try {
+                        when(process.waitFor(5, TimeUnit.SECONDS)).thenReturn(true);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                    when(process.exitValue()).thenReturn(0);
+                    when(process.isAlive()).thenReturn(false);
+                    return process;
+                }, budget);
+
+        ResponseEntity<StreamingResponseBody> response =
+                controller.streamInternal(303L, null, null, false, null, true, false, null);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        response.getBody().writeTo(new ByteArrayOutputStream());
+
+        // 验证 MKV 双音轨合并默认走 copyVideo
+        assertThat(capturedCommand.get()).containsSubsequence("-c:v", "copy");
+        assertThat(capturedCommand.get()).anyMatch(arg -> arg.contains("amerge=inputs=2"));
+        assertThat(capturedCommand.get()).doesNotContain("libx264");
+
+        // 验证传入 softVideo=true 时降级为 libx264 软编码
+        ResponseEntity<StreamingResponseBody> softResponse =
+                controller.streamInternal(303L, null, null, false, null, true, true, null);
+        assertThat(softResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        softResponse.getBody().writeTo(new ByteArrayOutputStream());
+        assertThat(capturedCommand.get()).containsSubsequence("-c:v", "libx264");
+    }
+
     private static void diesWhenDestroyed(Process process) {
         AtomicBoolean alive = new AtomicBoolean(true);
         when(process.isAlive()).thenAnswer(invocation -> alive.get());
