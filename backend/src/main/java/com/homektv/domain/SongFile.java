@@ -142,6 +142,13 @@ public class SongFile {
     @Column(name = "probe_pending", nullable = false)
     private boolean probePending;
 
+    /** Codec names captured by FFprobe, nullable for unprobed files. */
+    @Column(name = "audio_codec")
+    private String audioCodec;
+
+    @Column(name = "video_codec")
+    private String videoCodec;
+
     // ---- getters / setters ----
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -257,6 +264,10 @@ public class SongFile {
     public void setLyricSnapshotVersion(Integer lyricSnapshotVersion) { this.lyricSnapshotVersion = lyricSnapshotVersion; }
     public boolean isProbePending() { return probePending; }
     public void setProbePending(boolean probePending) { this.probePending = probePending; }
+    public String getAudioCodec() { return audioCodec; }
+    public void setAudioCodec(String audioCodec) { this.audioCodec = audioCodec; }
+    public String getVideoCodec() { return videoCodec; }
+    public void setVideoCodec(String videoCodec) { this.videoCodec = videoCodec; }
 
     /** Swap only semantic vocal/accompaniment assignments; media bytes are untouched. */
     public void swapOriginalAndAccompaniment() {

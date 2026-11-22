@@ -328,6 +328,8 @@ final class LibraryIngestionWriter {
         sf.setRelativePath(input.relativePath());
         sf.setFormat(extOf(file));
         sf.setAudioTracks(probe.audioTracks());
+        sf.setAudioCodec(probe.audioCodec());
+        sf.setVideoCodec(probe.videoCodec());
         sf.setAudioLayout(audioLayout);
         sf.setAudioLayoutSource(resolvedLayout.source());
         sf.setMediaType(mediaType);

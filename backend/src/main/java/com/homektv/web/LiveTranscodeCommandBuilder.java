@@ -16,22 +16,28 @@ final class LiveTranscodeCommandBuilder {
     }
 
     List<String> build(File source, SongFile songFile, Double startSeconds) {
-        return build(source, songFile, startSeconds, null, false, false);
+        return build(source, songFile, startSeconds, null, false, false, false);
     }
 
     List<String> build(File source, SongFile songFile, Double startSeconds,
                        Integer audioTrack, boolean copyVideo) {
-        return build(source, songFile, startSeconds, audioTrack, copyVideo, false);
+        return build(source, songFile, startSeconds, audioTrack, copyVideo, false, false);
     }
 
     List<String> build(File source, SongFile songFile, Double startSeconds,
                        Integer audioTrack, boolean copyVideo, boolean mergeTracks) {
+        return build(source, songFile, startSeconds, audioTrack, copyVideo, false, mergeTracks);
+    }
+
+    List<String> build(File source, SongFile songFile, Double startSeconds,
+                       Integer audioTrack, boolean copyVideo, boolean copyAudio, boolean mergeTracks) {
         List<String> command = new ArrayList<>();
         command.add(ffmpegPath);
         command.add("-hide_banner");
         command.add("-loglevel");
         command.add("error");
         if (startSeconds != null && startSeconds > 0) {
+            command.add("-noaccurate_seek");
             command.add("-ss");
             command.add(String.format(Locale.US, "%.3f", startSeconds));
         }
@@ -80,14 +86,23 @@ final class LiveTranscodeCommandBuilder {
             command.add("yuv420p");
         }
 
-        command.add("-c:a");
-        command.add("aac");
-        command.add("-b:a");
-        command.add("192k");
-        command.add("-ar");
-        command.add("48000");
-        command.add("-ac");
-        command.add("2");
+        boolean effectiveCopyAudio = copyAudio && !shouldMerge;
+        if (effectiveCopyAudio) {
+            command.add("-c:a");
+            command.add("copy");
+        } else {
+            command.add("-c:a");
+            command.add("aac");
+            command.add("-b:a");
+            command.add("192k");
+            command.add("-ar");
+            command.add("48000");
+            command.add("-ac");
+            command.add("2");
+        }
+
+        command.add("-avoid_negative_ts");
+        command.add("make_zero");
 
         command.add("-f");
         command.add("mp4");

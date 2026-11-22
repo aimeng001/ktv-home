@@ -27,6 +27,9 @@ import java.io.RandomAccessFile;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import com.homektv.media.FFprobeService;
+import com.homektv.media.MediaProbe;
 
 /**
  * 媒体流（P1.17，详设§11.1）。
@@ -80,6 +83,8 @@ public class StreamController {
     private final LiveTranscodeCommandBuilder transcodeCommandBuilder;
     private final ProcessLauncher processLauncher;
     private final ResourceBudget resourceBudget;
+    private final FFprobeService ffprobeService;
+    private final ConcurrentHashMap<Long, String> audioCodecCache = new ConcurrentHashMap<>();
 
     public StreamController(SongFileRepository fileRepo) {
         this(fileRepo, new AppProperties(), new SongAvailabilityPolicy(fileRepo), "ffmpeg",
@@ -102,12 +107,21 @@ public class StreamController {
         this(fileRepo, props, availabilityPolicy, "ffmpeg", processLauncher, standaloneResourceBudget());
     }
 
+    public StreamController(SongFileRepository fileRepo, AppProperties props,
+                            SongAvailabilityPolicy availabilityPolicy,
+                            String ffmpegPath,
+                            ProcessLauncher processLauncher,
+                            ResourceBudget resourceBudget) {
+        this(fileRepo, props, availabilityPolicy, ffmpegPath, processLauncher, resourceBudget, null);
+    }
+
     @Autowired
     public StreamController(SongFileRepository fileRepo, AppProperties props,
                             SongAvailabilityPolicy availabilityPolicy,
                             @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath,
                             @Autowired(required = false) ProcessLauncher processLauncher,
-                            ResourceBudget resourceBudget) {
+                            ResourceBudget resourceBudget,
+                            @Autowired(required = false) FFprobeService ffprobeService) {
         this.fileRepo = fileRepo;
         this.props = props;
         this.availabilityPolicy = availabilityPolicy;
@@ -115,6 +129,7 @@ public class StreamController {
         this.transcodeCommandBuilder = new LiveTranscodeCommandBuilder(executable);
         this.processLauncher = processLauncher != null ? processLauncher : ProcessBuilder::start;
         this.resourceBudget = resourceBudget;
+        this.ffprobeService = ffprobeService;
     }
 
     private static ResourceBudget standaloneResourceBudget() {
@@ -238,7 +253,8 @@ public class StreamController {
                 return ResponseEntity.badRequest().build();
             }
             boolean copyVideo = shouldCopyVideo(sf, forceTranscode, effectiveMerge, audioTrack, softVideo);
-            return serveOnTheFlyTranscodeStream(fileId, file, sf, startSeconds, audioTrack, copyVideo, effectiveMerge, request);
+            boolean copyAudio = shouldCopyAudio(sf, file, copyVideo, effectiveMerge, audioTrack);
+            return serveOnTheFlyTranscodeStream(fileId, file, sf, startSeconds, audioTrack, copyVideo, copyAudio, effectiveMerge, request);
         }
 
         // 2. 99% 普通格式快路径：继续走 RandomAccessFile HTTP Range 流
@@ -251,6 +267,39 @@ public class StreamController {
         return true;
     }
 
+    boolean shouldCopyAudio(SongFile sf, File file, boolean copyVideo, boolean mergeTracks, Integer audioTrack) {
+        if (!copyVideo) return false;
+        if (mergeTracks) return false;
+        if (audioTrack != null && audioTrack > 0) return false;
+        if (sf.getAudioTracks() > 1) return false;
+
+        String codec = sf.getAudioCodec();
+        if (codec == null && file != null && sf.getId() != null) {
+            codec = audioCodecCache.computeIfAbsent(sf.getId(), id -> {
+                if (ffprobeService != null) {
+                    try {
+                        MediaProbe probe = ffprobeService.probe(file.toPath());
+                        return probe != null ? probe.audioCodec() : null;
+                    } catch (Exception e) {
+                        return null;
+                    }
+                }
+                return null;
+            });
+        }
+        if (codec == null && file != null) {
+            String name = file.getName().toLowerCase(java.util.Locale.ROOT);
+            if (name.endsWith(".aac") || name.endsWith(".m4a")) {
+                codec = "aac";
+            }
+        }
+        if (codec != null) {
+            String c = codec.trim().toLowerCase(java.util.Locale.ROOT);
+            return c.equals("aac") || c.equals("mp4a") || c.equals("mp3");
+        }
+        return false;
+    }
+
     private static boolean isBrowserCopySafeMp4(SongFile sf) {
         String format = sf.getFormat() == null ? "" : sf.getFormat().trim().toLowerCase(java.util.Locale.ROOT);
         String path = sf.getFilePath() == null ? "" : sf.getFilePath().trim().toLowerCase(java.util.Locale.ROOT);
@@ -259,14 +308,14 @@ public class StreamController {
 
     private ResponseEntity<StreamingResponseBody> serveOnTheFlyTranscodeStream(
             Long fileId, File file, SongFile sf, Double startSeconds, Integer audioTrack,
-            boolean copyVideo, boolean mergeTracks, HttpServletRequest request) {
+            boolean copyVideo, boolean copyAudio, boolean mergeTracks, HttpServletRequest request) {
         MediaStreamLease mediaStreamLease = reserveMediaStream(request);
         if (mediaStreamLease == null) return tooManyStreamsResponse();
 
         LiveTranscodeSession session;
         try {
             List<String> command = transcodeCommandBuilder.build(
-                    file, sf, startSeconds, audioTrack, copyVideo, mergeTracks);
+                    file, sf, startSeconds, audioTrack, copyVideo, copyAudio, mergeTracks);
             session = LiveTranscodeSession.tryReserve(
                     resourceBudget, processLauncher, command, fileId, startSeconds).orElse(null);
         } catch (RuntimeException | Error error) {

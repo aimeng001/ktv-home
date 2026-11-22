@@ -201,6 +201,8 @@ public class SongProbeService {
         sf.setMediaType(mediaType);
         sf.setResolution(probe.resolution());
         sf.setAudioTracks(probe.audioTracks());
+        sf.setAudioCodec(probe.audioCodec());
+        sf.setVideoCodec(probe.videoCodec());
         sf.setProbePending(false);
         sf.setValid(true);
     }

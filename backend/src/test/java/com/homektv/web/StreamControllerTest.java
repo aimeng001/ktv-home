@@ -31,6 +31,7 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -1676,6 +1677,52 @@ class StreamControllerTest {
         assertThat(softResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         softResponse.getBody().writeTo(new ByteArrayOutputStream());
         assertThat(capturedCommand.get()).containsSubsequence("-c:v", "libx264");
+    }
+
+    @Test
+    void shouldCopyAudioEnforcesBrowserSafeCodecsAndSingleTrackOnly() {
+        SongFileRepository repo = mock(SongFileRepository.class);
+        AppProperties props = new AppProperties();
+        com.homektv.media.FFprobeService ffprobe = mock(com.homektv.media.FFprobeService.class);
+        StreamController controller = new StreamController(repo, props, new SongAvailabilityPolicy(repo),
+                "ffmpeg", ProcessBuilder::start, new ResourceBudget(4, 4, 4, () -> false), ffprobe);
+
+        SongFile aacSong = new SongFile();
+        aacSong.setId(101L);
+        aacSong.setAudioTracks(1);
+        aacSong.setAudioCodec("aac");
+        File aacFile = new File("test.mkv");
+
+        // 1. 单音轨 AAC 允许 copyAudio
+        assertThat(controller.shouldCopyAudio(aacSong, aacFile, true, false, null)).isTrue();
+
+        // 2. copyVideo=false 时禁止 copyAudio
+        assertThat(controller.shouldCopyAudio(aacSong, aacFile, false, false, null)).isFalse();
+
+        // 3. mergeTracks=true 时禁止 copyAudio
+        assertThat(controller.shouldCopyAudio(aacSong, aacFile, true, true, null)).isFalse();
+
+        // 4. 多音轨 (audioTracks > 1) 时禁止 copyAudio
+        aacSong.setAudioTracks(2);
+        assertThat(controller.shouldCopyAudio(aacSong, aacFile, true, false, null)).isFalse();
+
+        // 5. 非安全音频编码 (如 ac3) 必须重编码
+        SongFile ac3Song = new SongFile();
+        ac3Song.setId(102L);
+        ac3Song.setAudioTracks(1);
+        ac3Song.setAudioCodec("ac3");
+        assertThat(controller.shouldCopyAudio(ac3Song, aacFile, true, false, null)).isFalse();
+
+        // 6. 未知编码通过 FFprobeService 探测到 aac 时返回 true 并命中缓存
+        SongFile unprobedSong = new SongFile();
+        unprobedSong.setId(103L);
+        unprobedSong.setAudioTracks(1);
+        when(ffprobe.probe(aacFile.toPath())).thenReturn(new com.homektv.media.MediaProbe(
+                1000L, 1, 0, true, "1080p", List.of(), "h264", "aac", null, null, null));
+        assertThat(controller.shouldCopyAudio(unprobedSong, aacFile, true, false, null)).isTrue();
+        // 第二次调用应走缓存，不再次调用 probe
+        assertThat(controller.shouldCopyAudio(unprobedSong, aacFile, true, false, null)).isTrue();
+        verify(ffprobe, org.mockito.Mockito.times(1)).probe(aacFile.toPath());
     }
 
     private static void diesWhenDestroyed(Process process) {

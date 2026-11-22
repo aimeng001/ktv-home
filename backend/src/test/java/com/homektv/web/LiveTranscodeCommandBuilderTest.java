@@ -115,4 +115,40 @@ class LiveTranscodeCommandBuilderTest {
         assertThat(singleCommand).doesNotContain("-filter_complex");
         assertThat(singleCommand).contains("0:a?");
     }
+
+    @Test
+    void copiesAudioWhenCopyAudioIsTrueAndNotMerging() {
+        File source = temp.resolve("single-track-aac.mkv").toFile();
+        SongFile song = new SongFile();
+        song.setAudioTracks(1);
+
+        List<String> command = builder.build(source, song, null, null, true, true, false);
+
+        assertThat(command).containsSubsequence("-c:v", "copy", "-c:a", "copy");
+        assertThat(command).containsSubsequence("-avoid_negative_ts", "make_zero");
+        assertThat(command).doesNotContain("-ar", "-b:a", "192k");
+    }
+
+    @Test
+    void addsNoaccurateSeekBeforeInputWhenStartSecondsIsPositive() {
+        File source = temp.resolve("seek-keyframe.mkv").toFile();
+        SongFile song = new SongFile();
+
+        List<String> command = builder.build(source, song, 15.0, null, true, true, false);
+
+        assertThat(command).containsSubsequence("-noaccurate_seek", "-ss", "15.000", "-i", source.getAbsolutePath());
+    }
+
+    @Test
+    void forcesAudioTranscodeWhenMergeTracksIsTrueEvenIfCopyAudioRequested() {
+        File source = temp.resolve("dual-track-merge.mkv").toFile();
+        SongFile song = new SongFile();
+        song.setAudioTracks(2);
+
+        List<String> command = builder.build(source, song, null, null, true, true, true);
+
+        assertThat(command).contains("-filter_complex");
+        assertThat(command).containsSubsequence("-c:v", "copy", "-c:a", "aac");
+        assertThat(command).doesNotContain("-c:a copy");
+    }
 }
