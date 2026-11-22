@@ -67,6 +67,24 @@ class WebPlayerCoordinatorTest {
         assertThat(coordinator.authorizesUpstream("h5-1", gen)).isFalse();
     }
 
+    @Test
+    void sameClientTokenReclaimsActiveWithoutForceOnReconnect() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-11-18T00:00:00Z"));
+        WebPlayerCoordinator coordinator = new WebPlayerCoordinator(clock, Duration.ofSeconds(45));
+
+        WebPlayerCoordinator.ClaimOutcome first = coordinator.claim("h5-1", "pc-kiosk", false, false);
+        assertThat(first.assignment().role()).isEqualTo(ActivePlayerRegistry.Role.ACTIVE);
+        long firstGen = first.assignment().generation();
+
+        // 模拟同一台电脑刷新或重连（换了新的 session ID，但保持相同的 clientToken），force 为 false
+        WebPlayerCoordinator.ClaimOutcome reconnected = coordinator.claim("h5-2", "pc-kiosk", false, false);
+        assertThat(reconnected.assignment().role()).isEqualTo(ActivePlayerRegistry.Role.ACTIVE);
+        assertThat(reconnected.assignment().generation()).isGreaterThan(firstGen);
+        assertThat(reconnected.replacedSessionId()).contains("h5-1");
+        assertThat(coordinator.authorizesUpstream("h5-1", firstGen)).isFalse();
+        assertThat(coordinator.authorizesUpstream("h5-2", reconnected.assignment().generation())).isTrue();
+    }
+
     private static final class MutableClock extends Clock {
         private Instant instant;
 

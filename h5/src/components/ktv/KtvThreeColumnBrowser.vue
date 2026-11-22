@@ -319,7 +319,13 @@
           <div v-if="!recentItems.length" class="stage-state">{{ recentMineOnly ? '你还没有唱过歌曲' : '今晚还没有演唱记录' }}</div>
           <article v-for="item in recentItems" :key="item.historyId" class="song-card">
             <div class="card-thumb">
-              <img v-if="item.song?.coverUrl" :src="item.song.coverUrl" alt="" />
+              <img
+                v-if="songThumbUrl(item.song)"
+                :src="songThumbUrl(item.song)"
+                alt=""
+                loading="lazy"
+                @error="rememberSongThumbFailure(item.song)"
+              />
               <span v-else>{{ (item.song?.title || '歌').slice(0, 1) }}</span>
             </div>
             <div class="card-info">
@@ -352,7 +358,13 @@
             :class="{ ordered: orderedIds.has(song.id) }"
           >
             <div class="card-thumb">
-              <img v-if="song.coverUrl" :src="song.coverUrl" alt="" />
+              <img
+                v-if="songThumbUrl(song)"
+                :src="songThumbUrl(song)"
+                alt=""
+                loading="lazy"
+                @error="rememberSongThumbFailure(song)"
+              />
               <span v-else>{{ (song.artist || song.title || '音').slice(0, 1) }}</span>
             </div>
             <div class="card-info">
@@ -1249,6 +1261,30 @@ async function submitWish() {
 
 function rememberAvatar(artist) {
   avatarFailures.value = rememberAvatarFailure(avatarFailures.value, artist)
+}
+
+function songThumbUrl(song) {
+  if (!song) return ''
+  if (song.coverUrl) return song.coverUrl
+  if (activeTab.value === 'singer' && selectedArtist.value) {
+    return avatarUrlFor(selectedArtist.value, avatarFailures.value)
+  }
+  const artistName = (song.artist || '').trim()
+  if (artistName && !avatarFailures.value.has(artistName)) {
+    return `/api/artists/${encodeURIComponent(artistName)}/avatar`
+  }
+  return ''
+}
+
+function rememberSongThumbFailure(song) {
+  if (!song) return
+  if (activeTab.value === 'singer' && selectedArtist.value) {
+    rememberAvatar(selectedArtist.value)
+  }
+  const artistName = (song.artist || '').trim()
+  if (artistName) {
+    avatarFailures.value = rememberAvatarFailure(avatarFailures.value, { name: artistName, artistKey: artistName })
+  }
 }
 
 function triggerSearchNow() {

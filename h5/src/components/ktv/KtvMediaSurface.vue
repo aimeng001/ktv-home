@@ -21,6 +21,14 @@
       @playing="onVideoPlaying"
     />
 
+    <!-- 转码流 Seek 平滑加载过渡层：保持当前画面并展示轻量加载指示，杜绝纯黑屏 -->
+    <transition name="fade-fast">
+      <div v-if="isSeekingTranscode" class="seek-buffer-overlay">
+        <div class="seek-spinner" />
+        <span>正在定位画面…</span>
+      </div>
+    </transition>
+
     <!-- 纯音频伴奏全屏动态频谱跳动与歌手写真舞台 (1:1 电视端全屏纯音频效果) -->
     <div
       v-if="song && fullscreen && (!hasVideoStream || mirrorStreamFailed || isAudioOnly)"
@@ -133,7 +141,6 @@
           <button type="button" class="fs-act" :disabled="!canVocal" @click="$emit('toggle-vocal')">
             {{ player.vocalMode === 'original' ? '原唱' : '伴唱' }}
           </button>
-          <button v-if="canVocal" type="button" class="fs-act" @click="$emit('swap-vocal')">纠正音轨</button>
           <button type="button" class="fs-act" @click="$emit('toggle-mute')">
             {{ player.muted ? '取消静音' : '静音' }}
           </button>
@@ -207,6 +214,7 @@ const channelRouter = createWebAudioChannelRouter()
 
 const forceTranscodeFallback = ref(false)
 const mirrorStreamFailed = ref(false)
+const isSeekingTranscode = ref(false)
 const liveStartSec = ref(0)
 const streamReloadNonce = ref(0)
 const detectedDurationMs = ref(0)
@@ -261,7 +269,12 @@ const streamSpec = computed(() => buildWebStreamSpec({
 
 const hasVideoStream = computed(() => Boolean(streamSpec.value.url))
 const isAudioOnly = computed(() => streamSpec.value.isAudioOnly)
-const effectiveMuted = computed(() => !player.isWebHost || player.muted || player.audioBlockedByAutoplay)
+const effectiveMuted = computed(() => {
+  if (player.isTvConsole) return true
+  if (player.muted) return true
+  if (player.audioBlockedByAutoplay) return true
+  return false
+})
 const durationMs = computed(() => song.value?.durationMs || detectedDurationMs.value || 0)
 const displayPositionMs = computed(() => scrubbingValue.value != null ? scrubbingValue.value : player.positionMs)
 
@@ -408,6 +421,7 @@ async function unlockAudio() {
 
 function onLoadedMetadata() {
   awaitingMediaReload = false
+  isSeekingTranscode.value = false
   const el = videoEl.value
   if (!el) return
   if (Number.isFinite(el.duration) && el.duration > 0 && el.duration < 86400) {
@@ -422,6 +436,7 @@ function onLoadedMetadata() {
 
 function onVideoPlaying() {
   awaitingMediaReload = false
+  isSeekingTranscode.value = false
   if (player.audioBlockedByAutoplay && player.isWebHost && !player.muted) {
     // Wait for explicit user gesture if blocked
   }
@@ -596,6 +611,7 @@ watch(() => player.seekSequence, (seq) => {
   const targetSec = Math.max(0, (player.positionMs || 0) / 1000)
   if (streamSpec.value.liveTranscode) {
     awaitingMediaReload = true
+    isSeekingTranscode.value = true
     if (Math.abs(targetSec - liveStartSec.value) < 0.5) {
       liveStartSec.value = targetSec
       streamReloadNonce.value += 1
@@ -755,11 +771,35 @@ watch(spectrumCanvas, (canvas) => {
   }
 })
 
+function onGlobalUserGesture() {
+  if (channelRouter.isSuspended()) {
+    channelRouter.resume().then(() => {
+      if (player.audioBlockedByAutoplay) {
+        player.audioBlockedByAutoplay = false
+        player.audioUnlockFailed = false
+        const el = videoEl.value
+        if (el && !effectiveMuted.value) {
+          el.muted = false
+          syncAudioRouter()
+        }
+      }
+    }).catch(() => {})
+  }
+}
+
 onMounted(() => {
   applyMediaSource()
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pointerdown', onGlobalUserGesture, { capture: true })
+    window.addEventListener('keydown', onGlobalUserGesture, { capture: true })
+  }
 })
 
 onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('pointerdown', onGlobalUserGesture, { capture: true })
+    window.removeEventListener('keydown', onGlobalUserGesture, { capture: true })
+  }
   stopSpectrumAnimation()
   clearTimeout(osdTimer)
   clearTimeout(effectTimer)
@@ -770,6 +810,33 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.seek-buffer-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  gap: 10px;
+  z-index: 10;
+  pointer-events: none;
+}
+.seek-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #ffc64b;
+  border-radius: 50%;
+  animation: seek-spin 0.8s linear infinite;
+}
+@keyframes seek-spin {
+  to { transform: rotate(360deg); }
+}
+
 .media-stage {
   position: fixed;
   z-index: 30;

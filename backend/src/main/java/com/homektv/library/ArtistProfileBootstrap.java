@@ -108,7 +108,6 @@ public class ArtistProfileBootstrap {
     }
 
     private boolean refreshNow() {
-        boolean creditsCompleted = reconcileCreditsOnce();
         try {
             profiles.pruneObsoleteCombinedProfiles();
             int count = profiles.backfillFromSongs();
@@ -125,13 +124,15 @@ public class ArtistProfileBootstrap {
             if (directoryProjection != null) directoryProjection.refresh();
             log.info("artist profile backfill completed: {} source names, {} database classifications, {} local avatars resolved",
                     count, classified, matched);
-            if (!creditsCompleted) refreshRequested.set(true);
-            return creditsCompleted;
         } catch (RuntimeException failure) {
             refreshRequested.set(true);
             log.warn("artist profile backfill did not complete: {}", failure.getMessage());
             return false;
         }
+
+        boolean creditsCompleted = reconcileCreditsOnce();
+        if (!creditsCompleted) refreshRequested.set(true);
+        return creditsCompleted;
     }
 
     private boolean reconcileCreditsOnce() {

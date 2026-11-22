@@ -143,11 +143,7 @@
           </div>
         </div>
 
-        <div v-if="canVocal" class="swap-row">
-          <button type="button" class="btn ghost small" @click="$emit('swap-vocal')">
-            原唱和伴唱弄反了？纠正并记住
-          </button>
-        </div>
+
 
         <div class="mixer-row">
           <span>伴奏升降调</span>

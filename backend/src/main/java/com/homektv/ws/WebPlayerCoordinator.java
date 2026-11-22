@@ -81,7 +81,8 @@ public class WebPlayerCoordinator {
                     newlyActivated || expiredCleared);
         }
 
-        if (!force) {
+        boolean sameClientReconnect = normalizedToken.equals(activeClientToken);
+        if (!force && !sameClientReconnect) {
             return new ClaimOutcome(
                     new ActivePlayerRegistry.Assignment(
                             ActivePlayerRegistry.Role.STANDBY, 0, leaseDuration.toMillis()),
@@ -98,7 +99,7 @@ public class WebPlayerCoordinator {
         return new ClaimOutcome(
                 new ActivePlayerRegistry.Assignment(
                         ActivePlayerRegistry.Role.ACTIVE, generation, leaseDuration.toMillis()),
-                Optional.of(replaced),
+                Optional.ofNullable(replaced),
                 new WebPlayerStatus(true, activeClientToken),
                 true);
     }

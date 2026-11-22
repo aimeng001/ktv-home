@@ -414,4 +414,27 @@ class ArtistDirectoryProjectionServiceTest {
         verify(jdbc).update(contains("UPDATE artist_directory_stats SET gender=?"),
                 eq("男歌手"), eq(true), eq("zhoujielun"));
     }
+
+    @Test
+    void onApplicationReadyRefreshesWhenNotReady() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class))).thenReturn(false);
+        CountDownLatch refreshComplete = stubRefreshCompletion(jdbc);
+        ArtistDirectoryProjectionService service = new ArtistDirectoryProjectionService(
+                jdbc, null, refreshComplete::countDown);
+
+        service.onApplicationReady();
+        assertThat(refreshComplete.await(3, TimeUnit.SECONDS)).isTrue();
+        verify(jdbc).update("DELETE FROM artist_directory_stats");
+    }
+
+    @Test
+    void onApplicationReadySkipsWhenAlreadyReady() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class))).thenReturn(true);
+        ArtistDirectoryProjectionService service = new ArtistDirectoryProjectionService(jdbc);
+
+        service.onApplicationReady();
+        verify(jdbc, never()).update(anyString());
+    }
 }

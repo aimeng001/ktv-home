@@ -1,6 +1,8 @@
 package com.homektv.library;
 
 import jakarta.annotation.PreDestroy;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -235,6 +237,13 @@ public class ArtistDirectoryProjectionService {
     void shutdown() {
         refreshExecutor.shutdownNow();
     }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void onApplicationReady() {
+        if (!isReady()) {
+            requestRefresh();
+        }
+    }
     public Optional<ProjectionPage> page(String gender, String initial, int page, int size) {
         return page(gender, initial, "", page, size);
     }
@@ -342,7 +351,10 @@ public class ArtistDirectoryProjectionService {
 
     public Optional<AdminProjectionPage> adminPage(String keyword, String gender, Boolean reviewed,
                                                    int page, int size) {
-        if (!isReady()) return Optional.empty();
+        if (!isReady()) {
+            requestRefresh();
+            return Optional.empty();
+        }
         int safePage = Math.max(0, page);
         int safeSize = Math.max(1, Math.min(size, 100));
         String safeKeyword = normalize(keyword);
@@ -377,6 +389,9 @@ public class ArtistDirectoryProjectionService {
                 filterArgs.toArray());
         long totalCount = total == null ? 0L : total;
         if (totalCount == 0L) {
+            if (where.isEmpty()) {
+                requestRefresh();
+            }
             return Optional.of(new AdminProjectionPage(List.of(), 0L));
         }
 
