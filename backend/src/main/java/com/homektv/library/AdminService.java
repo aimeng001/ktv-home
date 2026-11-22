@@ -251,8 +251,11 @@ public class AdminService {
             song.setLyricType(LyricType.detect(req.lyricText()));
             song.setLyricSource(Song.LYRIC_SOURCE_MANUAL);
         }
-        boolean promotedToOk = manualIdentityEdited && "unrecognized".equals(song.getStatus());
-        // 只有人工确认歌名或歌手时，才允许未识别歌曲转正
+        boolean identityEdited = (req.title() != null && !req.title().isBlank())
+                || (req.artist() != null && !req.artist().isBlank());
+        boolean hasValidIdentity = song.getTitle() != null && !song.getTitle().isBlank() && !"未识别".equals(song.getTitle())
+                && song.getArtist() != null && !song.getArtist().isBlank() && !"未知歌手".equals(song.getArtist());
+        boolean promotedToOk = identityEdited && hasValidIdentity && "unrecognized".equals(song.getStatus());
         if (promotedToOk) {
             song.setStatus("ok");
         }

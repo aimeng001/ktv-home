@@ -65,4 +65,38 @@ class MusicMetadataApplyServiceTest {
         assertThat(song.getMetadataLocks()).containsExactlyInAnyOrder("album", "releaseDate", "aliases");
         assertThat(song.getMetadataProvenance()).contains("MANUAL_REVIEW").doesNotContain("externalId");
     }
+
+    @Test
+    void promotesUnrecognizedSongToOkAndRefreshesProjectionWhenIdentityIsPopulated() {
+        Song song = new Song();
+        song.setId(9L);
+        song.setTitle("未识别");
+        song.setArtist("未知歌手");
+        song.setStatus("unrecognized");
+        song.setDurationMs(210_000);
+        song.setMetadataProvenance("{}");
+
+        ExternalTrack track = new ExternalTrack(MusicProvider.QQ, "track-9", "我的背后",
+                List.of("5566"), "专辑", 210_000, "2003-01-01", List.of(),
+                null, "AVAILABLE", null);
+        SongRepository songs = mock(SongRepository.class);
+        ExternalTrackStorage storage = mock(ExternalTrackStorage.class);
+        when(songs.findById(9L)).thenReturn(Optional.of(song));
+        when(songs.findByFingerprint(org.mockito.ArgumentMatchers.anyString())).thenReturn(Optional.empty());
+        when(storage.track(MusicProvider.QQ, "track-9", false)).thenReturn(Optional.of(track));
+
+        com.homektv.library.ArtistDirectoryProjectionService projection = mock(com.homektv.library.ArtistDirectoryProjectionService.class);
+        MusicMetadataApplyService service = new MusicMetadataApplyService(songs, mock(MusicSourceSearchService.class),
+                storage, mock(ExternalCoverService.class), mock(MusicSourceConfigService.class), new ObjectMapper());
+        service.setArtistDirectoryProjectionService(projection);
+
+        service.apply(9L, MusicProvider.QQ, "track-9", new MusicMetadataApplyService.ApplyRequest(
+                Set.of("title", "artist"),
+                Map.of()));
+
+        assertThat(song.getStatus()).isEqualTo("ok");
+        assertThat(song.getTitle()).isEqualTo("我的背后");
+        assertThat(song.getArtist()).isEqualTo("5566");
+        org.mockito.Mockito.verify(projection).requestRefreshAfterCommit();
+    }
 }

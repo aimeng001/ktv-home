@@ -109,7 +109,7 @@ public class JdbcLibraryScanSeenPathStore implements LibraryScanSeenPathStore {
                 + "       RETURNING file.id, file.song_id"
                 + "), updated_songs AS ("
                 + "    UPDATE songs song SET status = 'file_missing' "
-                + "     WHERE song.status = 'ok' "
+                + "     WHERE song.status IN ('ok', 'unrecognized', 'unsupported') "
                 + "       AND EXISTS ("
                 + "           SELECT 1 FROM marked_files marked "
                 + "            WHERE marked.song_id = song.id"
@@ -124,9 +124,21 @@ public class JdbcLibraryScanSeenPathStore implements LibraryScanSeenPathStore {
                 + "              )"
                 + "       ) "
                 + "       RETURNING song.id"
+                + "), orphan_unrecognized_songs AS ("
+                + "    UPDATE songs song SET status = 'file_missing' "
+                + "     WHERE song.status = 'unrecognized' "
+                + "       AND NOT EXISTS ("
+                + "           SELECT 1 FROM song_files remaining "
+                + "            WHERE remaining.song_id = song.id AND remaining.valid = TRUE"
+                + "       ) "
+                + "       AND NOT EXISTS ("
+                + "           SELECT 1 FROM updated_songs u "
+                + "            WHERE u.id = song.id"
+                + "       ) "
+                + "       RETURNING song.id"
                 + ") "
                 + "SELECT (SELECT COUNT(*) FROM marked_files) AS files_marked, "
-                + "       (SELECT COUNT(*) FROM updated_songs) AS songs_marked";
+                + "       (SELECT COUNT(*) FROM updated_songs) + (SELECT COUNT(*) FROM orphan_unrecognized_songs) AS songs_marked";
         return jdbc.query(sql,
                 statement -> {
                     statement.setString(1, fileRole);

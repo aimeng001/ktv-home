@@ -31,10 +31,16 @@ public class MusicMetadataApplyService {
     private final ObjectMapper mapper;
     private final ArtistCreditService artistCreditService;
     private com.homektv.library.CatalogRevisionService catalogRevisionService;
+    private com.homektv.library.ArtistDirectoryProjectionService artistDirectoryProjectionService;
 
     @Autowired(required = false)
     void setCatalogRevisionService(com.homektv.library.CatalogRevisionService catalogRevisionService) {
         this.catalogRevisionService = catalogRevisionService;
+    }
+
+    @Autowired(required = false)
+    void setArtistDirectoryProjectionService(com.homektv.library.ArtistDirectoryProjectionService artistDirectoryProjectionService) {
+        this.artistDirectoryProjectionService = artistDirectoryProjectionService;
     }
 
     public MusicMetadataApplyService(SongRepository songRepository, MusicSourceSearchService searchService,
@@ -101,10 +107,19 @@ public class MusicMetadataApplyService {
         }
         overrides.keySet().stream().filter(applied::contains).forEach(song::lockMetadata);
         updateProvenance(song, provider, externalId, applied, overrides.keySet());
+        boolean unrecognizedPromoted = "unrecognized".equals(song.getStatus())
+                && song.getTitle() != null && !song.getTitle().isBlank() && !"未识别".equals(song.getTitle())
+                && song.getArtist() != null && !song.getArtist().isBlank() && !"未知歌手".equals(song.getArtist());
+        if (unrecognizedPromoted) {
+            song.setStatus("ok");
+        }
         Song saved = songRepository.save(song);
         if (artistCreditService != null && applied.contains("artist")) {
             if (structuredArtistCredit) artistCreditService.replace(saved.getId(), track.artists());
             else artistCreditService.replace(saved.getId(), saved.getArtist());
+        }
+        if ((applied.contains("artist") || unrecognizedPromoted) && artistDirectoryProjectionService != null) {
+            artistDirectoryProjectionService.requestRefreshAfterCommit();
         }
         storage.saveMatch(songId, track, 1);
         storage.markApplied(songId, provider, externalId);
@@ -146,9 +161,18 @@ public class MusicMetadataApplyService {
         song.setFingerprint(fingerprint);
         applied.forEach(song::lockMetadata);
         updateManualProvenance(song, applied);
+        boolean unrecognizedPromoted = "unrecognized".equals(song.getStatus())
+                && song.getTitle() != null && !song.getTitle().isBlank() && !"未识别".equals(song.getTitle())
+                && song.getArtist() != null && !song.getArtist().isBlank() && !"未知歌手".equals(song.getArtist());
+        if (unrecognizedPromoted) {
+            song.setStatus("ok");
+        }
         Song saved = songRepository.save(song);
         if (artistCreditService != null && applied.contains("artist")) {
             artistCreditService.replace(saved.getId(), saved.getArtist());
+        }
+        if ((!applied.isEmpty() || unrecognizedPromoted) && artistDirectoryProjectionService != null) {
+            artistDirectoryProjectionService.requestRefreshAfterCommit();
         }
         if (!applied.isEmpty() && catalogRevisionService != null) {
             catalogRevisionService.bumpIfChanged(true);
