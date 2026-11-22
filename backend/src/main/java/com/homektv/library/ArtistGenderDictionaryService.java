@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
 @Service
 public class ArtistGenderDictionaryService {
     public static final int MAX_IMPORT_ENTRIES = 5_000;
+    static final int MAX_BUILTIN_ENTRIES = 20_000;
     private static final int MAX_NAME_LENGTH = 120;
     private static final int MAX_ALIASES_PER_ENTRY = 32;
     private static final Pattern CONTROL_CHARACTERS = Pattern.compile("[\\p{Cntrl}]");
@@ -54,7 +55,7 @@ public class ArtistGenderDictionaryService {
     /** Imports administrator rows; existing admin rows with the same canonical key are updated. */
     @Transactional
     public int importEntries(Collection<DictionaryEntry> entries) {
-        return importRows(normalizeEntries(entries), "ADMIN");
+        return importRows(normalizeEntries(entries, MAX_IMPORT_ENTRIES), "ADMIN");
     }
 
     /** Idempotently seeds the small offline dictionary without overwriting admin rows. */
@@ -66,7 +67,7 @@ public class ArtistGenderDictionaryService {
         } catch (IOException failure) {
             throw new IllegalStateException("无法读取内置歌手分类词典", failure);
         }
-        return importRows(normalizeEntries(entries), "BUILTIN");
+        return importRows(normalizeEntries(entries, MAX_BUILTIN_ENTRIES), "BUILTIN");
     }
 
     private int importRows(List<DictionaryRow> rows, String source) {
@@ -142,11 +143,11 @@ public class ArtistGenderDictionaryService {
         }
     }
 
-    private List<DictionaryRow> normalizeEntries(Collection<DictionaryEntry> entries) {
+    private List<DictionaryRow> normalizeEntries(Collection<DictionaryEntry> entries, int maxEntries) {
         if (entries == null || entries.isEmpty()) return List.of();
-        if (entries.size() > MAX_IMPORT_ENTRIES) {
+        if (entries.size() > maxEntries) {
             throw new ApiException("ARTIST_DICTIONARY_TOO_LARGE",
-                    "单次最多导入 " + MAX_IMPORT_ENTRIES + " 条歌手词典记录");
+                    "单次最多导入 " + maxEntries + " 条歌手词典记录");
         }
         Map<String, DictionaryRow> rows = new LinkedHashMap<>();
         for (DictionaryEntry entry : entries) {

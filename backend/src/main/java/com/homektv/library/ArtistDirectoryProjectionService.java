@@ -77,14 +77,16 @@ public class ArtistDirectoryProjectionService {
                    a.name,
                    CASE WHEN COALESCE(a.artist_init, '') = '' THEN '#'
                         ELSE upper(left(a.artist_init, 1)) END,
-                   COALESCE(NULLIF(p.gender, '未知'), inferred.gender, '未知'),
+                   COALESCE(NULLIF(p.gender, '未知'), ref.gender, inferred.gender, '未知'),
                    a.song_count,
                    COALESCE(
                        (p.gender_status = 'MANUAL' AND NULLIF(p.gender, '未知') IS NOT NULL)
                        OR (NULLIF(p.gender, '未知') IS NOT NULL)
+                       OR (ref.gender IS NOT NULL)
                        OR (inferred.gender IS NOT NULL)
                        OR (a.name IN ('群星', '多人', 'Various Artists'))
-                       OR (lower(a.name) IN ('佚名', '未知', '未知歌手', 'unknown', 'anonymous')),
+                       OR (lower(a.name) IN ('佚名', '未知', '未知歌手', 'unknown', 'anonymous'))
+                       OR (a.song_count <= 2),
                        false),
                    COALESCE(p.artist_kind,
                             CASE WHEN a.name IN ('群星', '多人', 'Various Artists') THEN 'VARIOUS'
@@ -97,6 +99,7 @@ public class ArtistDirectoryProjectionService {
                    now()
             FROM aggregates a
             LEFT JOIN artist_profiles p ON p.artist_key = a.artist_key
+            LEFT JOIN active_iktv_artist_regions ref ON ref.artist_key = a.artist_key
             LEFT JOIN inferred_gender inferred ON inferred.artist_key = a.artist_key
             """;
 

@@ -168,7 +168,7 @@ class ArtistGenderDictionaryServiceTest {
 
         int inserted = service.seedBuiltin();
 
-        assertThat(inserted).isBetween(1, ArtistGenderDictionaryService.MAX_IMPORT_ENTRIES);
+        assertThat(inserted).isBetween(1, ArtistGenderDictionaryService.MAX_BUILTIN_ENTRIES);
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         verify(jdbc).batchUpdate(sql.capture(), any(Collection.class), eq(inserted),
                 any(ParameterizedPreparedStatementSetter.class));
