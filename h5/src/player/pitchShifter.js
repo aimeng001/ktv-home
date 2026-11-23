@@ -7,6 +7,9 @@
 export const MIN_SEMITONES = -6
 export const MAX_SEMITONES = 6
 const BUFFER_SIZE = 4096
+const PITCH_WINDOW_SIZE = 1764 // ~36.75ms at 48kHz, ~40ms at 44.1kHz (optimal dual-tap window)
+const CIRCULAR_BUFFER_SIZE = 8192
+const TWO_PI = 2 * Math.PI
 
 export function clampSemitones(semitones) {
   const val = Number.isFinite(Number(semitones)) ? Math.round(Number(semitones)) : 0
@@ -30,12 +33,11 @@ export function createPitchShifter(audioContext) {
   let bypassNode = null
   let activeNode = null
 
-  // Circular buffers for stereo pitch shifting
-  const bufferL = new Float32Array(BUFFER_SIZE * 4)
-  const bufferR = new Float32Array(BUFFER_SIZE * 4)
+  // Circular buffers for stereo dual-tap pitch shifting
+  const bufferL = new Float32Array(CIRCULAR_BUFFER_SIZE)
+  const bufferR = new Float32Array(CIRCULAR_BUFFER_SIZE)
   let writePos = 0
-  let readPosL = 0
-  let readPosR = 0
+  let phase = 0
 
   function isBypassed() {
     return semitones === 0
@@ -53,8 +55,7 @@ export function createPitchShifter(audioContext) {
     bufferL.fill(0)
     bufferR.fill(0)
     writePos = 0
-    readPosL = 0
-    readPosR = 0
+    phase = 0
   }
 
   function setSemitones(newSemitones) {
@@ -62,7 +63,6 @@ export function createPitchShifter(audioContext) {
     if (next === semitones) return
     semitones = next
     pitchRatio = semitonesToPitchRatio(semitones)
-    reset()
     updateRouting()
   }
 
@@ -88,30 +88,41 @@ export function createPitchShifter(audioContext) {
     const outputL = event.outputBuffer.getChannelData(0)
     const outputR = event.outputBuffer.numberOfChannels > 1 ? event.outputBuffer.getChannelData(1) : outputL
     const len = inputL.length
-    const bufLen = bufferL.length
-    const ratio = pitchRatio
+    const bufLen = CIRCULAR_BUFFER_SIZE
+    const windowSize = PITCH_WINDOW_SIZE
+    const dPhase = (1 - pitchRatio) / windowSize
 
-    // Write input into circular buffer
     for (let i = 0; i < len; i++) {
       bufferL[writePos] = inputL[i]
       bufferR[writePos] = inputR[i]
+
+      // Dual-tap Hann-window overlap-add calculation
+      const delay1 = phase * windowSize
+      const phase2 = (phase + 0.5) % 1
+      const delay2 = phase2 * windowSize
+
+      const w1 = 0.5 * (1 - Math.cos(TWO_PI * phase))
+      const w2 = 1 - w1
+
+      const r1 = (writePos - delay1 + bufLen) % bufLen
+      const r1Floor = Math.floor(r1)
+      const r1Frac = r1 - r1Floor
+      const s1L = bufferL[r1Floor] * (1 - r1Frac) + bufferL[(r1Floor + 1) % bufLen] * r1Frac
+      const s1R = bufferR[r1Floor] * (1 - r1Frac) + bufferR[(r1Floor + 1) % bufLen] * r1Frac
+
+      const r2 = (writePos - delay2 + bufLen) % bufLen
+      const r2Floor = Math.floor(r2)
+      const r2Frac = r2 - r2Floor
+      const s2L = bufferL[r2Floor] * (1 - r2Frac) + bufferL[(r2Floor + 1) % bufLen] * r2Frac
+      const s2R = bufferR[r2Floor] * (1 - r2Frac) + bufferR[(r2Floor + 1) % bufLen] * r2Frac
+
+      outputL[i] = w1 * s1L + w2 * s2L
+      outputR[i] = w1 * s1R + w2 * s2R
+
       writePos = (writePos + 1) % bufLen
-    }
-
-    // Read with fractional pitch ratio interpolation
-    for (let i = 0; i < len; i++) {
-      const idxL = Math.floor(readPosL) % bufLen
-      const nextIdxL = (idxL + 1) % bufLen
-      const fracL = readPosL - Math.floor(readPosL)
-      outputL[i] = bufferL[idxL] * (1 - fracL) + bufferL[nextIdxL] * fracL
-
-      const idxR = Math.floor(readPosR) % bufLen
-      const nextIdxR = (idxR + 1) % bufLen
-      const fracR = readPosR - Math.floor(readPosR)
-      outputR[i] = bufferR[idxR] * (1 - fracR) + bufferR[nextIdxR] * fracR
-
-      readPosL = (readPosL + ratio) % bufLen
-      readPosR = (readPosR + ratio) % bufLen
+      phase += dPhase
+      if (phase >= 1) phase -= 1
+      else if (phase < 0) phase += 1
     }
   }
 

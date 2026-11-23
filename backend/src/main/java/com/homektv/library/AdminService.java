@@ -202,6 +202,7 @@ public class AdminService {
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         boolean manualIdentityEdited = false;
         boolean artistEdited = false;
+        boolean artistGenderEdited = false;
         if (req.title() != null && !req.title().isBlank()) {
             song.setTitle(req.title().trim());
             song.setTitlePy(PinyinUtil.fullPinyin(req.title()));
@@ -225,6 +226,7 @@ public class AdminService {
                 throw new ApiException("INVALID_ARTIST_GENDER", "歌手类型只能是男歌手、女歌手、组合或未知");
             song.setArtistGender(gender);
             song.lockMetadata("artistGender");
+            artistGenderEdited = true;
         }
         if (req.tags() != null) {
             song.setTags(req.tags());
@@ -263,7 +265,7 @@ public class AdminService {
         if (artistEdited && artistCreditService != null) {
             artistCreditService.replace(saved.getId(), saved.getArtist());
         }
-        if ((artistEdited || promotedToOk) && artistDirectoryProjectionService != null) {
+        if ((artistEdited || promotedToOk || artistGenderEdited) && artistDirectoryProjectionService != null) {
             artistDirectoryProjectionService.requestRefreshAfterCommit();
         }
         if (catalogRevisionService != null) {

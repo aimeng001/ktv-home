@@ -536,6 +536,11 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR s.id::text = LOWER(:keyword)
                   OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
               )
+              AND (
+                  :wordCount <= 0
+                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
+                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+              )
             """,
             countQuery = """
             SELECT COUNT(*) FROM songs s
@@ -652,6 +657,11 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
                   OR s.id::text = LOWER(:keyword)
                   OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
+              )
+              AND (
+                  :wordCount <= 0
+                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
+                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
               )
             """,
             countQuery = """
@@ -770,6 +780,11 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR s.id::text = LOWER(:keyword)
                   OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
               )
+              AND (
+                  :wordCount <= 0
+                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
+                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+              )
             """,
             countQuery = """
             SELECT COUNT(*) FROM songs s
@@ -884,6 +899,11 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                   OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
                   OR s.id::text = LOWER(:keyword)
                   OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
+              )
+              AND (
+                  :wordCount <= 0
+                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
+                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
               )
             """,
             countQuery = """

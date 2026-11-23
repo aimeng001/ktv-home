@@ -104,7 +104,11 @@ public class ArtistAvatarJobService {
     /** Reconciles profiles beyond the bounded first page after a large scan. */
     @Scheduled(fixedDelayString = "${app.artist-avatar.pending-reconcile-ms:60000}")
     void retryPendingProfileEnqueue() {
-        enqueuePendingProfiles();
+        try {
+            executor.execute(this::enqueuePendingProfiles);
+        } catch (RejectedExecutionException failure) {
+            log.debug("pending artist avatar profile enqueue queued for retry: {}", failure.getMessage());
+        }
     }
 
     /** Explicit administrator retry for profiles that still have no usable avatar. */

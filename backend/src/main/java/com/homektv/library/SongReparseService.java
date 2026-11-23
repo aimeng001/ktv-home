@@ -41,6 +41,11 @@ public class SongReparseService {
     public List<Preview> preview(List<Long> songIds, String rule) {
         validateRule(rule);
         List<String> knownArtists = existingArtistNames();
+        return previewInternal(songIds, rule, knownArtists);
+    }
+
+    private List<Preview> previewInternal(List<Long> songIds, String rule, List<String> knownArtists) {
+        FilenameParser.ArtistIndex artistIndex = FilenameParser.prepareKnownArtists(knownArtists);
         List<Preview> result = new ArrayList<>();
         for (Long songId : songIds) {
             Song song = songRepository.findById(songId).orElse(null);
@@ -52,7 +57,7 @@ public class SongReparseService {
                 continue;
             }
             String filename = Path.of(file.getFilePath()).getFileName().toString();
-            ParsedMeta parsed = FilenameParser.parse(filename, rule, knownArtists);
+            ParsedMeta parsed = FilenameParser.parse(filename, rule, artistIndex);
             String artist = parsed.artist().isBlank() ? "未知歌手" : parsed.artist();
             result.add(new Preview(songId, song.getTitle(), song.getArtist(), filename,
                     parsed.title(), artist, parsed.catalogNumber(), parsed.recognized(),
@@ -63,9 +68,10 @@ public class SongReparseService {
 
     @Transactional
     public ApplyResult apply(List<Long> songIds, String rule) {
-        List<Preview> previews = preview(songIds, rule);
-        List<String> knownArtists = artistCreditService == null
-                ? List.of() : existingArtistNames();
+        validateRule(rule);
+        List<String> rawKnown = artistCreditService == null ? List.of() : existingArtistNames();
+        List<String> knownArtists = rawKnown.isEmpty() ? List.of() : ArtistCreditParser.preindex(rawKnown);
+        List<Preview> previews = previewInternal(songIds, rule, knownArtists);
         int updated = 0;
         int skipped = 0;
         for (Preview preview : previews) {

@@ -103,7 +103,7 @@ public final class AiBaseUrlPolicy {
     private static boolean isHttp(URI uri) { return "http".equalsIgnoreCase(uri.getScheme()); }
     private static boolean isHttps(URI uri) { return "https".equalsIgnoreCase(uri.getScheme()); }
 
-    private static boolean isPrivate(InetAddress address) {
+    public static boolean isPrivate(InetAddress address) {
         if (address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isLinkLocalAddress()
                 || address.isSiteLocalAddress() || address.isMulticastAddress()) return true;
         byte[] bytes = address.getAddress();

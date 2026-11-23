@@ -154,10 +154,23 @@ public class CategoryBrowseService {
                 .toList();
     }
 
+    private volatile CachedLanguages cachedLanguages;
+
+    private record CachedLanguages(List<Map<String, Object>> items, long expiresAtNanos) {}
+
     public List<Map<String, Object>> languages() {
-        return songRepository.aggregateLanguagesByStatus("ok").stream()
+        CachedLanguages snapshot = cachedLanguages;
+        long now = System.nanoTime();
+        if (snapshot != null && now < snapshot.expiresAtNanos()) {
+            return snapshot.items();
+        }
+        List<Map<String, Object>> loaded = songRepository.aggregateLanguagesByStatus("ok").stream()
                 .map(item -> Map.<String, Object>of("name", item.getLanguage(), "songCount", item.getSongCount()))
                 .toList();
+        if (!loaded.isEmpty()) {
+            cachedLanguages = new CachedLanguages(loaded, now + 5_000_000_000L);
+        }
+        return loaded;
     }
 
     private volatile CachedTags cachedTags;

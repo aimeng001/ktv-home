@@ -545,7 +545,7 @@ class StreamControllerTest {
         List<String> cmd = executedCommand.get();
         assertThat(cmd).isNotNull();
         assertThat(cmd).containsSequence("-ss", "15.500");
-        assertThat(cmd).containsSequence("-map", "0:v:0");
+        assertThat(cmd).containsSequence("-map", "0:V:0?");
         assertThat(cmd).containsSequence("-map", "0:a:0");
         assertThat(cmd).containsSequence("-map", "0:a:1");
         assertThat(cmd).containsSequence("-c:a", "aac");
@@ -1618,7 +1618,7 @@ class StreamControllerTest {
                 controller.streamInternal(302L, null, 25.0, false, 1, null);
         assertThat(valid.getStatusCode()).isEqualTo(HttpStatus.OK);
         valid.getBody().writeTo(new ByteArrayOutputStream());
-        assertThat(capturedCommand.get()).containsSubsequence("-map", "0:v:0", "-map", "0:a:1");
+        assertThat(capturedCommand.get()).containsSubsequence("-map", "0:V:0?", "-map", "0:a:1");
         assertThat(capturedCommand.get()).containsSubsequence("-c:v", "copy");
         assertThat(capturedCommand.get()).containsSubsequence("-ss", "25.000");
     }

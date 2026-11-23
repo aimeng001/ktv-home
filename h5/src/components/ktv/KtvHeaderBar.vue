@@ -151,9 +151,9 @@ const modeBadge = computed(() => {
   }
   return {
     cls: 'web-remote',
-    label: player.webPlayerActive ? '📱 遥控控制台' : '💻 本机大屏播放',
-    title: player.webPlayerActive
-      ? '房间已有其他网页作为主屏，点击接管本机作为 KTV 主播放端'
+    label: (player.modeOverride === 'console' || player.webPlayerActive) ? '📱 遥控控制台' : '💻 本机大屏播放',
+    title: (player.modeOverride === 'console' || player.webPlayerActive)
+      ? '当前为静音遥控控制台模式，点击切换为本机大屏播放'
       : '当前无 TV 在线，本机作为完整 KTV 主播放端（发声播放中）'
   }
 })

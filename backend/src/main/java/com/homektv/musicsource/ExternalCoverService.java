@@ -5,6 +5,7 @@ import com.homektv.web.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URI;
@@ -15,6 +16,12 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Service
 public class ExternalCoverService {
@@ -33,6 +40,8 @@ public class ExternalCoverService {
             MusicProvider.NETEASE, Set.of("music.126.net"),
             MusicProvider.KUGOU, Set.of("kugou.com", "kugoucdn.com", "kgimg.com")
     );
+    private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    private static final ExecutorService BODY_READ_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
     private final HttpClient client;
     private final AssetWriter writer;
     private final ProviderCallGuard guard;
@@ -42,7 +51,7 @@ public class ExternalCoverService {
     @Autowired
     public ExternalCoverService(AssetWriter writer, ProviderCallGuard guard, CoverImageNormalizer imageNormalizer) {
         this(writer, guard, imageNormalizer,
-                HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(), InetAddress::getAllByName);
+                HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).followRedirects(HttpClient.Redirect.NEVER).build(), InetAddress::getAllByName);
     }
 
     ExternalCoverService(AssetWriter writer, ProviderCallGuard guard, CoverImageNormalizer imageNormalizer,
@@ -160,7 +169,7 @@ public class ExternalCoverService {
                     }
                     long length = response.headers().firstValueAsLong("Content-Length").orElse(-1);
                     if (length > MAX_BYTES) throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面超过 5 MB");
-                    byte[] bytes = input.readNBytes(MAX_BYTES + 1);
+                    byte[] bytes = readNBytesWithTimeout(input, MAX_BYTES + 1, timeout);
                     if (bytes.length == 0 || bytes.length > MAX_BYTES) {
                         throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面为空或超过 5 MB");
                     }
@@ -174,6 +183,27 @@ public class ExternalCoverService {
             }
         }
         throw invalid();
+    }
+
+    private static byte[] readNBytesWithTimeout(InputStream input, int length, Duration timeout) throws IOException {
+        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+            return input.readNBytes(length);
+        }
+        Future<byte[]> future = BODY_READ_EXECUTOR.submit(() -> input.readNBytes(length));
+        try {
+            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            try { input.close(); } catch (Exception ignored) {}
+            throw new IOException("读取封面响应体超时 (" + timeout.toSeconds() + "s)", e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof IOException ioe) throw ioe;
+            throw new IOException(cause);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("读取封面响应体被中断", e);
+        }
     }
 
     private static String refererFor(MusicProvider provider, URI uri) {
@@ -196,8 +226,7 @@ public class ExternalCoverService {
     private void rejectPrivateAddress(String host) {
         try {
             for (InetAddress address : hostAddressResolver.resolve(host)) {
-                if (address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isLinkLocalAddress()
-                        || address.isSiteLocalAddress() || address.isMulticastAddress()) throw invalid();
+                if (com.homektv.ai.AiBaseUrlPolicy.isPrivate(address)) throw invalid();
             }
         } catch (ApiException ex) { throw ex; }
         catch (Exception ex) { throw new ApiException("EXTERNAL_COVER_DNS_FAILED", "封面地址无法解析"); }

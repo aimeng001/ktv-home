@@ -17,6 +17,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -86,7 +87,11 @@ public class ArtistAvatarFallbackChain {
     public List<String> findCandidateUrls(String artistName, Duration timeout) {
         if (!isEnabled()) return List.of();
         String lookup = ArtistAvatarMatcher.cleanLookupName(artistName);
-        if (lookup.isBlank() || !consumeDailyBudget()) return List.of();
+        if (lookup.isBlank()) return List.of();
+        if (!consumeDailyBudget()) {
+            Instant nextWindow = windowDateUtc.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().plusSeconds(300);
+            throw new ProviderRateLimitedException(null, "兜底图源今日配额已用完，等待次日刷新", nextWindow);
+        }
 
         Duration safeTimeout = timeout == null ? Duration.ofSeconds(6) : timeout;
         Duration overseasTimeout = safeTimeout.compareTo(Duration.ofSeconds(4)) > 0

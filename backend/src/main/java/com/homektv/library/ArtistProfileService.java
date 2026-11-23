@@ -189,8 +189,17 @@ public class ArtistProfileService {
                     avatar_error=NULL, updated_at=now()
                 WHERE artist_key=?
                 """, path, provider, artistKey) > 0;
-        if (changed && directoryProjection != null) {
-            directoryProjection.updateAvatarPathAfterCommit(artistKey, path);
+        if (changed) {
+            try {
+                jdbc.update("""
+                        UPDATE artist_avatar_jobs
+                        SET status='SKIPPED', last_error='已获取有效头像', updated_at=now()
+                        WHERE artist_key=? AND status='PENDING'
+                        """, artistKey);
+            } catch (DataAccessException ignored) {}
+            if (directoryProjection != null) {
+                directoryProjection.updateAvatarPathAfterCommit(artistKey, path);
+            }
         }
         return changed;
     }
@@ -412,6 +421,11 @@ public class ArtistProfileService {
                     WHERE job.last_error IS NOT NULL AND trim(job.last_error) <> ''
                       AND job.status IN ('FAILED', 'REVIEW')
                       AND p.avatar_status NOT IN ('READY', 'AUTO_INITIAL')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM artist_avatar_jobs active
+                          WHERE active.artist_key = job.artist_key
+                            AND active.status IN ('PENDING', 'PROCESSING')
+                      )
                     ORDER BY job.updated_at DESC
                     LIMIT 5
                     """, (rs, index) -> {

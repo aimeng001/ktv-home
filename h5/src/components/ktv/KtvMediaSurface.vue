@@ -48,14 +48,14 @@
       <div class="poster-badge">
         <strong>{{ song.title }}</strong>
         <span>{{ song.artist }}</span>
-        <small v-if="mirrorStreamFailed">已切换为封面与实时歌词预览</small>
+        <small v-if="mirrorStreamFailed || (isSilentConsole && streamSpec.liveTranscode)">已切换为封面与实时歌词预览</small>
       </div>
     </div>
 
     <!-- 小窗悬浮歌名栏（避免被固定 video 层遮挡） -->
     <div v-if="!fullscreen && song" class="pip-overlay-caption">
       <strong>{{ song.title }}</strong>
-      <small>{{ player.isTvConsole ? 'TV 同步预览 · 点击全屏' : '点击全屏演唱' }}</small>
+      <small>{{ isSilentConsole ? '控制台镜像 · 点击全屏' : '点击全屏演唱' }}</small>
     </div>
 
     <!-- 全屏覆盖层：顶部信息、实时歌词、底部控制面板（对标 view_ktv_fullscreen_playback_panel.xml） -->
@@ -70,7 +70,7 @@
           <small v-if="nextSong" class="next-hint">下一首：{{ nextSong.title }}</small>
         </div>
         <div class="fs-badges">
-          <span class="fs-mode-tag">{{ player.isTvConsole ? 'TV 控制台镜像' : 'Web KTV 全屏' }}</span>
+          <span class="fs-mode-tag">{{ isSilentConsole ? '控制台镜像' : 'Web KTV 全屏' }}</span>
           <button type="button" class="fs-chip" @click.stop="showLyrics = !showLyrics">
             {{ showLyrics ? '隐藏歌词' : '显示歌词' }}
           </button>
@@ -156,7 +156,7 @@
       <!-- 全屏模式下醒目的自动播放伴奏声音锁定解锁横幅 -->
       <transition name="fade-fast">
         <div
-          v-if="fullscreen && player.isWebHost && !player.isTvConsole && player.audioBlockedByAutoplay && song"
+          v-if="fullscreen && player.isWebHost && !isSilentConsole && player.audioBlockedByAutoplay && song"
           class="fs-autoplay-banner"
           role="alert"
           @click.stop="unlockAudio"
@@ -272,13 +272,21 @@ const lyricLoader = createLyricLoader({
 
 const song = computed(() => player.nowPlaying?.song || null)
 const nextSong = computed(() => player.queue?.[0]?.song || null)
+const isSilentConsole = computed(() => {
+  return player.isSilentConsole ?? (
+    player.isTvConsole ||
+    player.modeOverride === 'console' ||
+    (player.webPlayerActive && player.webPlayerRole !== 'ACTIVE')
+  )
+})
+
 const canVocal = computed(() => (
   song.value?.hasVocalTrack === true
   || ['DUAL_TRACK', 'DUAL_CHANNEL'].includes(player.audioLayout?.layout)
 ))
 
 const needsWebAudioRouting = computed(() => {
-  if (player.isTvConsole) return false
+  if (isSilentConsole.value) return false
   if (['DUAL_TRACK', 'DUAL_CHANNEL'].includes(player.audioLayout?.layout)) return true
   if ((player.pitchSemitones || 0) !== 0) return true
   return false
@@ -294,10 +302,19 @@ const streamSpec = computed(() => buildWebStreamSpec({
   song: song.value,
 }))
 
-const hasVideoStream = computed(() => Boolean(streamSpec.value.url))
+const shouldLoadVideoMedia = computed(() => {
+  // 扫码遥控端（WEB_REMOTE）或处于手动控制台模式时，实时转码流（liveTranscode）不拉取视频流，
+  // 避免多台手机扫码点歌时并发拉取转码流耗尽服务端 4 并发 FFmpeg 转码槽位
+  if ((player.effectiveMode === 'WEB_REMOTE' || player.modeOverride === 'console') && streamSpec.value.liveTranscode) {
+    return false
+  }
+  return Boolean(streamSpec.value.url)
+})
+
+const hasVideoStream = computed(() => Boolean(shouldLoadVideoMedia.value && streamSpec.value.url))
 const isAudioOnly = computed(() => streamSpec.value.isAudioOnly)
 const effectiveMuted = computed(() => {
-  if (player.isTvConsole) return true
+  if (isSilentConsole.value) return true
   if (player.muted) return true
   if (player.audioBlockedByAutoplay) return true
   return false
@@ -335,7 +352,7 @@ function wakeOsd() {
 }
 
 function triggerAudioWakeGesture() {
-  if (player.isTvConsole) return
+  if (isSilentConsole.value) return
   if (typeof channelRouter.resumeDirect === 'function') {
     channelRouter.resumeDirect()
   }
@@ -361,8 +378,8 @@ function onStageClick() {
 function syncAudioRouter() {
   const el = videoEl.value
   if (!el) return
-  if (!player.isTvConsole) {
-    if (needsWebAudioRouting.value) {
+  if (!isSilentConsole.value) {
+    if (needsWebAudioRouting.value || Boolean(channelRouter?.isActive?.())) {
       const routed = channelRouter.attach(el)
       channelRouter.setRouting(player.audioLayout, player.vocalMode)
       channelRouter?.setPitch?.(player.pitchSemitones)
@@ -372,7 +389,6 @@ function syncAudioRouter() {
       }
       el.muted = effectiveMuted.value
     } else {
-      channelRouter.dispose()
       if (el.volume !== undefined) {
         el.volume = Math.max(0, Math.min(1, (player.volume ?? 60) / 100))
       }
@@ -397,7 +413,7 @@ function currentPlaybackSeconds() {
 async function applyMediaSource() {
   const el = videoEl.value
   if (!el) return
-  const nextUrl = streamSpec.value.url
+  const nextUrl = shouldLoadVideoMedia.value ? streamSpec.value.url : ''
   const queueId = player.nowPlaying?.queueId || 0
   const key = `${queueId}|${nextUrl}|${streamReloadNonce.value}`
   if (key === lastStreamKey) return
@@ -428,21 +444,21 @@ async function applyMediaSource() {
 
 async function attemptPlay() {
   const el = videoEl.value
-  if (!el || !streamSpec.value.url) return
+  if (!el || !shouldLoadVideoMedia.value || !streamSpec.value.url) return
   try {
     syncAudioRouter()
     if (needsWebAudioRouting.value && typeof channelRouter.resumeDirect === 'function') {
       channelRouter.resumeDirect()
     }
     await el.play()
-    if (!player.isTvConsole && !player.muted && needsWebAudioRouting.value && channelRouter.isSuspended()) {
+    if (!isSilentConsole.value && !player.muted && needsWebAudioRouting.value && channelRouter.isSuspended()) {
       player.audioBlockedByAutoplay = true
-    } else if (!player.isTvConsole) {
+    } else if (!isSilentConsole.value) {
       player.audioBlockedByAutoplay = false
       player.audioUnlockFailed = false
     }
   } catch (err) {
-    if (!player.isTvConsole && err?.name === 'NotAllowedError') {
+    if (!isSilentConsole.value && err?.name === 'NotAllowedError') {
       player.audioBlockedByAutoplay = true
       el.muted = true
       try { await el.play() } catch { /* wait for user tap */ }
@@ -452,7 +468,7 @@ async function attemptPlay() {
 
 async function unlockAudio() {
   const el = videoEl.value
-  if (!el || player.isTvConsole) return
+  if (!el || isSilentConsole.value) return
   player.audioBlockedByAutoplay = false
   player.audioUnlockFailed = false
   el.muted = player.muted
@@ -707,10 +723,8 @@ watch(() => props.fullscreen, (fs) => {
   else clearTimeout(osdTimer)
 })
 
-watch(() => player.pitchSemitones, (semitones) => {
-  if (player.isWebHost) {
-    channelRouter?.setPitch?.(semitones)
-  }
+watch(() => player.pitchSemitones, () => {
+  syncAudioRouter()
 })
 
 const spectrumCanvas = ref(null)

@@ -1,4 +1,9 @@
 spring:
+  task:
+    scheduling:
+      pool:
+        size: 4
+      thread-name-prefix: scheduling-
   application:
     name: home-ktv-server
   datasource:

@@ -29,8 +29,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import api from '../../api/client'
+import { ref, onBeforeUnmount } from 'vue'
 import { usePlayerStore } from '../../stores/player'
 
 const player = usePlayerStore()
@@ -44,9 +43,11 @@ let audioCtx = null
 
 const EFFECT_CONFIGS = {
   applause: { icon: '👏', text: '现场掌声响起来！', chars: ['👏', '✨', '⭐', '🎊'] },
+  clap: { icon: '👏', text: '现场掌声响起来！', chars: ['👏', '✨', '⭐', '🎊'] },
   cheer: { icon: '🎉', text: '现场欢呼喝彩！', chars: ['🎉', '🥳', '🙌', '🌟', '💥'] },
   boo: { icon: '👎', text: '现场倒彩一片！', chars: ['👎', '💨', '⚡', '🍂'] },
   flower: { icon: '💐', text: '献上一大束鲜花！', chars: ['💐', '🌸', '🌹', '🌺', '🌷'] },
+  toast: { icon: '🍻', text: '举杯欢聚，干杯！', chars: ['🍻', '🥂', '🍾', '✨', '🎉'] },
 }
 
 function getAudioContext() {
@@ -68,7 +69,7 @@ function playSynthesizedSound(type) {
     if (!ctx) return
     const now = ctx.currentTime
 
-    if (type === 'applause' || type === 'cheer') {
+    if (type === 'applause' || type === 'clap' || type === 'cheer') {
       // 噪音碎拍模拟掌声/喝彩
       const bufferSize = ctx.sampleRate * 0.8
       const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
@@ -101,9 +102,9 @@ function playSynthesizedSound(type) {
       gain.connect(ctx.destination)
       osc.start(now)
       osc.stop(now + 0.9)
-    } else if (type === 'flower') {
-      // 清脆和弦风铃
-      const freqs = [523.25, 659.25, 783.99, 1046.50]
+    } else if (type === 'flower' || type === 'toast') {
+      // 清脆和弦风铃 / 碰杯和弦
+      const freqs = type === 'toast' ? [784.00, 1046.50, 1318.51, 1567.98] : [523.25, 659.25, 783.99, 1046.50]
       freqs.forEach((f, idx) => {
         const osc = ctx.createOscillator()
         const gain = ctx.createGain()
@@ -126,12 +127,15 @@ function playSynthesizedSound(type) {
 function triggerEffect(type = 'applause') {
   const config = EFFECT_CONFIGS[type] || EFFECT_CONFIGS.applause
 
-  // 1. 双模音频路由
-  if (player?.tvOnline) {
-    // 电视在线：通过 API 广播让电视大屏功放播放音效，手机/网页端避免杂音
-    api.control({ action: 'effect', effect_id: type }).catch(() => {})
-  } else {
-    // 独立网页播放端：本地程序化音频
+  // 1. 声道静音保护：仅当本机为主播放端且未静音时程序化发声；电视在线或遥控端仅展示视觉效果
+  const shouldPlayAudio = Boolean(
+    player?.isWebHost &&
+    !player?.isTvConsole &&
+    !player?.muted &&
+    player?.modeOverride !== 'console' &&
+    (!player?.webPlayerActive || player?.webPlayerRole === 'ACTIVE')
+  )
+  if (shouldPlayAudio) {
     playSynthesizedSound(type)
   }
 
@@ -165,6 +169,15 @@ function triggerEffect(type = 'applause') {
     activeParticles.value = []
   }, 2600)
 }
+
+onBeforeUnmount(() => {
+  clearTimeout(bannerTimer)
+  clearTimeout(particlesTimer)
+  if (audioCtx && typeof audioCtx.close === 'function') {
+    audioCtx.close().catch(() => {})
+    audioCtx = null
+  }
+})
 
 defineExpose({ triggerEffect })
 </script>

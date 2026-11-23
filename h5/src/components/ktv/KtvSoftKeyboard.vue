@@ -8,7 +8,9 @@
         maxlength="40"
         :placeholder="kbMode === 'number' ? '输入 6 位歌曲编号（如 800101）直接秒定歌曲' : '输入歌名 / 歌手 / 拼音首字母'"
         @input="onManualInput"
-        @keydown.enter.prevent="$emit('submit')"
+        @compositionstart="isComposing = true"
+        @compositionend="onCompositionEnd"
+        @keydown.enter="onEnter"
       />
       <button v-if="modelValue" type="button" class="kb-clear-mini" aria-label="清空输入" @click="clearAll">
         <X :size="15" />
@@ -131,6 +133,7 @@ function selectWordCount(val) {
 
 const kbMode = ref('qwerty')
 const inputEl = ref(null)
+const isComposing = ref(false)
 const qwertyRows = QWERTY_ROWS
 const t9Keys = T9_KEYS
 const numberKeys = NUMBER_KEYS
@@ -167,6 +170,17 @@ function onNumberPress(item) {
 function onManualInput(e) {
   resetMultiTap()
   emit('update:modelValue', e.target.value)
+}
+
+function onCompositionEnd(e) {
+  isComposing.value = false
+  onManualInput(e)
+}
+
+function onEnter(e) {
+  if (isComposing.value || e.isComposing) return
+  e.preventDefault()
+  emit('submit')
 }
 
 function appendChar(ch) {
@@ -292,7 +306,7 @@ defineExpose({ focusInput })
 }
 .kb-mode-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 6px;
 }
 .kb-mode-tabs button {

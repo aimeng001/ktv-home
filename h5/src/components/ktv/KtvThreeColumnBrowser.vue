@@ -265,7 +265,7 @@
 
         <!-- 歌手头部提示 -->
         <div v-if="activeTab === 'singer' && selectedArtist" class="artist-banner">
-          <div class="artist-mini-av">
+          <div class="artist-mini-av" :style="!avatarUrlFor(selectedArtist, avatarFailures) ? getArtistAvatarStyle(selectedArtist.name) : undefined">
             <img v-if="avatarUrlFor(selectedArtist, avatarFailures)" :src="avatarUrlFor(selectedArtist, avatarFailures)" alt="" @error="rememberAvatar(selectedArtist)" />
             <span v-else>{{ (selectedArtist.name || '?').slice(0, 1) }}</span>
           </div>
@@ -300,7 +300,7 @@
             class="artist-card"
             @click="openArtist(artist)"
           >
-            <div class="avatar-circle">
+            <div class="avatar-circle" :style="!avatarUrlFor(artist, avatarFailures) ? getArtistAvatarStyle(artist.name) : undefined">
               <img
                 v-if="avatarUrlFor(artist, avatarFailures)"
                 :src="avatarUrlFor(artist, avatarFailures)"
@@ -454,6 +454,7 @@ import { loadAllFavoritePages } from '../../views/favoritesState'
 import { avatarUrlFor, rememberAvatarFailure } from '../../views/artistAvatarState'
 import { formatOrderToast } from '../../views/orderFeedbackState'
 import { unavailableReasonLabel } from './songAvailability'
+import { getArtistAvatarStyle } from '../../utils/avatarColor'
 import KtvSoftKeyboard from './KtvSoftKeyboard.vue'
 import {
   CAPSULE_TABS,
@@ -1018,19 +1019,23 @@ async function ensureLanguagesLoaded() {
     if (!selectedLanguage.value) selectedLanguage.value = languages.value[0].name
     return Boolean(selectedLanguage.value)
   }
+  const req = reqGate.begin()
   loading.value = true
+  loadError.value = ''
   try {
-    const list = await api.browseLanguages()
+    const list = await api.browseLanguages({ signal: req.signal })
+    if (!reqGate.isCurrent(req.id)) return false
     languages.value = Array.isArray(list) ? list : []
     if (languages.value.length && !selectedLanguage.value) {
       selectedLanguage.value = languages.value[0].name
     }
     return Boolean(selectedLanguage.value)
   } catch (e) {
+    if (!reqGate.isCurrent(req.id) || e.name === 'AbortError') return false
     loadError.value = e.message || '语种目录读取失败'
     return false
   } finally {
-    loading.value = false
+    if (reqGate.isCurrent(req.id)) loading.value = false
   }
 }
 
@@ -1039,19 +1044,23 @@ async function ensureTagsLoaded() {
     if (!selectedTag.value) selectedTag.value = tags.value[0].name
     return Boolean(selectedTag.value)
   }
+  const req = reqGate.begin()
   loading.value = true
+  loadError.value = ''
   try {
-    const list = await api.browseTags()
+    const list = await api.browseTags({ signal: req.signal })
+    if (!reqGate.isCurrent(req.id)) return false
     tags.value = Array.isArray(list) ? list : []
     if (tags.value.length && !selectedTag.value) {
       selectedTag.value = tags.value[0].name
     }
     return Boolean(selectedTag.value)
   } catch (e) {
+    if (!reqGate.isCurrent(req.id) || e.name === 'AbortError') return false
     loadError.value = e.message || '主题目录读取失败'
     return false
   } finally {
-    loading.value = false
+    if (reqGate.isCurrent(req.id)) loading.value = false
   }
 }
 
@@ -1375,6 +1384,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearTimeout(debounceTimer)
+  reqGate.cancel()
   typingCapture?.dispose()
 })
 

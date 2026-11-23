@@ -22,9 +22,17 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 final class MusicSourceHttp {
     static final int MAX_BODY_BYTES = 5 * 1024 * 1024;
+    private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    private static final ExecutorService BODY_READ_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
     private final HttpClient client;
     private final ObjectMapper mapper;
     private final MusicProvider provider;
@@ -33,7 +41,7 @@ final class MusicSourceHttp {
 
     MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts) {
         this(mapper, provider, allowedHosts,
-                HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(), null);
+                HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).followRedirects(HttpClient.Redirect.NEVER).build(), null);
     }
 
     MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts, HttpClient client) {
@@ -43,7 +51,7 @@ final class MusicSourceHttp {
     MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts,
                     ProviderCallGuard callGuard) {
         this(mapper, provider, allowedHosts,
-                HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(), callGuard);
+                HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).followRedirects(HttpClient.Redirect.NEVER).build(), callGuard);
     }
 
     MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts,
@@ -90,7 +98,7 @@ final class MusicSourceHttp {
                             parseRetryAfter(response.headers()), "上游返回 HTTP " + response.statusCode());
                 long declaredLength = response.headers().firstValueAsLong("Content-Length").orElse(-1);
                 if (declaredLength > MAX_BODY_BYTES) throw new ResponseTooLargeException();
-                return mapper.readTree(readAtMost(body, MAX_BODY_BYTES));
+                return mapper.readTree(readAtMostWithTimeout(body, MAX_BODY_BYTES, timeout));
             }
         } catch (MusicSourceException ex) {
             throw ex;
@@ -114,6 +122,27 @@ final class MusicSourceHttp {
             } catch (DateTimeParseException ignoredDate) {
                 return null;
             }
+        }
+    }
+
+    static byte[] readAtMostWithTimeout(InputStream input, int limit, Duration timeout) throws IOException {
+        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+            return readAtMost(input, limit);
+        }
+        Future<byte[]> future = BODY_READ_EXECUTOR.submit(() -> readAtMost(input, limit));
+        try {
+            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            try { input.close(); } catch (Exception ignored) {}
+            throw new IOException("读取响应体超时 (" + timeout.toSeconds() + "s)", e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof IOException ioe) throw ioe;
+            throw new IOException(cause);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("读取响应体被中断", e);
         }
     }
 

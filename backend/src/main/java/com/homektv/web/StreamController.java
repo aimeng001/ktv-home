@@ -26,7 +26,10 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
@@ -84,7 +87,14 @@ public class StreamController {
     private final ProcessLauncher processLauncher;
     private final ResourceBudget resourceBudget;
     private final FFprobeService ffprobeService;
-    private final ConcurrentHashMap<Long, String> audioCodecCache = new ConcurrentHashMap<>();
+    private static final int MAX_AUDIO_CODEC_CACHE_ENTRIES = 2000;
+    private final Map<Long, String> audioCodecCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(128, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<Long, String> eldest) {
+                    return size() > MAX_AUDIO_CODEC_CACHE_ENTRIES;
+                }
+            });
 
     public StreamController(SongFileRepository fileRepo) {
         this(fileRepo, new AppProperties(), new SongAvailabilityPolicy(fileRepo), "ffmpeg",
@@ -264,6 +274,10 @@ public class StreamController {
     static boolean shouldCopyVideo(SongFile sf, boolean forceTranscode, boolean effectiveMerge, Integer audioTrack, boolean softVideo) {
         if (softVideo) return false;
         if (PlaybackTransportPolicy.requiresLiveTranscode(sf, false)) return false;
+        if (sf != null && sf.getVideoCodec() != null && !sf.getVideoCodec().isBlank()) {
+            String vc = sf.getVideoCodec().trim().toLowerCase(java.util.Locale.ROOT);
+            return vc.equals("h264") || vc.equals("avc1") || vc.equals("h.264");
+        }
         return true;
     }
 
@@ -275,17 +289,17 @@ public class StreamController {
 
         String codec = sf.getAudioCodec();
         if (codec == null && file != null && sf.getId() != null) {
-            codec = audioCodecCache.computeIfAbsent(sf.getId(), id -> {
-                if (ffprobeService != null) {
-                    try {
-                        MediaProbe probe = ffprobeService.probe(file.toPath());
-                        return probe != null ? probe.audioCodec() : null;
-                    } catch (Exception e) {
-                        return null;
+            codec = audioCodecCache.get(sf.getId());
+            if (codec == null && ffprobeService != null) {
+                try {
+                    MediaProbe probe = ffprobeService.probe(file.toPath());
+                    if (probe != null && probe.audioCodec() != null) {
+                        codec = probe.audioCodec();
+                        audioCodecCache.put(sf.getId(), codec);
                     }
+                } catch (Exception ignored) {
                 }
-                return null;
-            });
+            }
         }
         if (codec == null && file != null) {
             String name = file.getName().toLowerCase(java.util.Locale.ROOT);

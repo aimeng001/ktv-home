@@ -55,6 +55,12 @@ public class HistoryController {
     private final UserService userService;
     private final WsBroadcaster broadcaster;
     private SongAvailabilityPolicy availabilityPolicy;
+    private com.homektv.library.SongProbeService songProbeService;
+
+    @Autowired(required = false)
+    void setSongProbeService(com.homektv.library.SongProbeService songProbeService) {
+        this.songProbeService = songProbeService;
+    }
 
     /**
      * 构造函数，注入所有依赖服务与仓库。
@@ -202,6 +208,9 @@ public class HistoryController {
         PlayHistory history = historyRepo.findById(historyId)
                 .orElseThrow(() -> new ApiException("HISTORY_NOT_FOUND", "历史记录不存在"));
         Long userId = userService.resolveUserId(request.clientToken());
+        if (songProbeService != null) {
+            songProbeService.ensurePlayable(history.getSongId());
+        }
         QueueItem item = queueService.order(history.getSongId(), userId, request.force());
         int position = queueService.waitingPosition(item);
         boolean started = playbackService.startIfIdle();

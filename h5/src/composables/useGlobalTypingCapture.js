@@ -5,6 +5,7 @@
 export function useGlobalTypingCapture({ onChar, onBackspace, isBlocked } = {}) {
   function handleKeyDown(event) {
     if (!event || event.defaultPrevented) return
+    if (event.isComposing || event.keyCode === 229) return
     if (event.ctrlKey || event.altKey || event.metaKey) return
     if (typeof isBlocked === 'function' && isBlocked()) return
     if (typeof window !== 'undefined' && window.location && /^\/(m\/)?admin/.test(window.location.pathname || '')) {

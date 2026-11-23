@@ -124,11 +124,20 @@ public class PlaybackService {
      */
     @Transactional
     public PositionUpdateResult updatePosition(Long expectedQueueId, long positionMs) {
+        return updatePosition(expectedQueueId, positionMs, null);
+    }
+
+    @Transactional
+    public PositionUpdateResult updatePosition(Long expectedQueueId, long positionMs, Long seekSequence) {
         PlayerState ps = playerRepo.getSingletonForUpdate();
         if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
             return PositionUpdateResult.rejected(ps);
         }
         if (ps.getCurrentQueueId() == null || "idle".equals(ps.getState())) {
+            return PositionUpdateResult.rejected(ps);
+        }
+        // 若客户端携带了 seek_sequence 且小于当前服务端的 seekSequence，说明属于旧进度在途包，丢弃防回跳
+        if (seekSequence != null && seekSequence < ps.getSeekSequence()) {
             return PositionUpdateResult.rejected(ps);
         }
         long normalized = Math.max(0, positionMs);

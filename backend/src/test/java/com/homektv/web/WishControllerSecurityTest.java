@@ -116,6 +116,24 @@ class WishControllerSecurityTest {
     }
 
     @Test
+    void exportCsvEscapesFormulaCharacters() {
+        Wish w = new Wish();
+        w.setId(6L);
+        w.setKeyword("=SUM(1+1)");
+        w.setCreatedBy(456L);
+
+        WishRepository wishes = (WishRepository) Proxy.newProxyInstance(
+                WishRepository.class.getClassLoader(),
+                new Class<?>[]{WishRepository.class},
+                (proxy, method, args) -> "findAllByOrderByCreatedAtDesc".equals(method.getName()) ? List.of(w) : null);
+
+        WishController controller = new WishController(wishes, null);
+        ResponseEntity<byte[]> response = controller.exportCsv();
+        String content = new String(response.getBody(), java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(content).contains("6,\"'=SUM(1+1)\",456");
+    }
+
+    @Test
     void rejectsKeywordExceedingMaxLength() {
         WishRepository wishes = (WishRepository) Proxy.newProxyInstance(
                 WishRepository.class.getClassLoader(),

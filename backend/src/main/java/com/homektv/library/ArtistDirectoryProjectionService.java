@@ -72,12 +72,14 @@ public class ArtistDirectoryProjectionService {
             )
             INSERT INTO artist_directory_stats(
                 artist_key, name, initial, gender, song_count, reviewed,
-                artist_kind, avatar_path, artist_init, artist_py, updated_at)
+                artist_kind, avatar_path, artist_init, artist_py, region, updated_at)
             SELECT a.artist_key,
                    a.name,
                    CASE WHEN COALESCE(a.artist_init, '') = '' THEN '#'
                         ELSE upper(left(a.artist_init, 1)) END,
-                   COALESCE(NULLIF(p.gender, '未知'), ref.gender, inferred.gender, '未知'),
+                   CASE WHEN a.name IN ('群星', '多人', 'Various Artists') THEN '组合'
+                        WHEN lower(a.name) IN ('佚名', '未知', '未知歌手', 'unknown', 'anonymous') THEN '未知'
+                        ELSE COALESCE(NULLIF(p.gender, '未知'), ref.gender, inferred.gender, '未知') END,
                    a.song_count,
                    COALESCE(
                        (p.gender_status = 'MANUAL' AND NULLIF(p.gender, '未知') IS NOT NULL)
@@ -96,6 +98,9 @@ public class ArtistDirectoryProjectionService {
                    p.avatar_path,
                    COALESCE(a.artist_init, ''),
                    COALESCE(a.artist_py, ''),
+                   CASE WHEN lower(a.name) IN ('佚名', '未知', '未知歌手', 'unknown', 'anonymous') THEN ''
+                        WHEN a.name IN ('群星', '多人', 'Various Artists') THEN ''
+                        ELSE COALESCE(ref.region, '') END,
                    now()
             FROM aggregates a
             LEFT JOIN artist_profiles p ON p.artist_key = a.artist_key
@@ -273,7 +278,7 @@ public class ArtistDirectoryProjectionService {
         if ("热门".equals(safeInitial)) safeInitial = "";
         String where = "WHERE (? = '' OR directory.gender = ?) "
                 + "AND (? = '' OR directory.initial = ?) "
-                + "AND (? = '' OR COALESCE(reference_artist.region, '') = ?)";
+                + "AND (? = '' OR directory.region = ?)";
         if (!safeKeyword.isEmpty()) {
             where += " AND (LOWER(directory.name) LIKE '%' || LOWER(?) || '%' "
                     + "OR LOWER(directory.artist_init) LIKE LOWER(?) || '%' "
@@ -281,24 +286,20 @@ public class ArtistDirectoryProjectionService {
         }
         Long total = safeKeyword.isEmpty()
                 ? jdbc.queryForObject(
-                        "SELECT COUNT(*) FROM artist_directory_stats directory "
-                                + "LEFT JOIN active_iktv_artist_regions reference_artist "
-                                + "ON reference_artist.artist_key = directory.artist_key " + where,
+                        "SELECT COUNT(*) FROM artist_directory_stats directory " + where,
                         Long.class, safeGender, safeGender, safeInitial, safeInitial, safeRegion, safeRegion)
                 : jdbc.queryForObject(
-                        "SELECT COUNT(*) FROM artist_directory_stats directory "
-                                + "LEFT JOIN active_iktv_artist_regions reference_artist "
-                                + "ON reference_artist.artist_key = directory.artist_key " + where,
+                        "SELECT COUNT(*) FROM artist_directory_stats directory " + where,
                         Long.class, safeGender, safeGender, safeInitial, safeInitial, safeRegion, safeRegion,
                         safeKeyword, safeKeyword, safeKeyword);
         String rowsSql = """
                 SELECT directory.artist_key, directory.name, directory.initial, directory.gender,
                        directory.song_count, directory.reviewed, directory.artist_kind, directory.avatar_path,
-                       COALESCE(reference_artist.region, '') AS region
+                       directory.region
                 FROM artist_directory_stats directory
-                LEFT JOIN active_iktv_artist_regions reference_artist
-                  ON reference_artist.artist_key = directory.artist_key
-                """ + where + " ORDER BY directory.song_count DESC, directory.name ASC, directory.artist_key ASC LIMIT ? OFFSET ?";
+                """ + where + """
+                 ORDER BY CASE WHEN directory.artist_kind = 'UNATTRIBUTED' THEN 1 ELSE 0 END ASC,
+                          directory.song_count DESC, directory.name ASC, directory.artist_key ASC LIMIT ? OFFSET ?""";
         List<ArtistRow> rows = safeKeyword.isEmpty()
                 ? jdbc.query(
                         rowsSql,
@@ -331,10 +332,8 @@ public class ArtistDirectoryProjectionService {
         return Optional.of(jdbc.query("""
                 SELECT DISTINCT directory.initial
                 FROM artist_directory_stats directory
-                LEFT JOIN active_iktv_artist_regions reference_artist
-                  ON reference_artist.artist_key = directory.artist_key
                 WHERE (? = '' OR directory.gender = ?)
-                  AND (? = '' OR COALESCE(reference_artist.region, '') = ?)
+                  AND (? = '' OR directory.region = ?)
                 ORDER BY directory.initial
                 """, (rs, index) -> rs.getString(1), safeGender, safeGender, safeRegion, safeRegion));
     }

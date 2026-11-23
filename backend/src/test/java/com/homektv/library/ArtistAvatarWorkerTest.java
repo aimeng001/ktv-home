@@ -88,7 +88,7 @@ class ArtistAvatarWorkerTest {
 
         worker.process();
 
-        verify(profiles).markAvatarStatusIfClaimed(eq("zhoujielun"), eq("SKIPPED"),
+        verify(profiles).markAvatarStatusIfClaimed(eq("zhoujielun"), eq("AUTO_INITIAL"),
                 org.mockito.ArgumentMatchers.contains("暂不支持"), eq(1L), eq("lease-token"));
         assertThat(claimCount).hasValue(2);
     }

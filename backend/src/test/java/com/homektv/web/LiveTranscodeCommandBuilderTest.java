@@ -26,7 +26,7 @@ class LiveTranscodeCommandBuilderTest {
         List<String> command = builder.build(source, song, null);
 
         assertThat(command).containsSubsequence(
-                "-map", "0:v:0",
+                "-map", "0:V:0?",
                 "-map", "0:a:0",
                 "-map", "0:a:1",
                 "-map", "0:a:2",
@@ -75,13 +75,13 @@ class LiveTranscodeCommandBuilderTest {
 
         List<String> copyCommand = builder.build(source, song, 18.5, 1, true);
         assertThat(copyCommand).containsSubsequence("-ss", "18.500", "-i", source.getAbsolutePath());
-        assertThat(copyCommand).containsSubsequence("-map", "0:v:0", "-map", "0:a:1");
+        assertThat(copyCommand).containsSubsequence("-map", "0:V:0?", "-map", "0:a:1");
         assertThat(copyCommand).containsSubsequence("-c:v", "copy", "-c:a", "aac");
         assertThat(copyCommand).doesNotContain("0:a:0");
         assertThat(copyCommand).doesNotContain("libx264");
 
         List<String> transcodeCommand = builder.build(source, song, null, 0, false);
-        assertThat(transcodeCommand).containsSubsequence("-map", "0:v:0", "-map", "0:a:0");
+        assertThat(transcodeCommand).containsSubsequence("-map", "0:V:0?", "-map", "0:a:0");
         assertThat(transcodeCommand).containsSubsequence("-c:v", "libx264");
     }
 
@@ -95,7 +95,7 @@ class LiveTranscodeCommandBuilderTest {
 
         assertThat(command).contains("-filter_complex");
         assertThat(command).anyMatch(arg -> arg.contains("amerge=inputs=2"));
-        assertThat(command).containsSubsequence("-map", "0:v:0", "-map", "[aout]");
+        assertThat(command).containsSubsequence("-map", "0:V:0?", "-map", "[aout]");
         assertThat(command).doesNotContain("-map 0:a:0", "-map 0:a:1");
     }
 

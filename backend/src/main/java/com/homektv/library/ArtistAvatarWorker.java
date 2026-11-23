@@ -175,7 +175,7 @@ public class ArtistAvatarWorker {
         MusicProvider jobProvider = job.provider();
         if (jobProvider == null || config.providers() == null || !config.providers().contains(jobProvider)) {
             if (!hasRemainingActiveJobs(profile.artistKey(), job.id())) {
-                profiles.markAvatarStatusIfClaimed(profile.artistKey(), "SKIPPED", "该音乐平台当前未启用",
+                profiles.markAvatarStatusIfClaimed(profile.artistKey(), "AUTO_INITIAL", "该音乐平台当前未启用",
                         job.id(), job.claimToken());
             }
             finish(job, "SKIPPED", "该音乐平台当前未启用");
@@ -184,7 +184,7 @@ public class ArtistAvatarWorker {
         ArtistMetadataProvider metadataProvider = providers.get(jobProvider);
         if (metadataProvider == null) {
             if (!hasRemainingActiveJobs(profile.artistKey(), job.id())) {
-                profiles.markAvatarStatusIfClaimed(profile.artistKey(), "SKIPPED", "该平台暂不支持歌手头像搜索",
+                profiles.markAvatarStatusIfClaimed(profile.artistKey(), "AUTO_INITIAL", "该平台暂不支持歌手头像搜索",
                         job.id(), job.claimToken());
             }
             finish(job, "SKIPPED", "该音乐平台暂不支持歌手头像搜索");
@@ -292,6 +292,9 @@ public class ArtistAvatarWorker {
             if (!avatarCommitted) return;
             skipRemainingPendingJobs(profile.artistKey(), job.id());
             finish(job, "COMPLETED", null);
+        } catch (ProviderRateLimitedException failure) {
+            log.debug("artist avatar fallback rate limited for {}: {}", profile.displayName(), failure.getMessage());
+            defer(job, failure.getMessage(), failure.retryAt());
         } catch (RuntimeException failure) {
             log.debug("artist avatar fallback failed for {}: {}", profile.displayName(), failure.getMessage());
             deferRetry(job, "歌手头像兜底服务暂时不可用", retryAt(job, null));
@@ -360,6 +363,16 @@ public class ArtistAvatarWorker {
                                 OR (
                                     (rate.cooldown_until IS NULL OR rate.cooldown_until <= now())
                                     AND (rate.window_date_utc < ? OR rate.request_count < ?)
+                                )
+                              )
+                          AND (
+                                job.provider <> 'FALLBACK'
+                                OR NOT EXISTS (
+                                    SELECT 1
+                                    FROM artist_avatar_jobs primary_job
+                                    WHERE primary_job.artist_key = job.artist_key
+                                      AND primary_job.tier > job.tier
+                                      AND primary_job.status IN ('PENDING', 'PROCESSING')
                                 )
                               )
                           AND NOT EXISTS (
@@ -442,6 +455,10 @@ public class ArtistAvatarWorker {
     private void deferRetry(Job job, String reason, Instant retryAt) {
         if (shuttingDown) return;
         try {
+            boolean willFail = (job.attempts + 1 >= MAX_ATTEMPTS);
+            if (willFail && !hasRemainingActiveJobs(job.artistKey(), job.id())) {
+                profiles.markAvatarStatusIfClaimed(job.artistKey(), "AUTO_INITIAL", reason, job.id(), job.claimToken());
+            }
             jdbc.update("""
                     UPDATE artist_avatar_jobs
                     SET status=CASE WHEN attempts + 1 >= ? THEN 'FAILED' ELSE 'PENDING' END,
@@ -450,7 +467,7 @@ public class ArtistAvatarWorker {
                         lease_until=NULL, claim_token=NULL, last_error=?, updated_at=now()
                     WHERE id=? AND status='PROCESSING' AND claim_token=?::uuid
                     """, MAX_ATTEMPTS, MAX_ATTEMPTS,
-                    OffsetDateTime.ofInstant(retryAt, ZoneOffset.UTC), reason, job.id(), job.claimToken());
+                    OffsetDateTime.ofInstant(retryAt, ZoneOffset.UTC), clean(reason), job.id(), job.claimToken());
         } catch (DataAccessException failure) {
             log.debug("artist avatar deferRetry skipped: {}", failure.getMessage());
         }

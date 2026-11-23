@@ -19,6 +19,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class MusicMetadataApplyService {
@@ -32,6 +35,19 @@ public class MusicMetadataApplyService {
     private final ArtistCreditService artistCreditService;
     private com.homektv.library.CatalogRevisionService catalogRevisionService;
     private com.homektv.library.ArtistDirectoryProjectionService artistDirectoryProjectionService;
+    private TransactionTemplate transactionTemplate;
+
+    @Autowired(required = false)
+    public void setTransactionManager(PlatformTransactionManager transactionManager) {
+        this.transactionTemplate = transactionManager == null ? null : new TransactionTemplate(transactionManager);
+    }
+
+    private <T> T runInTransaction(Supplier<T> action) {
+        if (transactionTemplate != null) {
+            return transactionTemplate.execute(status -> action.get());
+        }
+        return action.get();
+    }
 
     @Autowired(required = false)
     void setCatalogRevisionService(com.homektv.library.CatalogRevisionService catalogRevisionService) {
@@ -59,7 +75,6 @@ public class MusicMetadataApplyService {
         this.artistCreditService = artistCreditService;
     }
 
-    @Transactional
     public ApplyResult apply(long songId, MusicProvider provider, String externalId, ApplyRequest request) {
         Song song = songRepository.findById(songId).orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         ExternalTrack track = storage.track(provider, externalId, false)
@@ -68,7 +83,7 @@ public class MusicMetadataApplyService {
                 ? ALLOWED_FIELDS : new LinkedHashSet<>(request.fields());
         if (!ALLOWED_FIELDS.containsAll(requested)) throw new ApiException("EXTERNAL_FIELDS_INVALID", "包含不支持的应用字段");
         Map<String, String> overrides = sanitizeOverrides(request == null ? null : request.overrides(), requested);
-        List<String> applied = new ArrayList<>(); List<String> skippedLocked = new ArrayList<>();
+
         String suggestedTitle = overrides.getOrDefault("title", track.title());
         String suggestedArtist = overrides.getOrDefault("artist", String.join(" / ", track.artists()));
         boolean structuredArtistCredit = requested.contains("artist") && !overrides.containsKey("artist")
@@ -78,6 +93,26 @@ public class MusicMetadataApplyService {
         String nextArtist = requested.contains("artist") && (!song.isMetadataLocked("artist") || overrides.containsKey("artist"))
                 && !suggestedArtist.isBlank() ? suggestedArtist : song.getArtist();
         String fingerprint = MediaClassifier.fingerprint(nextArtist, nextTitle, song.getDurationMs());
+
+        // 外部封面下载与图片格式标准化：在写事务外执行，彻底释放数据库连接池
+        String downloadedCoverPath = null;
+        if (requested.contains("cover") && track.coverUrl() != null && !song.isMetadataLocked("cover")) {
+            int timeout = configService.getConfig() != null ? configService.getConfig().timeoutSeconds() : 5;
+            downloadedCoverPath = coverService.download(provider, track.coverUrl(), fingerprint, Duration.ofSeconds(timeout));
+        }
+        final String coverPathToApply = downloadedCoverPath;
+
+        // 短平快的数据库写事务
+        return runInTransaction(() -> executeApplyTransaction(songId, provider, externalId, track, requested, overrides,
+                suggestedTitle, suggestedArtist, structuredArtistCredit, fingerprint, coverPathToApply));
+    }
+
+    private ApplyResult executeApplyTransaction(long songId, MusicProvider provider, String externalId,
+                                                ExternalTrack track, Set<String> requested, Map<String, String> overrides,
+                                                String suggestedTitle, String suggestedArtist, boolean structuredArtistCredit,
+                                                String fingerprint, String downloadedCoverPath) {
+        Song song = songRepository.findById(songId).orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
+        List<String> applied = new ArrayList<>(); List<String> skippedLocked = new ArrayList<>();
         songRepository.findByFingerprint(fingerprint).filter(other -> !other.getId().equals(songId)).ifPresent(other -> {
             throw new ApiException("SONG_FINGERPRINT_CONFLICT", "应用后会与《" + other.getTitle() + "》重复，请先处理重复歌曲");
         });
@@ -99,9 +134,8 @@ public class MusicMetadataApplyService {
         song.setFingerprint(fingerprint);
         if (requested.contains("cover") && track.coverUrl() != null) {
             if (song.isMetadataLocked("cover")) skippedLocked.add("cover");
-            else {
-                int timeout = configService.getConfig().timeoutSeconds();
-                song.setCoverPath(coverService.download(provider, track.coverUrl(), fingerprint, Duration.ofSeconds(timeout)));
+            else if (downloadedCoverPath != null) {
+                song.setCoverPath(downloadedCoverPath);
                 applied.add("cover");
             }
         }

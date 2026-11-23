@@ -157,6 +157,9 @@ export class KtvSocket {
     this.generation = 0
     this.pendingReports = []
     this.snapshotChunks = new SnapshotChunkAssembler()
+    this._eventsBound = false
+    this._onVisibilityChange = null
+    this._onOnline = null
   }
 
   /**
@@ -174,6 +177,7 @@ export class KtvSocket {
    */
   connect() {
     this.closed = false
+    this._bindWindowEvents()
     this.snapshotChunks.reset()
     this._clearReconnect()
     const generation = ++this.generation
@@ -319,6 +323,7 @@ export class KtvSocket {
     this.generation++
     this._clearReconnect()
     this._stopPing()
+    this._unbindWindowEvents()
     this.snapshotChunks.reset()
     const socket = this.ws
     this.ws = null
@@ -352,6 +357,49 @@ export class KtvSocket {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
+    }
+  }
+
+  _bindWindowEvents() {
+    if (typeof window === 'undefined' || typeof document === 'undefined' || this._eventsBound) return
+    this._onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        this.resumeIfNeeded()
+      }
+    }
+    this._onOnline = () => {
+      this.resumeIfNeeded()
+    }
+    document.addEventListener('visibilitychange', this._onVisibilityChange)
+    window.addEventListener('online', this._onOnline)
+    this._eventsBound = true
+  }
+
+  _unbindWindowEvents() {
+    if (typeof window === 'undefined' || !this._eventsBound) return
+    if (this._onVisibilityChange) {
+      document.removeEventListener('visibilitychange', this._onVisibilityChange)
+      this._onVisibilityChange = null
+    }
+    if (this._onOnline) {
+      window.removeEventListener('online', this._onOnline)
+      this._onOnline = null
+    }
+    this._eventsBound = false
+  }
+
+  /**
+   * 页面切回前台或网络恢复时主动唤醒/探测连接。
+   */
+  resumeIfNeeded() {
+    if (this.closed) return
+    if (!this.ws || this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
+      this.retry = 0
+      this._clearReconnect()
+      this.connect()
+    } else if (this.ws.readyState === WebSocket.OPEN) {
+      const payload = this.getPingPayload?.()
+      this.send(payload ? { type: 'ping', payload } : { type: 'ping' })
     }
   }
 

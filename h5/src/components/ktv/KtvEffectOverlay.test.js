@@ -59,7 +59,7 @@ describe('KtvEffectOverlay 现场气氛互动组件', () => {
     expect(particles.length).toBeGreaterThan(0)
   })
 
-  it('当 TV 在线时，通过 api.control 广播给电视', async () => {
+  it('当 TV 在线时，仅展示视觉横幅与粒子，不发声且不调用 api.control 避免广播风暴', async () => {
     player.tvOnline = true
     let overlayRef
     const Host = {
@@ -77,9 +77,9 @@ describe('KtvEffectOverlay 现场气氛互动组件', () => {
     overlayRef.triggerEffect('cheer')
     await nextTick()
 
-    expect(api.control).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'effect',
-      effect_id: 'cheer',
-    }))
+    expect(api.control).not.toHaveBeenCalled()
+    const banner = root.querySelector('.effect-banner')
+    expect(banner).not.toBeNull()
+    expect(banner.textContent).toContain('欢呼')
   })
 })

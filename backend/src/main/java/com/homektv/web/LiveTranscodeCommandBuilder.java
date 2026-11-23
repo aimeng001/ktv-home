@@ -49,12 +49,12 @@ final class LiveTranscodeCommandBuilder {
             command.add("-filter_complex");
             command.add("[0:a:0]aformat=sample_rates=48000:channel_layouts=mono[a0];[0:a:1]aformat=sample_rates=48000:channel_layouts=mono[a1];[a0][a1]amerge=inputs=2[aout]");
             command.add("-map");
-            command.add("0:v:0");
+            command.add("0:V:0?");
             command.add("-map");
             command.add("[aout]");
         } else {
             command.add("-map");
-            command.add("0:v:0");
+            command.add("0:V:0?");
             if (audioTrack != null && audioTrack >= 0) {
                 command.add("-map");
                 command.add("0:a:" + audioTrack);

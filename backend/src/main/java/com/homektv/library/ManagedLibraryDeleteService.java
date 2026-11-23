@@ -153,6 +153,7 @@ public class ManagedLibraryDeleteService {
 
     /** Restore a staged operation; used by rollback callbacks and focused tests. */
     public synchronized void rollback(String operationId) {
+        if (LibraryModePolicy.isExternalReadOnly(props)) return;
         ManagedDeleteOperation operation = operationRepository.findById(operationId).orElse(null);
         if (operation == null || ManagedDeleteOperation.ROLLED_BACK.equals(operation.getStatus())
                 || ManagedDeleteOperation.PURGED.equals(operation.getStatus())) return;
@@ -173,6 +174,7 @@ public class ManagedLibraryDeleteService {
 
     /** Mark the DB deletion durable, then purge only the already committed trash. */
     public synchronized void complete(String operationId) {
+        if (LibraryModePolicy.isExternalReadOnly(props)) return;
         ManagedDeleteOperation operation = operationRepository.findById(operationId).orElse(null);
         if (operation == null || ManagedDeleteOperation.PURGED.equals(operation.getStatus())) return;
         List<StagedFile> files;
@@ -201,6 +203,7 @@ public class ManagedLibraryDeleteService {
     /** Recover operations left by a process crash or an uncompleted transaction callback. */
     @EventListener(ApplicationReadyEvent.class)
     public void recoverPendingOperations() {
+        if (LibraryModePolicy.isExternalReadOnly(props)) return;
         for (ManagedDeleteOperation operation : operationRepository
                 .findByStatusInOrderByCreatedAtAsc(RECOVERABLE_STATUSES)) {
             try {

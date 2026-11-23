@@ -459,7 +459,6 @@ async function sendEffect(fx) {
   try {
     const effectId = typeof fx === 'string' ? fx : fx?.id
     if (effectId) {
-      effectOverlayRef.value?.triggerEffect(effectId)
       await controls.effect(effectId)
       const label = typeof fx === 'object' && fx?.label ? fx.label : effectId
       toast(`已发送现场音效：${label}`)

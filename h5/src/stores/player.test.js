@@ -377,7 +377,7 @@ describe('usePlayerStore', () => {
     p.reportProgress(1, 25000)
     expect(p.socket.send).toHaveBeenLastCalledWith({
       type: 'progress',
-      payload: { queue_id: 1, position_ms: 25000, generation: 4 }
+      payload: { queue_id: 1, position_ms: 25000, generation: 4, seek_sequence: 0 }
     })
 
     p.handleEvent('player_state', { ...snapshot, tvOnline: true, stateRevision: 11 })
@@ -486,7 +486,7 @@ describe('usePlayerStore', () => {
     p.reportProgress(2, 'bad')
     expect(socket.send).toHaveBeenLastCalledWith({
       type: 'progress',
-      payload: { queue_id: 2, position_ms: 0, generation: 7 }
+      payload: { queue_id: 2, position_ms: 0, generation: 7, seek_sequence: 0 }
     })
     p.reportFinished(2)
     expect(socket.send).toHaveBeenLastCalledWith({

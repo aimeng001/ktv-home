@@ -40,27 +40,99 @@ public final class ArtistCreditParser {
     public static List<String> parse(String artistCredit, Collection<String> knownArtists) {
         if (artistCredit == null || artistCredit.isBlank()) return List.of();
         String trimmed = artistCredit.trim();
-        Collection<String> safeKnown = atomicKnownArtists(knownArtists);
+        KnownArtistsLookup lookup = knownArtists instanceof PreindexedKnownArtists pre
+                ? pre.getLookup()
+                : new KnownArtistsLookup(knownArtists);
 
         List<String> explicit = List.of(trimmed.split(COLLABORATOR_SEPARATOR.pattern(), -1));
         if (explicit.size() <= 1) {
-            String exact = exactKnownArtist(trimmed, safeKnown);
+            String exact = lookup.findExact(trimmed);
             if (exact != null) return List.of(exact);
         }
 
         List<String> result = new ArrayList<>();
         for (String part : explicit) {
-            List<String> split = splitByKnownArtists(part, safeKnown);
+            List<String> split = splitByKnownArtists(part, lookup);
             if (split != null) {
                 result.addAll(split);
                 continue;
             }
 
-            List<String> plusSplit = splitByKnownPlus(part, safeKnown);
+            List<String> plusSplit = splitByKnownPlus(part, lookup);
             if (plusSplit != null) result.addAll(plusSplit);
             else result.add(part);
         }
         return normalize(result);
+    }
+
+    public static final class KnownArtistsLookup {
+        private final Map<String, String> map;
+        private final List<String> atomic;
+
+        public KnownArtistsLookup(Collection<String> artists) {
+            if (artists == null || artists.isEmpty()) {
+                this.map = Map.of();
+                this.atomic = List.of();
+            } else {
+                List<String> list = new ArrayList<>(artists.size());
+                Map<String, String> m = new LinkedHashMap<>();
+                for (String artist : artists) {
+                    if (artist == null || artist.isBlank()) continue;
+                    if (!hasExplicitSeparator(artist)) {
+                        String cleaned = artist.trim();
+                        list.add(cleaned);
+                        m.putIfAbsent(key(cleaned), cleaned);
+                    }
+                }
+                this.atomic = list;
+                this.map = m;
+            }
+        }
+
+        public String findExact(String candidate) {
+            return candidate == null ? null : map.get(key(candidate));
+        }
+
+        public boolean isEmpty() {
+            return map.isEmpty();
+        }
+
+        public List<String> atomic() {
+            return atomic;
+        }
+
+        public Map<String, String> map() {
+            return map;
+        }
+    }
+
+    public static final class PreindexedKnownArtists extends java.util.AbstractList<String> {
+        private final List<String> source;
+        private final KnownArtistsLookup lookup;
+
+        public PreindexedKnownArtists(Collection<String> source) {
+            this.source = source instanceof List<String> list ? list : new ArrayList<>(source);
+            this.lookup = new KnownArtistsLookup(source);
+        }
+
+        public KnownArtistsLookup getLookup() {
+            return lookup;
+        }
+
+        @Override
+        public String get(int index) {
+            return source.get(index);
+        }
+
+        @Override
+        public int size() {
+            return source.size();
+        }
+    }
+
+    public static List<String> preindex(Collection<String> knownArtists) {
+        if (knownArtists instanceof PreindexedKnownArtists pre) return pre;
+        return new PreindexedKnownArtists(knownArtists);
     }
 
     private static Collection<String> atomicKnownArtists(Collection<String> knownArtists) {
@@ -93,9 +165,8 @@ public final class ArtistCreditParser {
      * ambiguous expressions to the existing review path.
      */
     private static List<String> splitByKnownPlus(String artistCredit,
-                                                  Collection<String> knownArtists) {
-        if (artistCredit == null || !artistCredit.contains("+")
-                || knownArtists == null || knownArtists.isEmpty()) return null;
+                                                  KnownArtistsLookup lookup) {
+        if (artistCredit == null || !artistCredit.contains("+") || lookup == null || lookup.isEmpty()) return null;
         List<String> parts = Arrays.stream(artistCredit.split("\\+", -1))
                 .map(String::trim)
                 .filter(part -> !part.isBlank())
@@ -103,7 +174,7 @@ public final class ArtistCreditParser {
         if (parts.size() < 2) return null;
         List<String> matched = new ArrayList<>(parts.size());
         for (String part : parts) {
-            String exact = exactKnownArtist(part, knownArtists);
+            String exact = lookup.findExact(part);
             if (exact == null) return null;
             matched.add(exact);
         }
@@ -111,19 +182,12 @@ public final class ArtistCreditParser {
     }
 
     private static List<String> splitByKnownArtists(String artistCredit,
-                                                    Collection<String> knownArtists) {
+                                                    KnownArtistsLookup lookup) {
         if (artistCredit == null || !artistCredit.trim().matches(".*\\s+.*")
-                || knownArtists == null || knownArtists.isEmpty()) return null;
+                || lookup == null || lookup.isEmpty()) return null;
 
-        Map<String, String> known = new LinkedHashMap<>();
-        for (String artist : knownArtists) {
-            if (artist == null || artist.isBlank()) continue;
-            String cleaned = artist.trim();
-            known.putIfAbsent(key(cleaned), cleaned);
-        }
-        if (known.isEmpty()) return null;
-
-        String exact = known.get(key(artistCredit));
+        Map<String, String> known = lookup.map();
+        String exact = lookup.findExact(artistCredit);
         if (exact != null) return List.of(exact);
 
         List<String> tokens = Arrays.stream(artistCredit.trim().split("\\s+"))

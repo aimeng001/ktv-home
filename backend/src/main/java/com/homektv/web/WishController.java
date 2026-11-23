@@ -90,7 +90,7 @@ public class WishController {
         csv.append('\ufeff'); // UTF-8 BOM
         csv.append("ID,关键词,创建者ID,创建时间\n");
         for (Wish w : list) {
-            String kw = w.getKeyword() == null ? "" : w.getKeyword().replace("\"", "\"\"");
+            String kw = sanitizeCsvField(w.getKeyword());
             csv.append(w.getId()).append(",")
                .append("\"").append(kw).append("\",")
                .append(w.getCreatedBy() == null ? "" : w.getCreatedBy()).append(",")
@@ -101,5 +101,15 @@ public class WishController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"ktv-wishes.csv\"")
                 .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
                 .body(bytes);
+    }
+
+    private static String sanitizeCsvField(String value) {
+        if (value == null || value.isEmpty()) return "";
+        String escaped = value.replace("\"", "\"\"");
+        char first = escaped.charAt(0);
+        if (first == '=' || first == '+' || first == '-' || first == '@' || first == '\t' || first == '\r') {
+            escaped = "'" + escaped;
+        }
+        return escaped;
     }
 }

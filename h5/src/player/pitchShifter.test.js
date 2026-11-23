@@ -90,4 +90,42 @@ describe('pitchShifter 纯前端 Web Audio 变调器', () => {
     scriptProcessor.onaudioprocess(event)
     expect(event.inputBuffer.getChannelData).not.toHaveBeenCalled()
   })
+
+  it('非原调时 processAudio 执行双抽头汉宁窗交叉淡入淡出变调处理且无 NaN', () => {
+    const shifter = createPitchShifter(mockContext)
+    shifter.connect(mockInputNode, mockOutputNode)
+    shifter.setSemitones(2)
+    const scriptProcessor = mockContext.createScriptProcessor.mock.results[0].value
+
+    const inL = new Float32Array(4096)
+    for (let i = 0; i < inL.length; i++) inL[i] = Math.sin(i * 0.1)
+    const inR = new Float32Array(4096)
+    for (let i = 0; i < inR.length; i++) inR[i] = Math.cos(i * 0.1)
+
+    const outL = new Float32Array(4096)
+    const outR = new Float32Array(4096)
+
+    const event = {
+      inputBuffer: {
+        getChannelData: vi.fn(ch => (ch === 0 ? inL : inR)),
+        numberOfChannels: 2
+      },
+      outputBuffer: {
+        getChannelData: vi.fn(ch => (ch === 0 ? outL : outR))
+      }
+    }
+
+    scriptProcessor.onaudioprocess(event)
+    expect(event.inputBuffer.getChannelData).toHaveBeenCalledWith(0)
+    expect(event.inputBuffer.getChannelData).toHaveBeenCalledWith(1)
+
+    let hasNonZeroL = false
+    let hasNaN = false
+    for (let i = 0; i < outL.length; i++) {
+      if (Number.isNaN(outL[i]) || Number.isNaN(outR[i])) hasNaN = true
+      if (outL[i] !== 0) hasNonZeroL = true
+    }
+    expect(hasNaN).toBe(false)
+    expect(hasNonZeroL).toBe(true)
+  })
 })

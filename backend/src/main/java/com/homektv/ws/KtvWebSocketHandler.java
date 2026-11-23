@@ -137,13 +137,20 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 // TV 上行播放进度 → 转发给所有端（详设§4.2 progress）
                 long positionMs = node.path("payload").path("position_ms").asLong(0);
                 long queueId = node.path("payload").path("queue_id").asLong();
-                PositionUpdateResult result = playbackService.updatePosition(queueId, positionMs);
-                if (!result.accepted()) {
+                PositionUpdateResult result;
+                if (node.path("payload").has("seek_sequence")) {
+                    long seekSequence = node.path("payload").path("seek_sequence").asLong(0);
+                    result = playbackService.updatePosition(queueId, positionMs, seekSequence);
+                } else {
+                    result = playbackService.updatePosition(queueId, positionMs);
+                }
+                if (result == null || !result.accepted()) {
                     return;
                 }
                 java.util.Map<String, Object> progress = new java.util.LinkedHashMap<>();
                 progress.put("position_ms", result.state().getPositionMs());
                 progress.put("queue_id", queueId);
+                progress.put("seek_sequence", result.state().getSeekSequence());
                 broadcaster.broadcastPlayback(WsEvent.of(WsEvent.PROGRESS, progress));
             }
             case "finished" -> {

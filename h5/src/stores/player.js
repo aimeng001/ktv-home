@@ -53,6 +53,12 @@ export const usePlayerStore = defineStore('player', {
     isPlaying: (s) => s.state === 'playing',
     isTvConsole: (s) => s.tvOnline === true && s.modeOverride !== 'host',
     isWebHost: (s) => s.tvOnline !== true && s.webPlayerRole === 'ACTIVE' && s.modeOverride !== 'console',
+    isSilentConsole: (s) => {
+      if (s.tvOnline === true && s.modeOverride !== 'host') return true
+      if (s.modeOverride === 'console') return true
+      if (s.webPlayerActive && s.webPlayerRole !== 'ACTIVE') return true
+      return false
+    },
     effectiveMode: (s) => {
       if (s.tvOnline === true && s.modeOverride !== 'host') return 'TV_CONSOLE'
       if (s.tvOnline !== true && s.webPlayerRole === 'ACTIVE' && s.modeOverride !== 'console') return 'WEB_HOST'
@@ -123,6 +129,12 @@ export const usePlayerStore = defineStore('player', {
             } else if (!this.nowPlaying) {
               // Older servers omitted queue_id; keep their position mirror only while a song is active.
               break
+            }
+            if (typeof payload.seek_sequence === 'number' && payload.seek_sequence < this.seekSequence) {
+              break
+            }
+            if (typeof payload.seek_sequence === 'number') {
+              this.seekSequence = payload.seek_sequence
             }
             this.positionMs = Math.max(0, payload.position_ms)
           }
@@ -297,7 +309,12 @@ export const usePlayerStore = defineStore('player', {
       this.positionMs = pos
       this.socket?.send({
         type: 'progress',
-        payload: { queue_id: queueId, position_ms: pos, generation: this.webPlayerGeneration }
+        payload: {
+          queue_id: queueId,
+          position_ms: pos,
+          generation: this.webPlayerGeneration,
+          seek_sequence: this.seekSequence ?? 0,
+        }
       })
     },
 
