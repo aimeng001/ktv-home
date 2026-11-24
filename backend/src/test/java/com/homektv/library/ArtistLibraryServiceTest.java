@@ -1,4 +1,6 @@
 package com.homektv.library;
+import com.homektv.common.ArtistCreditParser;
+import com.homektv.common.ArtistKind;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.ai.AiConfigService;
@@ -175,7 +177,7 @@ class ArtistLibraryServiceTest {
         when(songs.findByArtistIgnoreCaseAndStatus("佚名", "ok")).thenReturn(List.of(placeholder));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.analyze("佚名"))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("占位歌手");
         verify(aiConfig, never()).isConfigured();
     }
@@ -442,7 +444,7 @@ class ArtistLibraryServiceTest {
                 .thenReturn(List.of());
 
         assertThatThrownBy(() -> service.analyze("missing"))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("歌手不存在");
         verify(aiConfig, never()).isConfigured();
     }
@@ -530,7 +532,7 @@ class ArtistLibraryServiceTest {
                 .thenReturn(null);
 
         assertThatThrownBy(() -> service.analyze("missing"))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("歌手不存在");
         List<?> nullArtistSamples = ReflectionTestUtils.invokeMethod(
                 service, "representativeSongsFor", new Object[]{null});
@@ -645,12 +647,12 @@ class ArtistLibraryServiceTest {
     @Test
     void applyRejectsInvalidGenderPlaceholderAndMissingArtist() {
         assertThatThrownBy(() -> service.apply("歌手", "中性"))
-                .isInstanceOf(com.homektv.web.ApiException.class).hasMessageContaining("类型无效");
+                .isInstanceOf(com.homektv.common.ApiException.class).hasMessageContaining("类型无效");
         assertThatThrownBy(() -> service.apply("佚名", "男歌手"))
-                .isInstanceOf(com.homektv.web.ApiException.class).hasMessageContaining("占位歌手");
+                .isInstanceOf(com.homektv.common.ApiException.class).hasMessageContaining("占位歌手");
         when(songs.countByArtistKeyAndStatus("不存在", "ok")).thenReturn(0L);
         assertThatThrownBy(() -> service.apply("不存在", "男歌手"))
-                .isInstanceOf(com.homektv.web.ApiException.class).hasMessageContaining("歌手不存在");
+                .isInstanceOf(com.homektv.common.ApiException.class).hasMessageContaining("歌手不存在");
 
         verify(songs, times(1)).countByArtistKeyAndStatus("不存在", "ok");
     }

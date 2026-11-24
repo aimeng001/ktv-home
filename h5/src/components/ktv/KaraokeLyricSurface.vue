@@ -49,6 +49,25 @@ const showEmptyNotice = computed(() => {
   return props.positionMs < 3500
 })
 
+function lineStartMs(line) {
+  const val = Number(line?.startMs ?? line?.time ?? 0)
+  return Number.isFinite(val) ? val : 0
+}
+
+function lineEndMs(lines, index) {
+  const line = lines?.[index]
+  if (!line) return 0
+  const start = lineStartMs(line)
+  const explicitEnd = Number(line.endMs)
+  if (Number.isFinite(explicitEnd) && explicitEnd > start) return explicitEnd
+  const nextLine = lines?.[index + 1]
+  if (nextLine) {
+    const nextStart = lineStartMs(nextLine)
+    if (nextStart > start) return nextStart
+  }
+  return start + 4500
+}
+
 function findCurrentIndex(lines, pos) {
   if (!lines || !lines.length) return -1
   let low = 0
@@ -57,7 +76,7 @@ function findCurrentIndex(lines, pos) {
 
   while (low <= high) {
     const mid = (low + high) >> 1
-    if ((lines[mid].startMs ?? 0) <= pos) {
+    if (lineStartMs(lines[mid]) <= pos) {
       result = mid
       low = mid + 1
     } else {
@@ -87,26 +106,34 @@ const nextLine = computed(() => {
 const sweepPercent = computed(() => {
   const line = currentLine.value
   if (!line || activeIndex.value < 0) return 0
-  const start = Number(line.startMs) || 0
-  const end = Number(line.endMs) || (start + 3500)
+  const start = lineStartMs(line)
+  const end = lineEndMs(props.lyricLines, activeIndex.value)
   const pos = props.positionMs
 
   if (pos <= start) return 0
   if (pos >= end) return 100
 
-  // 1. 若有逐字锚点时间戳，按字推进
+  // 1. 若有逐字锚点时间戳，按字宽比例精准扫光
   if (Array.isArray(line.words) && line.words.length > 0) {
-    let wordStart = start
-    let wordEnd = end
+    const totalChars = line.words.reduce((sum, w) => sum + Math.max(1, String(w?.text || '').length), 0)
+    let sungChars = 0
     for (let i = 0; i < line.words.length; i++) {
       const w = line.words[i]
-      if (w.time <= pos) {
-        wordStart = w.time
-        wordEnd = (i + 1 < line.words.length) ? line.words[i + 1].time : end
+      const charCount = Math.max(1, String(w?.text || '').length)
+      const wStart = Number(w?.startMs ?? w?.time ?? start)
+      const nextWord = line.words[i + 1]
+      const wEnd = nextWord ? Number(nextWord?.startMs ?? nextWord?.time ?? end) : end
+      if (pos >= wEnd) {
+        sungChars += charCount
+      } else if (pos > wStart) {
+        const frac = (pos - wStart) / Math.max(1, wEnd - wStart)
+        sungChars += charCount * Math.max(0, Math.min(1, frac))
+        break
+      } else {
+        break
       }
     }
-    const ratio = (pos - start) / Math.max(1, end - start)
-    return Math.max(0, Math.min(100, Math.round(ratio * 100)))
+    return Math.max(0, Math.min(100, Math.round((sungChars / Math.max(1, totalChars)) * 100)))
   }
 
   // 2. 传统行级歌词：按行起止毫秒平滑线性扫光（对齐 Android TV LyricSweepCalculator）
@@ -125,7 +152,7 @@ const countdownProgress = computed(() => {
   if (!props.isPlaying || !props.lyricLines || !props.lyricLines.length) return 0
   const pos = props.positionMs
   const first = props.lyricLines[0]
-  const firstStart = Number(first?.startMs) || 0
+  const firstStart = lineStartMs(first)
 
   // 1. 前奏倒计时
   if (firstStart >= 3000 && pos < firstStart && pos >= firstStart - 4000) {
@@ -140,8 +167,11 @@ const countdownProgress = computed(() => {
   if (activeIndex.value >= 0 && activeIndex.value < props.lyricLines.length - 1) {
     const cur = props.lyricLines[activeIndex.value]
     const next = props.lyricLines[activeIndex.value + 1]
-    const curEnd = Number(cur?.endMs) || (Number(cur?.startMs) + 3000)
-    const nextStart = Number(next?.startMs) || 0
+    const explicitCurEnd = Number(cur?.endMs)
+    const curEnd = Number.isFinite(explicitCurEnd) && explicitCurEnd > lineStartMs(cur)
+      ? explicitCurEnd
+      : lineStartMs(cur) + 3000
+    const nextStart = lineStartMs(next)
     if (nextStart - curEnd >= 8000 && pos >= curEnd && pos >= nextStart - 4000 && pos < nextStart) {
       const remainMs = nextStart - pos
       if (remainMs > 3000) return 1

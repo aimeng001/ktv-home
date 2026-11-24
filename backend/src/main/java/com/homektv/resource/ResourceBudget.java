@@ -100,6 +100,11 @@ public final class ResourceBudget {
         }
     }
 
+    /** Admits an on-demand probe within a short bounded wait without blocking callers indefinitely. */
+    public Optional<Permit> tryAcquireProbe(Duration waitTimeout) {
+        return tryAcquireWithGrace(waitTimeout, Work.PROBE, false);
+    }
+
     /** Reserves a live transcode slot before returning an HTTP success response. */
     public Optional<Permit> tryAcquireLiveTranscode() {
         return tryAcquireLiveTranscode(Duration.ZERO);

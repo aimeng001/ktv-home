@@ -1,4 +1,6 @@
 package com.homektv.library;
+import com.homektv.common.ArtistCreditParser;
+import com.homektv.common.ArtistKindClassifier;
 
 import com.homektv.config.AppProperties;
 import com.homektv.musicsource.CoverImageNormalizer;
@@ -137,6 +139,86 @@ public class LocalAvatarResolver {
         }
     }
 
+    /** Resolves a single artist portrait from local candidate directories without scanning the whole library DB. */
+    public boolean resolveSingleArtist(ArtistProfileService.Profile profile) {
+        if (profile == null || profile.artistKey() == null || ArtistKindClassifier.isPlaceholder(profile.displayName())) {
+            return false;
+        }
+        List<Path> candidateRoots = collectCandidateDirectories();
+        if (candidateRoots.isEmpty()) return false;
+        java.util.Set<String> targetKeys = new java.util.LinkedHashSet<>();
+        targetKeys.add(profile.artistKey());
+        if (profile.displayName() != null) {
+            String displayKey = ArtistCreditParser.key(profile.displayName());
+            if (!displayKey.isBlank()) targetKeys.add(displayKey);
+            String lead = extractLeadArtist(profile.displayName());
+            if (!lead.isBlank()) {
+                String leadKey = ArtistCreditParser.key(lead);
+                if (!leadKey.isBlank()) targetKeys.add(leadKey);
+            }
+        }
+        targetKeys.removeIf(String::isBlank);
+        if (targetKeys.isEmpty()) return false;
+
+        Map<String, Path> matchedFiles = new HashMap<>();
+        for (Path root : candidateRoots) {
+            indexMatchingDirectory(root, targetKeys, matchedFiles);
+        }
+        Path imagePath = null;
+        for (String key : targetKeys) {
+            imagePath = matchedFiles.get(key);
+            if (isRegularNonLink(imagePath)) break;
+            imagePath = null;
+        }
+        if (imagePath == null) return false;
+        try {
+            if (Files.size(imagePath) > MAX_FILE_SIZE) return false;
+            byte[] bytes = readBounded(imagePath);
+            if (bytes == null) return false;
+            String ext = extractExtension(imagePath);
+            if (coverImageNormalizer != null) {
+                bytes = coverImageNormalizer.normalize(bytes);
+                ext = "jpg";
+            }
+            String relPath = assetWriter.writeArtistCover(profile.artistKey(), bytes, ext);
+            profileService.setAvatarReady(profile.artistKey(), "LOCAL_PACK", relPath);
+            return true;
+        } catch (Exception e) {
+            log.warn("读取单歌手本地头像失败：{} - {}", imagePath, e.getMessage());
+            return false;
+        }
+    }
+
+    private void indexMatchingDirectory(Path dir, java.util.Set<String> targetKeys, Map<String, Path> index) {
+        if (dir == null || !Files.isDirectory(dir)) return;
+        final Path realRoot;
+        try {
+            realRoot = dir.toRealPath();
+        } catch (IOException e) {
+            return;
+        }
+        try (Stream<Path> stream = Files.walk(dir, 3)) {
+            stream.filter(file -> isRegularFileUnderRoot(realRoot, file)).forEach(file -> {
+                for (Path parent = file.getParent(); parent != null && !parent.equals(dir.getParent()); parent = parent.getParent()) {
+                    String parentName = parent.getFileName() != null ? parent.getFileName().toString().toLowerCase(Locale.ROOT) : "";
+                    if (EXCLUDED_DIRS.contains(parentName)) return;
+                }
+                String filename = file.getFileName().toString();
+                int dot = filename.lastIndexOf('.');
+                if (dot <= 0) return;
+                String ext = filename.substring(dot).toLowerCase(Locale.ROOT);
+                if (!IMAGE_EXTENSIONS.contains(ext)) return;
+                Map<String, Path> localKeys = new HashMap<>(4);
+                indexCandidateKeys(filename.substring(0, dot).trim(), file, localKeys);
+                for (String targetKey : targetKeys) {
+                    if (localKeys.containsKey(targetKey)) {
+                        index.putIfAbsent(targetKey, file);
+                    }
+                }
+            });
+        } catch (IOException ignored) {}
+    }
+
     /**
      * Reads an image with a second, streamed size boundary. The initial Files.size check is
      * only advisory because a file can be replaced or grow before it is opened.
@@ -253,9 +335,14 @@ public class LocalAvatarResolver {
         return dot > 0 ? fn.substring(dot + 1).toLowerCase(Locale.ROOT) : "jpg";
     }
 
+    private static final Pattern LEAD_ARTIST_SPLIT = Pattern.compile(
+            "\\s*(?:[_&＆、/／,，;；+]|(?<=[\\p{IsHan}\\p{IsHangul}\\p{IsHiragana}\\p{IsKatakana}])\\s+(?=[\\p{IsHan}\\p{IsHangul}\\p{IsHiragana}\\p{IsKatakana}]))\\s*");
+
     static String extractLeadArtist(String displayName) {
         if (displayName == null || displayName.isBlank()) return "";
-        String[] parts = displayName.trim().split("\\s*(?:[_&＆、/／,，;；+]|\\s+)\\s*");
+        String[] parts = LEAD_ARTIST_SPLIT.split(displayName.trim());
+        if (parts.length <= 1) return parts.length == 1 && !ArtistKindClassifier.isPlaceholder(parts[0].trim())
+                && parts[0].trim().length() >= 2 ? parts[0].trim() : "";
         for (String part : parts) {
             String trimmed = part.trim();
             if (trimmed.length() >= 2 && !ArtistKindClassifier.isPlaceholder(trimmed)) {

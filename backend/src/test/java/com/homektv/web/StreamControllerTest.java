@@ -7,7 +7,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.homektv.config.AppProperties;
 import com.homektv.domain.AudioLayout;
 import com.homektv.domain.SongFile;
-import com.homektv.library.LibraryMode;
+import com.homektv.common.LibraryMode;
 import com.homektv.library.LibraryModePolicy;
 import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.repo.SongFileRepository;
@@ -62,6 +62,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup;
 
 class StreamControllerTest {
@@ -1723,6 +1724,107 @@ class StreamControllerTest {
         // 第二次调用应走缓存，不再次调用 probe
         assertThat(controller.shouldCopyAudio(unprobedSong, aacFile, true, false, null)).isTrue();
         verify(ffprobe, org.mockito.Mockito.times(1)).probe(aacFile.toPath());
+
+        // 7. 5.1 多声道 AAC 禁止直通，需由服务端重编码下混为立体声保护浏览器 ChannelSplitter(2)
+        SongFile surroundSong = new SongFile();
+        surroundSong.setId(104L);
+        surroundSong.setAudioTracks(1);
+        when(ffprobe.probe(aacFile.toPath())).thenReturn(new com.homektv.media.MediaProbe(
+                1000L, 1, 0, true, "1080p",
+                List.of(new com.homektv.media.AudioStreamInfo(0, null, null, 6, false, true)),
+                "h264", "aac", null, null, null));
+        assertThat(controller.shouldCopyAudio(surroundSong, aacFile, true, false, null)).isFalse();
+        assertThat(controller.shouldCopyAudio(surroundSong, aacFile, true, false, null)).isFalse();
+    }
+
+    @Test
+    void headRequestsReturnMetadataHeadersWithoutAcquiringLeaseOrLaunchingFfmpeg() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("head-stream-library"));
+        Path mp4 = Files.write(library.resolve("song.mp4"), new byte[]{1, 2, 3, 4, 5});
+        Path rmvb = Files.write(library.resolve("legacy.rmvb"), new byte[]{1, 2, 3});
+
+        SongFile mp4File = new SongFile();
+        mp4File.setFilePath(mp4.toString());
+        mp4File.setFormat("mp4");
+        mp4File.setMediaType("KTV_VIDEO");
+
+        SongFile rmvbFile = new SongFile();
+        rmvbFile.setFilePath(rmvb.toString());
+        rmvbFile.setFormat("rmvb");
+        rmvbFile.setMediaType("KTV_VIDEO");
+
+        SongFileRepository repo = mock(SongFileRepository.class);
+        when(repo.findById(501L)).thenReturn(Optional.of(mp4File));
+        when(repo.findById(502L)).thenReturn(Optional.of(rmvbFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        ResourceBudget budget = new ResourceBudget(2, 1, 1, 1, 1, () -> false);
+        AtomicBoolean launcherCalled = new AtomicBoolean(false);
+        StreamController controller = new StreamController(repo, props,
+                new SongAvailabilityPolicy(repo), "ffmpeg", builder -> {
+                    launcherCalled.set(true);
+                    throw new AssertionError("HEAD must not start FFmpeg");
+                }, budget);
+        MockMvc mvc = standaloneSetup(controller).build();
+
+        var mp4Head = mvc.perform(head("/api/stream/501")).andReturn().getResponse();
+        var rmvbHead = mvc.perform(head("/api/stream/502")).andReturn().getResponse();
+
+        assertThat(mp4Head.getStatus()).isEqualTo(HttpStatus.OK.value());
+        assertThat(mp4Head.getContentLength()).isEqualTo(5);
+        assertThat(mp4Head.getContentAsByteArray()).isEmpty();
+        assertThat(rmvbHead.getStatus()).isEqualTo(HttpStatus.OK.value());
+        assertThat(rmvbHead.getContentType()).contains("video/mp4");
+        assertThat(launcherCalled).isFalse();
+        assertThat(budget.activeMediaStreamCount()).isZero();
+        assertThat(budget.activeLiveTranscodeCount()).isZero();
+    }
+
+    @Test
+    void samePlaybackSessionPreemptsPreviousTranscodeInsteadOfReturning429() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("preempt-transcode-lib"));
+        Path media = Files.createFile(library.resolve("song.mkv"));
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("matroska");
+        songFile.setMediaType("MV");
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(503L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        ResourceBudget budget = new ResourceBudget(2, 1, 1, 1, 2, () -> false);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), "ffmpeg", builder -> {
+                    Process proc = mock(Process.class);
+                    when(proc.getInputStream()).thenReturn(new ByteArrayInputStream(new byte[]{0x01, 0x02}));
+                    when(proc.isAlive()).thenReturn(false);
+                    try {
+                        when(proc.waitFor(5, TimeUnit.SECONDS)).thenReturn(true);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                    when(proc.exitValue()).thenReturn(0);
+                    return proc;
+                }, budget);
+
+        org.springframework.mock.web.MockHttpServletRequest req1 = new org.springframework.mock.web.MockHttpServletRequest();
+        req1.setMethod("GET");
+        req1.addHeader("X-Playback-Session", "tv-box-seek");
+        org.springframework.mock.web.MockHttpServletRequest req2 = new org.springframework.mock.web.MockHttpServletRequest();
+        req2.setMethod("GET");
+        req2.addHeader("X-Playback-Session", "tv-box-seek");
+
+        var first = controller.streamInternal(503L, null, 0.0, true, null, false, false, req1);
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(budget.activeLiveTranscodeCount()).isEqualTo(1);
+
+        var second = controller.streamInternal(503L, null, 30.0, true, null, false, false, req2);
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(budget.activeLiveTranscodeCount()).isEqualTo(1);
+
+        second.getBody().writeTo(new ByteArrayOutputStream());
+        assertThat(budget.activeLiveTranscodeCount()).isZero();
+        assertThat(budget.activeMediaStreamCount()).isZero();
     }
 
     private static void diesWhenDestroyed(Process process) {

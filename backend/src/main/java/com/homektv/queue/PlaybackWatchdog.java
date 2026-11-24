@@ -87,7 +87,7 @@ public class PlaybackWatchdog {
         this.startupGraceUntil = clock.instant().plus(STARTUP_GRACE);
     }
 
-    @Scheduled(fixedDelayString = "${app.playback.watchdog-interval-ms:10000}")
+    @Scheduled(fixedDelayString = "${app.playback.watchdog-interval-ms:10000}", scheduler = "realtimeScheduler")
     public void tick() {
         evaluate(clock.instant());
     }

@@ -5,7 +5,7 @@ import com.homektv.domain.Song;
 import com.homektv.library.ArtistCreditService;
 import com.homektv.library.CatalogRevisionService;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;

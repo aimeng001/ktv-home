@@ -1,4 +1,5 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.domain.AppUser;
 import com.homektv.domain.PlayHistory;
@@ -12,8 +13,8 @@ import com.homektv.queue.UserService;
 import com.homektv.repo.AppUserRepository;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.dto.QueueSnapshot;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.QueueSnapshot;
+import com.homektv.contract.SongDto;
 import com.homektv.ws.WsBroadcaster;
 import com.homektv.ws.WsEvent;
 import org.mockito.ArgumentCaptor;
@@ -129,10 +130,10 @@ class HistoryControllerTest {
         when(songRepository.findAllById(any())).thenReturn(List.of(song(11L, "晴天"), song(12L, "稻香")));
         when(userRepository.findAllById(any())).thenReturn(null);
 
-        List<com.homektv.web.dto.RecentHistoryDto> result = controller().recent(" \t ", false);
+        List<com.homektv.contract.RecentHistoryDto> result = controller().recent(" \t ", false);
 
         assertThat(result).hasSize(2);
-        assertThat(result).extracting(com.homektv.web.dto.RecentHistoryDto::playedByNick)
+        assertThat(result).extracting(com.homektv.contract.RecentHistoryDto::playedByNick)
                 .containsExactly("家人", "家人");
         assertThat(result).allSatisfy(item -> assertThat(item.mine()).isFalse());
         verify(userRepository, never()).findByClientToken(any());
@@ -207,7 +208,7 @@ class HistoryControllerTest {
         HistoryController controller = controller();
         controller.setAvailabilityPolicy(availabilityPolicy);
 
-        List<com.homektv.web.dto.RecentHistoryDto> result = controller.recent("client-7", false);
+        List<com.homektv.contract.RecentHistoryDto> result = controller.recent("client-7", false);
 
         assertThat(result).hasSize(2);
         assertThat(result.get(0).mine()).isTrue();

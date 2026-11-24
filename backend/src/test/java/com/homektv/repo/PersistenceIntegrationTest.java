@@ -1,4 +1,5 @@
 package com.homektv.repo;
+import com.homektv.common.ArtistCreditParser;
 
 import com.homektv.domain.PlayerState;
 import com.homektv.domain.Song;
@@ -148,7 +149,7 @@ class PersistenceIntegrationTest {
             return state;
         }).when(playerStateRepository).getSingleton();
 
-        Future<com.homektv.web.dto.QueueSnapshot> snapshotFuture = null;
+        Future<com.homektv.contract.QueueSnapshot> snapshotFuture = null;
         try {
             snapshotFuture = executor.submit(() -> {
                 Thread.currentThread().setName("postgres-snapshot-reader");
@@ -208,7 +209,7 @@ class PersistenceIntegrationTest {
             return state;
         }).when(playerStateRepository).getSingleton();
 
-        Future<com.homektv.web.dto.QueueSnapshot> firstSnapshot = null;
+        Future<com.homektv.contract.QueueSnapshot> firstSnapshot = null;
         try {
             firstSnapshot = executor.submit(() -> {
                 Thread.currentThread().setName("postgres-snapshot-A");
@@ -216,7 +217,7 @@ class PersistenceIntegrationTest {
             });
             assertThat(firstCallBeforeRead.await(10, TimeUnit.SECONDS)).isTrue();
 
-            Future<com.homektv.web.dto.QueueSnapshot> secondSnapshot = executor.submit(() -> {
+            Future<com.homektv.contract.QueueSnapshot> secondSnapshot = executor.submit(() -> {
                 Thread.currentThread().setName("postgres-snapshot-B");
                 return snapshotService.snapshot();
             });
@@ -549,7 +550,7 @@ class PersistenceIntegrationTest {
             var page = songRepository.browseCategorySongs("", "", "", category, "",
                     org.springframework.data.domain.PageRequest.of(0, 10));
             var byArtistKey = songRepository.browseCategorySongsByArtistKey(
-                    com.homektv.library.ArtistCreditParser.key("IKTV projection artist"),
+                    com.homektv.common.ArtistCreditParser.key("IKTV projection artist"),
                     "", "", category, "", org.springframework.data.domain.PageRequest.of(0, 10));
 
             assertThat(tag.getSongCount()).isEqualTo(1L);
@@ -759,10 +760,10 @@ class PersistenceIntegrationTest {
                        (?, ?, '男歌手', 'MANUAL', 'PERSON'),
                        (?, ?, '未知', 'UNREVIEWED', 'PERSON')
                 """,
-                com.homektv.library.ArtistCreditParser.key(maleName), maleName,
-                com.homektv.library.ArtistCreditParser.key(aliasName), aliasName,
-                com.homektv.library.ArtistCreditParser.key(manualName), manualName,
-                com.homektv.library.ArtistCreditParser.key(unknownName), unknownName);
+                com.homektv.common.ArtistCreditParser.key(maleName), maleName,
+                com.homektv.common.ArtistCreditParser.key(aliasName), aliasName,
+                com.homektv.common.ArtistCreditParser.key(manualName), manualName,
+                com.homektv.common.ArtistCreditParser.key(unknownName), unknownName);
         artistGenderDictionary.importEntries(List.of(
                 new ArtistGenderDictionaryService.DictionaryEntry(maleName, "男歌手", List.of(aliasName)),
                 new ArtistGenderDictionaryService.DictionaryEntry(manualName, "女歌手", List.of())
@@ -771,13 +772,13 @@ class PersistenceIntegrationTest {
 
         assertThat(changed).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
-                String.class, com.homektv.library.ArtistCreditParser.key(maleName))).isEqualTo("男歌手");
+                String.class, com.homektv.common.ArtistCreditParser.key(maleName))).isEqualTo("男歌手");
         assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
-                String.class, com.homektv.library.ArtistCreditParser.key(aliasName))).isEqualTo("男歌手");
+                String.class, com.homektv.common.ArtistCreditParser.key(aliasName))).isEqualTo("男歌手");
         assertThat(jdbc.queryForObject("SELECT gender_status FROM artist_profiles WHERE artist_key = ?",
-                String.class, com.homektv.library.ArtistCreditParser.key(manualName))).isEqualTo("MANUAL");
+                String.class, com.homektv.common.ArtistCreditParser.key(manualName))).isEqualTo("MANUAL");
         assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
-                String.class, com.homektv.library.ArtistCreditParser.key(unknownName))).isEqualTo("未知");
+                String.class, com.homektv.common.ArtistCreditParser.key(unknownName))).isEqualTo("未知");
     }
 @Test
     void consistentSongGenderClassifiesProfilesAndUpdatesPublicProjection() {
@@ -804,8 +805,8 @@ class PersistenceIntegrationTest {
                 VALUES (?, ?, '未知', 'UNREVIEWED', 'PERSON'),
                        (?, ?, '未知', 'UNREVIEWED', 'PERSON')
                 """,
-                com.homektv.library.ArtistCreditParser.key(consistentArtist), consistentArtist,
-                com.homektv.library.ArtistCreditParser.key(mixedArtist), mixedArtist);
+                com.homektv.common.ArtistCreditParser.key(consistentArtist), consistentArtist,
+                com.homektv.common.ArtistCreditParser.key(mixedArtist), mixedArtist);
 
         int changed = artistGenderMatcher.applyDictionary();
 
@@ -816,12 +817,12 @@ class PersistenceIntegrationTest {
                   AND gender = '女歌手'
                   AND gender_status = 'AUTO_DB'
                 """, Long.class,
-                com.homektv.library.ArtistCreditParser.key(consistentArtist),
-                com.homektv.library.ArtistCreditParser.key(mixedArtist))).isEqualTo(1L);
+                com.homektv.common.ArtistCreditParser.key(consistentArtist),
+                com.homektv.common.ArtistCreditParser.key(mixedArtist))).isEqualTo(1L);
         assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
-                String.class, com.homektv.library.ArtistCreditParser.key(consistentArtist))).isEqualTo("女歌手");
+                String.class, com.homektv.common.ArtistCreditParser.key(consistentArtist))).isEqualTo("女歌手");
         assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
-                String.class, com.homektv.library.ArtistCreditParser.key(mixedArtist))).isEqualTo("未知");
+                String.class, com.homektv.common.ArtistCreditParser.key(mixedArtist))).isEqualTo("未知");
 
         artistDirectoryProjection.refresh();
         var page = artistDirectoryProjection.page("女歌手", "C", 0, 100).orElseThrow();
@@ -842,8 +843,8 @@ class PersistenceIntegrationTest {
                 INSERT INTO song_artists(song_id, artist_name, artist_key, artist_order)
                 VALUES (?, ?, ?, 0), (?, ?, ?, 1)
                 """,
-                savedLinked.getId(), linkedMale, com.homektv.library.ArtistCreditParser.key(linkedMale),
-                savedLinked.getId(), linkedFemale, com.homektv.library.ArtistCreditParser.key(linkedFemale));
+                savedLinked.getId(), linkedMale, com.homektv.common.ArtistCreditParser.key(linkedMale),
+                savedLinked.getId(), linkedFemale, com.homektv.common.ArtistCreditParser.key(linkedFemale));
 
         Song legacySong = song("遗留合作歌曲-" + suffix, legacyCredit, "gender-collaboration-legacy-" + suffix);
         legacySong.setArtistGender("组合");
@@ -856,18 +857,18 @@ class PersistenceIntegrationTest {
                        (?, ?, '未知', 'UNREVIEWED', 'PERSON'),
                        (?, ?, '未知', 'UNREVIEWED', 'PERSON')
                 """,
-                com.homektv.library.ArtistCreditParser.key(linkedMale), linkedMale,
-                com.homektv.library.ArtistCreditParser.key(linkedFemale), linkedFemale,
-                com.homektv.library.ArtistCreditParser.key(legacyCredit), legacyCredit);
+                com.homektv.common.ArtistCreditParser.key(linkedMale), linkedMale,
+                com.homektv.common.ArtistCreditParser.key(linkedFemale), linkedFemale,
+                com.homektv.common.ArtistCreditParser.key(legacyCredit), legacyCredit);
 
         artistGenderMatcher.applyDictionary();
 
         assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
-                String.class, com.homektv.library.ArtistCreditParser.key(linkedMale))).isEqualTo("未知");
+                String.class, com.homektv.common.ArtistCreditParser.key(linkedMale))).isEqualTo("未知");
         assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
-                String.class, com.homektv.library.ArtistCreditParser.key(linkedFemale))).isEqualTo("未知");
+                String.class, com.homektv.common.ArtistCreditParser.key(linkedFemale))).isEqualTo("未知");
         assertThat(jdbc.queryForObject("SELECT gender FROM artist_profiles WHERE artist_key = ?",
-                String.class, com.homektv.library.ArtistCreditParser.key(legacyCredit))).isEqualTo("未知");
+                String.class, com.homektv.common.ArtistCreditParser.key(legacyCredit))).isEqualTo("未知");
     }
 
     @Test
@@ -975,9 +976,9 @@ class PersistenceIntegrationTest {
     void adminArtistLibraryUsesMaterializedProjectionSamplesAndSyncsManualGenderImmediately() {
         String suffix = String.valueOf(System.nanoTime());
         String indexedArtist = "高速投影歌手-" + suffix;
-        String indexedKey = com.homektv.library.ArtistCreditParser.key(indexedArtist);
+        String indexedKey = com.homektv.common.ArtistCreditParser.key(indexedArtist);
         String legacyArtist = "遗留样本歌手-" + suffix;
-        String legacyKey = com.homektv.library.ArtistCreditParser.key(legacyArtist);
+        String legacyKey = com.homektv.common.ArtistCreditParser.key(legacyArtist);
 
         for (int i = 1; i <= 7; i++) {
             Song s = song("热门代表作-" + i + "-" + suffix, indexedArtist, "admin-fast-indexed-" + i + "-" + suffix);

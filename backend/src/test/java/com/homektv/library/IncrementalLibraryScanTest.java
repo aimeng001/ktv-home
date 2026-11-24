@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.LibraryMode;
 
 import com.homektv.config.AppProperties;
 import com.homektv.domain.AudioLayout;
@@ -14,7 +15,7 @@ import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongFileScanSnapshot;
 import com.homektv.repo.SongRepository;
 import com.homektv.resource.ResourceBudget;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

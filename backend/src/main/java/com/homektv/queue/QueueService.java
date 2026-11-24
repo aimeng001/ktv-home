@@ -7,9 +7,11 @@ import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
+import com.homektv.common.QueueSnapshotInvalidatedEvent;
 import com.homektv.ws.WsProtocolLimits;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -49,6 +51,8 @@ public class QueueService {
     private final PlayerStateRepository playerRepo;
     private final SongAvailabilityPolicy availabilityPolicy;
     private final Consumer<List<QueueItem>> shuffleItems;
+    @Autowired(required = false)
+    private ApplicationEventPublisher eventPublisher;
 
     @Autowired
     public QueueService(QueueItemRepository queueRepo, SongRepository songRepo,
@@ -105,7 +109,9 @@ public class QueueService {
         item.setOrderedBy(userId);
         item.setOrderIndex(tail + STEP);
         item.setStatus(WAITING);
-        return queueRepo.save(item);
+        QueueItem saved = queueRepo.save(item);
+        publishQueueInvalidated();
+        return saved;
     }
 
     /**
@@ -140,7 +146,9 @@ public class QueueService {
             midpoint = currentIndex + (nextIndex - currentIndex) / 2.0;
         }
         item.setOrderIndex(midpoint);
-        return queueRepo.save(item);
+        QueueItem saved = queueRepo.save(item);
+        publishQueueInvalidated();
+        return saved;
     }
 
     /**
@@ -158,6 +166,7 @@ public class QueueService {
             throw new ApiException("INVALID_ACTION", "只能删除等待中的歌曲");
         }
         queueRepo.delete(item);
+        publishQueueInvalidated();
     }
 
     /** 等待队列（含歌曲信息由上层组装） */
@@ -205,7 +214,15 @@ public class QueueService {
             item.setOrderIndex(index);
             index += STEP;
         }
-        return queueRepo.saveAll(arranged);
+        List<QueueItem> saved = queueRepo.saveAll(arranged);
+        publishQueueInvalidated();
+        return saved;
+    }
+
+    private void publishQueueInvalidated() {
+        if (eventPublisher != null) {
+            eventPublisher.publishEvent(new QueueSnapshotInvalidatedEvent());
+        }
     }
 
     static Map.Entry<Long, ArrayDeque<QueueItem>> selectShuffleGroup(

@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.ArtistCreditParser;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

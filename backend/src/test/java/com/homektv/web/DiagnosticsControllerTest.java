@@ -25,7 +25,7 @@ class DiagnosticsControllerTest {
     void diagnosticsRequiresExistingAdminAuthenticationAndReturnsOnlyAllowlistedFields() throws Exception {
         AppProperties properties = new AppProperties();
         properties.setAdminPassword("admin-secret");
-        properties.setLibraryMode(com.homektv.library.LibraryMode.EXTERNAL_READ_ONLY);
+        properties.setLibraryMode(com.homektv.common.LibraryMode.EXTERNAL_READ_ONLY);
         properties.getRelease().setVersion("1.0.0");
         AdminAuthService auth = new AdminAuthService(properties);
         String token = auth.login("admin-secret");

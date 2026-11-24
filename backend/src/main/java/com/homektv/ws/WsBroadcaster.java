@@ -239,16 +239,17 @@ public class WsBroadcaster {
     }
 
     private OutboundBatch prepareOutbound(WsEvent event) {
-        if (event != null && event.payload() instanceof com.homektv.web.dto.QueueSnapshot snapshot) {
+        if (event != null && event.payload() instanceof com.homektv.contract.QueueSnapshot snapshot) {
             return prepareSnapshot(event.type(), snapshot);
         }
         String json = serializeWithinBudget(event);
-        return json == null ? null : OutboundBatch.of(json);
+        if (json == null) return null;
+        return OutboundBatch.of(json, event != null && WsEvent.PROGRESS.equals(event.type()));
     }
 
-    private OutboundBatch prepareSnapshot(String eventType, com.homektv.web.dto.QueueSnapshot snapshot) {
+    private OutboundBatch prepareSnapshot(String eventType, com.homektv.contract.QueueSnapshot snapshot) {
         String legacy = serializeWithinBudget(WsEvent.of(eventType, snapshot));
-        if (legacy != null) return OutboundBatch.of(legacy);
+        if (legacy != null) return OutboundBatch.of(legacy, false);
 
         List<String> frames = new ArrayList<>();
         long[] byteCount = {0L};
@@ -262,7 +263,7 @@ public class WsBroadcaster {
                 frames.add(json);
                 byteCount[0] += json.getBytes(StandardCharsets.UTF_8).length;
             });
-            return new OutboundBatch(frames, byteCount[0]);
+            return new OutboundBatch(frames, byteCount[0], false);
         } catch (QueueChunkTooLargeException exception) {
             log.warn("拒绝无法安全同步的队列快照: chunk={}", exception.getChunkIndex());
             return null;
@@ -346,13 +347,13 @@ public class WsBroadcaster {
         return sessions.get(session.getId()) == session;
     }
 
-    private record OutboundBatch(List<String> frames, long byteCount) {
+    private record OutboundBatch(List<String> frames, long byteCount, boolean progress) {
         private OutboundBatch {
             frames = List.copyOf(frames);
         }
 
-        private static OutboundBatch of(String json) {
-            return new OutboundBatch(List.of(json), json.getBytes(StandardCharsets.UTF_8).length);
+        private static OutboundBatch of(String json, boolean progress) {
+            return new OutboundBatch(List.of(json), json.getBytes(StandardCharsets.UTF_8).length, progress);
         }
 
         private int frameCount() {
@@ -379,7 +380,21 @@ public class WsBroadcaster {
         private boolean enqueue(OutboundBatch batch) {
             boolean startWorker = false;
             synchronized (this) {
-                if (closed || batch.frameCount() > MAX_PENDING_FRAMES
+                if (closed) {
+                    return false;
+                }
+                if (batch.progress()) {
+                    var iterator = pending.iterator();
+                    while (iterator.hasNext()) {
+                        OutboundBatch existing = iterator.next();
+                        if (existing.progress()) {
+                            pendingFrames -= existing.frameCount();
+                            pendingBytes -= existing.byteCount();
+                            iterator.remove();
+                        }
+                    }
+                }
+                if (batch.frameCount() > MAX_PENDING_FRAMES
                         || pendingFrames > MAX_PENDING_FRAMES - batch.frameCount()
                         || pendingBytes > MAX_PENDING_BYTES - batch.byteCount()) {
                     return false;

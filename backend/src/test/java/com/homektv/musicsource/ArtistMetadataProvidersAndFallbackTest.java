@@ -312,6 +312,37 @@ class ArtistMetadataProvidersAndFallbackTest {
         assertThat(hosts).containsExactly("baike.baidu.com");
     }
 
+    @Test
+    void fallbackChainAbortsStalledResponseStreamWithinTimeout() throws Exception {
+        HttpClient client = mock(HttpClient.class);
+        InputStream stalledStream = new InputStream() {
+            @Override
+            public int read() throws java.io.IOException {
+                try {
+                    Thread.sleep(5_000);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }
+                return -1;
+            }
+        };
+        HttpResponse<InputStream> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (k, v) -> true));
+        when(response.body()).thenReturn(stalledStream);
+        when(client.send(any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any())).thenReturn(response);
+
+        ProviderCallGuard guard = new ProviderCallGuard();
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        when(config.isAvatarFallbackEnabled()).thenReturn(true);
+        ArtistAvatarFallbackChain chain = new ArtistAvatarFallbackChain(client, mapper, guard, config, 400);
+
+        List<String> urls = chain.searchBaiduBaike("周杰伦", "周杰伦", Duration.ofMillis(100));
+
+        assertThat(urls).isEmpty();
+    }
+
     private static HttpResponse<InputStream> jsonResponse(String json) {
         HttpResponse<InputStream> response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(200);

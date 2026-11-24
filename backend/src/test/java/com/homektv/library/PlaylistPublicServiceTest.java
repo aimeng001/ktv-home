@@ -8,8 +8,8 @@ import com.homektv.repo.PlaylistRepository;
 import com.homektv.repo.PlaylistSongRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.repo.SongFileRepository;
-import com.homektv.web.ApiException;
-import com.homektv.web.dto.SongDto;
+import com.homektv.common.ApiException;
+import com.homektv.contract.SongDto;
 import com.homektv.ws.WsEvent;
 import com.homektv.ws.WsBroadcaster;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,7 +57,7 @@ class PlaylistPublicServiceTest {
         pl.setPublicVisible(true);
         when(playlistRepo.findById(1L)).thenReturn(Optional.of(pl));
         when(userService.resolveUserId("tok")).thenReturn(10L);
-        when(snapshotService.snapshot()).thenReturn(new com.homektv.web.dto.QueueSnapshot(null, List.of(), "idle", 50, false, "original", true, 0L));
+        when(snapshotService.snapshot()).thenReturn(new com.homektv.contract.QueueSnapshot(null, List.of(), "idle", 50, false, "original", true, 0L));
     }
 
     @Test

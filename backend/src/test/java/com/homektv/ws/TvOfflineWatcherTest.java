@@ -3,7 +3,7 @@ package com.homektv.ws;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.queue.PlaybackService;
 import com.homektv.queue.SnapshotService;
-import com.homektv.web.dto.QueueSnapshot;
+import com.homektv.contract.QueueSnapshot;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

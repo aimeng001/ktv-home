@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.LibraryMode;
 
 import com.homektv.config.AppProperties;
 import com.homektv.domain.SongFile;
@@ -9,7 +10,7 @@ import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import com.homektv.ws.WsBroadcaster;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

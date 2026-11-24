@@ -1,7 +1,7 @@
 package com.homektv.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.homektv.web.dto.QueueSnapshot;
+import com.homektv.contract.QueueSnapshot;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -28,32 +28,59 @@ public final class QueueSnapshotChunker {
 
         String syncId = UUID.randomUUID().toString();
         QueueSnapshotHeader header = QueueSnapshotHeader.from(snapshot);
+        int emptyEnvelopeBytes = wireBytes(mapper, new QueueSnapshotChunk(eventType, syncId,
+                WsProtocolLimits.MAX_SYNC_CHUNKS - 1, WsProtocolLimits.MAX_SYNC_CHUNKS, false,
+                header, List.of()), 0);
         List<List<QueueSnapshot.QueueEntry>> pages = new ArrayList<>();
         List<QueueSnapshot.QueueEntry> page = new ArrayList<>();
+        int pageBytes = emptyEnvelopeBytes;
         for (QueueSnapshot.QueueEntry entry : snapshot.list()) {
-            page.add(entry);
-            boolean tooMany = page.size() > WsProtocolLimits.MAX_CHUNK_ENTRIES;
-            boolean tooLarge = !tooMany && !fits(mapper, eventType, syncId,
-                    WsProtocolLimits.MAX_SYNC_CHUNKS, WsProtocolLimits.MAX_SYNC_CHUNKS - 1,
-                    header, page);
-            if (tooMany || tooLarge) {
-                page.remove(page.size() - 1);
-                if (page.isEmpty()) {
-                    throw new QueueChunkTooLargeException(pages.size(),
-                            "单个队列条目超过 WebSocket 分片上限");
-                }
-                pages.add(List.copyOf(page));
-                page.clear();
-                page.add(entry);
+            byte[] serializedEntry = BoundedJson.serialize(mapper, entry, WsProtocolLimits.MAX_MESSAGE_BYTES);
+            int entryBytes = serializedEntry == null ? WsProtocolLimits.MAX_MESSAGE_BYTES + 1 : serializedEntry.length;
+            if (serializedEntry == null || emptyEnvelopeBytes + entryBytes > WsProtocolLimits.MAX_MESSAGE_BYTES) {
                 if (!fits(mapper, eventType, syncId, WsProtocolLimits.MAX_SYNC_CHUNKS,
-                        WsProtocolLimits.MAX_SYNC_CHUNKS - 1, header, page)) {
+                        WsProtocolLimits.MAX_SYNC_CHUNKS - 1, header, List.of(entry))) {
                     throw new QueueChunkTooLargeException(pages.size(),
                             "单个队列条目超过 WebSocket 分片上限");
                 }
             }
+            int commaBytes = page.isEmpty() ? 0 : 1;
+            if (!page.isEmpty() && (page.size() >= WsProtocolLimits.MAX_CHUNK_ENTRIES
+                    || pageBytes + commaBytes + entryBytes > WsProtocolLimits.MAX_MESSAGE_BYTES)) {
+                while (!fits(mapper, eventType, syncId, WsProtocolLimits.MAX_SYNC_CHUNKS,
+                        WsProtocolLimits.MAX_SYNC_CHUNKS - 1, header, page)) {
+                    if (page.size() <= 1) {
+                        throw new QueueChunkTooLargeException(pages.size(),
+                                "单个队列条目超过 WebSocket 分片上限");
+                    }
+                    QueueSnapshot.QueueEntry overflow = page.remove(page.size() - 1);
+                    pages.add(List.copyOf(page));
+                    page.clear();
+                    page.add(overflow);
+                }
+                pages.add(List.copyOf(page));
+                page.clear();
+                pageBytes = emptyEnvelopeBytes;
+                commaBytes = 0;
+            }
+            page.add(entry);
+            pageBytes += commaBytes + entryBytes;
         }
-        if (!page.isEmpty() || pages.isEmpty()) {
+        if (!page.isEmpty()) {
+            while (!fits(mapper, eventType, syncId, WsProtocolLimits.MAX_SYNC_CHUNKS,
+                    WsProtocolLimits.MAX_SYNC_CHUNKS - 1, header, page)) {
+                if (page.size() <= 1) {
+                    throw new QueueChunkTooLargeException(pages.size(),
+                            "单个队列条目超过 WebSocket 分片上限");
+                }
+                QueueSnapshot.QueueEntry overflow = page.remove(page.size() - 1);
+                pages.add(List.copyOf(page));
+                page.clear();
+                page.add(overflow);
+            }
             pages.add(List.copyOf(page));
+        } else if (pages.isEmpty()) {
+            pages.add(List.of());
         }
         if (pages.size() > WsProtocolLimits.MAX_SYNC_CHUNKS) {
             throw new QueueChunkTooLargeException(-1, "队列快照分片数量超过上限");

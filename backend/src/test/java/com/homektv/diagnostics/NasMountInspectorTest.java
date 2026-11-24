@@ -1,7 +1,7 @@
 package com.homektv.diagnostics;
 
 import com.homektv.config.AppProperties;
-import com.homektv.library.LibraryMode;
+import com.homektv.common.LibraryMode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 

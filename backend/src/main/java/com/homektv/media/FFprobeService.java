@@ -220,8 +220,9 @@ public class FFprobeService {
             long durationMs = 0;
             JsonNode format = root.path("format");
             if (format.hasNonNull("duration")) {
-                durationMs = Math.round(format.get("duration").asDouble() * 1000);
+                durationMs = parseSecondsDurationMs(format.get("duration").asText(null));
             }
+            long maxStreamDurationMs = 0;
 
             int audioTracks = 0;
             int subtitleTracks = 0;
@@ -238,6 +239,7 @@ public class FFprobeService {
             language = textOrNull(formatTags, "language");
 
             for (JsonNode stream : root.path("streams")) {
+                maxStreamDurationMs = Math.max(maxStreamDurationMs, parseStreamDurationMs(stream));
                 String type = stream.path("codec_type").asText("");
                 switch (type) {
                     case "audio" -> {
@@ -280,6 +282,9 @@ public class FFprobeService {
                 }
             }
 
+            if (durationMs <= 0 && maxStreamDurationMs > 0) {
+                durationMs = maxStreamDurationMs;
+            }
             return new MediaProbe(durationMs, audioTracks, subtitleTracks, hasVideo, resolution,
                     java.util.List.copyOf(audioStreams), videoCodec, audioCodec, title, artist, language);
         } catch (IOException e) {
@@ -296,5 +301,51 @@ public class FFprobeService {
         if (!node.hasNonNull(field)) return null;
         String v = node.get(field).asText().trim();
         return v.isEmpty() ? null : v;
+    }
+
+    private static long parseStreamDurationMs(JsonNode stream) {
+        if (stream == null || stream.isMissingNode()) return 0L;
+        if (stream.hasNonNull("duration")) {
+            long ms = parseSecondsDurationMs(stream.get("duration").asText(null));
+            if (ms > 0) return ms;
+        }
+        JsonNode tags = stream.path("tags");
+        for (String key : List.of("DURATION", "duration", "DURATION-eng")) {
+            String raw = textOrNull(tags, key);
+            if (raw != null) {
+                long ms = parseTagDurationMs(raw);
+                if (ms > 0) return ms;
+            }
+        }
+        return 0L;
+    }
+
+    private static long parseSecondsDurationMs(String raw) {
+        if (raw == null || raw.isBlank()) return 0L;
+        try {
+            double seconds = Double.parseDouble(raw.trim());
+            return Double.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000.0) : 0L;
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
+    }
+
+    private static long parseTagDurationMs(String raw) {
+        String trimmed = raw.trim();
+        long secondsDirect = parseSecondsDurationMs(trimmed);
+        if (secondsDirect > 0) return secondsDirect;
+        String[] parts = trimmed.split(":");
+        if (parts.length != 3) return 0L;
+        try {
+            long hours = Long.parseLong(parts[0]);
+            long minutes = Long.parseLong(parts[1]);
+            double seconds = Double.parseDouble(parts[2]);
+            if (hours < 0 || minutes < 0 || minutes >= 60 || !Double.isFinite(seconds) || seconds < 0) {
+                return 0L;
+            }
+            return Math.round(((hours * 3600.0) + (minutes * 60.0) + seconds) * 1000.0);
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
     }
 }

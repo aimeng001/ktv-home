@@ -1,7 +1,7 @@
 package com.homektv.web;
 
 import com.homektv.playback.PlaybackResolutionService;
-import com.homektv.web.dto.PlaybackDescriptor;
+import com.homektv.contract.PlaybackDescriptor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;

@@ -79,11 +79,17 @@ public class AiLibraryController {
     @PostMapping("/repair")
     public Map<String, Object> repair() { return service.createRepairBatch(); }
 
+    @GetMapping("/repair/latest")
+    public Map<String, Object> latestRepair() { return service.latestRepairBatch(); }
+
     @GetMapping("/repair/{batchId}")
     public Map<String, Object> repairProgress(@PathVariable String batchId) { return service.repairProgress(batchId); }
 
     @PostMapping("/repair/{batchId}/pause")
     public Map<String, Object> pauseRepair(@PathVariable String batchId) { return service.pauseRepairBatch(batchId); }
+
+    @PostMapping("/repair/{batchId}/cancel")
+    public Map<String, Object> cancelRepair(@PathVariable String batchId) { return service.cancelRepairBatch(batchId); }
 
     @PostMapping("/repair/{batchId}/resume")
     public Map<String, Object> resumeRepair(@PathVariable String batchId) { return service.resumeRepairBatch(batchId); }

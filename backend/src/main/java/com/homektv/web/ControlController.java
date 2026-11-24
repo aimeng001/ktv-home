@@ -1,4 +1,5 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.domain.QueueItem;
 import com.homektv.queue.PlaybackService;
@@ -7,8 +8,8 @@ import com.homektv.queue.RoomHostService;
 import com.homektv.queue.SnapshotService;
 import com.homektv.queue.UserService;
 import com.homektv.repo.QueueItemRepository;
-import com.homektv.web.dto.ControlRequest;
-import com.homektv.web.dto.QueueSnapshot;
+import com.homektv.contract.ControlRequest;
+import com.homektv.contract.QueueSnapshot;
 import com.homektv.ws.WsBroadcaster;
 import com.homektv.ws.WsEvent;
 import org.springframework.web.bind.annotation.*;
@@ -103,6 +104,9 @@ public class ControlController {
                 }
             }
             case "shuffle" -> {
+                if (roomHostService != null && roomHostService.isClaimed()) {
+                    roomHostService.requireHost(req.clientToken());
+                }
                 queueService.shuffleWaiting();
                 snapshot = snapshotService.snapshot();
                 broadcast(WsEvent.QUEUE_UPDATED, snapshot);
@@ -159,6 +163,9 @@ public class ControlController {
                 broadcast(WsEvent.VOCAL_CHANGED, snapshot);
             }
             case "swap_vocal_tracks" -> {
+                if (roomHostService != null && roomHostService.isClaimed()) {
+                    roomHostService.requireHost(req.clientToken());
+                }
                 playbackService.swapVocalTracks();
                 snapshot = snapshotService.snapshot();
                 broadcast(WsEvent.VOCAL_CHANGED, snapshot);

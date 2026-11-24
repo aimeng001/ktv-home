@@ -1,7 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.config.AppProperties;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 
 import java.io.IOException;
 import java.nio.file.Files;

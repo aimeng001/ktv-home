@@ -1,8 +1,10 @@
 package com.homektv.library;
+import com.homektv.common.ArtistCreditParser;
+import com.homektv.common.ArtistKind;
 
 import com.homektv.domain.Song;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.SongDto;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -254,7 +256,7 @@ class CategoryBrowseServiceTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                 new CategoryBrowseService(repository).artistsPage("", "", "火星", 0, 30))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("地区筛选值无效");
         verify(repository, never()).pagePublicArtistDirectory(any(), any(), any(), any(), any());
     }
@@ -601,7 +603,7 @@ class CategoryBrowseServiceTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                 service.songsPage("", "", "", "", "", "", "", "BOGUS", "hot", 0, 18))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("媒体格式");
     }
 

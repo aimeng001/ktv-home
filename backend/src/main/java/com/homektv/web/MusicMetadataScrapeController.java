@@ -39,6 +39,9 @@ public class MusicMetadataScrapeController {
     @PostMapping("/{batchId}/pause")
     public Map<String, Object> pause(@PathVariable String batchId) { return service.pause(batchId); }
 
+    @PostMapping("/{batchId}/cancel")
+    public Map<String, Object> cancel(@PathVariable String batchId) { return service.cancel(batchId); }
+
     @PostMapping("/{batchId}/resume")
     public Map<String, Object> resume(@PathVariable String batchId) { return service.resume(batchId); }
 

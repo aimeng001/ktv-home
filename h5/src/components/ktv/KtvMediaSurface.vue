@@ -303,9 +303,11 @@ const streamSpec = computed(() => buildWebStreamSpec({
 }))
 
 const shouldLoadVideoMedia = computed(() => {
-  // 扫码遥控端（WEB_REMOTE）或处于手动控制台模式时，实时转码流（liveTranscode）不拉取视频流，
-  // 避免多台手机扫码点歌时并发拉取转码流耗尽服务端 4 并发 FFmpeg 转码槽位
-  if ((player.effectiveMode === 'WEB_REMOTE' || player.modeOverride === 'console') && streamSpec.value.liveTranscode) {
+  // 扫码遥控端（WEB_REMOTE）或处于手动控制台模式时：
+  // 1) 实时转码流（liveTranscode）一律不拉取，100% 保护服务端 4 并发 FFmpeg 槽位；
+  // 2) 非全屏小窗默认走省流封面+实时歌词预览，避免多个手机大厅连接占用带宽与媒体槽位。
+  const isWebRemoteOnly = player.effectiveMode === 'WEB_REMOTE' || player.modeOverride === 'console'
+  if (isWebRemoteOnly && (streamSpec.value.liveTranscode || !props.fullscreen)) {
     return false
   }
   return Boolean(streamSpec.value.url)
@@ -421,6 +423,7 @@ async function applyMediaSource() {
 
   if (!nextUrl) {
     awaitingMediaReload = false
+    isSeekingTranscode.value = false
     if (el.getAttribute('src')) {
       el.pause()
       el.removeAttribute('src')
@@ -445,13 +448,14 @@ async function applyMediaSource() {
 async function attemptPlay() {
   const el = videoEl.value
   if (!el || !shouldLoadVideoMedia.value || !streamSpec.value.url) return
+  const webAudioActive = needsWebAudioRouting.value || Boolean(channelRouter?.isActive?.())
   try {
     syncAudioRouter()
-    if (needsWebAudioRouting.value && typeof channelRouter.resumeDirect === 'function') {
+    if (webAudioActive && typeof channelRouter.resumeDirect === 'function') {
       channelRouter.resumeDirect()
     }
     await el.play()
-    if (!isSilentConsole.value && !player.muted && needsWebAudioRouting.value && channelRouter.isSuspended()) {
+    if (!isSilentConsole.value && !player.muted && webAudioActive && channelRouter.isSuspended()) {
       player.audioBlockedByAutoplay = true
     } else if (!isSilentConsole.value) {
       player.audioBlockedByAutoplay = false
@@ -469,15 +473,24 @@ async function attemptPlay() {
 async function unlockAudio() {
   const el = videoEl.value
   if (!el || isSilentConsole.value) return
+  const webAudioActive = needsWebAudioRouting.value || Boolean(channelRouter?.isActive?.())
   player.audioBlockedByAutoplay = false
   player.audioUnlockFailed = false
   el.muted = player.muted
   syncAudioRouter()
   try {
-    if (needsWebAudioRouting.value && typeof channelRouter.resumeDirect === 'function') {
-      channelRouter.resumeDirect()
+    if (webAudioActive) {
+      if (typeof channelRouter.resumeDirect === 'function') {
+        channelRouter.resumeDirect()
+      }
+      if (typeof channelRouter.resume === 'function') {
+        await channelRouter.resume()
+      }
     }
     if (player.isPlaying) await el.play()
+    if (webAudioActive && channelRouter.isSuspended?.()) {
+      throw new DOMException('AudioContext remains suspended', 'NotAllowedError')
+    }
   } catch (e) {
     player.audioBlockedByAutoplay = true
     player.audioUnlockFailed = true
@@ -494,7 +507,8 @@ function onLoadedMetadata() {
   const el = videoEl.value
   if (!el) return
   if (Number.isFinite(el.duration) && el.duration > 0 && el.duration < 86400) {
-    detectedDurationMs.value = Math.round(el.duration * 1000)
+    const offsetMs = streamSpec.value.liveTranscode ? Math.round((liveStartSec.value || 0) * 1000) : 0
+    detectedDurationMs.value = offsetMs + Math.round(el.duration * 1000)
   }
   const targetSec = (player.positionMs || 0) / 1000
   if (!streamSpec.value.liveTranscode && targetSec > 1 && Number.isFinite(el.duration) && targetSec < el.duration) {
@@ -604,7 +618,9 @@ watch(() => player.nowPlaying?.queueId, (newId, oldId) => {
     mirrorStreamFailed.value = false
     liveStartSec.value = newId ? resolveInitialLiveStartSec() : 0
     detectedDurationMs.value = 0
+    isSeekingTranscode.value = false
     lastAppliedSeq = player.seekSequence
+    channelRouter?.resetPitch?.()
     if (song.value?.id) lyricLoader.load(song.value.id)
     else lyricLoader.dispose()
 
@@ -639,7 +655,7 @@ watch(
   }
 )
 
-watch([() => streamSpec.value.url, () => player.nowPlaying?.queueId, streamReloadNonce], () => {
+watch([() => streamSpec.value.url, () => player.nowPlaying?.queueId, streamReloadNonce, shouldLoadVideoMedia], () => {
   applyMediaSource()
 }, { flush: 'post' })
 
@@ -678,20 +694,26 @@ watch([() => player.volume, () => player.muted], () => {
 watch(() => player.seekSequence, (seq) => {
   if (seq === lastAppliedSeq) return
   lastAppliedSeq = seq
-  const el = videoEl.value
-  if (!el) return
   const targetSec = Math.max(0, (player.positionMs || 0) / 1000)
   if (streamSpec.value.liveTranscode) {
-    awaitingMediaReload = true
-    isSeekingTranscode.value = true
-    if (Math.abs(targetSec - liveStartSec.value) < 0.5) {
-      liveStartSec.value = targetSec
-      streamReloadNonce.value += 1
+    if (shouldLoadVideoMedia.value) {
+      awaitingMediaReload = true
+      isSeekingTranscode.value = true
+      if (Math.abs(targetSec - liveStartSec.value) < 0.5) {
+        liveStartSec.value = targetSec
+        streamReloadNonce.value += 1
+      } else {
+        liveStartSec.value = targetSec
+      }
     } else {
+      isSeekingTranscode.value = false
       liveStartSec.value = targetSec
     }
-  } else {
-    try { el.currentTime = targetSec } catch { /* ignore */ }
+  } else if (shouldLoadVideoMedia.value) {
+    const el = videoEl.value
+    if (el) {
+      try { el.currentTime = targetSec } catch { /* ignore */ }
+    }
   }
 })
 

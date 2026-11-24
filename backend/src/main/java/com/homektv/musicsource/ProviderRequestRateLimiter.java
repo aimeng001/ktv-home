@@ -17,6 +17,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -71,6 +72,37 @@ public class ProviderRequestRateLimiter {
 
     public long minIntervalMs() {
         return minIntervalMs;
+    }
+
+    /** Fast non-mutating check so cooled-down or exhausted providers fail before waiting locally. */
+    public void ensureNotBlocked(MusicProvider provider) {
+        Instant now = clock.instant();
+        try {
+            List<RateState> states = jdbc.query("""
+                    SELECT next_request_at, cooldown_until, window_date_utc, request_count,
+                           failure_streak, last_http_status, last_error, updated_at
+                    FROM music_provider_rate_state
+                    WHERE provider=?
+                    """, (rs, ignored) -> from(rs), provider.name());
+            if (states.isEmpty()) return;
+            RateState state = states.getFirst();
+            LocalDate today = LocalDate.ofInstant(now, ZoneOffset.UTC);
+            if (!today.equals(state.windowDateUtc)) {
+                return;
+            }
+            int effectiveLimit = configService != null ? configService.getConfig().dailyLimit() : dailyLimit;
+            if (state.requestCount >= effectiveLimit) {
+                throw new ProviderRateLimitedException(provider, today.plusDays(1)
+                        .atStartOfDay(ZoneOffset.UTC).toInstant());
+            }
+            if (state.cooldownUntil != null && state.cooldownUntil.isAfter(now)) {
+                throw new ProviderRateLimitedException(provider, state.cooldownUntil);
+            }
+        } catch (ProviderRateLimitedException ex) {
+            throw ex;
+        } catch (DataAccessException ex) {
+            throw unavailable(provider, ex);
+        }
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

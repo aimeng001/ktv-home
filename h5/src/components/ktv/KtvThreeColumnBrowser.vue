@@ -455,6 +455,11 @@ import { avatarUrlFor, rememberAvatarFailure } from '../../views/artistAvatarSta
 import { formatOrderToast } from '../../views/orderFeedbackState'
 import { unavailableReasonLabel } from './songAvailability'
 import { getArtistAvatarStyle } from '../../utils/avatarColor'
+import {
+  HOT_NEW_MODES,
+  SORT_OPTIONS,
+  filterAndSortClientSongs as filterClientSongList,
+} from '../../composables/useKtvCatalogHelpers'
 import KtvSoftKeyboard from './KtvSoftKeyboard.vue'
 import {
   CAPSULE_TABS,
@@ -495,16 +500,8 @@ const regionFilters = REGION_FILTERS
 const mediaFilters = MEDIA_FILTERS
 const vocalFormFilters = VOCAL_FORM_FILTERS
 const varietyPresets = VARIETY_PRESETS
-const hotNewModes = [
-  { value: 'all', label: '全部热歌' },
-  { value: 'ranking', label: '30天飙升榜' },
-  { value: 'new_arrivals', label: '最新入库' },
-]
-const sortOptions = [
-  { value: 'hot', label: '按热度' },
-  { value: 'title', label: '按歌名' },
-  { value: 'new', label: '最新入库' },
-]
+const hotNewModes = HOT_NEW_MODES
+const sortOptions = SORT_OPTIONS
 
 const PAGE_SIZE_SONGS = 18
 const PAGE_SIZE_ARTISTS = 18
@@ -565,42 +562,14 @@ const availableLetters = computed(() => {
 })
 
 function filterAndSortClientSongs(list) {
-  const kw = keyword.value.trim().toLowerCase()
-  const filtered = (Array.isArray(list) ? list : []).filter((song) => {
-    if (mediaFilter.value && song.mediaType !== mediaFilter.value) return false
-    if (vocalFormFilter.value && (song.vocalForm || '') !== vocalFormFilter.value) return false
-    if (wordCount.value > 0) {
-      const len = (song.title || '').trim().length
-      if (wordCount.value < 6 && len !== wordCount.value) return false
-      if (wordCount.value >= 6 && len < 6) return false
-    }
-    if (kw) {
-      const hay = [
-        song.title,
-        song.artist,
-        song.titlePinyin,
-        song.titleInitials,
-        song.artistPinyin,
-        song.artistInitials,
-        song.pinyin,
-        song.pinyinAbbr,
-      ].filter(Boolean).join(' ').toLowerCase()
-      if (!hay.includes(kw)) return false
-    }
-    return true
+  return filterClientSongList(list, {
+    keyword: keyword.value,
+    mediaFilter: mediaFilter.value,
+    vocalFormFilter: vocalFormFilter.value,
+    wordCount: wordCount.value,
+    activeTab: activeTab.value,
+    songSort: songSort.value,
   })
-  if (activeTab.value === 'favorites') {
-    const copy = [...filtered]
-    if (songSort.value === 'title') {
-      copy.sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN'))
-    } else if (songSort.value === 'new') {
-      copy.sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
-    } else if (songSort.value === 'hot') {
-      copy.sort((a, b) => Number(b.playCount || 0) - Number(a.playCount || 0))
-    }
-    return copy
-  }
-  return filtered
 }
 
 const displayedSongs = computed(() => {

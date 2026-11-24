@@ -3,7 +3,9 @@ package com.homektv.musicsource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.domain.Song;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.context.event.EventListener;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -34,6 +36,8 @@ public class MusicMetadataScrapeService {
     private final MusicMetadataScrapeWorker worker;
     private final MusicMetadataApplyService applyService;
     private final ObjectMapper mapper;
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public MusicMetadataScrapeService(JdbcTemplate jdbc, SongRepository songRepository,
                                       MusicSourceConfigService configService, MusicMetadataScrapeWorker worker,
@@ -44,6 +48,10 @@ public class MusicMetadataScrapeService {
         this.worker = worker;
         this.applyService = applyService;
         this.mapper = mapper;
+    }
+
+    void setEntityManager(EntityManager entityManager) {
+        this.entityManager = entityManager;
     }
 
     @Transactional
@@ -153,6 +161,9 @@ public class MusicMetadataScrapeService {
             insertItems(batchId, songs);
             inserted += songs.size();
             lastSongId = ids.getLast();
+            if (entityManager != null) {
+                entityManager.clear();
+            }
         }
         return new InsertionStats(inserted, skippedExisting);
     }
@@ -234,17 +245,42 @@ public class MusicMetadataScrapeService {
         return batch;
     }
 
+    @Transactional
     public Map<String, Object> pause(String batchId) {
         requireBatch(batchId);
         jdbc.update("UPDATE music_metadata_scrape_batches SET status='PAUSED',updated_at=now() WHERE id=? AND status='RUNNING'", batchId);
         return details(batchId, "", 0, 20);
     }
 
+    @Transactional
+    public Map<String, Object> cancel(String batchId) {
+        jdbc.queryForObject("SELECT id FROM music_metadata_scrape_lock WHERE id=1 FOR UPDATE", Short.class);
+        requireBatch(batchId);
+        jdbc.update("""
+                UPDATE music_metadata_scrape_batches
+                SET status='CANCELLED', finished_at=COALESCE(finished_at, now()), updated_at=now()
+                WHERE id=? AND status IN ('RUNNING','PAUSED')
+                """, batchId);
+        jdbc.update("""
+                UPDATE music_metadata_scrape_items
+                SET status='PENDING', lease_owner=NULL, lease_until=NULL, claim_token=NULL, updated_at=now()
+                WHERE batch_id=? AND status='PROCESSING'
+                """, batchId);
+        return details(batchId, "", 0, 20);
+    }
+
+    @Transactional
     public Map<String, Object> resume(String batchId) {
+        jdbc.queryForObject("SELECT id FROM music_metadata_scrape_lock WHERE id=1 FOR UPDATE", Short.class);
         requireBatch(batchId);
         MusicSourceConfig config = configService.getConfig();
         if (!config.enabled() || config.providers().isEmpty())
             throw new ApiException("MUSIC_SOURCES_NOT_CONFIGURED", "请先启用元数据刮削平台");
+        Integer otherActive = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM music_metadata_scrape_batches WHERE status IN ('RUNNING','PAUSED') AND id<>?",
+                Integer.class, batchId);
+        if (otherActive != null && otherActive > 0)
+            throw new ApiException("METADATA_SCRAPE_ACTIVE", "已有其他刮削任务正在运行或暂停，请先完成当前任务");
         int changed = jdbc.update("UPDATE music_metadata_scrape_batches SET status='RUNNING',finished_at=NULL,updated_at=now() WHERE id=? AND status='PAUSED'", batchId);
         if (changed == 0) throw new ApiException("METADATA_SCRAPE_NOT_PAUSED", "当前任务不是暂停状态");
         jdbc.update("""
@@ -252,12 +288,22 @@ public class MusicMetadataScrapeService {
                 SET status='PENDING',lease_owner=NULL,lease_until=NULL,claim_token=NULL,updated_at=now()
                 WHERE batch_id=? AND status='PROCESSING'
                 """, batchId);
-        worker.process(batchId);
+        dispatchAfterCommit(batchId);
         return details(batchId, "", 0, 20);
     }
 
+    @Transactional
     public Map<String, Object> retryItem(String batchId, long itemId) {
+        jdbc.queryForObject("SELECT id FROM music_metadata_scrape_lock WHERE id=1 FOR UPDATE", Short.class);
         requireItem(batchId, itemId);
+        MusicSourceConfig config = configService.getConfig();
+        if (!config.enabled() || config.providers().isEmpty())
+            throw new ApiException("MUSIC_SOURCES_NOT_CONFIGURED", "请先启用元数据刮削平台");
+        Integer otherActive = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM music_metadata_scrape_batches WHERE status IN ('RUNNING','PAUSED') AND id<>?",
+                Integer.class, batchId);
+        if (otherActive != null && otherActive > 0)
+            throw new ApiException("METADATA_SCRAPE_ACTIVE", "已有其他刮削任务正在运行或暂停，请先完成或取消后再重试");
         jdbc.update("""
                 UPDATE music_metadata_scrape_items SET status='PENDING',provider=NULL,external_id=NULL,match_score=NULL,
                 result_json=NULL,error_message=NULL,started_at=NULL,finished_at=NULL,
@@ -265,7 +311,7 @@ public class MusicMetadataScrapeService {
                 WHERE id=? AND batch_id=? AND status IN ('REVIEW','FAILED')
                 """, itemId, batchId);
         jdbc.update("UPDATE music_metadata_scrape_batches SET status='RUNNING',finished_at=NULL,updated_at=now() WHERE id=?", batchId);
-        worker.process(batchId);
+        dispatchAfterCommit(batchId);
         return details(batchId, "", 0, 20);
     }
 
@@ -302,7 +348,7 @@ public class MusicMetadataScrapeService {
         String placeholders = String.join(",", java.util.Collections.nCopies(songIds.size(), "?"));
         String sql = """
                 SELECT song_id FROM music_metadata_scrape_items
-                WHERE status IN ('AUTO_APPLIED','REVIEW','MANUAL_APPLIED','FAILED')
+                WHERE status IN ('AUTO_APPLIED','REVIEW','MANUAL_APPLIED')
                   AND song_id IN (%s)
                 UNION
                 SELECT song_id FROM song_external_matches
@@ -386,5 +432,30 @@ public class MusicMetadataScrapeService {
         row.put("startedAt", rs.getObject("started_at", OffsetDateTime.class));
         row.put("finishedAt", rs.getObject("finished_at", OffsetDateTime.class));
         return row;
+    }
+
+    public com.homektv.common.BackgroundJobSummary jobStatus() {
+        try {
+            Map<String, Object> latest = latest();
+            if (!Boolean.TRUE.equals(latest.get("exists"))) {
+                return new com.homektv.common.BackgroundJobSummary(
+                        "metadata-scrape", "在线元数据刮削", "IDLE", false, 0, 0, 0, 0, true, true, Map.of());
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> counts = (Map<String, Object>) latest.getOrDefault("counts", Map.of());
+            long total = ((Number) counts.getOrDefault("total", 0)).longValue();
+            long pending = ((Number) counts.getOrDefault("pending", 0)).longValue();
+            long processing = ((Number) counts.getOrDefault("processing", 0)).longValue();
+            long failed = ((Number) counts.getOrDefault("failed", 0)).longValue();
+            long completed = Math.max(0L, total - pending - processing);
+            String status = String.valueOf(latest.getOrDefault("status", "IDLE"));
+            boolean running = "RUNNING".equalsIgnoreCase(status);
+            return new com.homektv.common.BackgroundJobSummary(
+                    "metadata-scrape", "在线元数据刮削", status, running, total, completed, failed, pending + processing,
+                    true, true, Map.of("batchId", String.valueOf(latest.getOrDefault("batchId", ""))));
+        } catch (Exception ex) {
+            return new com.homektv.common.BackgroundJobSummary(
+                    "metadata-scrape", "在线元数据刮削", "UNKNOWN", false, 0, 0, 0, 0, true, true, Map.of());
+        }
     }
 }

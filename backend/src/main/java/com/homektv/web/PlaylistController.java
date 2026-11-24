@@ -1,10 +1,6 @@
 package com.homektv.web;
-
-import com.homektv.config.AppProperties;
-import com.homektv.domain.Playlist;
-import com.homektv.library.AssetWriter;
+import com.homektv.common.ApiException;
 import com.homektv.library.PlaylistPublicService;
-import com.homektv.repo.PlaylistRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -26,19 +22,10 @@ import java.util.Map;
 @RequestMapping("/api/playlists")
 public class PlaylistController {
     private final PlaylistPublicService service;
-    private final PlaylistRepository playlistRepository;
-    private final AssetWriter assetWriter;
-
-    /** Compatibility constructor for test callers providing AppProperties directly. */
-    public PlaylistController(PlaylistPublicService service, PlaylistRepository playlistRepository, AppProperties properties) {
-        this(service, playlistRepository, new AssetWriter(properties));
-    }
 
     @Autowired
-    public PlaylistController(PlaylistPublicService service, PlaylistRepository playlistRepository, AssetWriter assetWriter) {
+    public PlaylistController(PlaylistPublicService service) {
         this.service = service;
-        this.playlistRepository = playlistRepository;
-        this.assetWriter = assetWriter;
     }
 
     /**
@@ -91,18 +78,12 @@ public class PlaylistController {
      */
     @GetMapping("/{id}/cover")
     public ResponseEntity<Resource> cover(@PathVariable Long id) {
-        return playlistRepository.findById(id)
-                .filter(Playlist::isPublicVisible)
-                .filter(playlist -> playlist.getCoverPath() != null)
-                .map(playlist -> serveCover(playlist.getCoverPath()))
+        return service.resolvePublicCover(id)
+                .map(this::serveCoverFile)
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    private ResponseEntity<Resource> serveCover(String relativePath) {
-        Path file = assetWriter.readableCachePath(relativePath).orElse(null);
-        if (file == null) {
-            return ResponseEntity.notFound().build();
-        }
+    private ResponseEntity<Resource> serveCoverFile(Path file) {
         String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
         MediaType type = name.endsWith(".png") ? MediaType.IMAGE_PNG
                 : name.endsWith(".webp") ? MediaType.parseMediaType("image/webp") : MediaType.IMAGE_JPEG;

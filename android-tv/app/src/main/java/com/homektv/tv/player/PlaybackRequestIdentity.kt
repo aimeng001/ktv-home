@@ -37,6 +37,7 @@ internal class PlaybackSessionMetadata {
     var currentRequest: PlaybackRequestIdentity? = null
     var currentHasVideoDeclared: Boolean = false
     var currentFormat: String? = null
+    var currentVideoCodec: String? = null
     var currentStreamUrl: String? = null
     var currentStreamOffsetMs: Long = 0L
     var currentIsLiveTranscode: Boolean = false
@@ -51,6 +52,7 @@ internal class PlaybackSessionMetadata {
         streamUrl: String,
         hasVideoDeclared: Boolean,
         format: String?,
+        videoCodec: String? = null,
         songDurationMs: Long,
     ) {
         currentQueueId = queueId
@@ -59,6 +61,7 @@ internal class PlaybackSessionMetadata {
         currentSongDurationMs = songDurationMs
         currentHasVideoDeclared = hasVideoDeclared
         currentFormat = format
+        currentVideoCodec = videoCodec
         currentStreamUrl = streamUrl
         currentIsLiveTranscode = LiveTranscodeStreamUrl.isLiveTranscode(streamUrl)
         currentStreamOffsetMs = LiveTranscodeStreamUrl.startPositionMs(streamUrl)
@@ -73,6 +76,7 @@ internal class PlaybackSessionMetadata {
         streamUrl: String,
         hasVideoDeclared: Boolean,
         format: String?,
+        videoCodec: String? = null,
         songDurationMs: Long,
         engineChoice: PlaybackEngineType,
         activeEngineType: PlaybackEngineType,
@@ -97,6 +101,7 @@ internal class PlaybackSessionMetadata {
             streamUrl = streamUrl,
             hasVideoDeclared = hasVideoDeclared,
             format = format,
+            videoCodec = videoCodec,
             songDurationMs = songDurationMs,
         )
 

@@ -1,7 +1,7 @@
 package com.homektv.musicsource;
 
 import com.homektv.library.AssetWriter;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -272,6 +272,19 @@ class ExternalCoverServiceTest {
         assertCode("EXTERNAL_COVER_URL_INVALID", () -> service.downloadFallbackArtistAvatar(
                 "https://upload.wikimedia.org/portrait.jpg", "artist-key", Duration.ofSeconds(1)));
         verifyNoInteractions(writer);
+    }
+
+    @Test
+    void rejectsHtmlOrPlaylistContentTypeBeforeNormalizing() throws Exception {
+        CoverImageNormalizer normalizer = mock(CoverImageNormalizer.class);
+        TrackingInputStream htmlBody = new TrackingInputStream("<html>nope</html>".getBytes());
+        ExternalCoverService service = responseService(mock(AssetWriter.class), normalizer, 200,
+                Map.of("Content-Type", List.of("text/html; charset=utf-8")), htmlBody);
+
+        assertCode("EXTERNAL_COVER_INVALID", () -> service.download(
+                MusicProvider.QQ, "https://y.gtimg.cn/cover.jpg", "key", Duration.ofSeconds(1)));
+        assertThat(htmlBody.bytesRead()).isZero();
+        verifyNoInteractions(normalizer);
     }
 
     private static ExternalCoverService responseService(int status, Map<String, List<String>> headers,

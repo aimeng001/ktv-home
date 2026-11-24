@@ -5,7 +5,7 @@ import com.homektv.repo.AppUserRepository;
 import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import com.homektv.ws.WsBroadcaster;
 import org.junit.jupiter.api.Test;
 

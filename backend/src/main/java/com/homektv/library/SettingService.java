@@ -281,7 +281,7 @@ public class SettingService {
             String k = entry.getKey();
             Object v = entry.getValue();
             if (!EDITABLE_KEYS.contains(k)) {
-                throw new com.homektv.web.ApiException("SETTING_NOT_ALLOWED", "不允许修改设置：" + k);
+                throw new com.homektv.common.ApiException("SETTING_NOT_ALLOWED", "不允许修改设置：" + k);
             }
             Object sanitized = v;
             if (DISCOVERY_NAME.equals(k) && v instanceof String s && s.isBlank()) {
@@ -341,39 +341,39 @@ public class SettingService {
     }
 
     private void validateKeyValue(String key, Object value) {
-        if (!ALLOWED_KEYS.contains(key)) throw new com.homektv.web.ApiException("SETTING_NOT_ALLOWED", "不允许修改设置：" + key);
+        if (!ALLOWED_KEYS.contains(key)) throw new com.homektv.common.ApiException("SETTING_NOT_ALLOWED", "不允许修改设置：" + key);
         if (STRING_KEYS.contains(key)) {
-            if (!(value instanceof String)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是字符串");
-            if (((String) value).length() > 1000) throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 文本过长");
+            if (!(value instanceof String)) throw new com.homektv.common.ApiException("SETTING_INVALID_TYPE", key + " 必须是字符串");
+            if (((String) value).length() > 1000) throw new com.homektv.common.ApiException("SETTING_INVALID_RANGE", key + " 文本过长");
             if (DISCOVERY_NAME.equals(key)) {
                 String name = (String) value;
                 if (name.length() > 32) {
-                    throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 长度不能超过 32 个字符");
+                    throw new com.homektv.common.ApiException("SETTING_INVALID_RANGE", key + " 长度不能超过 32 个字符");
                 }
             }
         }
         if (Set.of(LIBRARY_WATCH_ENABLED, "standby_carousel", "anti_burn", "mini_qr", "transcode_audio_only",
                 "transcode_hardware_acceleration", "transcode_hardware_auto_configured", DELETE_SOURCE_AFTER_TRANSCODE,
                 LIBRARY_FILENAME_METADATA_PREFERRED, DISCOVERY_ENABLED).contains(key)) {
-            if (!(value instanceof Boolean)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是布尔值");
+            if (!(value instanceof Boolean)) throw new com.homektv.common.ApiException("SETTING_INVALID_TYPE", key + " 必须是布尔值");
         }
         if (key.endsWith("_interval_sec")) {
             if (!(value instanceof Number number)
                     || number.doubleValue() != number.longValue()
                     || number.longValue() < 3
                     || number.longValue() > 60)
-                throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 必须在 3 到 60 之间");
+                throw new com.homektv.common.ApiException("SETTING_INVALID_RANGE", key + " 必须在 3 到 60 之间");
         }
         if ("standby_song_ids".equals(key)) {
-            if (!(value instanceof List<?> ids)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是数组");
-            if (ids.size() > MAX_STANDBY_SONGS) throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 最多包含 " + MAX_STANDBY_SONGS + " 首歌曲");
+            if (!(value instanceof List<?> ids)) throw new com.homektv.common.ApiException("SETTING_INVALID_TYPE", key + " 必须是数组");
+            if (ids.size() > MAX_STANDBY_SONGS) throw new com.homektv.common.ApiException("SETTING_INVALID_RANGE", key + " 最多包含 " + MAX_STANDBY_SONGS + " 首歌曲");
             Set<Long> set = new HashSet<>();
             for (Object item : ids) {
                 if (!(item instanceof Number n) || n.longValue() <= 0 || n.doubleValue() != n.longValue()) {
-                    throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "待机歌曲 ID 必须为正整数");
+                    throw new com.homektv.common.ApiException("SETTING_INVALID_VALUE", "待机歌曲 ID 必须为正整数");
                 }
                 if (!set.add(n.longValue())) {
-                    throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "待机歌曲 ID 不能重复");
+                    throw new com.homektv.common.ApiException("SETTING_INVALID_VALUE", "待机歌曲 ID 不能重复");
                 }
             }
         }
@@ -382,20 +382,20 @@ public class SettingService {
             validateDirectCopyOptions(key, value, allowedDirectCopyOptions);
         }
         if ("transcode_output_container".equals(key) && !Set.of("mkv", "mp4").contains(String.valueOf(value)))
-            throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "输出容器无效");
+            throw new com.homektv.common.ApiException("SETTING_INVALID_VALUE", "输出容器无效");
         if ("transcode_video_codec".equals(key) && !Set.of("h264", "hevc").contains(String.valueOf(value)))
-            throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "转码视频编码无效");
+            throw new com.homektv.common.ApiException("SETTING_INVALID_VALUE", "转码视频编码无效");
         if ("transcode_audio_codec".equals(key) && !Set.of("aac", "mp3", "opus").contains(String.valueOf(value)))
-            throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "转码音频编码无效");
+            throw new com.homektv.common.ApiException("SETTING_INVALID_VALUE", "转码音频编码无效");
         if ("tv_video_scale_mode".equals(key) && !Set.of("zoom", "fit", "fill").contains(String.valueOf(value)))
-            throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "视频画面模式无效");
+            throw new com.homektv.common.ApiException("SETTING_INVALID_VALUE", "视频画面模式无效");
         if ("standby_source".equals(key) && !Set.of("mixed", "hot", "new", "custom").contains(String.valueOf(value)))
-            throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "待机轮播来源无效");
+            throw new com.homektv.common.ApiException("SETTING_INVALID_VALUE", "待机轮播来源无效");
         if (EXTERNAL_DEFAULT_AUDIO_LAYOUT.equals(key)) {
             if (!(value instanceof String)
                     || !Set.of(AudioLayout.NORMAL_STEREO.name(), AudioLayout.DUAL_TRACK.name(),
                     AudioLayout.DUAL_CHANNEL.name()).contains(String.valueOf(value))) {
-                throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "外部曲库音频布局无效");
+                throw new com.homektv.common.ApiException("SETTING_INVALID_VALUE", "外部曲库音频布局无效");
             }
         }
     }
@@ -439,18 +439,18 @@ public class SettingService {
 
     private static void validateDirectCopyOptions(String key, Object value, Set<String> allowed) {
         if (!(value instanceof List<?> list)) {
-            throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是数组");
+            throw new com.homektv.common.ApiException("SETTING_INVALID_TYPE", key + " 必须是数组");
         }
         for (Object item : list) {
             if (!(item instanceof String text)) {
-                throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 的每个选项必须是字符串");
+                throw new com.homektv.common.ApiException("SETTING_INVALID_TYPE", key + " 的每个选项必须是字符串");
             }
             String normalized = text.trim().toLowerCase(java.util.Locale.ROOT);
             if (normalized.isEmpty() || normalized.length() > 32) {
-                throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 的选项长度无效");
+                throw new com.homektv.common.ApiException("SETTING_INVALID_RANGE", key + " 的选项长度无效");
             }
             if (!allowed.contains(normalized)) {
-                throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", key + " 包含不支持的选项：" + text);
+                throw new com.homektv.common.ApiException("SETTING_INVALID_VALUE", key + " 包含不支持的选项：" + text);
             }
         }
     }
@@ -474,7 +474,7 @@ public class SettingService {
         } catch (Exception e) {
             String detail = e.getMessage() == null || e.getMessage().isBlank()
                     ? e.getClass().getSimpleName() : e.getMessage();
-            throw new com.homektv.web.ApiException("SETTING_SERIALIZATION_FAILED", "设置序列化失败：" + detail);
+            throw new com.homektv.common.ApiException("SETTING_SERIALIZATION_FAILED", "设置序列化失败：" + detail);
         }
     }
 }

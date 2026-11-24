@@ -651,7 +651,7 @@ class AiLibraryServiceTest {
     @Test
     void previewPlaylistRejectsMissingConfigurationBlankInstructionsAndEmptyCatalogues() throws Exception {
         AiConfigService disabledConfig = mock(AiConfigService.class);
-        doThrow(new com.homektv.web.ApiException("AI_DISABLED", "AI disabled"))
+        doThrow(new com.homektv.common.ApiException("AI_DISABLED", "AI disabled"))
                 .when(disabledConfig).requireConfigured();
         OpenAiCompatibleClient disabledClient = mock(OpenAiCompatibleClient.class);
         AiLibraryService disabledService = previewService(mock(SongRepository.class), disabledClient,
@@ -955,7 +955,7 @@ class AiLibraryServiceTest {
                 .thenReturn("playlist-covers/722.jpg");
         CoverImageNormalizer normalizer = mock(CoverImageNormalizer.class);
         when(normalizer.normalize(any())).thenReturn(new byte[]{9})
-                .thenThrow(new com.homektv.web.ApiException("IMAGE_BUSY", "busy"));
+                .thenThrow(new com.homektv.common.ApiException("IMAGE_BUSY", "busy"));
         AiLibraryService service = service(mock(SongRepository.class), playlists,
                 mock(PlaylistSongRepository.class), mock(OpenAiCompatibleClient.class), new ObjectMapper(), writer);
         service.setCoverImageNormalizer(normalizer);

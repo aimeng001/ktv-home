@@ -5,7 +5,7 @@ import { createApp, defineComponent, nextTick } from 'vue'
 const { apiMock, alertMock, confirmMock, routeMock, routerMock } = vi.hoisted(() => ({
   apiMock: {
     adminMusicSourceConfig: vi.fn(), adminLatestMetadataScrape: vi.fn(), adminStartMetadataScrape: vi.fn(),
-    adminMetadataScrape: vi.fn(), adminPauseMetadataScrape: vi.fn(), adminResumeMetadataScrape: vi.fn(),
+    adminMetadataScrape: vi.fn(), adminPauseMetadataScrape: vi.fn(), adminCancelMetadataScrape: vi.fn(), adminResumeMetadataScrape: vi.fn(),
     adminRetryMetadataScrapeItem: vi.fn(), adminSong: vi.fn(), adminSongExternalMatches: vi.fn(),
     lyricText: vi.fn(), adminApplyManualMetadata: vi.fn(), adminApplyExternalMatch: vi.fn(),
     adminApplyMetadataScrapeItem: vi.fn(), adminEditSong: vi.fn()
@@ -35,6 +35,7 @@ describe('MetadataScrapeView', () => {
     apiMock.adminSongExternalMatches.mockResolvedValue({ matches: [] })
     apiMock.adminApplyManualMetadata.mockResolvedValue({})
     apiMock.adminEditSong.mockResolvedValue({})
+    apiMock.adminCancelMetadataScrape.mockResolvedValue({ batchId: 'batch-2', status: 'CANCELLED' })
     confirmMock.mockResolvedValue(true)
   })
 
@@ -133,7 +134,7 @@ describe('MetadataScrapeView', () => {
     root.querySelector('[aria-label="重试刮削"]').click()
     await flushUi()
     expect(apiMock.adminRetryMetadataScrapeItem).toHaveBeenCalledWith('old-batch', 3)
-    expect(apiMock.adminMetadataScrape).toHaveBeenCalledWith('old-batch', { status: '', page: 0, size: 20 })
+    expect(apiMock.adminMetadataScrape).toHaveBeenCalledWith('old-batch', { status: '', page: 0, size: 20 }, { signal: expect.any(AbortSignal) })
   })
 
   it('uses the default threshold and reports a latest-task load error when setup APIs fail', async () => {
@@ -220,16 +221,16 @@ describe('MetadataScrapeView', () => {
 
     root.querySelectorAll('.metrics button')[3].click()
     await flushUi()
-    expect(apiMock.adminMetadataScrape).toHaveBeenLastCalledWith('batch-2', { status: 'FAILED', page: 0, size: 20 })
+    expect(apiMock.adminMetadataScrape).toHaveBeenLastCalledWith('batch-2', { status: 'FAILED', page: 0, size: 20 }, { signal: expect.any(AbortSignal) })
 
     root.querySelector('.pager button:last-child').click()
     await flushUi()
-    expect(apiMock.adminMetadataScrape).toHaveBeenLastCalledWith('batch-2', { status: 'FAILED', page: 1, size: 20 })
+    expect(apiMock.adminMetadataScrape).toHaveBeenLastCalledWith('batch-2', { status: 'FAILED', page: 1, size: 20 }, { signal: expect.any(AbortSignal) })
     expect(root.querySelector('.pager button:first-child').disabled).toBe(false)
 
     root.querySelector('.pager button:first-child').click()
     await flushUi()
-    expect(apiMock.adminMetadataScrape).toHaveBeenLastCalledWith('batch-2', { status: 'FAILED', page: 0, size: 20 })
+    expect(apiMock.adminMetadataScrape).toHaveBeenLastCalledWith('batch-2', { status: 'FAILED', page: 0, size: 20 }, { signal: expect.any(AbortSignal) })
   })
 
   it('rejects short review searches without calling the metadata provider', async () => {
@@ -542,7 +543,7 @@ describe('MetadataScrapeView', () => {
     await flushUi()
     expect(root.querySelector('.stale-alert')).toBeNull()
     expect(apiMock.adminMetadataScrape).toHaveBeenCalledTimes(2)
-    expect(apiMock.adminMetadataScrape).toHaveBeenLastCalledWith('batch-2', { status: '', page: 0, size: 20 })
+    expect(apiMock.adminMetadataScrape).toHaveBeenLastCalledWith('batch-2', { status: '', page: 0, size: 20 }, { signal: expect.any(AbortSignal) })
   })
 
   it('shows the last successful refresh time when a later poll fails', async () => {
@@ -611,7 +612,7 @@ describe('MetadataScrapeView', () => {
 
   it('renders low-confidence and unknown batch values without treating them as known states', async () => {
     apiMock.adminLatestMetadataScrape.mockResolvedValue(taskFixture({
-      mode: 'LEGACY_MODE', status: 'CANCELLED', autoApplyThreshold: 0.8,
+      mode: 'LEGACY_MODE', status: 'ARCHIVED', autoApplyThreshold: 0.8,
       items: [{
         id: 12, songId: 42, title: '低置信歌曲', artist: '歌手', status: 'PENDING',
         provider: 'UNLISTED_PROVIDER', score: 0.79,
@@ -621,7 +622,7 @@ describe('MetadataScrapeView', () => {
     await mount()
 
     expect(root.querySelector('.section-title p').textContent).toContain('LEGACY_MODE')
-    expect(root.querySelector('.batch-status').textContent).toBe('CANCELLED')
+    expect(root.querySelector('.batch-status').textContent).toBe('ARCHIVED')
     expect(root.querySelector('tbody .score').classList.contains('low')).toBe(true)
     expect(root.querySelector('tbody .provider').textContent).toBe('UNLISTED_PROVIDER')
   })
@@ -1062,6 +1063,32 @@ describe('MetadataScrapeView', () => {
     await flushUi()
 
     expect(apiMock.adminEditSong).toHaveBeenCalledWith(42, { language: '国语', clearLyric: true })
+  })
+
+  it('cancels an active scrape batch and aborts superseded poll requests on filter change', async () => {
+    let firstPollSignal
+    let resolveFirstPoll
+    apiMock.adminLatestMetadataScrape.mockResolvedValue(taskFixture({ status: 'RUNNING' }))
+    apiMock.adminMetadataScrape
+      .mockImplementationOnce((_id, _params, opts) => {
+        firstPollSignal = opts?.signal
+        return new Promise(resolve => { resolveFirstPoll = resolve })
+      })
+      .mockResolvedValueOnce(taskFixture({ status: 'RUNNING', items: [] }))
+      .mockResolvedValueOnce(taskFixture({ status: 'CANCELLED', items: [] }))
+
+    await mount()
+    // Trigger an overlapping filter click while first refresh is in flight
+    root.querySelectorAll('.metrics button')[2].click() // REVIEW
+    await flushUi()
+    // Switching filter directly triggers refreshTask(true) immediately without waiting for poll
+    expect(apiMock.adminMetadataScrape).toHaveBeenLastCalledWith('batch-2', { status: 'REVIEW', page: 0, size: 20 }, { signal: expect.any(AbortSignal) })
+
+    const cancelBtn = root.querySelector('.task-actions .danger-btn')
+    expect(cancelBtn).toBeTruthy()
+    cancelBtn.click()
+    await flushUi()
+    expect(apiMock.adminCancelMetadataScrape).toHaveBeenCalledWith('batch-2')
   })
 
   function taskFixture(overrides = {}) {

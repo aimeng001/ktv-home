@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.LibraryMode;
 
 import com.homektv.config.AppProperties;
 import com.homektv.repo.SongFileRepository;

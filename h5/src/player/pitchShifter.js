@@ -61,6 +61,9 @@ export function createPitchShifter(audioContext) {
   function setSemitones(newSemitones) {
     const next = clampSemitones(newSemitones)
     if (next === semitones) return
+    if (semitones === 0 || next === 0) {
+      reset()
+    }
     semitones = next
     pitchRatio = semitonesToPitchRatio(semitones)
     updateRouting()

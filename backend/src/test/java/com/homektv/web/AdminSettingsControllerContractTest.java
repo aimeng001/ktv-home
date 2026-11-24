@@ -72,20 +72,13 @@ class AdminSettingsControllerContractTest {
         settingService = new SettingService(repository, new ObjectMapper(), props);
         libraryWatchService = mock(LibraryWatchService.class);
 
-        AdminScanController scanController = new AdminScanController(
-                mock(LibraryScanService.class),
-                libraryWatchService,
-                mock(AdminService.class),
-                mock(MediaImportService.class),
+        AdminSettingsController settingsController = new AdminSettingsController(
                 settingService,
-                mock(TranscodeService.class),
                 mock(TranscodeHardwareService.class),
-                mock(SongReparseService.class),
-                mock(SongMergeService.class),
-                props
+                libraryWatchService
         );
 
-        settingsMvc = standaloneSetup(scanController)
+        settingsMvc = standaloneSetup(settingsController)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 

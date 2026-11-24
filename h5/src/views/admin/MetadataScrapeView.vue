@@ -4,7 +4,7 @@
       <header class="page-head">
         <div class="title-wrap">
           <button class="icon-btn" title="返回 KTV 曲库" @click="router.push({name:'admin-ktv-library'})"><ArrowLeft :size="18" /></button>
-          <div><h1>元数据刮削</h1><p>从已启用平台为 KTV 曲库补全歌名、歌手、专辑、发行时间与封面</p></div>
+          <div><h1>元数据刮削</h1><p>从已启用平台补全歌名、歌手、专辑、发行时间、别名与封面（歌词与语种请在人工审核或 AI 标签维护）</p></div>
         </div>
         <button class="secondary" @click="router.push({name:'admin-settings',query:{section:'metadata'}})"><Settings2 :size="15" />平台与限速设置</button>
       </header>
@@ -35,6 +35,7 @@
           <div v-if="task" class="task-actions">
             <button v-if="task.status==='RUNNING'" class="secondary" :disabled="taskAction" @click="pauseTask"><Pause :size="15" />暂停</button>
             <button v-if="task.status==='PAUSED'" class="primary" :disabled="taskAction" @click="resumeTask"><Play :size="15" />继续</button>
+            <button v-if="['RUNNING','PAUSED'].includes(task.status)" class="secondary danger-btn" :disabled="taskAction" @click="cancelTask"><X :size="15" />终止任务</button>
             <span class="batch-status" :class="task.status.toLowerCase()">{{ batchStatusText(task.status) }}</span>
           </div>
         </div>
@@ -141,7 +142,7 @@ const reviewOriginal=reactive({language:'未知',lyricText:''})
 const reviewFields=[{key:'title',label:'歌名'},{key:'artist',label:'歌手'},{key:'album',label:'专辑'},{key:'releaseDate',label:'发行时间'},{key:'aliases',label:'别名'},{key:'cover',label:'封面'}]
 const languages=['国语','粤语','闽南语','英语','日语','韩语','纯音乐','其他','未知']
 const poll=reactive({status:'idle',lastSuccessAt:null,failureCount:0})
-let timer=null,refreshing=false,disposed=false
+let timer=null,refreshing=false,disposed=false,pollSerial=0,pollController=null
 const activeTask=computed(()=>task.value&&['RUNNING','PAUSED'].includes(task.value.status))
 const progressPercent=computed(()=>task.value?.total?Math.round(task.value.completed/task.value.total*100):0)
 const taskThresholdDiffers=computed(()=>task.value&&Math.abs(task.value.autoApplyThreshold-threshold.value)>.000001)
@@ -164,24 +165,36 @@ async function initialize(){
 async function startSelected(){if(!selectedIds.value.size)return;await startTask(false,[...selectedIds.value])}
 async function startAll(){if(!await confirmDialog(`将按 ${formatPercent(threshold.value)} 自动写入阈值刮削全部 KTV 歌曲，低置信结果会进入人工审核。`,{title:'刮削全部歌曲'}))return;await startTask(true,[])}
 async function startTask(all,ids){starting.value=true;try{task.value=await api.adminStartMetadataScrape({all,songIds:ids,autoApplyThreshold:threshold.value});taskPage.value=0;statusFilter.value='';poll.status='idle';poll.failureCount=0;schedulePoll(1500)}catch(e){if(e.code==='MUSIC_SOURCES_NOT_CONFIGURED'){await alertDialog('请先在系统设置中启用至少一个元数据平台。');await router.push({name:'admin-settings',query:{section:'metadata'}})}else await alertDialog(e.message||'刮削任务创建失败')}finally{starting.value=false}}
-async function refreshTask(){
-  if(refreshing||!task.value?.batchId)return
+async function refreshTask(force=false){
+  if((refreshing&&!force)||!task.value?.batchId)return
+  if(force)pollController?.abort()
+  const seq=++pollSerial
+  const controller=typeof AbortController!=='undefined'?new AbortController():null
+  pollController=controller
   refreshing=true
   try{
-    task.value=await api.adminMetadataScrape(task.value.batchId,{status:statusFilter.value,page:taskPage.value,size:20})
+    const params={status:statusFilter.value,page:taskPage.value,size:20}
+    const next=controller?await api.adminMetadataScrape(task.value.batchId,params,{signal:controller.signal}):await api.adminMetadataScrape(task.value.batchId,params)
+    if(disposed||seq!==pollSerial)return
+    task.value=next
     poll.status='ready';poll.lastSuccessAt=Date.now();poll.failureCount=0
-  }catch{
+  }catch(e){
+    if(e?.name==='AbortError'||disposed||seq!==pollSerial)return
     poll.status='stale';poll.failureCount+=1
   }finally{
-    refreshing=false
-    if(activeTask.value)schedulePoll(pollingDelay(poll.status,poll.failureCount))
+    if(seq===pollSerial){
+      refreshing=false
+      if(pollController===controller)pollController=null
+      if(activeTask.value)schedulePoll(pollingDelay(poll.status,poll.failureCount))
+    }
   }
 }
-async function pauseTask(){taskAction.value=true;try{await api.adminPauseMetadataScrape(task.value.batchId);await refreshTask()}catch(e){await alertDialog(e.message||'暂停失败')}finally{taskAction.value=false}}
-async function resumeTask(){taskAction.value=true;try{await api.adminResumeMetadataScrape(task.value.batchId);await refreshTask()}catch(e){await alertDialog(e.message||'继续任务失败')}finally{taskAction.value=false}}
-async function retryItem(item){itemBusy.value=item.id;try{await api.adminRetryMetadataScrapeItem(task.value.batchId,item.id);await refreshTask()}catch(e){await alertDialog(e.message||'重试失败')}finally{itemBusy.value=null}}
-function setStatus(value){statusFilter.value=value;taskPage.value=0;refreshTask()}
-function changeTaskPage(value){taskPage.value=value;refreshTask()}
+async function pauseTask(){taskAction.value=true;try{await api.adminPauseMetadataScrape(task.value.batchId);await refreshTask(true)}catch(e){await alertDialog(e.message||'暂停失败')}finally{taskAction.value=false}}
+async function resumeTask(){taskAction.value=true;try{await api.adminResumeMetadataScrape(task.value.batchId);await refreshTask(true)}catch(e){await alertDialog(e.message||'继续任务失败')}finally{taskAction.value=false}}
+async function cancelTask(){if(!await confirmDialog('确定终止当前刮削任务？已写入的数据保留，未处理条目将停止执行。',{title:'终止刮削任务',tone:'warning'}))return;taskAction.value=true;try{await api.adminCancelMetadataScrape(task.value.batchId);await refreshTask(true)}catch(e){await alertDialog(e.message||'终止任务失败')}finally{taskAction.value=false}}
+async function retryItem(item){itemBusy.value=item.id;try{await api.adminRetryMetadataScrapeItem(task.value.batchId,item.id);await refreshTask(true)}catch(e){await alertDialog(e.message||'重试失败')}finally{itemBusy.value=null}}
+function setStatus(value){statusFilter.value=value;taskPage.value=0;refreshTask(true)}
+function changeTaskPage(value){taskPage.value=value;refreshTask(true)}
 async function openReview(item){reviewKeyword.value=[item.title,item.artist].filter(Boolean).join(' ');reviewing.value={...item,standalone:false};await loadReviewData(false)}
 async function openStandaloneReview(song){reviewKeyword.value=[song.title,song.artist].filter(Boolean).join(' ');reviewing.value={songId:song.id,title:song.title,artist:song.artist,standalone:true};await loadReviewData(true)}
 function closeReview(){if(applying.value)return;reviewRequestGate.invalidate();reviewing.value=null;reviewMatches.value=[];reviewSelected.value=null;reviewManual.value=false;reviewSong.value=null;reviewProvider.value='';reviewKeyword.value='';reviewLoading.value=false;reviewLyricLoading.value=false}
@@ -251,20 +264,20 @@ async function applyReview(){
       await api.adminEditSong(reviewing.value.songId,edit)
     }
     if(!reviewing.value.standalone&&!metadataFields.length)await api.adminApplyMetadataScrapeItem(task.value.batchId,reviewing.value.id,{fields:[],overrides:{},completeOnly:true})
-    applying.value=false;closeReview();await refreshTask()
+    applying.value=false;closeReview();await refreshTask(true)
   }catch(e){await alertDialog(e.message||'元数据写入失败')}
   finally{applying.value=false}
 }
 function providerText(value){return{NETEASE:'网易云',QQ:'QQ 音乐',KUGOU:'酷狗'}[value]||value||'—'}
 function modeText(value){return{ALL:'全部歌曲',SELECTED:'已选歌曲',SINGLE:'单曲'}[value]||value}
-function batchStatusText(value){return{RUNNING:'刮削中',PAUSED:'已暂停',COMPLETED:'已完成'}[value]||value}
+function batchStatusText(value){return{RUNNING:'刮削中',PAUSED:'已暂停',COMPLETED:'已完成',CANCELLED:'已终止'}[value]||value}
 function itemStatusText(value){return{PENDING:'等待中',PROCESSING:'刮削中',AUTO_APPLIED:'已自动写入',REVIEW:'待人工审核',MANUAL_APPLIED:'已人工写入',FAILED:'失败'}[value]||value}
 function scoreClass(value){return value>=task.value.autoApplyThreshold?'high':value>=.8?'medium':'low'}
 function formatPercent(value){const percent=Number(value||0)*100;return `${Number.isInteger(percent)?percent.toFixed(0):percent.toFixed(1)}%`}
 function formatTime(value){return value?new Date(value).toLocaleString('zh-CN',{hour12:false}):''}
 function fileName(path){return String(path||'').split(/[\\/]/).filter(Boolean).pop()||''}
 function schedulePoll(delay){if(disposed||!task.value?.batchId)return;if(timer)window.clearTimeout(timer);timer=window.setTimeout(()=>{timer=null;refreshTask()},delay)}
-function clearPoll(){disposed=true;if(timer){window.clearTimeout(timer);timer=null}}
+function clearPoll(){disposed=true;pollSerial++;pollController?.abort();pollController=null;if(timer){window.clearTimeout(timer);timer=null}}
 onMounted(initialize)
 onBeforeUnmount(clearPoll)
 </script>

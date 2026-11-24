@@ -10,9 +10,9 @@ import com.homektv.queue.UserService;
 import com.homektv.repo.PlaylistRepository;
 import com.homektv.repo.PlaylistSongRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
-import com.homektv.web.dto.QueueSnapshot;
-import com.homektv.web.dto.SongDto;
+import com.homektv.common.ApiException;
+import com.homektv.contract.QueueSnapshot;
+import com.homektv.contract.SongDto;
 import com.homektv.ws.WsBroadcaster;
 import com.homektv.ws.WsEvent;
 import org.springframework.stereotype.Service;
@@ -45,6 +45,7 @@ public class PlaylistPublicService {
     private final UserService userService;
     private final WsBroadcaster broadcaster;
     private SongAvailabilityPolicy availabilityPolicy;
+    private AssetWriter assetWriter;
 
     public PlaylistPublicService(PlaylistRepository playlistRepository, PlaylistSongRepository playlistSongRepository,
                                  SongRepository songRepository, QueueService queueService,
@@ -141,6 +142,20 @@ public class PlaylistPublicService {
             if (started) broadcaster.broadcastPlayback(WsEvent.of(WsEvent.NOW_PLAYING, snapshot));
         }
         return Map.of("ordered", ordered, "skipped", skipped, "queueFull", queueFull, "snapshot", snapshot);
+    }
+
+    @Autowired(required = false)
+    void setAssetWriter(AssetWriter assetWriter) {
+        this.assetWriter = assetWriter;
+    }
+
+    public java.util.Optional<java.nio.file.Path> resolvePublicCover(Long id) {
+        if (assetWriter == null || id == null) return java.util.Optional.empty();
+        return playlistRepository.findById(id)
+                .filter(Playlist::isPublicVisible)
+                .map(Playlist::getCoverPath)
+                .filter(Objects::nonNull)
+                .flatMap(assetWriter::readableCachePath);
     }
 
     private Playlist requirePublic(Long id) {

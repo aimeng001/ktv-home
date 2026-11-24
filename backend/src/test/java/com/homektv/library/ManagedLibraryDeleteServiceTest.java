@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.LibraryMode;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -8,7 +9,7 @@ import com.homektv.domain.ManagedDeleteOperation;
 import com.homektv.domain.SongFile;
 import com.homektv.repo.ManagedDeleteOperationRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -81,7 +82,7 @@ class ManagedLibraryDeleteServiceTest {
         file.setFilePath(outside.toString());
 
         assertThatThrownBy(() -> service.prepare(7L, List.of(file)))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasFieldOrPropertyWithValue("code", "INVALID_LIBRARY_PATH");
     }
 
@@ -115,7 +116,7 @@ class ManagedLibraryDeleteServiceTest {
         Files.writeString(trash, "do-not-overwrite");
 
         assertThatThrownBy(() -> service.stage(operationId))
-                .isInstanceOf(com.homektv.web.ApiException.class);
+                .isInstanceOf(com.homektv.common.ApiException.class);
         assertThat(source).exists().hasContent("original");
         assertThat(trash).hasContent("do-not-overwrite");
     }

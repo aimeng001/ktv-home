@@ -1,7 +1,7 @@
 package com.homektv.security;
 
 import com.homektv.config.AppProperties;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

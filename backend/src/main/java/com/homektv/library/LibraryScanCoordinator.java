@@ -1,7 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.config.AppProperties;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

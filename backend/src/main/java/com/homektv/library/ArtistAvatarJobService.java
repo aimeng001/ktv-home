@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.ArtistKindClassifier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -135,15 +136,15 @@ public class ArtistAvatarJobService {
     public Map<String, Object> scrapeSingleArtist(String artistKey, LocalAvatarResolver localAvatarResolver) {
         String safeKey = artistKey == null ? "" : artistKey.trim();
         if (safeKey.isBlank()) {
-            throw new com.homektv.web.ApiException("INVALID_ARTIST_KEY", "歌手 Key 不能为空");
+            throw new com.homektv.common.ApiException("INVALID_ARTIST_KEY", "歌手 Key 不能为空");
         }
         var profile = worker.findProfile(safeKey)
-                .orElseThrow(() -> new com.homektv.web.ApiException("ARTIST_NOT_FOUND", "歌手档案不存在"));
+                .orElseThrow(() -> new com.homektv.common.ApiException("ARTIST_NOT_FOUND", "歌手档案不存在"));
         if (ArtistKindClassifier.isPlaceholder(profile.displayName())) {
-            throw new com.homektv.web.ApiException("INVALID_ARTIST_KIND", "占位歌手无需刮削头像");
+            throw new com.homektv.common.ApiException("INVALID_ARTIST_KIND", "占位歌手无需刮削头像");
         }
         if (worker.resetSingleArtistForScrape(safeKey)) {
-            if (localAvatarResolver != null && localAvatarResolver.resolveAllCandidates() > 0) {
+            if (localAvatarResolver != null && localAvatarResolver.resolveSingleArtist(profile)) {
                 var refreshed = worker.findProfile(safeKey).orElse(profile);
                 if (refreshed.avatarPath() != null && !refreshed.avatarPath().isBlank()) {
                     return Map.of("queued", 0, "resolvedLocally", true, "status", "READY");
@@ -154,7 +155,7 @@ public class ArtistAvatarJobService {
         try {
             config = configService.getConfig();
         } catch (DataAccessException failure) {
-            throw new com.homektv.web.ApiException("MUSIC_SOURCE_UNAVAILABLE", "音乐元数据配置暂时不可用");
+            throw new com.homektv.common.ApiException("MUSIC_SOURCE_UNAVAILABLE", "音乐元数据配置暂时不可用");
         }
         boolean fallbackEnabled = configService.isAvatarFallbackEnabled();
         if (config == null || !config.enabled()
@@ -239,6 +240,33 @@ public class ArtistAvatarJobService {
             // During a rolling upgrade the migration may not be present yet;
             // the song scan must remain usable and retry on the next scan.
             log.warn("artist avatar jobs unavailable: {}", failure.getMessage());
+        }
+    }
+
+    public com.homektv.common.BackgroundJobSummary jobStatus() {
+        try {
+            Map<String, Long> counts = jdbc.query("""
+                    SELECT status, COUNT(*) AS cnt FROM artist_avatar_jobs GROUP BY status
+                    """, rs -> {
+                Map<String, Long> map = new java.util.LinkedHashMap<>();
+                while (rs.next()) map.put(rs.getString("status"), rs.getLong("cnt"));
+                return map;
+            });
+            if (counts == null || counts.isEmpty()) {
+                return new com.homektv.common.BackgroundJobSummary(
+                        "artist-avatar", "歌手头像刮削", "IDLE", false, 0, 0, 0, 0, false, false, Map.of());
+            }
+            long pending = counts.getOrDefault("PENDING", 0L) + counts.getOrDefault("PROCESSING", 0L);
+            long failed = counts.getOrDefault("FAILED", 0L);
+            long completed = counts.getOrDefault("DONE", 0L) + counts.getOrDefault("SKIPPED", 0L);
+            long total = counts.values().stream().mapToLong(Long::longValue).sum();
+            boolean running = counts.getOrDefault("PROCESSING", 0L) > 0 || pending > 0;
+            return new com.homektv.common.BackgroundJobSummary(
+                    "artist-avatar", "歌手头像刮削", running ? "RUNNING" : "IDLE",
+                    running, total, completed, failed, pending, false, false, Map.of());
+        } catch (Exception ex) {
+            return new com.homektv.common.BackgroundJobSummary(
+                    "artist-avatar", "歌手头像刮削", "UNKNOWN", false, 0, 0, 0, 0, false, false, Map.of());
         }
     }
 

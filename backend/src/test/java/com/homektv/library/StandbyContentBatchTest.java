@@ -5,7 +5,7 @@ import com.homektv.domain.Song;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.SettingRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

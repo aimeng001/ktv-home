@@ -1,7 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.config.AppProperties;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -67,8 +67,22 @@ public class AssetWriter {
     public String writeArtistCover(String artistKey, byte[] image, String ext) {
         String rel = "artist-covers/" + digest(artistKey) + "." + (ext == null ? "jpg" : ext);
         requireImageSize(image);
+        Path target = dataRoot.resolve(rel);
+        long previousSize = Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) ? safeFileSize(target) : 0L;
+        long delta = Math.max(0L, image.length - previousSize);
+        if (delta > 0 && !hasArtistCoverCapacity(delta)) {
+            throw new ApiException("ARTIST_COVER_CACHE_FULL", "歌手头像缓存已达到容量上限");
+        }
         write(rel, image);
         return rel;
+    }
+
+    private static long safeFileSize(Path target) {
+        try {
+            return Files.size(target);
+        } catch (IOException ignored) {
+            return 0L;
+        }
     }
 
     /**

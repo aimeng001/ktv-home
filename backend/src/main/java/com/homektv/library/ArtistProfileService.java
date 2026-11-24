@@ -1,4 +1,7 @@
 package com.homektv.library;
+import com.homektv.common.ArtistCreditParser;
+import com.homektv.common.ArtistKindClassifier;
+import com.homektv.common.ArtistKind;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

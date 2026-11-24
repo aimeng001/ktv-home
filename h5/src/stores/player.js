@@ -44,6 +44,7 @@ export const usePlayerStore = defineStore('player', {
     webPlayerGeneration: 0,
     webPlayerActive: false,
     webPlayerHolderToken: null,
+    wasWebHostBeforeDisconnect: false,
     modeOverride: 'auto', // 'auto' | 'console' | 'host'
     audioBlockedByAutoplay: false,
     audioUnlockFailed: false
@@ -84,6 +85,12 @@ export const usePlayerStore = defineStore('player', {
         onStatus: (ok) => {
           this.connected = ok
           if (!ok) {
+            this.wasWebHostBeforeDisconnect = Boolean(
+              this.wasWebHostBeforeDisconnect ||
+              (this.tvOnline !== true && this.webPlayerRole === 'ACTIVE' && this.modeOverride !== 'console')
+            )
+            this.socket?.requeueUnackedReports?.()
+            this.stateRevision = 0
             this.webPlayerRole = 'STANDBY'
             this.webPlayerGeneration = 0
           } else {
@@ -102,6 +109,7 @@ export const usePlayerStore = defineStore('player', {
       this.webPlayerGeneration = 0
       this.webPlayerActive = false
       this.webPlayerHolderToken = null
+      this.wasWebHostBeforeDisconnect = false
       if (this.socket) { this.socket.close(); this.socket = null }
     },
 
@@ -154,6 +162,7 @@ export const usePlayerStore = defineStore('player', {
         case 'player_role':
           if (payload && typeof payload === 'object') {
             const role = payload.role === 'ACTIVE' && this.tvOnline !== true ? 'ACTIVE' : 'STANDBY'
+            this.wasWebHostBeforeDisconnect = false
             this.webPlayerRole = role
             this.webPlayerGeneration = role === 'ACTIVE' ? (Number(payload.generation) || 0) : 0
             if (role === 'STANDBY' && this.modeOverride === 'host') {
@@ -168,6 +177,11 @@ export const usePlayerStore = defineStore('player', {
           if (payload && typeof payload === 'object') {
             this.webPlayerActive = Boolean(payload.active)
             this.webPlayerHolderToken = payload.holderToken || null
+          }
+          break
+        case 'playback_report_ack':
+          if (payload && typeof payload === 'object') {
+            this.socket?.acknowledgeReport?.(payload.report_type, payload.queue_id)
           }
           break
         case 'room_host_changed':
@@ -231,6 +245,7 @@ export const usePlayerStore = defineStore('player', {
         this.webPlayerGeneration = 0
         this.webPlayerActive = false
         this.webPlayerHolderToken = null
+        this.wasWebHostBeforeDisconnect = false
         this.socket?.clearPendingReports?.()
         if (this.modeOverride === 'host') {
           this.modeOverride = 'auto'
@@ -289,6 +304,7 @@ export const usePlayerStore = defineStore('player', {
     releaseWebPlayer() {
       this.webPlayerRole = 'STANDBY'
       this.webPlayerGeneration = 0
+      this.wasWebHostBeforeDisconnect = false
       this.socket?.send({ type: 'web_player_release' })
     },
 
@@ -319,31 +335,43 @@ export const usePlayerStore = defineStore('player', {
     },
 
     reportFinished(queueId) {
-      if (!this.isWebHost || !this.webPlayerGeneration) return false
       if (!Number.isInteger(queueId) || queueId <= 0) return false
-      const sent = this.socket?.send({
-        type: 'finished',
-        payload: { queue_id: queueId, generation: this.webPlayerGeneration }
-      }) === true
-      if (!sent) this.socket?.queueReport?.({ kind: 'finished', queueId })
-      return sent
+      if (this.isWebHost && this.webPlayerGeneration) {
+        const sent = this.socket?.send({
+          type: 'finished',
+          payload: { queue_id: queueId, generation: this.webPlayerGeneration }
+        }) === true
+        if (sent) this.socket?.trackInFlightReport?.({ kind: 'finished', queueId })
+        else this.socket?.queueReport?.({ kind: 'finished', queueId })
+        return sent
+      }
+      if (!this.connected && this.wasWebHostBeforeDisconnect && this.tvOnline !== true && this.modeOverride !== 'console') {
+        this.socket?.queueReport?.({ kind: 'finished', queueId })
+      }
+      return false
     },
 
     reportPlayError(fileId, queueId, message) {
-      if (!this.isWebHost || !this.webPlayerGeneration) return false
       if (!Number.isInteger(queueId) || queueId <= 0) return false
       const text = String(message || '媒体播放失败')
-      const sent = this.socket?.send({
-        type: 'play_error',
-        payload: {
-          ...(fileId != null ? { file_id: fileId } : {}),
-          queue_id: queueId,
-          message: text,
-          generation: this.webPlayerGeneration
-        }
-      }) === true
-      if (!sent) this.socket?.queueReport?.({ kind: 'play_error', queueId, fileId, message: text })
-      return sent
+      if (this.isWebHost && this.webPlayerGeneration) {
+        const sent = this.socket?.send({
+          type: 'play_error',
+          payload: {
+            ...(fileId != null ? { file_id: fileId } : {}),
+            queue_id: queueId,
+            message: text,
+            generation: this.webPlayerGeneration
+          }
+        }) === true
+        if (sent) this.socket?.trackInFlightReport?.({ kind: 'play_error', queueId, fileId, message: text })
+        else this.socket?.queueReport?.({ kind: 'play_error', queueId, fileId, message: text })
+        return sent
+      }
+      if (!this.connected && this.wasWebHostBeforeDisconnect && this.tvOnline !== true && this.modeOverride !== 'console') {
+        this.socket?.queueReport?.({ kind: 'play_error', queueId, fileId, message: text })
+      }
+      return false
     },
 
     /**

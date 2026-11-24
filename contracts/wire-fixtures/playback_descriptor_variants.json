@@ -1,0 +1,41 @@
+[
+  {
+    "kind": "NONE",
+    "status": "IDLE",
+    "sourceFileId": null,
+    "variantId": null,
+    "streamUrl": null,
+    "audioTracks": 0,
+    "vocalTrackIndex": null,
+    "audioLayout": {
+      "layout": "NORMAL_STEREO",
+      "originalTrackIndex": null,
+      "accompanimentTrackIndex": null,
+      "originalChannel": "LEFT",
+      "accompanimentChannel": "RIGHT"
+    },
+    "errorCode": null,
+    "errorMessage": null
+  },
+  {
+    "kind": "LIVE_TRANSCODE",
+    "status": "READY",
+    "sourceFileId": 502,
+    "variantId": null,
+    "streamUrl": "/api/stream/502?transcode=true",
+    "audioTracks": 1,
+    "vocalTrackIndex": null,
+    "audioLayout": {
+      "layout": "DUAL_CHANNEL",
+      "originalTrackIndex": null,
+      "accompanimentTrackIndex": null,
+      "originalChannel": "LEFT",
+      "accompanimentChannel": "RIGHT"
+    },
+    "errorCode": null,
+    "errorMessage": null,
+    "format": "rmvb",
+    "videoCodec": "rv40",
+    "audioCodec": "cook"
+  }
+]

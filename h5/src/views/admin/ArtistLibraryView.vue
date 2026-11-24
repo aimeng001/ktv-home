@@ -114,14 +114,23 @@ function load(options = {}) {
   })
 }
 function reset() { Object.assign(filters, { keyword: '', gender: '', reviewed: '' }); load({ resetPage: true }) }
-async function refreshAvatarProgress() {
+let avatarPollTimer = null
+let avatarPollDisposed = false
+async function refreshAvatarProgress(silent = false) {
   if (!api.adminArtistAvatarProgress) return
-  avatarProgressState.value = 'loading'
+  if (avatarPollTimer) { clearTimeout(avatarPollTimer); avatarPollTimer = null }
+  if (!silent) avatarProgressState.value = 'loading'
   try {
     avatarProgress.value = await api.adminArtistAvatarProgress()
     avatarProgressState.value = 'ready'
+    if (!avatarPollDisposed && (avatarProgress.value?.pendingCount > 0 || avatarProgress.value?.queuedJobs > 0)) {
+      avatarPollTimer = setTimeout(() => {
+        avatarPollTimer = null
+        refreshAvatarProgress(true)
+      }, 5000)
+    }
   } catch {
-    avatarProgressState.value = 'error'
+    if (!silent) avatarProgressState.value = 'error'
   }
 }
 function formatReviewStatus(artist) {
@@ -262,6 +271,8 @@ function closeBatch() { if (!batchAnalyzing.value && !batchSaving.value) batchOp
 async function applyBatch() { const rows = batchRows.value.filter(row => row.apply && row.gender !== '未知'); if (!rows.length) return; batchSaving.value = true; batchSaveProgress.value = 0; try { for (const row of rows) { await api.adminApplyArtistGender(row.artist, row.gender); batchSaveProgress.value++ } batchOpen.value = false; selectedKeys.value = new Set(); await load() } catch (e) { await alertDialog(e.message || '批量写入失败') } finally { batchSaving.value = false } }
 function confidenceClass(value) { return value >= 0.8 ? 'high' : value >= 0.5 ? 'medium' : 'low' }
 onBeforeUnmount(() => {
+  avatarPollDisposed = true
+  if (avatarPollTimer) { clearTimeout(avatarPollTimer); avatarPollTimer = null }
   requestSerial++
   activeRequestController?.abort()
   avatarBackfillController?.abort()

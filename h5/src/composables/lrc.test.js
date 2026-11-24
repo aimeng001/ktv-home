@@ -60,4 +60,14 @@ describe('parseLrc', () => {
       { time: 1000, text: '整秒' }
     ])
   })
+
+  it('supports 3-digit minutes and colon millisecond separators aligned with Android TV', () => {
+    const lines = parseLrc('[105:02:500]<105:02:500>金<105:03:000>曲')
+    expect(lines).toHaveLength(1)
+    expect(lines[0].time).toBe((105 * 60 + 2) * 1000 + 500)
+    expect(lines[0].words).toEqual([
+      { time: 6302500, text: '金' },
+      { time: 6303000, text: '曲' }
+    ])
+  })
 })

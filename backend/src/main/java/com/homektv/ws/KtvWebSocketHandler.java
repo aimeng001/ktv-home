@@ -6,6 +6,7 @@ import com.homektv.queue.PlaybackService;
 import com.homektv.queue.PlaybackTransitionResult;
 import com.homektv.queue.PositionUpdateResult;
 import com.homektv.queue.FinishResult;
+import com.homektv.queue.RoomHostService;
 import com.homektv.queue.SnapshotService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +41,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
     private final TvOfflineWatcher tvOfflineWatcher;
     private final ActivePlayerRegistry playerRegistry;
     private final WebPlayerCoordinator webPlayerCoordinator;
+    private final RoomHostService roomHostService;
     private final ObjectMapper mapper;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -47,6 +49,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                                PlaybackService playbackService, TvOfflineWatcher tvOfflineWatcher,
                                ActivePlayerRegistry playerRegistry,
                                WebPlayerCoordinator webPlayerCoordinator,
+                               RoomHostService roomHostService,
                                ObjectMapper mapper) {
         this.broadcaster = broadcaster;
         this.snapshotService = snapshotService;
@@ -54,14 +57,24 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         this.tvOfflineWatcher = tvOfflineWatcher;
         this.playerRegistry = playerRegistry;
         this.webPlayerCoordinator = webPlayerCoordinator != null ? webPlayerCoordinator : new WebPlayerCoordinator();
+        this.roomHostService = roomHostService;
         this.mapper = mapper;
+    }
+
+    public KtvWebSocketHandler(WsBroadcaster broadcaster, SnapshotService snapshotService,
+                               PlaybackService playbackService, TvOfflineWatcher tvOfflineWatcher,
+                               ActivePlayerRegistry playerRegistry,
+                               WebPlayerCoordinator webPlayerCoordinator,
+                               ObjectMapper mapper) {
+        this(broadcaster, snapshotService, playbackService, tvOfflineWatcher, playerRegistry,
+                webPlayerCoordinator, null, mapper);
     }
 
     public KtvWebSocketHandler(WsBroadcaster broadcaster, SnapshotService snapshotService,
                                PlaybackService playbackService, TvOfflineWatcher tvOfflineWatcher,
                                ActivePlayerRegistry playerRegistry, ObjectMapper mapper) {
         this(broadcaster, snapshotService, playbackService, tvOfflineWatcher, playerRegistry,
-                new WebPlayerCoordinator(), mapper);
+                new WebPlayerCoordinator(), null, mapper);
     }
 
     /**
@@ -147,6 +160,9 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 if (result == null || !result.accepted()) {
                     return;
                 }
+                if (result.state() != null && result.state().getPositionMs() > 0) {
+                    // Valid progress update keeps playback healthy
+                }
                 java.util.Map<String, Object> progress = new java.util.LinkedHashMap<>();
                 progress.put("position_ms", result.state().getPositionMs());
                 progress.put("queue_id", queueId);
@@ -183,6 +199,12 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                                 "report_type", "play_error",
                                 "status", result.accepted() ? "APPLIED" : "STALE")));
                 if (!result.accepted()) return;
+                if (result.circuitBroken()) {
+                    broadcaster.broadcast(WsEvent.of(WsEvent.TOAST,
+                            java.util.Map.of("text", "连续多首歌曲播放失败，已暂停以保护队列，请检查网络或媒体源")));
+                    broadcaster.broadcastPlayback(WsEvent.of(WsEvent.PLAYER_STATE, snapshotService.snapshot()));
+                    return;
+                }
                 broadcaster.broadcast(WsEvent.of(WsEvent.TOAST,
                         java.util.Map.of("text", "当前歌曲播放失败，已自动切换下一首：" + reason)));
                 broadcaster.broadcastPlayback(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
@@ -317,6 +339,16 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         }
         boolean force = node.path("payload").path("force").asBoolean(false);
         String clientToken = attribute(session, "client_token", session.getId());
+        if (force && roomHostService != null && roomHostService.isClaimed()
+                && !roomHostService.isHost(clientToken)) {
+            sendRole(session, new ActivePlayerRegistry.Assignment(
+                    ActivePlayerRegistry.Role.STANDBY, 0, 45_000L));
+            broadcaster.sendTo(session, WsEvent.of(
+                    WsEvent.WEB_PLAYER_STATE, webPlayerCoordinator.status(broadcaster.isTvOnline())));
+            broadcaster.sendTo(session, WsEvent.of(
+                    WsEvent.TOAST, java.util.Map.of("text", "房间已启用房主控制，只有房主可强制接管主播放端")));
+            return;
+        }
         WebPlayerCoordinator.ClaimOutcome outcome = webPlayerCoordinator.claim(
                 session.getId(), clientToken, force, broadcaster.isTvOnline());
         outcome.replacedSessionId().ifPresent(oldId -> sendRole(
@@ -373,20 +405,43 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
             broadcaster.sendTo(session, WsEvent.of("pong", null));
             return;
         }
-        playerRegistry.expireAndPromote().ifPresent(expiration -> {
-            broadcaster.disconnect(expiration.expiredSessionId());
-            if (expiration.promotion().isPresent()) {
-                promote(expiration.promotion().get());
-            } else {
-                tvOfflineWatcher.onTvDisconnected();
-                broadcastObserverSnapshot();
-            }
-        });
+        handleTvExpiration(playerRegistry.expireAndPromote().orElse(null));
         JsonNode generation = node.path("payload").path("generation");
         Long value = generation.isIntegralNumber() ? generation.asLong() : null;
         playerRegistry.heartbeat(session.getId(), value)
                 .ifPresent(assignment -> broadcaster.sendTo(session,
                         WsEvent.of("pong", assignmentPayload(assignment))));
+    }
+
+    /** 定时清理断电/半开超时的物理 TV 租约与网页主屏租约，避免房间滞留假在线状态。 */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${app.playback.lease-reconcile-ms:10000}")
+    public void sweepExpiredTvLeases() {
+        handleTvExpiration(playerRegistry.expireAndPromote().orElse(null));
+        sweepExpiredWebPlayerLease();
+    }
+
+    private void sweepExpiredWebPlayerLease() {
+        if (broadcaster.isTvOnline()) {
+            return;
+        }
+        webPlayerCoordinator.expireActiveSession().ifPresent(expiredSessionId -> {
+            sendRole(expiredSessionId, new ActivePlayerRegistry.Assignment(
+                    ActivePlayerRegistry.Role.STANDBY, 0, 45_000L));
+            WebPlayerCoordinator.WebPlayerStatus status = webPlayerCoordinator.status(false);
+            broadcaster.sendTo(expiredSessionId, WsEvent.of(WsEvent.WEB_PLAYER_STATE, status));
+            broadcaster.broadcastObservers(WsEvent.of(WsEvent.WEB_PLAYER_STATE, status));
+        });
+    }
+
+    private void handleTvExpiration(ActivePlayerRegistry.Expiration expiration) {
+        if (expiration == null) return;
+        broadcaster.disconnect(expiration.expiredSessionId());
+        if (expiration.promotion().isPresent()) {
+            promote(expiration.promotion().get());
+        } else {
+            tvOfflineWatcher.onTvDisconnected();
+            broadcastObserverSnapshot();
+        }
     }
 
     private void promote(ActivePlayerRegistry.Promotion next) {

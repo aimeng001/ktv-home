@@ -5,7 +5,7 @@ import com.homektv.library.ArtistCreditService;
 import com.homektv.library.ArtistDirectoryProjectionService;
 import com.homektv.library.CatalogRevisionService;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -244,7 +244,49 @@ class AiClassificationApplierTest {
         assertThat(rejected.getLanguage()).isEqualTo("未知");
         assertThat(rejected.getVocalForm()).isEqualTo("未知");
         assertThat(rejected.getArtistGender()).isEqualTo("未知");
+        assertThat(rejected.getTags()).isEmpty();
+        assertThat(rejected.getAiAnalyzedAt()).isNull();
         verify(rejectedRepository, never()).save(any(Song.class));
+    }
+
+    @Test
+    void autoApplyDoesNotMutateTagsOrAnalysisFieldsWhenBelowThreshold() {
+        Song song = songWithTags("已有标签");
+        song.setNeedsAiOptimization(true);
+        SongRepository repository = mock(SongRepository.class);
+        when(repository.findById(1L)).thenReturn(Optional.of(song));
+        AiConfigService config = mock(AiConfigService.class);
+        when(config.resolve()).thenReturn(defaultConfig());
+
+        boolean changed = new AiClassificationApplier(repository, config).applyAuto(1L,
+                new AiSongClassification(null, null, "国语", "00年代", List.of("AI曲风"), List.of("失恋"),
+                        null, "独唱", List.of(), "test", 0.50, 0.0, 0.0, 0.50, 0.50, "男歌手", java.util.Map.of()));
+
+        assertThat(changed).isFalse();
+        assertThat(song.getTags()).containsExactly("已有标签");
+        assertThat(song.getAiLanguage()).isNull();
+        assertThat(song.getAiAnalyzedAt()).isNull();
+        assertThat(song.isNeedsAiOptimization()).isTrue();
+    }
+
+    @Test
+    void autoApplyPromotesUnrecognizedSongToOkWhenIdentityIsApplied() {
+        Song song = songWithTags();
+        song.setTitle("未识别");
+        song.setArtist("未知歌手");
+        song.setStatus("unrecognized");
+        SongRepository repository = mock(SongRepository.class);
+        when(repository.findById(1L)).thenReturn(Optional.of(song));
+        when(repository.findByFingerprint(any())).thenReturn(Optional.empty());
+        when(repository.save(any(Song.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        AiConfigService config = mock(AiConfigService.class);
+        when(config.resolve()).thenReturn(defaultConfig());
+
+        boolean changed = new AiClassificationApplier(repository, config).applyAuto(1L,
+                identity("晴天", "周杰伦", 0.99, 0.99));
+
+        assertThat(changed).isTrue();
+        assertThat(song.getStatus()).isEqualTo("ok");
     }
 
     @Test

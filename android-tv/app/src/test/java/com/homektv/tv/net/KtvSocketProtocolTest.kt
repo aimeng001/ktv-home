@@ -55,4 +55,30 @@ class KtvSocketProtocolTest {
         val legacy = Json.parseToJsonElement("{\"position_ms\":3000}")
         assertEquals(null, parsePlaybackProgress(legacy).queueId)
     }
+
+    @Test
+    fun progressMessageCarriesSeekSequenceWhenProvided() {
+        val root = Json.parseToJsonElement(
+            buildProgressMessage(positionMs = 45_000L, queueId = 9L, generation = 4L, seekSequence = 7L),
+        ).jsonObject
+        val payload = root["payload"]!!.jsonObject
+
+        assertEquals("progress", root["type"]?.jsonPrimitive?.content)
+        assertEquals("45000", payload["position_ms"]?.jsonPrimitive?.content)
+        assertEquals("9", payload["queue_id"]?.jsonPrimitive?.content)
+        assertEquals("4", payload["generation"]?.jsonPrimitive?.content)
+        assertEquals("7", payload["seek_sequence"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun ktvSocketHeartbeatCancelsDeadSocketOnPongTimeout() {
+        val source = sequenceOf(
+            java.io.File("src/main/java/com/homektv/tv/net/KtvSocket.kt"),
+            java.io.File("android-tv/app/src/main/java/com/homektv/tv/net/KtvSocket.kt"),
+            java.io.File("../app/src/main/java/com/homektv/tv/net/KtvSocket.kt"),
+        ).first(java.io.File::isFile).readText()
+        assertTrue(source.contains("PONG_TIMEOUT_MS"))
+        assertTrue(source.contains("socket.cancel()"))
+        assertTrue(source.contains("main.removeCallbacks(pongTimeout)"))
+    }
 }

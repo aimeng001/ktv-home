@@ -1,8 +1,8 @@
 package com.homektv.ai;
 
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
+import com.homektv.common.OutboundUrlGuard;
 
-import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
@@ -77,20 +77,12 @@ public final class AiBaseUrlPolicy {
         URI uri = URI.create(normalized);
         String host = uri.getHost();
         if (host == null || host.isBlank()) throw invalid("API Base URL 主机地址无效");
-        host = host.replace("[", "").replace("]", "");
-
-        InetAddress[] addresses;
-        try {
-            addresses = addressResolver.resolve(host);
-        } catch (UnknownHostException e) {
-            throw invalid("API Base URL 主机无法解析，已拒绝发送 API Key");
-        }
-        boolean privateAddress = false;
-        boolean publicAddress = false;
-        for (InetAddress address : addresses) {
-            if (isPrivate(address)) privateAddress = true;
-            else publicAddress = true;
-        }
+        OutboundUrlGuard.AddressClassification resolved = OutboundUrlGuard.classifyHost(
+                host,
+                addressResolver::resolve,
+                ignored -> invalid("API Base URL 主机无法解析，已拒绝发送 API Key"));
+        boolean privateAddress = resolved.hasPrivate();
+        boolean publicAddress = resolved.hasPublic();
 
         if (privateAddress && !allowPrivateNetwork) {
             throw invalid("API Base URL 禁止访问本机或内网地址；本地 AI 需明确开启 KTV_AI_ALLOW_PRIVATE_NETWORK=true");
@@ -104,38 +96,7 @@ public final class AiBaseUrlPolicy {
     private static boolean isHttps(URI uri) { return "https".equalsIgnoreCase(uri.getScheme()); }
 
     public static boolean isPrivate(InetAddress address) {
-        if (address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isLinkLocalAddress()
-                || address.isSiteLocalAddress() || address.isMulticastAddress()) return true;
-        byte[] bytes = address.getAddress();
-        if (address instanceof Inet4Address && bytes.length == 4) {
-            return isPrivateIpv4(bytes);
-        }
-        if (bytes.length == 16) {
-            if (isIpv4Mapped(bytes)) return isPrivateIpv4(Arrays.copyOfRange(bytes, 12, 16));
-            int first = bytes[0] & 0xff;
-            int second = bytes[1] & 0xff;
-            return (first & 0xfe) == 0xfc || (first == 0xfe && (second & 0xc0) == 0x80);
-        }
-        return false;
-    }
-
-    private static boolean isPrivateIpv4(byte[] bytes) {
-        if (bytes.length != 4) return false;
-        int first = bytes[0] & 0xff;
-        int second = bytes[1] & 0xff;
-        int third = bytes[2] & 0xff;
-        return first == 0 || first == 10 || first == 127
-                || (first == 100 && second >= 64 && second <= 127)
-                || (first == 169 && second == 254)
-                || (first == 172 && second >= 16 && second <= 31)
-                || (first == 192 && second == 168)
-                || (first == 192 && second == 0 && third == 0)
-                || (first == 198 && (second == 18 || second == 19));
-    }
-
-    private static boolean isIpv4Mapped(byte[] bytes) {
-        for (int index = 0; index < 10; index++) if (bytes[index] != 0) return false;
-        return (bytes[10] & 0xff) == 0xff && (bytes[11] & 0xff) == 0xff;
+        return OutboundUrlGuard.isPrivateAddress(address);
     }
 
     private static ApiException invalid(String message) {

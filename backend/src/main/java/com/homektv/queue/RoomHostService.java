@@ -3,7 +3,7 @@ package com.homektv.queue;
 import com.homektv.domain.AppUser;
 import com.homektv.library.SettingService;
 import com.homektv.repo.AppUserRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +21,11 @@ public class RoomHostService {
     public RoomHostService(SettingService settingService, AppUserRepository userRepository) {
         this.settingService = settingService;
         this.userRepository = userRepository;
+    }
+
+    public boolean isClaimed() {
+        Long hostUserId = hostUserId();
+        return hostUserId != null && userRepository != null && userRepository.existsById(hostUserId);
     }
 
     public boolean isHost(String clientToken) {

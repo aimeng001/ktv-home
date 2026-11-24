@@ -655,4 +655,26 @@ public final class IktvSongMatchBatchService {
     public record RollbackResult(long batchId, String state, long catalogNumbersChanged,
                                  long categoriesChanged, long conflictingCategoriesOrNumbers,
                                  long conflictRows) {}
+
+    public com.homektv.common.BackgroundJobSummary jobStatus() {
+        try {
+            Long latestId = jdbc.query(
+                    "SELECT id FROM iktv_song_match_batches ORDER BY id DESC LIMIT 1",
+                    rs -> rs.next() ? rs.getLong(1) : null);
+            if (latestId == null) {
+                return new com.homektv.common.BackgroundJobSummary(
+                        "iktv-fusion", "IKTV 参考库融合", "IDLE", false, 0, 0, 0, 0, true, false, java.util.Map.of());
+            }
+            BatchStatus latest = batchStatus(latestId);
+            boolean running = "PENDING".equalsIgnoreCase(latest.state()) || "RUNNING".equalsIgnoreCase(latest.state());
+            long pending = Math.max(0L, latest.totalCount() - latest.processedCount());
+            return new com.homektv.common.BackgroundJobSummary(
+                    "iktv-fusion", "IKTV 参考库融合", latest.state(), running,
+                    latest.totalCount(), latest.processedCount(), latest.failedCount(), pending,
+                    true, false, java.util.Map.of("batchId", latest.id(), "publicationState", latest.publicationState() == null ? "" : latest.publicationState()));
+        } catch (Exception ex) {
+            return new com.homektv.common.BackgroundJobSummary(
+                    "iktv-fusion", "IKTV 参考库融合", "UNKNOWN", false, 0, 0, 0, 0, true, false, java.util.Map.of());
+        }
+    }
 }

@@ -1,4 +1,5 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.config.AppProperties;
 import com.homektv.domain.Song;
@@ -8,8 +9,8 @@ import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.library.SongSearchService;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.dto.SongDetailDto;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.SongDetailDto;
+import com.homektv.contract.SongDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

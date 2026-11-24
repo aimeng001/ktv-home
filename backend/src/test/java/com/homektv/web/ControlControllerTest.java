@@ -1,4 +1,5 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.domain.QueueItem;
@@ -8,8 +9,8 @@ import com.homektv.queue.RoomHostService;
 import com.homektv.queue.SnapshotService;
 import com.homektv.queue.UserService;
 import com.homektv.repo.QueueItemRepository;
-import com.homektv.web.dto.ControlRequest;
-import com.homektv.web.dto.QueueSnapshot;
+import com.homektv.contract.ControlRequest;
+import com.homektv.contract.QueueSnapshot;
 import com.homektv.ws.WsBroadcaster;
 import com.homektv.ws.WsEvent;
 import org.junit.jupiter.api.Test;
@@ -515,6 +516,47 @@ class ControlControllerTest {
                 new ControlRequest("top", Map.of("queue_id", 10L), "guest")))
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("FORBIDDEN"));
         assertThat(topped).isFalse();
+    }
+
+    @Test
+    void claimedHostRestrictsShuffleAndSwapVocalTracksToHost() {
+        AtomicBoolean shuffled = new AtomicBoolean();
+        AtomicBoolean swapped = new AtomicBoolean();
+        QueueService queueService = new QueueService(null, null, null, null) {
+            @Override public List<QueueItem> shuffleWaiting() {
+                shuffled.set(true);
+                return List.of();
+            }
+        };
+        PlaybackService playbackService = new PlaybackService(null, null, null, null, null) {
+            @Override public com.homektv.domain.PlayerState swapVocalTracks() {
+                swapped.set(true);
+                return null;
+            }
+        };
+        RoomHostService claimedHost = new RoomHostService(null, null) {
+            @Override public boolean isClaimed() { return true; }
+            @Override public void requireHost(String clientToken) {
+                if (!"host-token".equals(clientToken)) {
+                    throw new ApiException("HOST_REQUIRED", "只有房主可以执行该操作");
+                }
+            }
+        };
+        ControlController controller = new ControlController(
+                queueService, playbackService, snapshotService(), resolvedUser(99L), null,
+                broadcaster(), claimedHost);
+
+        assertThatThrownBy(() -> controller.control(new ControlRequest("shuffle", Map.of(), "guest-token")))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("HOST_REQUIRED"));
+        assertThatThrownBy(() -> controller.control(new ControlRequest("swap_vocal_tracks", Map.of(), "guest-token")))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("HOST_REQUIRED"));
+        assertThat(shuffled).isFalse();
+        assertThat(swapped).isFalse();
+
+        controller.control(new ControlRequest("shuffle", Map.of(), "host-token"));
+        controller.control(new ControlRequest("swap_vocal_tracks", Map.of(), "host-token"));
+        assertThat(shuffled).isTrue();
+        assertThat(swapped).isTrue();
     }
 
     private static QueueItem waitingItem(Long id, Long orderedBy) {

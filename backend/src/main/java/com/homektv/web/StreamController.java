@@ -1,4 +1,5 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.config.AppProperties;
 import com.homektv.domain.SongFile;
@@ -30,6 +31,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import com.homektv.media.FFprobeService;
 import com.homektv.media.MediaProbe;
@@ -88,6 +90,7 @@ public class StreamController {
     private final ResourceBudget resourceBudget;
     private final FFprobeService ffprobeService;
     private static final int MAX_AUDIO_CODEC_CACHE_ENTRIES = 2000;
+    private static final String MULTICHANNEL_SENTINEL = "multichannel";
     private final Map<Long, String> audioCodecCache = Collections.synchronizedMap(
             new LinkedHashMap<>(128, 0.75f, true) {
                 @Override
@@ -95,6 +98,14 @@ public class StreamController {
                     return size() > MAX_AUDIO_CODEC_CACHE_ENTRIES;
                 }
             });
+    private record ActiveClientTranscode(LiveTranscodeSession session, MediaStreamLease lease) {
+        void closePreempted() {
+            session.close();
+            lease.closeBeforeBodyIfReserved();
+        }
+    }
+
+    private final Map<String, ActiveClientTranscode> activeTranscodesByClient = new ConcurrentHashMap<>();
 
     public StreamController(SongFileRepository fileRepo) {
         this(fileRepo, new AppProperties(), new SongAvailabilityPolicy(fileRepo), "ffmpeg",
@@ -246,6 +257,8 @@ public class StreamController {
             return ResponseEntity.notFound().build();
         }
 
+        boolean isHead = request != null && "HEAD".equalsIgnoreCase(request.getMethod());
+
         // 1. Explicit fallback, browser single-track selection, and legacy-video routing share pipe:1.
         if ((forceTranscode || audioTrack != null) && !PlaybackTransportPolicy.isVideo(sf)) {
             return ResponseEntity.badRequest().build();
@@ -262,13 +275,19 @@ public class StreamController {
                     || startSeconds < 0 || startSeconds > MAX_TRANSCODE_START_SECONDS)) {
                 return ResponseEntity.badRequest().build();
             }
+            if (isHead) {
+                return ResponseEntity.ok()
+                        .contentType(MediaType.parseMediaType("video/mp4"))
+                        .header(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+                        .build();
+            }
             boolean copyVideo = shouldCopyVideo(sf, forceTranscode, effectiveMerge, audioTrack, softVideo);
             boolean copyAudio = shouldCopyAudio(sf, file, copyVideo, effectiveMerge, audioTrack);
             return serveOnTheFlyTranscodeStream(fileId, file, sf, startSeconds, audioTrack, copyVideo, copyAudio, effectiveMerge, request);
         }
 
         // 2. 99% 普通格式快路径：继续走 RandomAccessFile HTTP Range 流
-        return serveStaticRangeStream(file, sf, rangeHeader, request);
+        return serveStaticRangeStream(file, sf, rangeHeader, request, isHead);
     }
 
     static boolean shouldCopyVideo(SongFile sf, boolean forceTranscode, boolean effectiveMerge, Integer audioTrack, boolean softVideo) {
@@ -291,11 +310,22 @@ public class StreamController {
         if (codec == null && file != null && sf.getId() != null) {
             codec = audioCodecCache.get(sf.getId());
             if (codec == null && ffprobeService != null) {
-                try {
-                    MediaProbe probe = ffprobeService.probe(file.toPath());
-                    if (probe != null && probe.audioCodec() != null) {
-                        codec = probe.audioCodec();
-                        audioCodecCache.put(sf.getId(), codec);
+                try (ResourceBudget.Permit probePermit = resourceBudget != null
+                        ? resourceBudget.tryAcquireProbe(Duration.ofMillis(100)).orElse(null)
+                        : null) {
+                    if (resourceBudget == null || probePermit != null) {
+                        MediaProbe probe = ffprobeService.probe(file.toPath());
+                        if (probe != null) {
+                            boolean multiChannel = probe.audioStreams() != null && probe.audioStreams().stream()
+                                    .anyMatch(s -> s != null && s.channels() > 2);
+                            if (multiChannel) {
+                                codec = MULTICHANNEL_SENTINEL;
+                                audioCodecCache.put(sf.getId(), codec);
+                            } else if (probe.audioCodec() != null) {
+                                codec = probe.audioCodec();
+                                audioCodecCache.put(sf.getId(), codec);
+                            }
+                        }
                     }
                 } catch (Exception ignored) {
                 }
@@ -323,6 +353,13 @@ public class StreamController {
     private ResponseEntity<StreamingResponseBody> serveOnTheFlyTranscodeStream(
             Long fileId, File file, SongFile sf, Double startSeconds, Integer audioTrack,
             boolean copyVideo, boolean copyAudio, boolean mergeTracks, HttpServletRequest request) {
+        String clientKey = resolveClientTranscodeKey(request);
+        if (clientKey != null) {
+            ActiveClientTranscode previous = activeTranscodesByClient.remove(clientKey);
+            if (previous != null) {
+                previous.closePreempted();
+            }
+        }
         MediaStreamLease mediaStreamLease = reserveMediaStream(request);
         if (mediaStreamLease == null) return tooManyStreamsResponse();
 
@@ -341,32 +378,69 @@ public class StreamController {
             mediaStreamLease.closeBeforeBodyIfReserved();
             return tooManyStreamsResponse();
         }
+        ActiveClientTranscode activeEntry = clientKey != null
+                ? new ActiveClientTranscode(session, mediaStreamLease) : null;
+        if (clientKey != null) {
+            ActiveClientTranscode raced = activeTranscodesByClient.put(clientKey, activeEntry);
+            if (raced != null && raced.session() != session) {
+                raced.closePreempted();
+            }
+        }
         if (request != null) {
             request.setAttribute(TranscodeAsyncLifecycleInterceptor.SESSION_ATTRIBUTE, session);
         }
         try {
+            StreamingResponseBody body = output -> {
+                try {
+                    session.streamTo(output);
+                } finally {
+                    if (clientKey != null) {
+                        activeTranscodesByClient.remove(clientKey, activeEntry);
+                    }
+                }
+            };
             return ResponseEntity.ok()
                     .contentType(MediaType.parseMediaType("video/mp4"))
                     .header(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate")
-                    .body(mediaStreamLease.wrap(session::streamTo));
+                    .body(mediaStreamLease.wrap(body));
         } catch (RuntimeException | Error error) {
+            if (clientKey != null) {
+                activeTranscodesByClient.remove(clientKey, activeEntry);
+            }
             session.close();
             mediaStreamLease.closeBeforeBodyIfReserved();
             throw error;
         }
     }
 
+    private static String resolveClientTranscodeKey(HttpServletRequest request) {
+        if (request == null) return null;
+        String playbackSession = request.getHeader("X-Playback-Session");
+        if (playbackSession != null && !playbackSession.isBlank()) {
+            return "session:" + playbackSession.trim();
+        }
+        String remoteAddr = request.getRemoteAddr();
+        if (remoteAddr == null || remoteAddr.isBlank()) {
+            return null;
+        }
+        return "addr:" + remoteAddr.trim() + "|" + Objects.toString(request.getHeader(HttpHeaders.USER_AGENT), "");
+    }
+
     private ResponseEntity<StreamingResponseBody> serveStaticRangeStream(
-            File file, SongFile sf, String rangeHeader, HttpServletRequest request) {
+            File file, SongFile sf, String rangeHeader, HttpServletRequest request, boolean isHead) {
         long length = file.length();
         MediaType contentType = mediaTypeFor(sf.getFormat(), file.getName());
 
         // 无 Range：整段返回，声明 Accept-Ranges 以便客户端后续 seek
         if (rangeHeader == null || rangeHeader.isBlank()) {
-            return streamWithMediaLease(ResponseEntity.ok()
+            ResponseEntity.BodyBuilder response = ResponseEntity.ok()
                     .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                     .contentType(contentType)
-                    .contentLength(length), writeRegion(file, 0, length), request);
+                    .contentLength(length);
+            if (isHead) {
+                return response.build();
+            }
+            return streamWithMediaLease(response, writeRegion(file, 0, length), request);
         }
 
         // 有 Range：解析首个区间，返回 206 Partial Content
@@ -387,11 +461,15 @@ public class StreamController {
 
         long count = end - start + 1;
 
-        return streamWithMediaLease(ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
                 .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                 .header(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + end + "/" + length)
                 .contentType(contentType)
-                .contentLength(count), writeRegion(file, start, count), request);
+                .contentLength(count);
+        if (isHead) {
+            return response.build();
+        }
+        return streamWithMediaLease(response, writeRegion(file, start, count), request);
     }
 
     private ResponseEntity<StreamingResponseBody> streamWithMediaLease(

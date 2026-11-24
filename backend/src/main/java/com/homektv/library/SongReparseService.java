@@ -1,10 +1,11 @@
 package com.homektv.library;
+import com.homektv.common.ArtistCreditParser;
 
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,10 +20,16 @@ public class SongReparseService {
     private final SongFileRepository fileRepository;
     private final ArtistCreditService artistCreditService;
     private CatalogRevisionService catalogRevisionService;
+    private ArtistDirectoryProjectionService artistDirectoryProjectionService;
 
     @Autowired(required = false)
     void setCatalogRevisionService(CatalogRevisionService catalogRevisionService) {
         this.catalogRevisionService = catalogRevisionService;
+    }
+
+    @Autowired(required = false)
+    void setArtistDirectoryProjectionService(ArtistDirectoryProjectionService artistDirectoryProjectionService) {
+        this.artistDirectoryProjectionService = artistDirectoryProjectionService;
     }
 
     public SongReparseService(SongRepository songRepository, SongFileRepository fileRepository) {
@@ -86,14 +93,10 @@ public class SongReparseService {
             String effectiveTitle = titleLocked ? song.getTitle() : preview.proposedTitle();
             String effectiveArtist = artistLocked ? song.getArtist() : preview.proposedArtist();
             if (!titleLocked) {
-                song.setTitle(effectiveTitle);
-                song.setTitlePy(PinyinUtil.fullPinyin(effectiveTitle));
-                song.setTitleInit(PinyinUtil.initials(effectiveTitle));
+                SongMetadataWritePolicy.applyTitleWithPinyin(song, effectiveTitle);
             }
             if (!artistLocked) {
-                song.setArtist(effectiveArtist);
-                song.setArtistPy(PinyinUtil.fullPinyin(effectiveArtist));
-                song.setArtistInit(PinyinUtil.initials(effectiveArtist));
+                SongMetadataWritePolicy.applyArtistWithPinyin(song, effectiveArtist);
             }
             // Filename-derived catalog metadata follows the same explicit lock
             // contract as other editable song fields.
@@ -101,8 +104,15 @@ public class SongReparseService {
                 song.setCatalogNumber(preview.catalogNumber());
             }
             String fingerprint = MediaClassifier.fingerprint(effectiveArtist, effectiveTitle, song.getDurationMs());
-            songRepository.findByFingerprint(fingerprint).filter(other -> !other.getId().equals(song.getId()))
-                    .ifPresent(other -> { throw new ApiException("FINGERPRINT_CONFLICT", "重解析结果与歌曲 #" + other.getId() + " 重复"); });
+            var conflict = songRepository.findByFingerprint(fingerprint).filter(other -> !other.getId().equals(song.getId()));
+            if (conflict.isPresent()) {
+                String msg = "重解析结果与歌曲 #" + conflict.get().getId() + " 重复";
+                if (songIds.size() <= 1) {
+                    throw new ApiException("FINGERPRINT_CONFLICT", msg);
+                }
+                skipped++;
+                continue;
+            }
             song.setFingerprint(fingerprint);
             if (!titleLocked) song.lockMetadata("title");
             if (!artistLocked) song.lockMetadata("artist");
@@ -117,8 +127,13 @@ public class SongReparseService {
             }
             updated++;
         }
-        if (updated > 0 && catalogRevisionService != null) {
-            catalogRevisionService.bumpIfChanged(true);
+        if (updated > 0) {
+            if (artistDirectoryProjectionService != null) {
+                artistDirectoryProjectionService.requestRefreshAfterCommit();
+            }
+            if (catalogRevisionService != null) {
+                catalogRevisionService.bumpIfChanged(true);
+            }
         }
         return new ApplyResult(updated, skipped, previews);
     }

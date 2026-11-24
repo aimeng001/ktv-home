@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.LibraryMode;
 
 import com.homektv.config.AppProperties;
 import com.homektv.domain.AudioLayout;
@@ -11,9 +12,9 @@ import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
-import com.homektv.web.dto.AudioLayoutUpdateRequest;
-import com.homektv.web.dto.SongEditRequest;
+import com.homektv.common.ApiException;
+import com.homektv.contract.AudioLayoutUpdateRequest;
+import com.homektv.contract.SongEditRequest;
 import com.homektv.ws.WsBroadcaster;
 import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;

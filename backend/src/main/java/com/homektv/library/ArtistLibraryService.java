@@ -1,4 +1,7 @@
 package com.homektv.library;
+import com.homektv.common.ArtistCreditParser;
+import com.homektv.common.ArtistKindClassifier;
+import com.homektv.common.ArtistKind;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -6,7 +9,7 @@ import com.homektv.ai.AiConfigService;
 import com.homektv.ai.OpenAiCompatibleClient;
 import com.homektv.domain.Song;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;

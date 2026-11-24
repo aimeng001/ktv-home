@@ -2,7 +2,7 @@ package com.homektv.musicsource;
 
 import com.homektv.domain.Song;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -327,6 +327,18 @@ class MusicSourceSearchServiceTest {
                 .thenThrow(new IllegalStateException());
         assertThat(failure.service.search("周杰伦", null, true).providers()).singleElement()
                 .satisfies(result -> assertThat(result.error()).isEqualTo("平台暂时不可用"));
+    }
+
+    @Test
+    void matchesPropagateRateLimitWhenAllProvidersAreBlocked() {
+        Fixture fixture = fixture(config(true, Set.of(MusicProvider.QQ)));
+        Song local = song(29, "晴天", "周杰伦");
+        when(fixture.songs.findById(29L)).thenReturn(Optional.of(local));
+        when(fixture.provider.search(anyString(), anyInt(), any()))
+                .thenThrow(new ProviderRateLimitedException(MusicProvider.QQ, java.time.Instant.now().plusSeconds(60)));
+
+        assertThatThrownBy(() -> fixture.service.matches(29L, false))
+                .isInstanceOf(ProviderRateLimitedException.class);
     }
 
     private static Fixture fixture(MusicSourceConfig config) {

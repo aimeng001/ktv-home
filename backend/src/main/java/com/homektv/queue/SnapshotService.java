@@ -12,16 +12,16 @@ import com.homektv.repo.SongRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.playback.PlaybackResolutionService;
-import com.homektv.web.ApiException;
-import com.homektv.web.dto.AudioLayoutDto;
-import com.homektv.web.dto.PlaybackDescriptor;
-import com.homektv.web.dto.QueueSnapshot;
-import com.homektv.web.dto.SongDto;
+import com.homektv.common.ApiException;
+import com.homektv.contract.AudioLayoutDto;
+import com.homektv.contract.PlaybackDescriptor;
+import com.homektv.contract.QueueSnapshot;
+import com.homektv.contract.SongDto;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Isolation;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -41,6 +41,8 @@ public class SnapshotService {
     private final com.homektv.ws.WsBroadcaster broadcaster;
     private final SongFileRepository songFileRepo;
     private final PlaybackResolutionService playbackResolution;
+    @Autowired(required = false)
+    private PlatformTransactionManager transactionManager;
     /** Monotonic wire revision used to reject an older HTTP response. */
     private final AtomicLong snapshotRevision = new AtomicLong(System.currentTimeMillis());
 
@@ -75,14 +77,22 @@ public class SnapshotService {
     }
 
     /**
-     * Capture one ordered, consistent wire view. The transaction proxy opens an
-     * independent REPEATABLE_READ transaction before entering this monitor;
-     * PostgreSQL establishes its read snapshot on the first query below, after
-     * a waiting caller has acquired the monitor.
+     * Capture one ordered, consistent wire view. Acquiring the monitor before
+     * opening the REPEATABLE_READ transaction ensures waiting callers never hold
+     * HikariCP pool connections while blocked on the serialization lock.
      */
-    @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW,
-            isolation = Isolation.REPEATABLE_READ)
     public synchronized QueueSnapshot snapshot() {
+        if (transactionManager == null) {
+            return captureSnapshot();
+        }
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        tx.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+        tx.setReadOnly(true);
+        return tx.execute(status -> captureSnapshot());
+    }
+
+    private QueueSnapshot captureSnapshot() {
         long stateRevision = snapshotRevision.incrementAndGet();
         PlayerState ps = playerRepo.getSingleton();
         long waitingCount = queueRepo.countByStatus(QueueService.WAITING);

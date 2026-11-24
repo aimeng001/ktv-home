@@ -6,13 +6,16 @@ import com.homektv.domain.SongFile;
 import com.homektv.media.MediaProbe;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import com.homektv.config.AppProperties;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -31,6 +34,14 @@ public class SongProbeService {
     private final SongAvailabilityPolicy availabilityPolicy;
 
     private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    private AppProperties appProperties;
+
+    // 探测失败文件短期冷却：连续失败 >= 2 次后进入 5 分钟冷却，避免损坏媒体反复被点播时同步阻塞 HTTP 线程
+    private static final Duration PROBE_FAILURE_COOLDOWN = Duration.ofMinutes(5);
+    private static final int PROBE_FAILURE_COOLDOWN_THRESHOLD = 2;
+    private static final int MAX_FAILURE_COOLDOWN_ENTRIES = 5000;
+    private record FailureState(int failures, Instant cooldownUntil) {}
+    private final ConcurrentHashMap<Long, FailureState> failedProbeCooldowns = new ConcurrentHashMap<>();
 
     // Single-flight 并发探测锁（带等待计数），防止并发探测同一首歌曲以及失败退锁时丢锁
     private final ConcurrentHashMap<Long, LockEntry> probeLocks = new ConcurrentHashMap<>();
@@ -52,6 +63,11 @@ public class SongProbeService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setTransactionTemplate(org.springframework.transaction.support.TransactionTemplate transactionTemplate) {
         this.transactionTemplate = transactionTemplate;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAppProperties(AppProperties appProperties) {
+        this.appProperties = appProperties;
     }
 
     private LockEntry acquireLock(Long songId) {
@@ -95,7 +111,7 @@ public class SongProbeService {
                 if (availabilityPolicy.isPlayable(current)) {
                     return;
                 }
-                probeAndPersistInternal(current);
+                probeAndPersistInternal(current, true);
             }
         } finally {
             releaseLock(songId, lock);
@@ -114,7 +130,7 @@ public class SongProbeService {
             synchronized (lock) {
                 Song song = songRepo.findById(songId)
                         .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在: " + songId));
-                return probeAndPersistInternal(song);
+                return probeAndPersistInternal(song, false);
             }
         } finally {
             releaseLock(songId, lock);
@@ -131,14 +147,14 @@ public class SongProbeService {
         LockEntry lock = acquireLock(song.getId());
         try {
             synchronized (lock) {
-                return probeAndPersistInternal(song);
+                return probeAndPersistInternal(song, false);
             }
         } finally {
             releaseLock(song.getId(), lock);
         }
     }
 
-    private boolean probeAndPersistInternal(Song song) {
+    private boolean probeAndPersistInternal(Song song, boolean honorCooldown) {
         Long songId = song.getId();
         List<SongFile> files = fileRepo.findBySongIdOrderByPriorityDesc(songId);
         if (files.isEmpty()) {
@@ -150,7 +166,23 @@ public class SongProbeService {
                 .findFirst()
                 .orElse(files.get(0));
 
-        Path filePath = Path.of(targetFile.getFilePath());
+        Long fileId = targetFile.getId();
+        Instant now = Instant.now();
+        if (honorCooldown && fileId != null) {
+            FailureState failureState = failedProbeCooldowns.get(fileId);
+            if (failureState != null
+                    && failureState.cooldownUntil() != null
+                    && now.isBefore(failureState.cooldownUntil())) {
+                throw new ApiException("SONG_PROBE_FAILED", "歌曲媒体最近探测失败，请稍后重试");
+            }
+        } else if (!honorCooldown && fileId != null) {
+            failedProbeCooldowns.remove(fileId);
+        }
+
+        Path rawPath = Path.of(targetFile.getFilePath());
+        Path filePath = appProperties != null
+                ? LibraryModePolicy.requireReadablePathInsideActiveLibrary(appProperties, rawPath)
+                : rawPath;
         if (!Files.exists(filePath)) {
             log.warn("探测失败：媒体文件不存在 {}", filePath);
             throw new ApiException("FILE_MISSING", "媒体文件不存在: " + filePath.getFileName());
@@ -159,9 +191,24 @@ public class SongProbeService {
         log.info("触发按需即时探测: songId={}, path={}", songId, filePath);
         MediaProbeStage.Result result = mediaProbeStage.probe(filePath);
         if (result.failure() != null || result.probe() == null) {
+            if (fileId != null) {
+                if (failedProbeCooldowns.size() >= MAX_FAILURE_COOLDOWN_ENTRIES) {
+                    failedProbeCooldowns.clear();
+                }
+                failedProbeCooldowns.compute(fileId, (k, existing) -> {
+                    int nextCount = (existing == null ? 0 : existing.failures()) + 1;
+                    Instant until = nextCount >= PROBE_FAILURE_COOLDOWN_THRESHOLD
+                            ? now.plus(PROBE_FAILURE_COOLDOWN)
+                            : null;
+                    return new FailureState(nextCount, until);
+                });
+            }
             String errorMsg = result.failure() != null ? result.failure().getMessage() : "未能解析到媒体流";
             log.warn("按需即时探测失败: songId={}, error={}", songId, errorMsg);
             throw new ApiException("SONG_PROBE_FAILED", "歌曲媒体探测失败: " + errorMsg);
+        }
+        if (fileId != null) {
+            failedProbeCooldowns.remove(fileId);
         }
 
         MediaProbe probe = result.probe();

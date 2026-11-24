@@ -104,7 +104,7 @@ class WebSocketIntegrationTest {
         WebSocketSession session = connect();
         awaitEvent(WsEvent.SYNC_FULL); // 先消费连接快照
 
-        var req = new com.homektv.web.dto.ControlRequest(
+        var req = new com.homektv.contract.ControlRequest(
                 "order", java.util.Map.of("song_id", songId), "tok-ws-1");
         controlController.control(req);
 

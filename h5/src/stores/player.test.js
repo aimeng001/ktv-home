@@ -521,4 +521,34 @@ describe('usePlayerStore', () => {
     setActivePinia(undefined)
     expect(p.socket.getClientToken()).toBe('')
   })
+
+  it('requeues unacknowledged finished reports on disconnect and clears on playback_report_ack', () => {
+    vi.stubGlobal('WebSocket', SocketStub)
+    const p = usePlayerStore()
+    p.connect()
+    const socket = p.socket
+    socket.onStatus(true)
+    p.tvOnline = false
+    p.handleEvent('player_role', { role: 'ACTIVE', generation: 3 })
+    socket.send = vi.fn(() => true)
+
+    expect(p.reportFinished(55)).toBe(true)
+    expect(socket.inFlightReports).toHaveLength(1)
+
+    // Disconnecting before ACK promotes in-flight report back to pendingReports
+    socket.onStatus(false)
+    expect(socket.inFlightReports).toHaveLength(0)
+    expect(socket.pendingReportCount).toBe(1)
+
+    // Reconnecting as WEB_HOST replays with new generation; ACK clears it
+    socket.onStatus(true)
+    p.handleEvent('player_role', { role: 'ACTIVE', generation: 4 })
+    expect(socket.send).toHaveBeenLastCalledWith({
+      type: 'finished',
+      payload: { queue_id: 55, generation: 4 },
+    })
+    p.handleEvent('playback_report_ack', { report_type: 'finished', queue_id: 55, status: 'APPLIED' })
+    expect(socket.inFlightReports).toHaveLength(0)
+    expect(socket.pendingReportCount).toBe(0)
+  })
 })

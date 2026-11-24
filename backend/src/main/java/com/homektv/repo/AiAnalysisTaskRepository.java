@@ -29,6 +29,7 @@ public interface AiAnalysisTaskRepository extends JpaRepository<AiAnalysisTask, 
             List<String> statuses, OffsetDateTime createdAtCutoff);
     List<AiAnalysisTask> findTop100ByStatusOrderByCreatedAtAscIdAsc(String status);
     List<AiAnalysisTask> findTop100ByOrderByCreatedAtDesc();
+    Optional<AiAnalysisTask> findFirstByBatchIdIsNotNullOrderByCreatedAtDescIdDesc();
     List<AiAnalysisTask> findByBatchIdOrderByCreatedAtAsc(String batchId);
     boolean existsBySongIdAndStatusIn(Long songId, List<String> statuses);
     Optional<AiAnalysisTask> findFirstBySongIdAndStatusInOrderByCreatedAtDesc(Long songId, List<String> statuses);
@@ -44,6 +45,14 @@ public interface AiAnalysisTaskRepository extends JpaRepository<AiAnalysisTask, 
             WHERE task.batchId = :batchId AND task.status IN ('pending', 'processing')
             """)
     int pauseBatch(@Param("batchId") String batchId);
+
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE AiAnalysisTask task SET task.status = 'cancelled'
+            WHERE task.batchId = :batchId AND task.status IN ('pending', 'paused', 'processing')
+            """)
+    int cancelBatch(@Param("batchId") String batchId);
     /**
      * Atomically claims a pending task. A concurrent worker that observes the
      * same task receives zero rows and must not execute the provider call.

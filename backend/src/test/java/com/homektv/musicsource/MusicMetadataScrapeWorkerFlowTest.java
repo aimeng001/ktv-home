@@ -190,6 +190,20 @@ class MusicMetadataScrapeWorkerFlowTest {
     }
 
     @Test
+    void rateLimitedProviderReleasesItemAndPausesBatchInsteadOfMarkingReview() {
+        WorkerContext context = context(List.of("RUNNING"), List.of(List.of(10L)), true, 52L,
+                List.of(), 0.9, List.of(), 0);
+        when(context.search.matches(52L, false))
+                .thenThrow(new ProviderRateLimitedException(MusicProvider.QQ, java.time.Instant.now().plusSeconds(60)));
+
+        context.worker.process("batch-rate-limited");
+
+        assertThat(context.updates).anySatisfy(update -> assertThat(update.sql()).contains("SET status='PENDING'"));
+        assertThat(context.updates).anySatisfy(update -> assertThat(update.sql()).contains("SET status='PAUSED'"));
+        assertThat(context.updates).noneSatisfy(update -> assertThat(Arrays.asList(update.args())).contains("REVIEW"));
+    }
+
+    @Test
     void leavesBatchUnchangedWhenActiveCountIsUnavailable() {
         WorkerContext context = context(List.of("RUNNING"), List.of(), false, null,
                 List.of(), 0.9, List.of(), null);

@@ -1,10 +1,11 @@
 package com.homektv.library;
+import com.homektv.common.ArtistCreditParser;
 
 import com.homektv.domain.Song;
 import com.homektv.domain.SongArtist;
 import com.homektv.repo.SongArtistRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.SongDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;

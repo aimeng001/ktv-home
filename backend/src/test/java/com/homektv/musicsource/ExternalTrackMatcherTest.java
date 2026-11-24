@@ -53,6 +53,17 @@ class ExternalTrackMatcherTest {
         assertThat(matcher.groupKey(unknownDuration)).isEqualTo("晴天|周杰伦jay|-1");
     }
 
+    @Test
+    void matchesTraditionalChineseReorderedArtistsAndPenalizesLiveMismatch() {
+        Song traditional = song("髮如雪", "周杰倫 / 費玉清", 290_000);
+        ExternalTrack simplifiedReordered = track("发如雪", List.of("费玉清", "周杰伦"), 290_000);
+        assertThat(matcher.score(traditional, simplifiedReordered)).isGreaterThanOrEqualTo(0.95);
+
+        Song studio = song("晴天", "周杰伦", 269_000);
+        ExternalTrack liveVersion = track("晴天 (Live)", List.of("周杰伦"), 269_000);
+        assertThat(matcher.score(studio, liveVersion)).isLessThan(0.90);
+    }
+
     private static Song song(String title, String artist, int durationMs) {
         Song song = new Song();
         song.setTitle(title);

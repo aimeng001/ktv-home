@@ -1,7 +1,8 @@
 package com.homektv.musicsource;
 
 import com.homektv.library.AssetWriter;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
+import com.homektv.common.OutboundUrlGuard;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -51,7 +52,7 @@ public class ExternalCoverService {
     @Autowired
     public ExternalCoverService(AssetWriter writer, ProviderCallGuard guard, CoverImageNormalizer imageNormalizer) {
         this(writer, guard, imageNormalizer,
-                HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).followRedirects(HttpClient.Redirect.NEVER).build(), InetAddress::getAllByName);
+                OutboundUrlGuard.newNoRedirectHttpClient(DEFAULT_CONNECT_TIMEOUT), InetAddress::getAllByName);
     }
 
     ExternalCoverService(AssetWriter writer, ProviderCallGuard guard, CoverImageNormalizer imageNormalizer,
@@ -116,20 +117,14 @@ public class ExternalCoverService {
     }
 
     private URI validateUri(MusicProvider provider, String url, boolean allowAnyPublicHost) {
-        URI uri;
-        try {
-            uri = URI.create(url.trim());
-        } catch (RuntimeException ex) {
-            throw invalid();
-        }
-        String scheme = uri.getScheme();
-        boolean validScheme = allowAnyPublicHost
-                ? ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
-                : "https".equalsIgnoreCase(scheme);
-        if (!validScheme || uri.getHost() == null || uri.getHost().isBlank()) throw invalid();
-        if (!allowAnyPublicHost && !allowed(provider, uri.getHost())) throw invalid();
-        rejectPrivateAddress(uri.getHost());
-        return uri;
+        Set<String> allow = allowAnyPublicHost ? Set.of() : ALLOWED_HOSTS.getOrDefault(provider, Set.of());
+        return OutboundUrlGuard.requirePublicDestination(
+                url,
+                !allowAnyPublicHost,
+                allow,
+                hostAddressResolver::resolve,
+                ignored -> invalid(),
+                ignored -> new ApiException("EXTERNAL_COVER_DNS_FAILED", "封面地址无法解析"));
     }
 
     private byte[] fetchBytesWithRedirects(MusicProvider provider, URI initialUri,
@@ -169,6 +164,10 @@ public class ExternalCoverService {
                     }
                     long length = response.headers().firstValueAsLong("Content-Length").orElse(-1);
                     if (length > MAX_BYTES) throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面超过 5 MB");
+                    String contentType = response.headers().firstValue("Content-Type").orElse("").trim();
+                    if (!isAllowedImageContentType(contentType)) {
+                        throw new ApiException("EXTERNAL_COVER_INVALID", "封面响应类型无效");
+                    }
                     byte[] bytes = readNBytesWithTimeout(input, MAX_BYTES + 1, timeout);
                     if (bytes.length == 0 || bytes.length > MAX_BYTES) {
                         throw new ApiException("EXTERNAL_COVER_TOO_LARGE", "封面为空或超过 5 MB");
@@ -217,19 +216,16 @@ public class ExternalCoverService {
         return null;
     }
 
-    private static boolean allowed(MusicProvider provider, String host) {
-        if (host == null) return false;
-        return ALLOWED_HOSTS.getOrDefault(provider, Set.of()).stream()
-                .anyMatch(allowed -> host.equalsIgnoreCase(allowed) || host.toLowerCase().endsWith("." + allowed));
-    }
-
-    private void rejectPrivateAddress(String host) {
-        try {
-            for (InetAddress address : hostAddressResolver.resolve(host)) {
-                if (com.homektv.ai.AiBaseUrlPolicy.isPrivate(address)) throw invalid();
-            }
-        } catch (ApiException ex) { throw ex; }
-        catch (Exception ex) { throw new ApiException("EXTERNAL_COVER_DNS_FAILED", "封面地址无法解析"); }
+    private static boolean isAllowedImageContentType(String contentType) {
+        if (contentType == null || contentType.isBlank()) return true;
+        int semicolon = contentType.indexOf(';');
+        String mime = (semicolon >= 0 ? contentType.substring(0, semicolon) : contentType)
+                .trim().toLowerCase(java.util.Locale.ROOT);
+        if (mime.isEmpty()) return true;
+        if ("image/svg+xml".equals(mime)) return false;
+        return mime.startsWith("image/")
+                || "application/octet-stream".equals(mime)
+                || "binary/octet-stream".equals(mime);
     }
 
     private static ApiException invalid() { return new ApiException("EXTERNAL_COVER_URL_INVALID", "封面地址不在平台白名单内"); }

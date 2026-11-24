@@ -1,6 +1,6 @@
 package com.homektv.library;
 
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;

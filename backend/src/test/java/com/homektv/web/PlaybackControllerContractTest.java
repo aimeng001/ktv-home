@@ -1,7 +1,7 @@
 package com.homektv.web;
 
 import com.homektv.playback.PlaybackResolutionService;
-import com.homektv.web.dto.PlaybackDescriptor;
+import com.homektv.contract.PlaybackDescriptor;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
 

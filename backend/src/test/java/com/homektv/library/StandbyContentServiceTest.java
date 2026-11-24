@@ -5,7 +5,7 @@ import com.homektv.domain.Song;
 import com.homektv.musicsource.CoverImageNormalizer;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.multipart.MultipartFile;
@@ -97,9 +97,9 @@ class StandbyContentServiceTest {
         StandbyContentService service = new StandbyContentService(settings, songs, history, mock(AssetWriter.class));
 
         @SuppressWarnings("unchecked")
-        List<com.homektv.web.dto.SongDto> result = (List<com.homektv.web.dto.SongDto>) service.content().get("songs");
+        List<com.homektv.contract.SongDto> result = (List<com.homektv.contract.SongDto>) service.content().get("songs");
 
-        assertThat(result).extracting(com.homektv.web.dto.SongDto::title).containsExactly("第二首", "第四首");
+        assertThat(result).extracting(com.homektv.contract.SongDto::title).containsExactly("第二首", "第四首");
         verify(songs).findAllById(List.of(2L, 1L, 4L));
         verify(songs, never()).findTop50ByOrderByCreatedAtDesc();
     }
@@ -132,9 +132,9 @@ class StandbyContentServiceTest {
         StandbyContentService service = new StandbyContentService(settings, songs, history, mock(AssetWriter.class));
 
         @SuppressWarnings("unchecked")
-        List<com.homektv.web.dto.SongDto> result = (List<com.homektv.web.dto.SongDto>) service.content().get("songs");
+        List<com.homektv.contract.SongDto> result = (List<com.homektv.contract.SongDto>) service.content().get("songs");
 
-        assertThat(result).extracting(com.homektv.web.dto.SongDto::title).containsExactly("熱門歌", "新歌");
+        assertThat(result).extracting(com.homektv.contract.SongDto::title).containsExactly("熱門歌", "新歌");
     }
 
     @Test
@@ -151,9 +151,9 @@ class StandbyContentServiceTest {
         StandbyContentService service = new StandbyContentService(settings, songs, history, mock(AssetWriter.class));
 
         @SuppressWarnings("unchecked")
-        List<com.homektv.web.dto.SongDto> result = (List<com.homektv.web.dto.SongDto>) service.content().get("songs");
+        List<com.homektv.contract.SongDto> result = (List<com.homektv.contract.SongDto>) service.content().get("songs");
 
-        assertThat(result).extracting(com.homektv.web.dto.SongDto::id).containsExactly(5L, 2L, 4L);
+        assertThat(result).extracting(com.homektv.contract.SongDto::id).containsExactly(5L, 2L, 4L);
         verify(songs).findAllById(List.of(5L, 2L, 4L));
         verifyNoInteractions(history);
     }
@@ -215,7 +215,7 @@ class StandbyContentServiceTest {
                 mock(PlayHistoryRepository.class), mock(AssetWriter.class));
 
         @SuppressWarnings("unchecked")
-        List<com.homektv.web.dto.SongDto> result = (List<com.homektv.web.dto.SongDto>) service.content().get("songs");
+        List<com.homektv.contract.SongDto> result = (List<com.homektv.contract.SongDto>) service.content().get("songs");
 
         assertThat(result).hasSize(20);
         assertThat(result.get(0).title()).isEqualTo("新歌1");

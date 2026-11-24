@@ -103,15 +103,11 @@ internal fun resolveVocalSelectionAction(
 ): VocalSelectionAction = when (AudioPlaybackRoute.forLayout(audioLayout.layout, audioTrackCount)) {
     AudioPlaybackRoute.PASSTHROUGH -> VocalSelectionAction.Passthrough
     AudioPlaybackRoute.PCM_CHANNEL_MAPPING -> VocalSelectionAction.MapChannels(
-        if (mode == VocalMode.ORIGINAL) {
-            PcmChannelMode.STEREO
-        } else {
-            PcmChannelMapper.modeFor(
-                vocalMode = mode.wireValue,
-                originalChannel = audioLayout.originalChannel,
-                accompanimentChannel = audioLayout.accompanimentChannel,
-            )
-        },
+        PcmChannelMapper.modeFor(
+            vocalMode = mode.wireValue,
+            originalChannel = audioLayout.originalChannel,
+            accompanimentChannel = audioLayout.accompanimentChannel,
+        ),
     )
     AudioPlaybackRoute.TRACK_SELECTION -> resolveAudioTrackIndex(
         audioLayout = audioLayout,
@@ -273,6 +269,8 @@ class PlaybackEngine(
     private var activeEngineType: PlaybackEngineType = PlaybackEngineType.PRIMARY_MEDIA3
     private var attachedPlayerView: PlayerView? = null
     private var hasRenderSurface: Boolean = true
+    private var lastAppliedVolumePercent: Int = 60
+    private var lastAppliedMuted: Boolean = false
     private var currentHasVideoDeclared: Boolean
         get() = sessionMetadata.currentHasVideoDeclared
         set(value) { sessionMetadata.currentHasVideoDeclared = value }
@@ -513,6 +511,16 @@ class PlaybackEngine(
         }
         attachedPlayerView = view
         hasRenderSurface = true
+        if (currentFileId != null && currentHasVideoDeclared && activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
+            val nowMs = SystemClock.elapsedRealtime()
+            firstFrameRenderedForCurrentMedia = false
+            videoGeneration = videoWatchdog.onMediaChanged()
+            videoWatchdog.onTracksChanged(selectedVideo = true, nowMs = nowMs)
+            videoWatchdog.onPlayingChanged(
+                playing = playerDelegate.isInitialized() && player.isPlaying,
+                nowMs = nowMs,
+            )
+        }
         if (activeEngineType == PlaybackEngineType.PRIMARY_MEDIA3) {
             view.player = player
         } else {
@@ -525,6 +533,7 @@ class PlaybackEngine(
         if (attachedPlayerView === view) {
             (view.videoSurfaceView as? SurfaceView)?.holder?.removeCallback(fallbackSurfaceCallback)
             attachedPlayerView = null
+            hasRenderSurface = false
         }
         if (playerDelegate.isInitialized() && view.player === player) view.player = null
         if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
@@ -582,6 +591,7 @@ class PlaybackEngine(
         format: String? = null,
         videoCodec: String? = null,
         songDurationMs: Long = 0L,
+        preserveTransientRetryCount: Boolean = false,
     ) {
         val engineChoice = playbackRouter.selectEngine(videoCodec, format)
         val prepareOutcome = sessionMetadata.preparePlay(
@@ -590,6 +600,7 @@ class PlaybackEngine(
             streamUrl = streamUrl,
             hasVideoDeclared = hasVideoDeclared,
             format = format,
+            videoCodec = videoCodec,
             songDurationMs = songDurationMs,
             engineChoice = engineChoice,
             activeEngineType = activeEngineType,
@@ -631,7 +642,9 @@ class PlaybackEngine(
         if (!continuesSameQueueItem) resetPitchForMediaChange()
         cancelRetry()
         Log.d(TAG, "play fileId=$fileId url=$streamUrl")
-        transientRetryCount = 0
+        if (!preserveTransientRetryCount) {
+            transientRetryCount = 0
+        }
         firstFrameRenderedForCurrentMedia = false
         videoGeneration = videoWatchdog.onMediaChanged()
         playRequestAt = SystemClock.elapsedRealtime()
@@ -718,6 +731,7 @@ class PlaybackEngine(
         identityGate.markReady(fileId.toString())
 
         fallbackPlaybackToken += 1L
+        fallbackPlayer.setVolume(lastAppliedVolumePercent, lastAppliedMuted)
         prepareFallbackPlayback(
             player = fallbackPlayer,
             fileId = fileId,
@@ -809,7 +823,11 @@ class PlaybackEngine(
         }
     }
 
-    private fun reloadLiveTranscodeAt(positionMs: Long, playWhenReady: Boolean) {
+    private fun reloadLiveTranscodeAt(
+        positionMs: Long,
+        playWhenReady: Boolean,
+        preserveTransientRetryCount: Boolean = false,
+    ) {
         val fileId = currentFileId ?: return
         val queueId = currentQueueId
         val currentUrl = currentStreamUrl ?: return
@@ -828,7 +846,9 @@ class PlaybackEngine(
             initialPositionMs = positionMs,
             hasVideoDeclared = currentHasVideoDeclared,
             format = currentFormat,
+            videoCodec = sessionMetadata.currentVideoCodec,
             songDurationMs = currentSongDurationMs,
+            preserveTransientRetryCount = preserveTransientRetryCount,
         )
     }
 
@@ -891,6 +911,8 @@ class PlaybackEngine(
      *  真机实测（腾讯极光 6SE）：只调 ExoPlayer 音量会让系统音量被独立调低后
      *  无法在 App 内恢复（音量键被 App 接管），因此直接联动系统音量。 */
     fun applyVolume(volume: Int, muted: Boolean) {
+        lastAppliedVolumePercent = volume.coerceIn(0, 100)
+        lastAppliedMuted = muted
         val fixedOutput = audioManager.isVolumeFixed
         val max = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
         if (!fixedOutput && max > 0) {
@@ -1490,7 +1512,7 @@ class PlaybackEngine(
                         && currentFileId == retryFileId
                         && player.currentMediaItem?.mediaId == retryFileId.toString()) {
                         if (currentIsLiveTranscode) {
-                            reloadLiveTranscodeAt(position, retryState.playWhenReady)
+                            reloadLiveTranscodeAt(position, retryState.playWhenReady, preserveTransientRetryCount = true)
                         } else {
                             player.prepare()
                             player.seekTo(LiveTranscodePosition.pipePositionMs(position, currentStreamOffsetMs))
@@ -1515,7 +1537,7 @@ class PlaybackEngine(
             PlaybackDecodeErrorPolicy.isCodecLevelError(error.errorCode)
 
         private fun isTransient(error: PlaybackException): Boolean =
-            PlaybackDecodeErrorPolicy.isTransientIoError(error.errorCode)
+            PlaybackDecodeErrorPolicy.isRetryableTransientError(error)
     }
 
     companion object {

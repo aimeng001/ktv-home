@@ -7,6 +7,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
+
+import com.homektv.common.PlaybackStateChangedEvent;
 
 import java.util.Locale;
 import java.util.Objects;
@@ -32,7 +36,12 @@ public final class PlaybackPressureMonitor {
         refresh();
     }
 
-    @Scheduled(fixedDelayString = "${app.resource-budget.playback-poll-ms:500}")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onPlaybackStateChanged(PlaybackStateChangedEvent event) {
+        refresh();
+    }
+
+    @Scheduled(fixedDelayString = "${app.resource-budget.playback-poll-ms:30000}", scheduler = "realtimeScheduler")
     public void refresh() {
         try {
             boolean sampledBusy = isBusy(playerStateRepository.getSingleton());

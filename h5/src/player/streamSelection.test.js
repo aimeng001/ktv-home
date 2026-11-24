@@ -134,4 +134,22 @@ describe('streamSelection', () => {
     expect(spec.url).toBe('/api/stream/88?transcode=true&softVideo=true')
     expect(spec.liveTranscode).toBe(true)
   })
+
+  it('forces live transcode for MP4 containing AC3/DTS/MP2 audio or HEVC video', () => {
+    const mp4Ac3 = {
+      kind: 'NATIVE', status: 'READY', sourceFileId: 91,
+      streamUrl: '/api/stream/91', audioTracks: 1, format: 'mp4',
+      videoCodec: 'h264', audioCodec: 'ac3'
+    }
+    const specAc3 = buildWebStreamSpec({ playback: mp4Ac3, song: { format: 'mp4' } })
+    expect(specAc3.liveTranscode).toBe(true)
+    expect(specAc3.url).toBe('/api/stream/91?transcode=true')
+
+    const mp4Hevc = {
+      kind: 'NATIVE', status: 'READY', sourceFileId: 92,
+      streamUrl: '/api/stream/92', audioTracks: 1, format: 'mp4',
+      videoCodec: 'hevc', audioCodec: 'aac'
+    }
+    expect(buildWebStreamSpec({ playback: mp4Hevc, song: { format: 'mp4' } }).liveTranscode).toBe(true)
+  })
 })

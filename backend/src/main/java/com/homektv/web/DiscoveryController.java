@@ -4,7 +4,7 @@ import com.homektv.domain.Song;
 import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.SongDto;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.beans.factory.annotation.Autowired;
 

@@ -2,6 +2,7 @@ package com.homektv.musicsource;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homektv.common.OutboundUrlGuard;
 import com.homektv.library.ArtistAvatarMatcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,10 +65,7 @@ public class ArtistAvatarFallbackChain {
     public ArtistAvatarFallbackChain(ObjectMapper mapper, ProviderCallGuard guard,
                                      MusicSourceConfigService configService,
                                      @Value("${app.artist-avatar.fallback-daily-limit:400}") int dailyLimit) {
-        this(HttpClient.newBuilder()
-                        .connectTimeout(Duration.ofSeconds(3))
-                        .followRedirects(HttpClient.Redirect.NORMAL)
-                        .build(),
+        this(OutboundUrlGuard.newNoRedirectHttpClient(Duration.ofSeconds(3)),
                 mapper, guard, configService, dailyLimit);
     }
 
@@ -225,10 +223,21 @@ public class ArtistAvatarFallbackChain {
         }
     }
 
+    private static final Set<String> ALLOWED_FALLBACK_HOSTS = Set.of(
+            "api.deezer.com",
+            "zh.wikipedia.org",
+            "en.wikipedia.org",
+            "baike.baidu.com",
+            "image.baidu.com",
+            "www.bing.com"
+    );
+
     private String fetchText(String url, String referer, Duration timeout) {
         try {
+            URI safeUri = OutboundUrlGuard.requireHttpsAllowedHost(url, ALLOWED_FALLBACK_HOSTS,
+                    IllegalArgumentException::new);
             return guard.callFallback(() -> {
-                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                HttpRequest request = HttpRequest.newBuilder(safeUri)
                         .timeout(timeout)
                         .header("User-Agent", BROWSER_UA)
                         .header("Referer", referer)
@@ -239,7 +248,7 @@ public class ArtistAvatarFallbackChain {
                     HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
                     try (InputStream body = response.body()) {
                         if (response.statusCode() < 200 || response.statusCode() >= 300) return "";
-                        byte[] bytes = MusicSourceHttp.readAtMost(body, MAX_BODY_BYTES);
+                        byte[] bytes = MusicSourceHttp.readAtMostWithTimeout(body, MAX_BODY_BYTES, timeout);
                         return new String(bytes, StandardCharsets.UTF_8);
                     }
                 } catch (Exception ex) {

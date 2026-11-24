@@ -81,6 +81,17 @@ class SearchMigrationContractTest {
                 .contains(":kw ~ '^[a-z0-9]+$'");
     }
 
+    @Test
+    void v71IndexesAliasesIntoSongSearchTermsAndSearchSqlQueriesAliases() throws Exception {
+        String sql = Files.readString(migrationPath("V71__aliases_search_terms_and_scrape_indexes.sql"));
+        assertThat(sql)
+                .contains("'ALIAS'")
+                .contains("aliases ON songs")
+                .contains("idx_song_external_matches_suggested_purge");
+        assertThat(SongSearchRepository.SEARCH_SQL).contains("term.kind IN ('TAG', 'ALIAS')");
+        assertThat(SongSearchRepository.SHORT_SEARCH_SQL).contains("'ALIAS'");
+    }
+
     private Path migrationPath() throws IOException {
         return migrationPath("V36__song_search_hot_path_indexes.sql");
     }

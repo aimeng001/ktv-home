@@ -82,4 +82,57 @@ describe('KtvEffectOverlay 现场气氛互动组件', () => {
     expect(banner).not.toBeNull()
     expect(banner.textContent).toContain('欢呼')
   })
+
+  it('WEB_HOST 模式下音效增益随房间音量等比缩放，避免低音量夜唱爆音', async () => {
+    const gains = []
+    const originalAudioContext = window.AudioContext
+    class FakeAudioContext {
+      constructor() {
+        this.sampleRate = 48000
+        this.currentTime = 0
+        this.state = 'running'
+        this.destination = {}
+      }
+      resume() { return Promise.resolve() }
+      close() { return Promise.resolve() }
+      createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) } }
+      createBufferSource() { return { buffer: null, connect: vi.fn(), start: vi.fn() } }
+      createBiquadFilter() { return { type: '', frequency: { value: 0 }, connect: vi.fn() } }
+      createOscillator() { return { type: '', frequency: { value: 0, setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() }, connect: vi.fn(), start: vi.fn(), stop: vi.fn() } }
+      createGain() {
+        return {
+          gain: {
+            setValueAtTime: (val) => gains.push(val),
+            exponentialRampToValueAtTime: vi.fn(),
+          },
+          connect: vi.fn(),
+        }
+      }
+    }
+    window.AudioContext = FakeAudioContext
+    try {
+      player.tvOnline = false
+      player.webPlayerRole = 'ACTIVE'
+      player.muted = false
+      player.volume = 20
+      let overlayRef
+      const Host = {
+        components: { KtvEffectOverlay },
+        template: '<KtvEffectOverlay ref="overlay" />',
+        mounted() {
+          overlayRef = this.$refs.overlay
+        }
+      }
+      app = createApp(Host)
+      app.use(pinia)
+      app.mount(root)
+      await nextTick()
+
+      overlayRef.triggerEffect('applause')
+      expect(gains).toHaveLength(1)
+      expect(gains[0]).toBeCloseTo(0.25 * 0.2, 4)
+    } finally {
+      window.AudioContext = originalAudioContext
+    }
+  })
 })

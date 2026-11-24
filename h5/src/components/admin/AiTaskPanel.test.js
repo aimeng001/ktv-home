@@ -5,7 +5,7 @@ import { createApp, h, nextTick } from 'vue'
 const { apiMock, alertMock, confirmMock } = vi.hoisted(() => ({
   apiMock: {
     adminAiTasks: vi.fn(), adminAiConfig: vi.fn(), adminAiCreateTask: vi.fn(), adminAiCreateTasks: vi.fn(),
-    adminAiCreateUnclassified: vi.fn(), adminAiRepair: vi.fn(), adminAiRepairProgress: vi.fn(),
+    adminAiCreateUnclassified: vi.fn(), adminAiRepair: vi.fn(), adminAiLatestRepair: vi.fn(), adminAiRepairProgress: vi.fn(),
     adminAiPauseRepair: vi.fn(), adminAiResumeRepair: vi.fn(), adminAiRetryFailedRepair: vi.fn(),
     adminAiRetryTask: vi.fn(), adminAiApplyTask: vi.fn(), adminMergeSong: vi.fn()
   },
@@ -34,6 +34,7 @@ describe('AiTaskPanel', () => {
     apiMock.adminAiApplyTask.mockResolvedValue({})
     apiMock.adminAiRetryTask.mockResolvedValue({})
     apiMock.adminAiRepair.mockResolvedValue({ batchId: 'batch-1', created: 3, dispatchRejected: 1 })
+    apiMock.adminAiLatestRepair.mockResolvedValue({ exists: false })
     apiMock.adminAiRepairProgress.mockResolvedValue({ total: 3, completed: 1, review: 1, failed: 1, running: true, paused: false })
     apiMock.adminAiPauseRepair.mockResolvedValue({ total: 3, completed: 1, review: 1, failed: 1, running: false, paused: true })
     apiMock.adminAiResumeRepair.mockResolvedValue({})
@@ -220,6 +221,16 @@ describe('AiTaskPanel', () => {
     await flushUi()
     expect(apiMock.adminAiResumeRepair).toHaveBeenCalledWith('batch-1')
     expect(apiMock.adminAiRepairProgress).toHaveBeenCalled()
+  })
+
+  it('restores the latest active repair batch on mount after page reload', async () => {
+    apiMock.adminAiLatestRepair.mockResolvedValueOnce({
+      exists: true, batchId: 'restored-batch', total: 10, completed: 4, review: 1, failed: 0, paused: 0, running: false
+    })
+    await mount()
+
+    expect(root.textContent).toContain('修复批次')
+    expect(root.textContent).toContain('4 / 10')
   })
 
   it('retries failed repair items in the active batch', async () => {

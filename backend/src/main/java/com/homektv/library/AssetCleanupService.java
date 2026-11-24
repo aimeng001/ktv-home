@@ -83,37 +83,73 @@ public class AssetCleanupService {
     }
 
     public int sweepOrphans() {
-        int[] deleted = {0};
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            log.error("资产引用快照或孤儿清理失败: 孤儿资产清理必须在独立事务中运行");
+            return 0;
+        }
+        Instant cutoff = Instant.now().minus(ORPHAN_GRACE);
+        List<String> candidates = collectExpiredCandidates(cutoff);
+        if (candidates.isEmpty()) return 0;
+
+        List<String> toDelete;
         try {
-            Integer result = jdbc.execute((ConnectionCallback<Integer>) connection ->
-                    sweepOrphansInTransaction(connection, deleted));
-            return result == null ? deleted[0] : result;
+            toDelete = jdbc.execute((ConnectionCallback<List<String>>) connection ->
+                    findUnreferencedInTransaction(connection, candidates));
         } catch (RuntimeException failure) {
             log.error("资产引用快照或孤儿清理失败", failure);
-            return deleted[0];
+            return 0;
         }
+        if (toDelete == null || toDelete.isEmpty()) return 0;
+
+        int deleted = 0;
+        for (String relativePath : toDelete) {
+            assetWriter.deleteReadableCache(relativePath);
+            deleted++;
+        }
+        return deleted;
     }
 
-    private int sweepOrphansInTransaction(Connection connection, int[] deleted) throws SQLException {
-        // This task owns its temp-table DDL and filesystem deletes; never run it inside a caller's transaction.
+    private List<String> collectExpiredCandidates(Instant cutoff) {
+        List<String> candidates = new ArrayList<>();
+        Path dataRoot = assetWriter.dataRootForCleanup();
+        for (String directory : APPLICATION_ASSET_DIRECTORIES) {
+            Path root = dataRoot.resolve(directory).normalize();
+            if (Files.isSymbolicLink(root) || !Files.isDirectory(root)) continue;
+            try (Stream<Path> paths = Files.walk(root)) {
+                Iterator<Path> iterator = paths.iterator();
+                while (iterator.hasNext()) {
+                    Path path = iterator.next();
+                    if (!isOldRegularFile(path, cutoff)) continue;
+                    candidates.add(dataRoot.relativize(path).toString()
+                            .replace(path.getFileSystem().getSeparator(), "/"));
+                }
+            } catch (IOException | UncheckedIOException failure) {
+                log.warn("应用资产孤儿扫描失败：{} - {}", root, failure.getMessage());
+            }
+        }
+        return candidates;
+    }
+
+    private List<String> findUnreferencedInTransaction(Connection connection, List<String> candidates) throws SQLException {
+        // This task owns its temp-table DDL; never run it inside a caller's transaction.
         if (!connection.getAutoCommit()) {
             throw new IllegalStateException("孤儿资产清理必须在独立事务中运行");
         }
         String temporaryTable = "ktv_asset_cleanup_refs_"
                 + UUID.randomUUID().toString().replace("-", "");
+        List<String> unreferenced = new ArrayList<>();
         connection.setAutoCommit(false);
         try {
             createTemporaryReferenceSnapshot(connection, temporaryTable);
-            Instant cutoff = Instant.now().minus(ORPHAN_GRACE);
-            for (String directory : APPLICATION_ASSET_DIRECTORIES) {
-                sweepDirectory(connection, temporaryTable, assetWriter.dataRootForCleanup(), directory,
-                        cutoff, deleted);
+            for (int start = 0; start < candidates.size(); start += SWEEP_BATCH_SIZE) {
+                List<String> batch = candidates.subList(start, Math.min(candidates.size(), start + SWEEP_BATCH_SIZE));
+                unreferenced.addAll(filterUnreferencedBatch(connection, temporaryTable, batch));
             }
             try (Statement statement = connection.createStatement()) {
                 statement.execute("DROP TABLE " + temporaryTable);
             }
             connection.commit();
-            return deleted[0];
+            return unreferenced;
         } catch (SQLException | RuntimeException failure) {
             try {
                 connection.rollback();
@@ -182,34 +218,8 @@ public class AssetCleanupService {
         }
     }
 
-    private void sweepDirectory(Connection connection, String temporaryTable, Path dataRoot,
-                                String directory, Instant cutoff, int[] deleted) throws SQLException {
-        Path root = dataRoot.resolve(directory).normalize();
-        if (Files.isSymbolicLink(root) || !Files.isDirectory(root)) return;
-
-        try (Stream<Path> paths = Files.walk(root)) {
-            Iterator<Path> iterator = paths.iterator();
-            List<String> candidates = new ArrayList<>(SWEEP_BATCH_SIZE);
-            while (iterator.hasNext()) {
-                Path path = iterator.next();
-                if (!isOldRegularFile(path, cutoff)) continue;
-                candidates.add(dataRoot.relativize(path).toString()
-                        .replace(path.getFileSystem().getSeparator(), "/"));
-                if (candidates.size() == SWEEP_BATCH_SIZE) {
-                    deleted[0] += deleteUnreferencedBatch(connection, temporaryTable, candidates);
-                    candidates.clear();
-                }
-            }
-            if (!candidates.isEmpty()) {
-                deleted[0] += deleteUnreferencedBatch(connection, temporaryTable, candidates);
-            }
-        } catch (IOException | UncheckedIOException failure) {
-            log.warn("应用资产孤儿扫描失败：{} - {}", root, failure.getMessage());
-        }
-    }
-
-    private int deleteUnreferencedBatch(Connection connection, String temporaryTable,
-                                        List<String> candidates) throws SQLException {
+    private List<String> filterUnreferencedBatch(Connection connection, String temporaryTable,
+                                                 List<String> candidates) throws SQLException {
         String placeholders = String.join(",", Collections.nCopies(candidates.size(), "?"));
         Set<String> referenced = new HashSet<>();
         try (PreparedStatement statement = connection.prepareStatement(
@@ -222,13 +232,11 @@ public class AssetCleanupService {
             }
         }
 
-        int deleted = 0;
+        List<String> unreferenced = new ArrayList<>();
         for (String candidate : candidates) {
-            if (referenced.contains(candidate)) continue;
-            assetWriter.deleteReadableCache(candidate);
-            deleted++;
+            if (!referenced.contains(candidate)) unreferenced.add(candidate);
         }
-        return deleted;
+        return unreferenced;
     }
 
     @Scheduled(fixedDelayString = "${home-ktv.asset-cleanup.interval-ms:3600000}")

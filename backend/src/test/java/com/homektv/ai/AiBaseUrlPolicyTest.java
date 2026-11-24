@@ -1,6 +1,6 @@
 package com.homektv.ai;
 
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
 
 import java.net.Inet6Address;

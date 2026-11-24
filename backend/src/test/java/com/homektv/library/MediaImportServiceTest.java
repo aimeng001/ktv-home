@@ -8,7 +8,7 @@ import com.homektv.media.MediaProbe;
 import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.resource.ResourceBudget;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.jaudiotagger.audio.AudioFile;
 import org.jaudiotagger.tag.FieldKey;
 import org.jaudiotagger.tag.Tag;

@@ -517,4 +517,20 @@ class FFprobeServiceTest {
         assertThat(invocations.get(0)).contains("-probesize", "-analyzeduration");
         assertThat(invocations.get(1)).doesNotContain("-probesize", "-analyzeduration");
     }
+
+    @Test
+    void parseFallsBackToStreamTagsDurationWhenFormatDurationIsMissing() {
+        String json = """
+            {
+              "streams": [
+                {"codec_type": "video", "width": 1920, "height": 1080,
+                 "tags": {"DURATION": "00:04:12.500000000"}},
+                {"codec_type": "audio", "channels": 2}
+              ],
+              "format": {"duration": "N/A"}
+            }
+            """;
+        MediaProbe p = service.parse(json);
+        assertThat(p.durationMs()).isEqualTo(252_500L);
+    }
 }

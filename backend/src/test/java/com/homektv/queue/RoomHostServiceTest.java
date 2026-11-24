@@ -3,7 +3,7 @@ package com.homektv.queue;
 import com.homektv.domain.AppUser;
 import com.homektv.library.SettingService;
 import com.homektv.repo.AppUserRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;

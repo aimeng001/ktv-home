@@ -2,6 +2,7 @@ package com.homektv.musicsource;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homektv.common.OutboundUrlGuard;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -41,7 +42,7 @@ final class MusicSourceHttp {
 
     MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts) {
         this(mapper, provider, allowedHosts,
-                HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).followRedirects(HttpClient.Redirect.NEVER).build(), null);
+                OutboundUrlGuard.newNoRedirectHttpClient(DEFAULT_CONNECT_TIMEOUT), null);
     }
 
     MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts, HttpClient client) {
@@ -51,7 +52,7 @@ final class MusicSourceHttp {
     MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts,
                     ProviderCallGuard callGuard) {
         this(mapper, provider, allowedHosts,
-                HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).followRedirects(HttpClient.Redirect.NEVER).build(), callGuard);
+                OutboundUrlGuard.newNoRedirectHttpClient(DEFAULT_CONNECT_TIMEOUT), callGuard);
     }
 
     MusicSourceHttp(ObjectMapper mapper, MusicProvider provider, Set<String> allowedHosts,
@@ -168,10 +169,8 @@ final class MusicSourceHttp {
     }
 
     private URI checked(String url) {
-        URI uri = URI.create(url);
-        if (!"https".equalsIgnoreCase(uri.getScheme()) || !allowedHosts.contains(uri.getHost()))
-            throw new MusicSourceException(provider, "请求地址不在平台白名单内");
-        return uri;
+        return OutboundUrlGuard.requireHttpsAllowedHost(url, allowedHosts,
+                message -> new MusicSourceException(provider, message));
     }
 
     static String query(Map<String, ?> values) {

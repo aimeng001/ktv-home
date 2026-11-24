@@ -114,6 +114,34 @@ class PlaybackServiceTest {
     }
 
     @Test
+    void consecutivePlayErrorsInShortWindowTriggerCircuitBreakerAndPauseQueue() {
+        QueueItem second = queueItem(101L, QueueService.WAITING);
+        QueueItem third = queueItem(102L, QueueService.WAITING);
+        when(queueRepository.findByStatusOrderByOrderIndexAsc(QueueService.WAITING))
+                .thenReturn(List.of(second, third), List.of(third));
+        when(songRepository.findAllById(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(List.of(song(102L), song(103L)), List.of(song(103L)));
+        when(fileRepository.findSongIdsWithReadyFile(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(java.util.Set.of(102L, 103L), java.util.Set.of(103L));
+        when(queueRepository.findById(101L)).thenReturn(Optional.of(second));
+
+        PlaybackTransitionResult firstError = playbackService.onPlayError(201L, 100L);
+        assertThat(firstError.circuitBroken()).isFalse();
+        assertThat(playerState.getCurrentQueueId()).isEqualTo(101L);
+
+        PlaybackTransitionResult secondError = playbackService.onPlayError(202L, 101L);
+        assertThat(secondError.circuitBroken()).isFalse();
+        assertThat(playerState.getCurrentQueueId()).isEqualTo(102L);
+
+        PlaybackTransitionResult thirdError = playbackService.onPlayError(203L, 102L);
+        assertThat(thirdError.accepted()).isTrue();
+        assertThat(thirdError.circuitBroken()).isTrue();
+        assertThat(playerState.getState()).isEqualTo("paused");
+        assertThat(playerState.getCurrentQueueId()).isEqualTo(102L);
+        assertThat(third.getStatus()).isEqualTo(QueueService.PLAYING);
+    }
+
+    @Test
     void stalePositionIsRejectedWithoutSaving() {
         PositionUpdateResult result = playbackService.updatePosition(999L, 12_345L);
 
@@ -149,12 +177,12 @@ class PlaybackServiceTest {
     @Test
     void explicitSeekRejectsNegativePositionsAndMissingCurrentSong() {
         assertThatThrownBy(() -> playbackService.seek(-1L))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("不能为负数");
 
         playerState.setCurrentQueueId(null);
         assertThatThrownBy(() -> playbackService.seek(0L))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("当前没有正在播放的歌曲");
         verify(playerRepository, never()).save(any(PlayerState.class));
     }
@@ -233,7 +261,7 @@ class PlaybackServiceTest {
         assertThat(playbackService.setVolume(-1).getVolume()).isZero();
         assertThat(playbackService.setVolume(101).getVolume()).isEqualTo(100);
         assertThatThrownBy(() -> playbackService.setVocalMode("stereo"))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("无效的原伴唱模式");
     }
 
@@ -391,7 +419,7 @@ class PlaybackServiceTest {
     void restartRequiresAndResetsTheCurrentQueueItem() {
         playerState.setCurrentQueueId(null);
         assertThatThrownBy(() -> playbackService.restart())
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("当前没有正在播放的歌曲");
 
         playerState.setCurrentQueueId(100L);
@@ -490,26 +518,26 @@ class PlaybackServiceTest {
         assertThat(playbackService.setVocalMode("original").getVocalMode()).isEqualTo("original");
         assertThat(playbackService.setVocalMode("accompaniment").getVocalMode()).isEqualTo("accompaniment");
         assertThatThrownBy(() -> playbackService.setVocalMode("stereo"))
-                .isInstanceOf(com.homektv.web.ApiException.class);
+                .isInstanceOf(com.homektv.common.ApiException.class);
     }
 
     @Test
     void vocalSwapRejectsMissingQueueSourceAndSingleTrackStereo() {
         playerState.setCurrentQueueId(null);
         assertThatThrownBy(() -> playbackService.swapVocalTracks())
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("当前没有正在播放的歌曲");
 
         playerState.setCurrentQueueId(100L);
         when(queueRepository.findById(100L)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> playbackService.swapVocalTracks())
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("当前队列项不存在");
 
         when(queueRepository.findById(100L)).thenReturn(Optional.of(currentQueue));
         when(fileRepository.findBySongIdAndValidTrueOrderByPriorityDesc(2L)).thenReturn(List.of());
         assertThatThrownBy(() -> playbackService.swapVocalTracks())
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("没有可用文件源");
 
         SongFile mono = file(204L, 2L);
@@ -517,7 +545,7 @@ class PlaybackServiceTest {
         mono.setAudioTracks(1);
         when(fileRepository.findBySongIdAndValidTrueOrderByPriorityDesc(2L)).thenReturn(List.of(mono));
         assertThatThrownBy(() -> playbackService.swapVocalTracks())
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("没有可交换的双音轨");
     }
 
@@ -558,6 +586,16 @@ class PlaybackServiceTest {
         assertThat(missingSongId.getStatus()).isEqualTo(QueueService.SKIPPED);
         assertThat(candidate.getStatus()).isEqualTo(QueueService.PLAYING);
         assertThat(playerState.getCurrentQueueId()).isEqualTo(candidate.getId());
+    }
+
+    @Test
+    void seekClampsAgainstKnownSongDuration() {
+        Song song = song(2L);
+        song.setDurationMs(120_000);
+        when(songRepository.findById(2L)).thenReturn(Optional.of(song));
+
+        PlayerState sought = playbackService.seek(999_999L);
+        assertThat(sought.getPositionMs()).isEqualTo(119_000L);
     }
 
     private static SongFile file(long id, long songId) {

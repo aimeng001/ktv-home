@@ -137,6 +137,9 @@ data class PlaybackDescriptor(
     val audioLayout: AudioLayout = AudioLayout.normalStereo(),
     val errorCode: String? = null,
     val errorMessage: String? = null,
+    val format: String? = null,
+    val videoCodec: String? = null,
+    val audioCodec: String? = null,
 )
 
 @Serializable

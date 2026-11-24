@@ -1,6 +1,7 @@
 package com.homektv.musicsource;
 
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
+import com.homektv.resource.ResourceBudget;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -39,21 +40,37 @@ public class CoverImageNormalizer {
     private final String ffmpegPath;
     private final ProcessLauncher processLauncher;
     private final Semaphore decodePermits;
+    private volatile ResourceBudget resourceBudget;
 
     @Autowired
     public CoverImageNormalizer(@Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath) {
-        this(ffmpegPath, CoverImageNormalizer::startProcess, new Semaphore(2, true));
+        this(ffmpegPath, CoverImageNormalizer::startProcess, new Semaphore(2, true), null);
+    }
+
+    @Autowired(required = false)
+    void setResourceBudget(ResourceBudget resourceBudget) {
+        this.resourceBudget = resourceBudget;
+    }
+
+    public CoverImageNormalizer(String ffmpegPath, ResourceBudget resourceBudget) {
+        this(ffmpegPath, CoverImageNormalizer::startProcess, new Semaphore(2, true), resourceBudget);
     }
 
     CoverImageNormalizer(String ffmpegPath, ProcessLauncher processLauncher) {
-        this(ffmpegPath, processLauncher, new Semaphore(2, true));
+        this(ffmpegPath, processLauncher, new Semaphore(2, true), null);
     }
 
     CoverImageNormalizer(String ffmpegPath, ProcessLauncher processLauncher,
                          Semaphore decodePermits) {
+        this(ffmpegPath, processLauncher, decodePermits, null);
+    }
+
+    CoverImageNormalizer(String ffmpegPath, ProcessLauncher processLauncher,
+                         Semaphore decodePermits, ResourceBudget resourceBudget) {
         this.ffmpegPath = ffmpegPath;
         this.processLauncher = processLauncher;
         this.decodePermits = Objects.requireNonNull(decodePermits, "decodePermits");
+        this.resourceBudget = resourceBudget;
     }
 
     public byte[] normalize(byte[] source) {
@@ -72,6 +89,9 @@ public class CoverImageNormalizer {
                     image.flush();
                 }
             }
+            if (!hasSupportedFallbackImageMagic(source)) {
+                throw invalid("原始封面不是受支持的图片格式");
+            }
             return convertWithFfmpeg(source);
         } finally {
             decodePermits.release();
@@ -79,6 +99,11 @@ public class CoverImageNormalizer {
     }
 
     private byte[] convertWithFfmpeg(byte[] source) {
+        ResourceBudget.Permit budgetPermit = null;
+        if (resourceBudget != null) {
+            budgetPermit = resourceBudget.tryAcquireProbe(java.time.Duration.ofMillis(500))
+                    .orElseThrow(() -> new ApiException("IMAGE_BUSY", "媒体处理繁忙，请稍后重试"));
+        }
         Path input = null;
         Path output = null;
         Process process = null;
@@ -87,7 +112,8 @@ public class CoverImageNormalizer {
             output = Files.createTempFile("home-ktv-cover-", ".jpg");
             Files.write(input, source);
             process = processLauncher.start(List.of(
-                    ffmpegPath, "-hide_banner", "-loglevel", "error", "-y",
+                    ffmpegPath, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                    "-protocol_whitelist", "file",
                     "-i", input.toString(), "-frames:v", "1",
                     "-vf", "scale=2048:2048:force_original_aspect_ratio=decrease",
                     "-q:v", "2", output.toString()));
@@ -120,6 +146,7 @@ public class CoverImageNormalizer {
             if (process != null && process.isAlive()) destroyAndWait(process);
             deleteQuietly(input);
             deleteQuietly(output);
+            if (budgetPermit != null) budgetPermit.close();
         }
     }
 
@@ -240,6 +267,39 @@ public class CoverImageNormalizer {
             Files.deleteIfExists(path);
         } catch (IOException ignored) {
         }
+    }
+
+    static boolean hasSupportedFallbackImageMagic(byte[] bytes) {
+        if (bytes == null || bytes.length < 4) return false;
+        // WebP: RIFF....WEBP
+        if (bytes.length >= 12
+                && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
+            return true;
+        }
+        // AVIF / HEIF / HEIC: ....ftyp<brand>
+        if (bytes.length >= 12 && bytes[4] == 'f' && bytes[5] == 't' && bytes[6] == 'y' && bytes[7] == 'p') {
+            String brand = new String(bytes, 8, 4, java.nio.charset.StandardCharsets.US_ASCII);
+            if (brand.equals("avif") || brand.equals("avis") || brand.equals("heic")
+                    || brand.equals("heix") || brand.equals("hevc") || brand.equals("hevx")
+                    || brand.equals("mif1") || brand.equals("msf1")) {
+                return true;
+            }
+        }
+        // JPEG / PNG / GIF / BMP / TIFF / ICO
+        if ((bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8 && (bytes[2] & 0xFF) == 0xFF) return true;
+        if (bytes.length >= 8 && (bytes[0] & 0xFF) == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G') {
+            return true;
+        }
+        if (bytes.length >= 6 && bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == '8') {
+            return true;
+        }
+        if (bytes[0] == 'B' && bytes[1] == 'M') return true;
+        if ((bytes[0] == 'I' && bytes[1] == 'I' && bytes[2] == 0x2A && bytes[3] == 0x00)
+                || (bytes[0] == 'M' && bytes[1] == 'M' && bytes[2] == 0x00 && bytes[3] == 0x2A)) {
+            return true;
+        }
+        return bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0x01 && bytes[3] == 0x00;
     }
 
     private static ApiException invalid(String message) {

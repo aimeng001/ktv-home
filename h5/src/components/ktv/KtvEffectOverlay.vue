@@ -40,6 +40,7 @@ const currentBanner = ref(null)
 let bannerTimer = null
 let particlesTimer = null
 let audioCtx = null
+let lastSoundAt = 0
 
 const EFFECT_CONFIGS = {
   applause: { icon: '👏', text: '现场掌声响起来！', chars: ['👏', '✨', '⭐', '🎊'] },
@@ -64,6 +65,10 @@ function getAudioContext() {
 }
 
 function playSynthesizedSound(type) {
+  const nowMs = Date.now()
+  if (nowMs - lastSoundAt < 150) return
+  lastSoundAt = nowMs
+  const volumeScale = Math.max(0.05, Math.min(1, Number(player?.volume ?? 60) / 100))
   try {
     const ctx = getAudioContext()
     if (!ctx) return
@@ -83,7 +88,7 @@ function playSynthesizedSound(type) {
       filter.type = 'bandpass'
       filter.frequency.value = type === 'cheer' ? 1200 : 800
       const gain = ctx.createGain()
-      gain.gain.setValueAtTime(0.25, now)
+      gain.gain.setValueAtTime(0.25 * volumeScale, now)
       gain.gain.exponentialRampToValueAtTime(0.01, now + 0.8)
       noise.connect(filter)
       filter.connect(gain)
@@ -96,7 +101,7 @@ function playSynthesizedSound(type) {
       osc.type = 'sawtooth'
       osc.frequency.setValueAtTime(260, now)
       osc.frequency.exponentialRampToValueAtTime(90, now + 0.9)
-      gain.gain.setValueAtTime(0.2, now)
+      gain.gain.setValueAtTime(0.2 * volumeScale, now)
       gain.gain.exponentialRampToValueAtTime(0.01, now + 0.9)
       osc.connect(gain)
       gain.connect(ctx.destination)
@@ -111,7 +116,7 @@ function playSynthesizedSound(type) {
         osc.type = 'sine'
         osc.frequency.value = f
         const startTime = now + idx * 0.08
-        gain.gain.setValueAtTime(0.18, startTime)
+        gain.gain.setValueAtTime(0.18 * volumeScale, startTime)
         gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.7)
         osc.connect(gain)
         gain.connect(ctx.destination)

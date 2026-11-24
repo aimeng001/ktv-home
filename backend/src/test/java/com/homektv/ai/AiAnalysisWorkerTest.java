@@ -8,7 +8,7 @@ import com.homektv.domain.Song;
 import com.homektv.repo.AiAnalysisTaskRepository;
 import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;

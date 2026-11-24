@@ -1,7 +1,7 @@
 package com.homektv.security;
 
 import com.homektv.config.AppProperties;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -127,7 +127,7 @@ public class AdminAuthService {
         });
     }
 
-    @Scheduled(fixedDelay = 300_000)
+    @Scheduled(fixedDelay = 300_000, scheduler = "realtimeScheduler")
     void purgeExpiredState() {
         synchronized (authStateGate) {
             purgeExpired(Instant.now(clock));

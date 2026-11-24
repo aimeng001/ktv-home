@@ -8,6 +8,13 @@
 const BROWSER_NATIVE_EXT_RE = /\.(mp4|m4v|webm|mp3|flac|m4a|wav|ogg)(?:$|\?)/i
 const AUDIO_EXT_RE = /\.(mp3|flac|m4a|wav|ogg)(?:$|\?)/i
 const NATIVE_FORMAT_TOKENS = new Set(['mp4', 'm4v', 'mov', 'webm', 'mp3', 'flac', 'm4a', 'aac', 'ogg', 'wav'])
+const NATIVE_VIDEO_CODECS = new Set(['h264', 'avc', 'avc1', 'h.264', 'vp8', 'vp9', 'av1', 'av01'])
+const NATIVE_AUDIO_CODECS = new Set(['aac', 'mp4a', 'mp3', 'opus', 'vorbis', 'flac', 'pcm_s16le', 'pcm_s24le'])
+
+function normalizeCodec(value) {
+  const c = String(value || '').trim().toLowerCase()
+  return c && c !== 'unknown' ? c : ''
+}
 
 export function resolveTargetAudioTrack(audioLayout, vocalMode) {
   if (!audioLayout || audioLayout.layout !== 'DUAL_TRACK') return null
@@ -24,6 +31,12 @@ export function isAudioOnlyPlayback(playback, song) {
 
 export function isBrowserNativeFormat(playback, song) {
   if (!playback || playback.kind === 'LIVE_TRANSCODE') return false
+  const audioOnly = isAudioOnlyPlayback(playback, song)
+  const vCodec = normalizeCodec(playback.videoCodec || song?.videoCodec)
+  const aCodec = normalizeCodec(playback.audioCodec || song?.audioCodec)
+  if (!audioOnly && vCodec && !NATIVE_VIDEO_CODECS.has(vCodec)) return false
+  if (aCodec && !NATIVE_AUDIO_CODECS.has(aCodec)) return false
+
   const fmt = String(playback.format || song?.format || '').trim().toLowerCase()
   if (fmt) {
     const tokens = fmt.split(/[\s,;/|]+/).filter(Boolean)

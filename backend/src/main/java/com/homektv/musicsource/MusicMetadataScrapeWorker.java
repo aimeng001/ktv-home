@@ -1,6 +1,8 @@
 package com.homektv.musicsource;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homektv.resource.PlaybackPressureMonitor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -20,6 +22,12 @@ public class MusicMetadataScrapeWorker {
     private final MusicSourceConfigService configService;
     private final ObjectMapper mapper;
     private final String workerId = UUID.randomUUID().toString();
+    private volatile PlaybackPressureMonitor playbackPressureMonitor;
+
+    @Autowired(required = false)
+    void setPlaybackPressureMonitor(PlaybackPressureMonitor playbackPressureMonitor) {
+        this.playbackPressureMonitor = playbackPressureMonitor;
+    }
 
     public MusicMetadataScrapeWorker(JdbcTemplate jdbc, MusicSourceSearchService searchService,
                                      MusicMetadataApplyService applyService, MusicSourceConfigService configService,
@@ -36,23 +44,25 @@ public class MusicMetadataScrapeWorker {
         if (!isRunning(batchId)) return;
         String claimToken = UUID.randomUUID().toString();
         jdbc.update("UPDATE music_metadata_scrape_batches SET started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=?", batchId);
+        int concurrencyLimit = Math.max(1, configService.getConfig().concurrencyLimit());
         try (var executor = Executors.newFixedThreadPool(
-                Math.max(1, Math.min(configService.getConfig().concurrencyLimit(),
-                        MetadataScrapeBatchPolicy.MAX_CLAIM_SIZE)))) {
+                Math.min(concurrencyLimit, MetadataScrapeBatchPolicy.MAX_INFLIGHT_CLAIM_SIZE))) {
             while (isRunning(batchId)) {
-                List<Long> itemIds = claimPendingItemIds(batchId, claimToken);
+                boolean busy = playbackPressureMonitor != null && playbackPressureMonitor.isPlaybackBusy();
+                int effectiveConcurrency = busy ? 1 : concurrencyLimit;
+                List<Long> itemIds = claimPendingItemIds(batchId, claimToken, effectiveConcurrency);
                 if (itemIds.isEmpty()) break;
                 List<CompletableFuture<Void>> futures = itemIds.stream()
                         .map(id -> CompletableFuture.runAsync(() -> processItem(batchId, id, claimToken), executor)).toList();
                 CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
+                if (busy && !pauseDuringPlayback(batchId)) break;
             }
         }
         finishIfDone(batchId);
     }
 
-    private List<Long> claimPendingItemIds(String batchId, String claimToken) {
-        int limit = MetadataScrapeBatchPolicy.safeBatchSize(
-                MetadataScrapeBatchPolicy.MAX_CLAIM_SIZE);
+    private List<Long> claimPendingItemIds(String batchId, String claimToken, int concurrencyLimit) {
+        int limit = MetadataScrapeBatchPolicy.safeInflightClaimSize(concurrencyLimit);
         return jdbc.query("""
                 WITH candidates AS (
                     SELECT id
@@ -74,6 +84,16 @@ public class MusicMetadataScrapeWorker {
                 WHERE item.id=candidates.id
                 RETURNING item.id
                 """, (rs, index) -> rs.getLong(1), batchId, limit, workerId, claimToken);
+    }
+
+    private boolean pauseDuringPlayback(String batchId) {
+        try {
+            Thread.sleep(1_500L);
+            return isRunning(batchId);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private void processItem(String batchId, long itemId, String claimToken) {
@@ -114,7 +134,7 @@ public class MusicMetadataScrapeWorker {
             // but no new metadata write may begin after the batch is paused.
             // Recheck both the batch state and the claim immediately before
             // entering the transactional apply service.
-            if (!canApply(batchId, itemId, claimToken)) {
+            if (!canApply(batchId, itemId, claimToken) || !renewLease(batchId, itemId, claimToken)) {
                 release(batchId, itemId, claimToken);
                 return;
             }
@@ -125,6 +145,9 @@ public class MusicMetadataScrapeWorker {
             } catch (RuntimeException ex) {
                 review(batchId, itemId, claimToken, best, "自动写入未执行：" + safe(ex));
             }
+        } catch (ProviderRateLimitedException | ProviderRateStateUnavailableException ex) {
+            release(batchId, itemId, claimToken);
+            pauseOnRateLimit(batchId);
         } catch (Exception ex) {
             fail(batchId, itemId, claimToken, safe(ex));
         }
@@ -169,6 +192,15 @@ public class MusicMetadataScrapeWorker {
         return count != null && count == 1;
     }
 
+    private boolean renewLease(String batchId, long itemId, String claimToken) {
+        return jdbc.update("""
+                UPDATE music_metadata_scrape_items
+                SET lease_until=now() + interval '5 minutes', updated_at=now()
+                WHERE id=? AND batch_id=? AND status='PROCESSING'
+                  AND lease_owner=? AND claim_token=?
+                """, itemId, batchId, workerId, claimToken) == 1;
+    }
+
     private void release(String batchId, long itemId, String claimToken) {
         jdbc.update("""
                 UPDATE music_metadata_scrape_items
@@ -177,6 +209,14 @@ public class MusicMetadataScrapeWorker {
                 WHERE id=? AND batch_id=? AND status='PROCESSING'
                   AND lease_owner=? AND claim_token=?
                 """, itemId, batchId, workerId, claimToken);
+    }
+
+    private void pauseOnRateLimit(String batchId) {
+        jdbc.update("""
+                UPDATE music_metadata_scrape_batches
+                SET status='PAUSED',updated_at=now()
+                WHERE id=? AND status='RUNNING'
+                """, batchId);
     }
 
     private void finishIfDone(String batchId) {

@@ -10,7 +10,7 @@ import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.SongRepository;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 
 import java.util.OptionalInt;
 
@@ -139,7 +139,9 @@ public class AiAnalysisWorker {
     }
 
     private boolean isPaused(Long taskId) {
-        return taskRepository.findById(taskId).map(task -> "paused".equals(task.getStatus())).orElse(false);
+        return taskRepository.findById(taskId)
+                .map(task -> "paused".equals(task.getStatus()) || "cancelled".equals(task.getStatus()))
+                .orElse(false);
     }
 
     // 安全截取异常信息（脱敏 API Key、限制长度 1000 字符）

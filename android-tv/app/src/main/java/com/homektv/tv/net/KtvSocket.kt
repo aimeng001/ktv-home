@@ -110,6 +110,14 @@ class KtvSocket(
     private val recoverySupervisor = SupervisorJob()
     private val recoveryScope = CoroutineScope(recoverySupervisor + Dispatchers.IO)
 
+    private val pongTimeout = Runnable {
+        val socket = ws
+        if (!closed && socket != null) {
+            Log.w(TAG, "ws pong timeout (${PONG_TIMEOUT_MS}ms); cancelling dead socket")
+            socket.cancel()
+        }
+    }
+
     // 15s 应用层心跳
     private val heartbeat = object : Runnable {
         override fun run() {
@@ -120,7 +128,17 @@ class KtvSocket(
                 flushFinishedReports(generation)
                 flushPlaybackErrors(generation)
             }
-            ws?.send("""{"type":"ping","payload":{"generation":${generation ?: "null"}}}""")
+            val socket = ws
+            if (socket != null) {
+                val sent = socket.send("""{"type":"ping","payload":{"generation":${generation ?: "null"}}}""")
+                if (sent) {
+                    main.removeCallbacks(pongTimeout)
+                    main.postDelayed(pongTimeout, PONG_TIMEOUT_MS)
+                } else {
+                    Log.w(TAG, "ws ping enqueue failed; cancelling dead socket")
+                    socket.cancel()
+                }
+            }
             main.postDelayed(this, HEARTBEAT_MS)
         }
     }
@@ -153,6 +171,7 @@ class KtvSocket(
         socketEpoch.invalidate()
         syncChunkAssembler.reset()
         main.removeCallbacks(heartbeat)
+        main.removeCallbacks(pongTimeout)
         main.removeCallbacks(inboundDrain)
         synchronized(inboundDrainLock) {
             inboundQueue.close()
@@ -170,14 +189,9 @@ class KtvSocket(
     }
 
     /** 上行播放进度（P1.28 播放引擎每 1s 调用）。 */
-    fun sendProgress(positionMs: Long, queueId: Long? = null) {
+    fun sendProgress(positionMs: Long, queueId: Long? = null, seekSequence: Long? = null) {
         val generation = leaseGate.activeGeneration() ?: return
-        val payload = buildJsonObject {
-            put("position_ms", positionMs)
-            queueId?.let { put("queue_id", it) }
-            put("generation", generation)
-        }
-        ws?.send(buildSocketMessage("progress", payload))
+        ws?.send(buildProgressMessage(positionMs, queueId, generation, seekSequence))
     }
 
     /** 上行播放完成（P1.33 自动连播）。 */
@@ -269,6 +283,7 @@ class KtvSocket(
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             if (!isCurrent(webSocket)) return
+            main.removeCallbacks(pongTimeout)
             val wireBytes = Utf8Budget.countAtMost(text, MAX_MESSAGE_BYTES)
             if (wireBytes == null) {
                 Log.w(TAG, "ws message too large: UTF-8 bytes exceed $MAX_MESSAGE_BYTES")
@@ -295,6 +310,7 @@ class KtvSocket(
             main.post {
                 if (closed || !socketEpoch.isCurrent(epoch) || ws != null) return@post
                 main.removeCallbacks(heartbeat)
+                main.removeCallbacks(pongTimeout)
                 syncReadyGate.onDisconnect()
                 finishedOutbox.onDisconnected()
                 leaseGate.disconnect()
@@ -313,6 +329,7 @@ class KtvSocket(
             main.post {
                 if (closed || !socketEpoch.isCurrent(epoch) || ws != null) return@post
                 main.removeCallbacks(heartbeat)
+                main.removeCallbacks(pongTimeout)
                 syncReadyGate.onDisconnect()
                 finishedOutbox.onDisconnected()
                 leaseGate.disconnect()
@@ -534,6 +551,7 @@ class KtvSocket(
         private const val MAX_EVENTS_PER_DRAIN = 32
         private const val TAG = "KtvSocket"
         private const val HEARTBEAT_MS = 15_000L   // TV 15s 心跳（详设§4.1）
+        private const val PONG_TIMEOUT_MS = 8_000L
         private val BACKOFF_MS = longArrayOf(1_000, 2_000, 5_000, 10_000) // 指数退避封顶 10s
     }
 }
@@ -558,6 +576,21 @@ internal fun buildPlayErrorMessage(
         fileId?.let { put("file_id", it) }
         queueId?.let { put("queue_id", it) }
         put("generation", generation)
+    },
+)
+
+internal fun buildProgressMessage(
+    positionMs: Long,
+    queueId: Long?,
+    generation: Long,
+    seekSequence: Long? = null,
+): String = buildSocketMessage(
+    "progress",
+    buildJsonObject {
+        put("position_ms", positionMs)
+        queueId?.let { put("queue_id", it) }
+        put("generation", generation)
+        seekSequence?.let { put("seek_sequence", it) }
     },
 )
 

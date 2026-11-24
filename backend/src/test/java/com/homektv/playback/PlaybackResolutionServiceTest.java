@@ -2,8 +2,8 @@ package com.homektv.playback;
 
 import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
-import com.homektv.web.ApiException;
-import com.homektv.web.dto.PlaybackDescriptor;
+import com.homektv.common.ApiException;
+import com.homektv.contract.PlaybackDescriptor;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;

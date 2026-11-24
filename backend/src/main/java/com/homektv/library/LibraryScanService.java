@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.ArtistCreditParser;
 
 import com.homektv.config.AppProperties;
 import com.homektv.domain.AudioLayout;
@@ -11,7 +12,7 @@ import com.homektv.musicsource.CoverImageNormalizer;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.resource.ResourceBudget;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Slice;
@@ -2014,6 +2015,21 @@ public class LibraryScanService {
             if (value != null && !value.isBlank()) return value.trim();
         }
         return "";
+    }
+
+    public com.homektv.common.BackgroundJobSummary jobStatus() {
+        ScanProgress p = getScanProgress();
+        if (p == null) {
+            return new com.homektv.common.BackgroundJobSummary(
+                    "library-scan", "曲库扫描与探测", "IDLE", false, 0, 0, 0, 0, false, true, Map.of());
+        }
+        String status = p.running() ? (p.phase() == null ? "RUNNING" : p.phase()) : (p.errorCode() != null ? "FAILED" : "IDLE");
+        long total = Math.max(0L, p.discovered());
+        long completed = Math.max(0L, p.probeCompleted());
+        long pending = Math.max(0L, p.probeQueued());
+        return new com.homektv.common.BackgroundJobSummary(
+                "library-scan", "曲库扫描与探测", status, p.running(), total, completed, 0L, pending,
+                false, true, Map.of("phase", p.phase() == null ? "IDLE" : p.phase()));
     }
 
     static String sourceOfArtist(String... values) {

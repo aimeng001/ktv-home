@@ -119,4 +119,27 @@ class PlaybackDecodeRecoveryPolicyTest {
         assertFalse(PlaybackDecodeErrorPolicy.isCodecLevelError(PlaybackException.ERROR_CODE_TIMEOUT))
         assertTrue(PlaybackDecodeErrorPolicy.isTransientIoError(PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE))
     }
+
+    @Test
+    fun retryableTransientErrorExcludesNonRetryableHttpStatusCodesWhileKeeping429And503() {
+        assertFalse(PlaybackDecodeErrorPolicy.isRetryableHttpStatus(400))
+        assertFalse(PlaybackDecodeErrorPolicy.isRetryableHttpStatus(403))
+        assertFalse(PlaybackDecodeErrorPolicy.isRetryableHttpStatus(404))
+        assertFalse(PlaybackDecodeErrorPolicy.isRetryableHttpStatus(410))
+        assertTrue(PlaybackDecodeErrorPolicy.isRetryableHttpStatus(429))
+        assertTrue(PlaybackDecodeErrorPolicy.isRetryableHttpStatus(503))
+
+        assertTrue(
+            PlaybackDecodeErrorPolicy.isRetryableTransientError(
+                PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+                java.io.IOException("reset"),
+            ),
+        )
+        assertFalse(
+            PlaybackDecodeErrorPolicy.isRetryableTransientError(
+                PlaybackException.ERROR_CODE_DECODING_FAILED,
+                null,
+            ),
+        )
+    }
 }

@@ -13,11 +13,17 @@ import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.repo.SongFileRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
+import com.homektv.common.PlaybackStateChangedEvent;
+import com.homektv.common.QueueSnapshotInvalidatedEvent;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -32,12 +38,25 @@ import java.util.List;
 @Service
 public class PlaybackService {
 
+    private static final Duration CONSECUTIVE_ERROR_WINDOW = Duration.ofSeconds(15);
+    private static final int CONSECUTIVE_ERROR_THRESHOLD = 3;
+
     private final PlayerStateRepository playerRepo;
     private final QueueItemRepository queueRepo;
     private final SongRepository songRepo;
     private final PlayHistoryRepository historyRepo;
     private final SongFileRepository fileRepo;
     private final SongAvailabilityPolicy availabilityPolicy;
+    @Autowired(required = false)
+    private ApplicationEventPublisher eventPublisher;
+    private Clock errorClock = Clock.systemUTC();
+    private Instant consecutiveErrorWindowStart;
+    private int consecutiveErrorCount;
+    private Long lastFailedQueueId;
+
+    void setErrorClock(Clock errorClock) {
+        this.errorClock = errorClock != null ? errorClock : Clock.systemUTC();
+    }
 
     /** Compatibility constructor for direct unit callers; Spring uses the injected policy below. */
     public PlaybackService(PlayerStateRepository playerRepo, QueueItemRepository queueRepo,
@@ -63,13 +82,16 @@ public class PlaybackService {
     @Transactional
     public PlayerState play() {
         queueRepo.lockQueueMutation();
+        resetConsecutiveErrors();
         PlayerState ps = playerRepo.getSingletonForUpdate();
         if (ps.getCurrentQueueId() == null) {
             advanceToNext(ps);
         } else {
             ps.setState("playing");
         }
-        return playerRepo.save(ps);
+        PlayerState saved = playerRepo.save(ps);
+        publishPlaybackStateChanged();
+        return saved;
     }
 
     /** 点歌后仅在播放器空闲时自动开始，不打断正在暂停的歌曲。 */
@@ -82,7 +104,11 @@ public class PlaybackService {
         }
         advanceToNext(ps);
         playerRepo.save(ps);
-        return ps.getCurrentQueueId() != null;
+        if (ps.getCurrentQueueId() != null) {
+            publishPlaybackStateChanged();
+            return true;
+        }
+        return false;
     }
 
     @Transactional
@@ -91,7 +117,9 @@ public class PlaybackService {
         if ("playing".equals(ps.getState())) {
             ps.setState("paused");
         }
-        return playerRepo.save(ps);
+        PlayerState saved = playerRepo.save(ps);
+        publishPlaybackStateChanged();
+        return saved;
     }
 
     /** Stop playback without consuming or removing the current queue item. */
@@ -99,7 +127,9 @@ public class PlaybackService {
     public PlayerState stop() {
         PlayerState ps = playerRepo.getSingletonForUpdate();
         ps.setState("idle");
-        return playerRepo.save(ps);
+        PlayerState saved = playerRepo.save(ps);
+        publishPlaybackStateChanged();
+        return saved;
     }
 
     /** Explicit seek requested by a remote controller. */
@@ -112,9 +142,20 @@ public class PlaybackService {
         if (ps.getCurrentQueueId() == null) {
             throw new ApiException("INVALID_ACTION", "当前没有正在播放的歌曲");
         }
-        ps.setPositionMs(positionMs);
+        long clamped = positionMs;
+        QueueItem current = queueRepo.findById(ps.getCurrentQueueId()).orElse(null);
+        if (current != null && current.getSongId() != null) {
+            Song song = songRepo.findById(current.getSongId()).orElse(null);
+            if (song != null && song.getDurationMs() > 0) {
+                long maxPositionMs = Math.max(0L, (long) song.getDurationMs() - 1000L);
+                clamped = Math.min(clamped, maxPositionMs);
+            }
+        }
+        ps.setPositionMs(clamped);
         ps.setSeekSequence(ps.getSeekSequence() + 1);
-        return playerRepo.save(ps);
+        PlayerState saved = playerRepo.save(ps);
+        publishSnapshotInvalidated();
+        return saved;
     }
 
     /**
@@ -141,9 +182,14 @@ public class PlaybackService {
             return PositionUpdateResult.rejected(ps);
         }
         long normalized = Math.max(0, positionMs);
+        if (normalized > 0) {
+            resetConsecutiveErrors();
+        }
         if (ps.getPositionMs() != normalized) {
             ps.setPositionMs(normalized);
-            return PositionUpdateResult.accepted(playerRepo.save(ps));
+            PositionUpdateResult accepted = PositionUpdateResult.accepted(playerRepo.save(ps));
+            publishSnapshotInvalidated();
+            return accepted;
         }
         return PositionUpdateResult.accepted(ps);
     }
@@ -152,10 +198,13 @@ public class PlaybackService {
     @Transactional
     public PlayerState next() {
         queueRepo.lockQueueMutation();
+        resetConsecutiveErrors();
         PlayerState ps = playerRepo.getSingletonForUpdate();
         markCurrent(ps, QueueService.SKIPPED, true);
         advanceToNext(ps);
-        return playerRepo.save(ps);
+        PlayerState saved = playerRepo.save(ps);
+        publishPlaybackStateChanged();
+        return saved;
     }
 
     @Transactional
@@ -184,7 +233,9 @@ public class PlaybackService {
         queueRepo.save(item);
         recordHistory(item);
         advanceToNext(ps);
-        return FinishResult.applied(playerRepo.save(ps), expectedQueueId);
+        PlayerState saved = playerRepo.save(ps);
+        publishPlaybackStateChanged();
+        return FinishResult.applied(saved, expectedQueueId);
     }
 
     @Transactional
@@ -199,12 +250,48 @@ public class PlaybackService {
         if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
             return PlaybackTransitionResult.rejected(ps);
         }
+        if (recordPlayErrorAndCheckCircuitBreak(expectedQueueId)) {
+            if ("playing".equals(ps.getState())) {
+                ps.setState("paused");
+            }
+            PlayerState saved = playerRepo.save(ps);
+            publishPlaybackStateChanged();
+            return PlaybackTransitionResult.circuitBroken(saved);
+        }
         // fileId is retained for wire compatibility, but a client playback
         // error does not prove that the source file is invalid. Server-side
         // scanning remains responsible for marking disappeared files.
         markCurrent(ps, QueueService.SKIPPED, false);
         advanceToNext(ps);
-        return PlaybackTransitionResult.accepted(playerRepo.save(ps));
+        PlayerState saved = playerRepo.save(ps);
+        publishPlaybackStateChanged();
+        return PlaybackTransitionResult.accepted(saved);
+    }
+
+    private boolean recordPlayErrorAndCheckCircuitBreak(Long queueId) {
+        Instant now = errorClock.instant();
+        if (consecutiveErrorWindowStart == null
+                || Duration.between(consecutiveErrorWindowStart, now).compareTo(CONSECUTIVE_ERROR_WINDOW) > 0) {
+            consecutiveErrorWindowStart = now;
+            consecutiveErrorCount = 1;
+            lastFailedQueueId = queueId;
+            return false;
+        }
+        if (queueId == null || !queueId.equals(lastFailedQueueId)) {
+            consecutiveErrorCount++;
+            lastFailedQueueId = queueId;
+        }
+        if (consecutiveErrorCount >= CONSECUTIVE_ERROR_THRESHOLD) {
+            resetConsecutiveErrors();
+            return true;
+        }
+        return false;
+    }
+
+    private void resetConsecutiveErrors() {
+        consecutiveErrorWindowStart = null;
+        consecutiveErrorCount = 0;
+        lastFailedQueueId = null;
     }
 
     @Transactional
@@ -229,7 +316,9 @@ public class PlaybackService {
             ps.setCurrentQueueId(null);
             ps.setState("idle");
             advanceToNext(ps);
-            return playerRepo.save(ps);
+            PlayerState saved = playerRepo.save(ps);
+            publishPlaybackStateChanged();
+            return saved;
         }
 
         for (QueueItem playing : playingItems) {
@@ -242,7 +331,9 @@ public class PlaybackService {
         queueRepo.save(current);
         ps.setCurrentQueueId(current.getId());
         ps.setState("playing");
-        return playerRepo.save(ps);
+        PlayerState saved = playerRepo.save(ps);
+        publishPlaybackStateChanged();
+        return saved;
     }
 
     /** 重唱：当前曲目回到 0，队列不变（详设§4.4.5）。 */
@@ -255,21 +346,27 @@ public class PlaybackService {
         ps.setState("playing");
         ps.setPositionMs(0);
         ps.setSeekSequence(ps.getSeekSequence() + 1);
-        return playerRepo.save(ps);
+        PlayerState saved = playerRepo.save(ps);
+        publishPlaybackStateChanged();
+        return saved;
     }
 
     @Transactional
     public PlayerState setVolume(int volume) {
         PlayerState ps = playerRepo.getSingletonForUpdate();
         ps.setVolume(Math.max(0, Math.min(100, volume)));
-        return playerRepo.save(ps);
+        PlayerState saved = playerRepo.save(ps);
+        publishSnapshotInvalidated();
+        return saved;
     }
 
     @Transactional
     public PlayerState setMuted(boolean muted) {
         PlayerState ps = playerRepo.getSingletonForUpdate();
         ps.setMuted(muted);
-        return playerRepo.save(ps);
+        PlayerState saved = playerRepo.save(ps);
+        publishSnapshotInvalidated();
+        return saved;
     }
 
     /** 原/伴唱切换（详设§9.4）。仅 A 类（有伴唱轨）有意义。 */
@@ -280,7 +377,9 @@ public class PlaybackService {
         }
         PlayerState ps = playerRepo.getSingletonForUpdate();
         ps.setVocalMode(mode);
-        return playerRepo.save(ps);
+        PlayerState saved = playerRepo.save(ps);
+        publishSnapshotInvalidated();
+        return saved;
     }
 
     /** 当前歌曲原/伴唱标记反转时，交换前两条音轨的语义并持久保存。 */
@@ -292,8 +391,13 @@ public class PlaybackService {
         }
         QueueItem current = queueRepo.findById(ps.getCurrentQueueId())
                 .orElseThrow(() -> new ApiException("QUEUE_ITEM_NOT_FOUND", "当前队列项不存在"));
-        SongFile file = fileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(current.getSongId()).stream()
+        List<SongFile> candidates = fileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(current.getSongId());
+        SongFile file = candidates.stream()
+                .filter(f -> f.isValid()
+                        && !f.isProbePending()
+                        && !SongAvailabilityPolicy.PENDING_PROBE.equalsIgnoreCase(f.getMediaType()))
                 .findFirst()
+                .or(() -> candidates.stream().findFirst())
                 .orElseThrow(() -> new ApiException("FILE_NOT_FOUND", "当前歌曲没有可用文件源"));
         if (file.getAudioLayout() != AudioLayout.DUAL_CHANNEL && file.getAudioTracks() < 2) {
             throw new ApiException("INVALID_ACTION", "当前歌曲没有可交换的双音轨");
@@ -308,6 +412,7 @@ public class PlaybackService {
         // 用户手动交换即人工确认，标 HIGH，后续复核列表不再显示
         file.setVocalConfidence("HIGH");
         fileRepo.save(file);
+        publishSnapshotInvalidated();
         return ps;
     }
 
@@ -329,7 +434,20 @@ public class PlaybackService {
         ps.setState("idle");
         ps.setPositionMs(0);
         playerRepo.save(ps);
+        publishPlaybackStateChanged();
         return true;
+    }
+
+    private void publishPlaybackStateChanged() {
+        if (eventPublisher != null) {
+            eventPublisher.publishEvent(new PlaybackStateChangedEvent());
+        }
+    }
+
+    private void publishSnapshotInvalidated() {
+        if (eventPublisher != null) {
+            eventPublisher.publishEvent(new QueueSnapshotInvalidatedEvent());
+        }
     }
 
     // ---- 内部 ----

@@ -227,6 +227,35 @@ class PlaybackEngineFallbackContractTest {
         assertTrue(engineSource.contains("softwareDecoderAttemptedLiveTranscode = currentIsLiveTranscode"))
     }
 
+    @Test
+    fun round2PlaybackContractsPreserveRetryCountSyncFallbackVolumeAndLimitEffects() {
+        val engineSource = locateMain("src/main/java/com/homektv/tv/player/PlaybackEngine.kt").readText()
+        assertTrue(
+            "Transient retry reload on live transcode must preserve transientRetryCount",
+            engineSource.contains("preserveTransientRetryCount = true") &&
+                engineSource.contains("if (!preserveTransientRetryCount)"),
+        )
+        val fallbackBlock = engineSource.substringAfter("private fun switchToFallbackEngine(")
+            .substringBefore("private fun switchCurrentMediaToFallback(")
+        assertTrue(
+            "switchToFallbackEngine must apply cached volume and mute state before preparing fallback",
+            fallbackBlock.contains("fallbackPlayer.setVolume(lastAppliedVolumePercent, lastAppliedMuted)"),
+        )
+
+        val micSource = locateMain("src/main/java/com/homektv/tv/player/MicrophoneMonitor.kt").readText()
+        val catchBlock = micSource.substringAfter("} catch (error: Exception)").substringBefore("} finally {")
+        assertTrue(
+            "MicrophoneMonitor catch block must clearBluetoothRoute before endSession",
+            catchBlock.indexOf("clearBluetoothRoute()") in 0 until catchBlock.indexOf("sessionCoordinator.endSession(session)"),
+        )
+
+        val effectSource = locateMain("src/main/java/com/homektv/tv/player/EffectPlayer.kt").readText()
+        assertTrue(
+            "EffectPlayer must bound concurrent AudioTrack instances",
+            effectSource.contains("MAX_CONCURRENT_TRACKS"),
+        )
+    }
+
     private fun locateMain(relativePath: String): java.io.File = sequenceOf(
         java.io.File(relativePath),
         java.io.File("android-tv/app/$relativePath"),

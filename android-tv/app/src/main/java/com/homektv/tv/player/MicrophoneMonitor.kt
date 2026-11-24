@@ -39,6 +39,8 @@ class MicrophoneMonitor(
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
     private var communicationDevice: AudioDeviceInfo? = null
+    @Volatile
+    private var previousAudioMode: Int? = null
 
     /**
      * 枚举并按优先级返回可用的外部麦克风输入设备。
@@ -182,12 +184,16 @@ class MicrophoneMonitor(
             } catch (error: Exception) {
                 Log.w(TAG, "microphone monitor failed", error)
                 if (sessionCoordinator.isCurrent(session)) {
+                    clearBluetoothRoute()
                     sessionCoordinator.endSession(session)
                     onStateChanged(State(false, message = error.message ?: "麦克风监听失败"))
                 }
             } finally {
                 releaseAudioObjects(record, track)
-                sessionCoordinator.endSession(session)
+                if (sessionCoordinator.isCurrent(session)) {
+                    clearBluetoothRoute()
+                    sessionCoordinator.endSession(session)
+                }
             }
         }
         return true
@@ -209,11 +215,23 @@ class MicrophoneMonitor(
     @SuppressLint("MissingPermission")
     private fun prepareBluetoothRoute(input: AudioDeviceInfo) {
         if (!MicrophoneInputSelector.isBluetoothInput(input)) return
+        if (previousAudioMode == null) {
+            previousAudioMode = audioManager.mode
+        }
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (audioManager.setCommunicationDevice(input)) communicationDevice = input
+            val targetDevice = audioManager.availableCommunicationDevices.firstOrNull { candidate ->
+                candidate.id == input.id ||
+                    (MicrophoneInputSelector.isBluetoothType(candidate.type, Build.VERSION.SDK_INT) &&
+                        candidate.productName == input.productName) ||
+                    MicrophoneInputSelector.isBluetoothType(candidate.type, Build.VERSION.SDK_INT)
+            } ?: input
+            if (audioManager.setCommunicationDevice(targetDevice)) {
+                communicationDevice = targetDevice
+            }
         } else {
             if (!audioManager.isBluetoothScoAvailableOffCall) {
+                clearBluetoothRoute()
                 throw IllegalStateException("当前设备不支持蓝牙麦克风通话音频")
             }
             @Suppress("DEPRECATION")
@@ -226,14 +244,17 @@ class MicrophoneMonitor(
     private fun clearBluetoothRoute() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (communicationDevice != null) audioManager.clearCommunicationDevice()
-        } else {
+        } else if (previousAudioMode != null || communicationDevice != null) {
             @Suppress("DEPRECATION")
             audioManager.stopBluetoothSco()
             @Suppress("DEPRECATION")
             run { audioManager.isBluetoothScoOn = false }
         }
         communicationDevice = null
-        audioManager.mode = AudioManager.MODE_NORMAL
+        previousAudioMode?.let { savedMode ->
+            audioManager.mode = savedMode
+            previousAudioMode = null
+        }
     }
 
     private fun preferredSampleRate(input: AudioDeviceInfo): Int {

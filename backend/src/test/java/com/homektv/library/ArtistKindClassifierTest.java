@@ -1,4 +1,6 @@
 package com.homektv.library;
+import com.homektv.common.ArtistKindClassifier;
+import com.homektv.common.ArtistKind;
 
 import org.junit.jupiter.api.Test;
 

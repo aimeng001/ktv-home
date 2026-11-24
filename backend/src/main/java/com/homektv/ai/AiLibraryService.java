@@ -13,7 +13,7 @@ import com.homektv.repo.PlaylistSongRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.domain.MediaImportRecord;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -66,6 +66,14 @@ public class AiLibraryService {
     private final OpenAiCompatibleClient aiClient;
     private final MediaImportRecordRepository importRecordRepository;
     private final AiTaskDispatchFailureRecorder dispatchFailureRecorder;
+    private volatile com.homektv.resource.PlaybackPressureMonitor playbackPressureMonitor;
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setPlaybackPressureMonitor(com.homektv.resource.PlaybackPressureMonitor playbackPressureMonitor) {
+        this.playbackPressureMonitor = playbackPressureMonitor;
+    }
 
     public AiLibraryService(AiAnalysisTaskRepository taskRepository, SongRepository songRepository,
                             PlaylistRepository playlistRepository, PlaylistSongRepository playlistSongRepository,
@@ -243,6 +251,7 @@ public class AiLibraryService {
             skippedExisting += pageResult.skippedExisting();
             dispatchRejected += pageResult.dispatchRejected();
             dispatchBudget = Math.max(0, dispatchBudget - pageResult.dispatchedAttempted());
+            if (entityManager != null) entityManager.clear();
             if (!page.hasNext()) break;
         }
         return Map.of("batchId", batchId, "created", created, "skippedExisting", skippedExisting,
@@ -306,6 +315,7 @@ public class AiLibraryService {
     /** Feeds pending backlog tasks into aiBulkExecutor without overflowing its bounded queue. */
     @Scheduled(fixedDelayString = "${home-ktv.ai.pending-drain-delay-ms:60000}")
     public void drainPendingTasks() {
+        if (playbackPressureMonitor != null && playbackPressureMonitor.isPlaybackBusy()) return;
         int allowance = availablePendingDispatchAllowance();
         if (allowance <= 0) return;
         List<AiAnalysisTask> pending = taskRepository.findTop100ByStatusOrderByCreatedAtAscIdAsc("pending");
@@ -366,6 +376,36 @@ public class AiLibraryService {
     }
 
     @Transactional
+    public Map<String, Object> cancelRepairBatch(String batchId) {
+        if (!taskRepository.existsByBatchId(batchId)) throw new ApiException("AI_BATCH_NOT_FOUND", "修复批次不存在");
+        taskRepository.cancelBatch(batchId);
+        return repairProgress(batchId);
+    }
+
+    public com.homektv.common.BackgroundJobSummary jobStatus() {
+        try {
+            Map<String, Object> latest = latestRepairBatch();
+            if (!Boolean.TRUE.equals(latest.get("exists"))) {
+                return new com.homektv.common.BackgroundJobSummary(
+                        "ai-analysis", "AI 分析/修复", "IDLE", false, 0, 0, 0, 0, true, true, Map.of());
+            }
+            long total = ((Number) latest.getOrDefault("total", 0)).longValue();
+            long completed = ((Number) latest.getOrDefault("completed", 0)).longValue();
+            long failed = ((Number) latest.getOrDefault("failed", 0)).longValue();
+            long paused = ((Number) latest.getOrDefault("paused", 0)).longValue();
+            boolean running = Boolean.TRUE.equals(latest.get("running"));
+            long pending = Math.max(0L, total - completed - paused);
+            String status = running ? "RUNNING" : (paused > 0 ? "PAUSED" : "COMPLETED");
+            return new com.homektv.common.BackgroundJobSummary(
+                    "ai-analysis", "AI 分析/修复", status, running, total, completed, failed, pending,
+                    true, true, Map.of("batchId", String.valueOf(latest.getOrDefault("batchId", "")), "paused", paused));
+        } catch (Exception ex) {
+            return new com.homektv.common.BackgroundJobSummary(
+                    "ai-analysis", "AI 分析/修复", "UNKNOWN", false, 0, 0, 0, 0, true, true, Map.of());
+        }
+    }
+
+    @Transactional
     public Map<String, Object> resumeRepairBatch(String batchId) {
         if (!taskRepository.existsByBatchId(batchId)) throw new ApiException("AI_BATCH_NOT_FOUND", "修复批次不存在");
         List<Long> targetIds = taskRepository.findIdsByBatchIdAndStatus(batchId, "paused");
@@ -419,6 +459,19 @@ public class AiLibraryService {
         }
         return Map.of("batchId", batchId, "total", Math.toIntExact(total), "completed", completed,
                 "failed", failed, "review", review, "paused", paused, "running", running);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> latestRepairBatch() {
+        return taskRepository.findFirstByBatchIdIsNotNullOrderByCreatedAtDescIdDesc()
+                .map(AiAnalysisTask::getBatchId)
+                .filter(id -> id != null && !id.isBlank())
+                .map(id -> {
+                    Map<String, Object> out = new java.util.LinkedHashMap<>(repairProgress(id));
+                    out.put("exists", true);
+                    return out;
+                })
+                .orElseGet(() -> Map.of("exists", false));
     }
 
     /** Preview an AI-curated playlist. No playlist or playlist-song rows are written here. */
@@ -1043,6 +1096,7 @@ public class AiLibraryService {
             Page<Song> page = songPage(pageNumber);
             if (page == null || page.isEmpty()) return;
             page.getContent().stream().filter(Objects::nonNull).forEach(consumer);
+            if (entityManager != null) entityManager.clear();
             if (!page.hasNext()) return;
         }
     }

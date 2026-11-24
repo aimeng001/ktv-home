@@ -3,7 +3,7 @@ package com.homektv.musicsource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.domain.Song;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -586,6 +586,27 @@ class MusicMetadataScrapeServiceTest {
     }
 
     @Test
+    void allModeDoesNotPermanentlySkipPreviouslyFailedSongs() {
+        jdbc.batchUpdate("INSERT INTO song_files(song_id,valid) VALUES (?,?)",
+                List.of(new Object[]{11L, true}, new Object[]{12L, true}));
+        jdbc.update("""
+                INSERT INTO music_metadata_scrape_batches(id,mode,status,auto_apply_threshold)
+                VALUES ('prev-failed-batch','SELECTED','COMPLETED',0.95)
+                """);
+        jdbc.update("""
+                INSERT INTO music_metadata_scrape_items(batch_id,song_id,original_title,original_artist,status)
+                VALUES ('prev-failed-batch',11,'失败歌','歌手','FAILED')
+                """);
+
+        Map<String, Object> created = transactions.execute(status -> service.start(true, List.of(), null));
+
+        assertThat(created).containsEntry("total", 2L).containsEntry("skippedExisting", 0);
+        assertThat(jdbc.queryForList(
+                "SELECT song_id FROM music_metadata_scrape_items WHERE batch_id=? ORDER BY song_id",
+                Long.class, created.get("batchId"))).containsExactly(11L, 12L);
+    }
+
+    @Test
     void selectedStartRejectsARecognizedSongThatWasAlreadyScraped() {
         jdbc.update("""
                 INSERT INTO music_metadata_scrape_batches(id,mode,status,auto_apply_threshold)
@@ -745,6 +766,32 @@ class MusicMetadataScrapeServiceTest {
         assertThat(jdbc.queryForMap("SELECT status,finished_at FROM music_metadata_scrape_batches WHERE id=?",
                 "retry-batch")).containsEntry("STATUS", "RUNNING").containsEntry("FINISHED_AT", null);
         verify(worker).process("retry-batch");
+    }
+
+    @Test
+    void retryItemRejectsWhenAnotherBatchIsAlreadyActiveAndCancelAllowsNewStart() {
+        jdbc.batchUpdate("""
+                INSERT INTO music_metadata_scrape_batches(id,mode,status,auto_apply_threshold)
+                VALUES (?,?,?,0.95)
+                """, List.of(
+                new Object[]{"active-batch", "SELECTED", "RUNNING"},
+                new Object[]{"old-batch", "SINGLE", "COMPLETED"}));
+        jdbc.update("""
+                INSERT INTO music_metadata_scrape_items(batch_id,song_id,original_title,original_artist,status)
+                VALUES ('old-batch',111,'旧歌','旧歌手','FAILED')
+                """);
+        long itemId = jdbc.queryForObject("SELECT id FROM music_metadata_scrape_items WHERE batch_id='old-batch'", Long.class);
+
+        assertThatThrownBy(() -> service.retryItem("old-batch", itemId))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "METADATA_SCRAPE_ACTIVE");
+
+        Map<String, Object> cancelled = service.cancel("active-batch");
+        assertThat(cancelled).containsEntry("status", "CANCELLED");
+
+        jdbc.update("INSERT INTO song_files(song_id,valid) VALUES (202,true)");
+        Map<String, Object> next = transactions.execute(status -> service.start(false, List.of(202L), null));
+        assertThat(next).containsEntry("status", "RUNNING");
     }
 
     @Test

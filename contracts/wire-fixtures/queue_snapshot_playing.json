@@ -1,0 +1,93 @@
+{
+  "playing": {
+    "queueId": 42,
+    "song": {
+      "id": 1001,
+      "title": "晴天",
+      "artist": "周杰伦",
+      "artistGender": "男歌手",
+      "mediaType": "KTV_VIDEO",
+      "hasVocalTrack": true,
+      "durationMs": 269000,
+      "lyricType": "word",
+      "coverUrl": "/api/cover/1001",
+      "playCount": 18,
+      "artistAvatarUrl": "/api/artists/avatar?key=%E5%91%A8%E6%9D%B0%E4%BC%A6",
+      "catalogNumber": "12345678",
+      "playable": true,
+      "unavailableReason": null,
+      "titlePinyin": "qingtian",
+      "titleInitials": "qt",
+      "artistPinyin": "zhoujielun",
+      "artistInitials": "zjl",
+      "resolution": "1920x1080"
+    },
+    "orderedByNick": "客厅大屏"
+  },
+  "list": [
+    {
+      "queueId": 43,
+      "song": {
+        "id": 1002,
+        "title": "夜曲",
+        "artist": "周杰伦",
+        "artistGender": "男歌手",
+        "mediaType": "KTV_VIDEO",
+        "hasVocalTrack": true,
+        "durationMs": 226000,
+        "lyricType": "line",
+        "coverUrl": null,
+        "playCount": 5,
+        "artistAvatarUrl": null,
+        "catalogNumber": "",
+        "playable": true,
+        "unavailableReason": null,
+        "titlePinyin": "yequ",
+        "titleInitials": "yq",
+        "artistPinyin": "zhoujielun",
+        "artistInitials": "zjl",
+        "resolution": "1280x720"
+      },
+      "orderedBy": 7,
+      "orderedByNick": "手机点歌",
+      "status": "waiting"
+    }
+  ],
+  "state": "playing",
+  "volume": 72,
+  "muted": false,
+  "vocalMode": "accompaniment",
+  "audioLayout": {
+    "layout": "DUAL_TRACK",
+    "originalTrackIndex": 0,
+    "accompanimentTrackIndex": 1,
+    "originalChannel": "LEFT",
+    "accompanimentChannel": "RIGHT"
+  },
+  "tvOnline": true,
+  "connectedPhones": 2,
+  "positionMs": 15420,
+  "seekSequence": 3,
+  "stateRevision": 9001,
+  "playback": {
+    "kind": "NATIVE",
+    "status": "READY",
+    "sourceFileId": 8801,
+    "variantId": null,
+    "streamUrl": "/api/stream/8801",
+    "audioTracks": 2,
+    "vocalTrackIndex": 1,
+    "audioLayout": {
+      "layout": "DUAL_TRACK",
+      "originalTrackIndex": 0,
+      "accompanimentTrackIndex": 1,
+      "originalChannel": "LEFT",
+      "accompanimentChannel": "RIGHT"
+    },
+    "errorCode": null,
+    "errorMessage": null,
+    "format": "mkv",
+    "videoCodec": "h264",
+    "audioCodec": "aac"
+  }
+}

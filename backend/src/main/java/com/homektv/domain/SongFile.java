@@ -287,4 +287,13 @@ public class SongFile {
             case NORMAL_STEREO -> { /* no vocal semantics to swap */ }
         }
     }
+
+    /** Single domain predicate defining when a file row has completed probing and is playable. */
+    public boolean isReadyMedia() {
+        return valid
+                && !probePending
+                && mediaType != null
+                && !mediaType.isBlank()
+                && !"PENDING_PROBE".equalsIgnoreCase(mediaType);
+    }
 }

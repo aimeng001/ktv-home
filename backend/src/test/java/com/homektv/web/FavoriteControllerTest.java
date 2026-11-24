@@ -1,4 +1,5 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.domain.Favorite;
 import com.homektv.domain.Song;
@@ -147,7 +148,7 @@ class FavoriteControllerTest {
             }
         });
 
-        List<com.homektv.web.dto.SongDto> result = controller.list("token-1", 0, 10);
+        List<com.homektv.contract.SongDto> result = controller.list("token-1", 0, 10);
 
         assertThat(result).hasSize(2);
         assertThat(result.get(0).playable()).isFalse();

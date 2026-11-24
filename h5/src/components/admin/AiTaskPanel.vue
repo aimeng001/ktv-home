@@ -64,12 +64,20 @@ async function refresh(){
   loading.value=true
   loadError.value=''
   try{
-    const result=await loadAiTaskData(()=>api.adminAiTasks(),()=>api.adminAiConfig())
+    const [result,latestRepair]=await Promise.all([
+      loadAiTaskData(()=>api.adminAiTasks(),()=>api.adminAiConfig()),
+      api.adminAiLatestRepair?api.adminAiLatestRepair().catch(()=>null):Promise.resolve(null)
+    ])
     tasks.value=result.tasks
     const config=result.config
     configured.value=!!(config.enabled&&config.baseUrl&&config.bulkModel)
     const errors=Object.values(result.errors).filter(Boolean)
     if(errors.length)loadError.value=errors.map(error=>error.message||'读取失败').join('；')
+    if(latestRepair?.exists&&latestRepair.batchId){
+      repairBatchId.value=latestRepair.batchId
+      Object.assign(repairProgress,latestRepair)
+      scheduleRepairPoll()
+    }
   }finally{loading.value=false}
 }
 function parseResult(task){try{return JSON.parse(task.resultJson||'{}')}catch{return{}}}
@@ -84,14 +92,19 @@ function targetTitle(task){return task.targetTitle?`《${task.targetTitle}》`:(
 function targetArtist(task){return task.targetArtist||'未知歌手'}
 function targetId(task){return task.targetType==='IMPORT_RECORD'?`导入记录 #${task.targetId}`:`歌曲 #${task.songId}`}
 function friendlyError(value){return String(value||'').includes('Cannot deserialize')?'AI 返回的字段格式不兼容，可重试；新任务已支持数组和嵌套证据。':value}
-let flashTimer=null
+let flashTimer=null,repairTimer=null,disposed=false
 function flash(value){message.value=value;if(flashTimer)clearTimeout(flashTimer);flashTimer=setTimeout(()=>{message.value='';flashTimer=null},3000)}
-onBeforeUnmount(()=>{if(flashTimer){clearTimeout(flashTimer);flashTimer=null}})
+function scheduleRepairPoll(){
+  if(repairTimer){clearTimeout(repairTimer);repairTimer=null}
+  if(disposed||!repairBatchId.value||!repairProgress.running)return
+  repairTimer=setTimeout(async()=>{repairTimer=null;try{await loadRepairProgress()}catch{}scheduleRepairPoll()},3000)
+}
+onBeforeUnmount(()=>{disposed=true;if(flashTimer){clearTimeout(flashTimer);flashTimer=null}if(repairTimer){clearTimeout(repairTimer);repairTimer=null}})
 async function run(action){busy.value=true;try{await action()}catch(error){await alertDialog(error.message||'操作失败')}finally{busy.value=false}}
 async function createSelected(){await run(async()=>{const result=await api.adminAiCreateTasks(props.selectedIds);const created=Number(result?.created||0);const skipped=Number(result?.skipped||0);const rejected=Number(result?.dispatchRejected||0);flash(`已创建 ${created} 个任务${skipped?`，跳过 ${skipped} 首`:''}${rejected?`，${rejected} 个未能入队`:''}`);await refresh()})}
 async function createUnclassified(){await run(async()=>{const result=await api.adminAiCreateUnclassified(batchLimit.value);flash(`已创建 ${result.created} 个任务`);await refresh()})}
 async function repairLibrary(){await run(async()=>{const result=await api.adminAiRepair();repairBatchId.value=result.batchId;await loadRepairProgress();const rejected=Number(result.dispatchRejected||0);flash(`已创建 ${result.created} 个存量修复任务${rejected?`，${rejected} 个未能入队，已标记失败可重试`:''}`);await refresh()})}
-async function loadRepairProgress(){if(repairBatchId.value)Object.assign(repairProgress,await api.adminAiRepairProgress(repairBatchId.value))}
+async function loadRepairProgress(){if(repairBatchId.value){Object.assign(repairProgress,await api.adminAiRepairProgress(repairBatchId.value));scheduleRepairPoll()}}
 async function pauseRepair(){await run(async()=>{Object.assign(repairProgress,await api.adminAiPauseRepair(repairBatchId.value));await refresh()})}
 async function resumeRepair(){await run(async()=>{await api.adminAiResumeRepair(repairBatchId.value);await loadRepairProgress();await refresh()})}
 async function retryFailedRepair(){await run(async()=>{await api.adminAiRetryFailedRepair(repairBatchId.value);await loadRepairProgress();await refresh()})}

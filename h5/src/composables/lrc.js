@@ -6,8 +6,8 @@
  * Supports standard line-level timestamps [mm:ss.xx] and word-level enhanced LRC <mm:ss.xx>.
  */
 
-const LINE_TAG = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?]/g
-const WORD_TAG = /<\d{1,2}:\d{2}(?:\.\d{1,3})?>/g
+const LINE_TAG = /\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?]/g
+const WORD_TAG = /<(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?>/g
 
 /**
  * 解析 LRC 歌词文本，返回按时间排序的歌词行数组。
@@ -35,7 +35,7 @@ export function parseLrc(text) {
     if (!times.length) continue
     const content = raw.replace(LINE_TAG, '').trim()
     if (!content) continue
-    const wordMatches = [...content.matchAll(/<(?:(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?)>/g)]
+    const wordMatches = [...content.matchAll(/<(?:(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?)>/g)]
     const words = wordMatches.map((match, index) => {
       const start = Number(match[1]) * 60000 + Number(match[2]) * 1000 + Number((match[3] || '').padEnd(3, '0') || 0)
       const from = match.index + match[0].length

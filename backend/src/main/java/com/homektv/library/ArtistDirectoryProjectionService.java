@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.ArtistKind;
 
 import jakarta.annotation.PreDestroy;
 import org.springframework.boot.context.event.ApplicationReadyEvent;

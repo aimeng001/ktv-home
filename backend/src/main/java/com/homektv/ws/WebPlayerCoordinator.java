@@ -166,6 +166,15 @@ public class WebPlayerCoordinator {
                 currentStatusUnsafe());
     }
 
+    /** Expires and clears the active web player lease when elapsed, returning the evicted session id. */
+    public synchronized Optional<String> expireActiveSession() {
+        String previous = activeSessionId;
+        if (expireIfElapsed(clock.instant())) {
+            return Optional.ofNullable(previous);
+        }
+        return Optional.empty();
+    }
+
     /** Returns the current room-wide web player status. */
     public synchronized WebPlayerStatus status(boolean tvOnline) {
         if (tvOnline) {

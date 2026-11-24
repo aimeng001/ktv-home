@@ -1,8 +1,9 @@
 package com.homektv.library;
+import com.homektv.common.LibraryMode;
 
 import com.homektv.ai.SecretCryptoService;
 import com.homektv.config.AppProperties;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

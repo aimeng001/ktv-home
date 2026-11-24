@@ -1,4 +1,5 @@
 package com.homektv.repo;
+import com.homektv.common.ArtistKind;
 
 import com.homektv.domain.Song;
 import org.springframework.data.domain.Page;

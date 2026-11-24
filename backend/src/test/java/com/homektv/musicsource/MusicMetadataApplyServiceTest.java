@@ -99,4 +99,35 @@ class MusicMetadataApplyServiceTest {
         assertThat(song.getArtist()).isEqualTo("5566");
         org.mockito.Mockito.verify(projection).requestRefreshAfterCommit();
     }
+
+    @Test
+    void protectsStructuredFilenameTitleAndArtistWhenFilenameMetadataIsPreferred() {
+        Song song = new Song();
+        song.setId(10L);
+        song.setTitle("权威歌名");
+        song.setArtist("权威歌手");
+        song.setDurationMs(200_000);
+        song.setMetadataProvenance("{\"title\":{\"source\":\"filename\"},\"artist\":{\"source\":\"filename\"}}");
+        ExternalTrack track = new ExternalTrack(MusicProvider.QQ, "track-10", "平台别名歌名",
+                List.of("平台歌手"), "正版专辑", 200_000, "2020-01-01", List.of("别名A"),
+                null, "AVAILABLE", null);
+        SongRepository songs = mock(SongRepository.class);
+        ExternalTrackStorage storage = mock(ExternalTrackStorage.class);
+        when(songs.findById(10L)).thenReturn(Optional.of(song));
+        when(songs.findByFingerprint(org.mockito.ArgumentMatchers.anyString())).thenReturn(Optional.empty());
+        when(storage.track(MusicProvider.QQ, "track-10", false)).thenReturn(Optional.of(track));
+        com.homektv.config.AppProperties props = new com.homektv.config.AppProperties();
+        props.setStructuredFilenameMetadataPreferred(true);
+        MusicMetadataApplyService service = new MusicMetadataApplyService(songs, mock(MusicSourceSearchService.class),
+                storage, mock(ExternalCoverService.class), mock(MusicSourceConfigService.class), new ObjectMapper());
+        service.setAppProperties(props);
+
+        MusicMetadataApplyService.ApplyResult result = service.apply(10L, MusicProvider.QQ, "track-10",
+                new MusicMetadataApplyService.ApplyRequest(Set.of("title", "artist", "album", "releaseDate", "aliases"), Map.of()));
+
+        assertThat(song.getTitle()).isEqualTo("权威歌名");
+        assertThat(song.getArtist()).isEqualTo("权威歌手");
+        assertThat(song.getAlbum()).isEqualTo("正版专辑");
+        assertThat(result.skippedLockedFields()).containsExactlyInAnyOrder("title", "artist");
+    }
 }

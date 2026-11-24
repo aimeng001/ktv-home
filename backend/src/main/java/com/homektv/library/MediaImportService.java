@@ -8,7 +8,7 @@ import com.homektv.media.MediaProbe;
 import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.resource.ResourceBudget;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;

@@ -3,7 +3,7 @@ package com.homektv.web;
 import com.homektv.domain.Song;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.SongDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

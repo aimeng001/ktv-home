@@ -1,4 +1,5 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.library.ArtistLibraryService;
 import com.homektv.library.ArtistAvatarJobService;

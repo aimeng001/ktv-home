@@ -86,7 +86,7 @@ class DiscoveryIntegrationTest {
         List<?> r = discoveryController.ranking(30);
         assertThat(r).isNotEmpty();
         // songA 播放最多，应排第一
-        var first = (com.homektv.web.dto.SongDto) r.get(0);
+        var first = (com.homektv.contract.SongDto) r.get(0);
         assertThat(first.title()).isEqualTo("晴天");
     }
 

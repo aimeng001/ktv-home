@@ -1,7 +1,7 @@
 package com.homektv.repo;
 
 import com.homektv.domain.Song;
-import com.homektv.library.SearchKeyword;
+import com.homektv.common.SearchKeyword;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -110,7 +110,7 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
                            WHEN term.kind IN ('TITLE', 'TITLE_PY', 'TITLE_INIT') THEN 10
                            WHEN term.kind IN ('ARTIST', 'ARTIST_PY', 'ARTIST_INIT',
                                                'ARTIST_CREDIT', 'ARTIST_CREDIT_PY', 'ARTIST_CREDIT_INIT') THEN 11
-                           WHEN term.kind = 'LANGUAGE' THEN 12
+                           WHEN term.kind IN ('LANGUAGE', 'ALIAS') THEN 12
                            ELSE 13
                        END AS term_rank
                 FROM song_search_terms term
@@ -254,20 +254,20 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
                     JOIN songs s ON s.id = term.song_id
                     WHERE s.status = 'ok'
                       AND (:mediaType = '' OR s.media_type = :mediaType)
-                      AND term.kind = 'TAG'
+                      AND term.kind IN ('TAG', 'ALIAS')
                       AND char_length(:kw) > 2
                       AND term.value_lower LIKE '%' || :likeKw || '%' ESCAPE '\\'
 
                     UNION ALL
 
                     -- 6. 一/二字符原文子串由维护型 gram 表命中，避免扫描
-                    -- songs 并避免对 tags 做逐行 unnest。
+                    -- songs 并避免对 tags/aliases 做逐行 unnest。
                     SELECT term.song_id
                     FROM song_search_terms term
                     JOIN songs s ON s.id = term.song_id
                     WHERE char_length(:kw) BETWEEN 1 AND 2
                       AND term.value_lower = :kw
-                      AND term.kind IN ('TITLE', 'ARTIST', 'LANGUAGE', 'TAG', 'ARTIST_CREDIT')
+                      AND term.kind IN ('TITLE', 'ARTIST', 'LANGUAGE', 'TAG', 'ALIAS', 'ARTIST_CREDIT')
                       AND s.status = 'ok'
                       AND (:mediaType = '' OR s.media_type = :mediaType)
 

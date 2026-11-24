@@ -1,9 +1,12 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.ai.OpenAiCompatibleClient;
+import com.homektv.diagnostics.DiagnosticsMetricsRecorder;
 import com.homektv.musicsource.ProviderHttpException;
 import com.homektv.musicsource.ProviderRateLimitedException;
 import com.homektv.musicsource.ProviderRateStateUnavailableException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -19,6 +22,8 @@ import java.util.Map;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @Autowired(required = false)
+    private DiagnosticsMetricsRecorder metricsRecorder;
 
     /**
      * 处理 ApiException 异常，返回统一的 {code, message} 错误响应。
@@ -72,6 +77,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ProviderRateLimitedException.class)
     public ResponseEntity<Map<String, Object>> handleProviderRateLimited(ProviderRateLimitedException e) {
+        if (metricsRecorder != null) metricsRecorder.recordProviderRateLimited();
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
                 "code", "MUSIC_PROVIDER_RATE_LIMITED",
                 "message", e.getMessage(),
@@ -88,6 +94,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ProviderHttpException.class)
     public ResponseEntity<Map<String, Object>> handleProviderHttp(ProviderHttpException e) {
+        if (metricsRecorder != null) metricsRecorder.recordProviderHttpError();
         HttpStatus status = e.statusCode() == 429 ? HttpStatus.TOO_MANY_REQUESTS : HttpStatus.BAD_GATEWAY;
         return ResponseEntity.status(status).body(Map.of(
                 "code", "MUSIC_PROVIDER_HTTP_ERROR",

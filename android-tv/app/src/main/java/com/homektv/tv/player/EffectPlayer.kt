@@ -19,7 +19,7 @@ class EffectPlayer {
     private val io = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "ktv-effect-player").apply { isDaemon = true }
     }
-    private val activeTracks = mutableSetOf<AudioTrack>()
+    private val activeTracks = linkedSetOf<AudioTrack>()
     @Volatile
     private var released = false
 
@@ -48,8 +48,24 @@ class EffectPlayer {
                         return@execute
                     }
                     created.setVolume(volume)
+                    var evicted: AudioTrack? = null
                     val accepted = synchronized(activeTracks) {
-                        if (released) false else activeTracks.add(created)
+                        if (released) {
+                            false
+                        } else {
+                            if (activeTracks.size >= MAX_CONCURRENT_TRACKS) {
+                                val oldest = activeTracks.firstOrNull()
+                                if (oldest != null) {
+                                    activeTracks.remove(oldest)
+                                    evicted = oldest
+                                }
+                            }
+                            activeTracks.add(created)
+                        }
+                    }
+                    evicted?.let {
+                        runCatching { it.stop() }
+                        runCatching { it.release() }
                     }
                     if (!accepted) {
                         created.release()
@@ -120,5 +136,6 @@ class EffectPlayer {
         private const val TAG = "EffectPlayer"
         private const val MAX_EFFECT_VOLUME = 0.42f
         private const val RELEASE_PADDING_MS = 150L
+        internal const val MAX_CONCURRENT_TRACKS = 4
     }
 }

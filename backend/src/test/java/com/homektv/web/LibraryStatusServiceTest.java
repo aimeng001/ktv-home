@@ -4,7 +4,7 @@ import com.homektv.library.LibraryIdentity;
 import com.homektv.library.LibraryCatalogStatsService;
 
 import com.homektv.config.AppProperties;
-import com.homektv.library.LibraryMode;
+import com.homektv.common.LibraryMode;
 import com.homektv.library.LibraryScanStateStore;
 import com.homektv.library.LibraryStatusService;
 import com.homektv.repo.SongFileRepository;

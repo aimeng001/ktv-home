@@ -118,7 +118,7 @@ class TranscodeServiceTest {
                 command -> FakeFfmpegProcess.coverFallback(command, emptyOutputFixture));
 
         assertThatThrownBy(() -> service.transcodeSong(42L))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("转码失败");
         verify(files, never()).save(any(SongFile.class));
         assertThat(sourcePath.resolveSibling("source.mkv")).doesNotExist();
@@ -146,7 +146,7 @@ class TranscodeServiceTest {
                 "configured-ffmpeg", command -> FakeFfmpegProcess.coverFallback(command, sourcePath));
 
         assertThatThrownBy(() -> service.transcodeSong(42L))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("曲库");
         verify(files, never()).save(any(SongFile.class));
     }

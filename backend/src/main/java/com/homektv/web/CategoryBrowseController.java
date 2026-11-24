@@ -1,7 +1,7 @@
 package com.homektv.web;
 
 import com.homektv.library.CategoryBrowseService;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.SongDto;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;

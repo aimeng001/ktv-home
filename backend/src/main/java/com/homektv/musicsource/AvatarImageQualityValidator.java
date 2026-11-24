@@ -1,6 +1,6 @@
 package com.homektv.musicsource;
 
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;

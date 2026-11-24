@@ -21,14 +21,23 @@ object PcmChannelMapper {
         originalChannel: String?,
         accompanimentChannel: String?,
     ): PcmChannelMode {
-        if (vocalMode.equals("original", ignoreCase = true)) return PcmChannelMode.STEREO
+        val isOriginal = vocalMode.equals("original", ignoreCase = true)
         val isAccompaniment = vocalMode.equals("accompaniment", ignoreCase = true)
+        if (!isOriginal && !isAccompaniment) return PcmChannelMode.STEREO
+        if (isOriginal) {
+            return when {
+                originalChannel.equals("LEFT", ignoreCase = true) -> PcmChannelMode.LEFT_MONO
+                originalChannel.equals("RIGHT", ignoreCase = true) -> PcmChannelMode.RIGHT_MONO
+                accompanimentChannel.equals("LEFT", ignoreCase = true) -> PcmChannelMode.RIGHT_MONO
+                accompanimentChannel.equals("RIGHT", ignoreCase = true) -> PcmChannelMode.LEFT_MONO
+                else -> PcmChannelMode.RIGHT_MONO
+            }
+        }
         return when {
-            isAccompaniment && accompanimentChannel.equals("RIGHT", ignoreCase = true) -> PcmChannelMode.RIGHT_MONO
-            isAccompaniment && accompanimentChannel.equals("LEFT", ignoreCase = true) -> PcmChannelMode.LEFT_MONO
-            isAccompaniment && originalChannel.equals("LEFT", ignoreCase = true) -> PcmChannelMode.RIGHT_MONO
-            isAccompaniment -> PcmChannelMode.LEFT_MONO
-            else -> PcmChannelMode.STEREO
+            accompanimentChannel.equals("RIGHT", ignoreCase = true) -> PcmChannelMode.RIGHT_MONO
+            accompanimentChannel.equals("LEFT", ignoreCase = true) -> PcmChannelMode.LEFT_MONO
+            originalChannel.equals("LEFT", ignoreCase = true) -> PcmChannelMode.RIGHT_MONO
+            else -> PcmChannelMode.LEFT_MONO
         }
     }
 }

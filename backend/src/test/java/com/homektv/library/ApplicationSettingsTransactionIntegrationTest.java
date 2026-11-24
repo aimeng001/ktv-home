@@ -5,7 +5,7 @@ import com.homektv.ai.SecretCryptoService;
 import com.homektv.discovery.DiscoverySettingsChangedEvent;
 import com.homektv.domain.Setting;
 import com.homektv.repo.SettingRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;

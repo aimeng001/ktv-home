@@ -68,6 +68,21 @@ class ProviderCallGuardTest {
         org.mockito.Mockito.verify(limiter, org.mockito.Mockito.times(1)).recordSuccess(MusicProvider.NETEASE);
     }
 
+    @Test
+    void blockedProviderFailsFastBeforeSleepingForLocalInterval() {
+        MusicSourceConfig config = new MusicSourceConfig(true, Set.of(MusicProvider.QQ),
+                20, 5, 6, 1, 5000, 0.95);
+        ProviderRequestRateLimiter limiter = mock(ProviderRequestRateLimiter.class);
+        org.mockito.Mockito.doThrow(new ProviderRateLimitedException(MusicProvider.QQ, java.time.Instant.now().plusSeconds(60)))
+                .when(limiter).ensureNotBlocked(MusicProvider.QQ);
+        ProviderCallGuard guard = new ProviderCallGuard(() -> config, limiter);
+        long started = System.nanoTime();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> guard.call(MusicProvider.QQ, () -> {
+            throw new AssertionError("unreachable");
+        })).isInstanceOf(ProviderRateLimitedException.class);
+        assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(1_000L);
+    }
+
     private static void invoke(ProviderCallGuard guard, AtomicInteger active, AtomicInteger maximum) {
         guard.call(MusicProvider.QQ, () -> {
             int current = active.incrementAndGet();

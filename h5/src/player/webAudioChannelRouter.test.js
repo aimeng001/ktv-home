@@ -89,6 +89,10 @@ describe('webAudioChannelRouter', () => {
     const reversedTrack = { layout: "DUAL_TRACK", originalTrackIndex: 1, accompanimentTrackIndex: 0 }
     expect(resolveActiveChannelIndex(reversedTrack, "original")).toBe(1)
     expect(resolveActiveChannelIndex(reversedTrack, "accompaniment")).toBe(0)
+
+    const threeTrackCustom = { layout: "DUAL_TRACK", originalTrackIndex: 0, accompanimentTrackIndex: 2 }
+    expect(resolveActiveChannelIndex(threeTrackCustom, "original")).toBe(0)
+    expect(resolveActiveChannelIndex(threeTrackCustom, "accompaniment")).toBe(1)
   })
 
   it('triggers synchronous resume via resumeDirect without unhandled promise rejections', () => {

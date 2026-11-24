@@ -55,6 +55,7 @@ public class ProviderCallGuard {
         try {
             acquire(provider);
             acquired = true;
+            if (persistentLimiter != null) persistentLimiter.ensureNotBlocked(provider);
             long configuredInterval = configSupplier.get().requestIntervalMs();
             long minPersistent = persistentLimiter != null ? persistentLimiter.minIntervalMs() : 0L;
             throttle(provider, Math.max(configuredInterval, minPersistent));
@@ -102,20 +103,23 @@ public class ProviderCallGuard {
         }
     }
 
-    /** Serialized lightweight throttle for public fallback / web image sources. */
+    /** Serialized lightweight throttle for public fallback / web image sources without holding the lock across HTTP I/O. */
     public <T> T callFallback(Supplier<T> action) {
+        long wait;
         synchronized (fallbackLock) {
+            long now = System.currentTimeMillis();
+            wait = Math.max(0L, nextFallbackAt - now);
+            nextFallbackAt = Math.max(now, nextFallbackAt) + FALLBACK_INTERVAL_MS;
+        }
+        if (wait > 0L) {
             try {
-                long now = System.currentTimeMillis();
-                long wait = Math.max(0L, nextFallbackAt - now);
-                if (wait > 0L) Thread.sleep(wait);
-                nextFallbackAt = System.currentTimeMillis() + FALLBACK_INTERVAL_MS;
+                Thread.sleep(wait);
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
                 throw new MusicSourceException(MusicProvider.QQ, "兜底刮削请求已取消", ex);
             }
-            return action.get();
         }
+        return action.get();
     }
 
     private void acquireMedia(MusicProvider provider) throws InterruptedException {

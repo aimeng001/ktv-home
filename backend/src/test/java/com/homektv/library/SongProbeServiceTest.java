@@ -6,7 +6,7 @@ import com.homektv.domain.SongFile;
 import com.homektv.media.MediaProbe;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -137,6 +137,15 @@ class SongProbeServiceTest {
         assertThatThrownBy(() -> probeService.ensurePlayable(300L))
                 .isInstanceOf(ApiException.class)
                 .hasFieldOrPropertyWithValue("code", "SONG_PROBE_FAILED");
+
+        // 允许 1 次瞬时重试；连续失败 2 次后进入冷却窗口，第 3 次直接快速拦截不再触发耗时 ffprobe
+        assertThatThrownBy(() -> probeService.ensurePlayable(300L))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SONG_PROBE_FAILED");
+        assertThatThrownBy(() -> probeService.ensurePlayable(300L))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "SONG_PROBE_FAILED");
+        verify(mediaProbeStage, times(2)).probe(mockFile);
     }
 
     @Test

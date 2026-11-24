@@ -57,6 +57,11 @@ describe('KtvMediaSurface 音频解锁失败处理', () => {
       writable: true,
       value: function pause() {}
     })
+    Object.defineProperty(window.HTMLMediaElement.prototype, 'load', {
+      configurable: true,
+      writable: true,
+      value: function load() {}
+    })
   })
 
   beforeEach(async () => {
@@ -270,5 +275,60 @@ describe('KtvMediaSurface 解码失败时的上报兜底', () => {
 
     instance.unmount()
     host.remove()
+  })
+
+  it('在 WEB_REMOTE 非全屏小窗停流省带宽，切回 WEB_HOST 后立即恢复视频拉流', async () => {
+    media.playImpl = () => Promise.resolve()
+    const { instance, host, scopedPlayer } = await mountSurface()
+    scopedPlayer.tvOnline = false
+    scopedPlayer.webPlayerActive = true
+    scopedPlayer.webPlayerRole = 'STANDBY'
+    scopedPlayer.modeOverride = 'auto'
+    await nextTick()
+    await nextTick()
+
+    const videoEl = host.querySelector('video')
+    expect(videoEl.getAttribute('src')).toBeNull()
+
+    // 抢占为主屏 WEB_HOST 后，watch(shouldLoadVideoMedia) 必须立刻恢复拉流
+    scopedPlayer.webPlayerRole = 'ACTIVE'
+    await nextTick()
+    await nextTick()
+    expect(videoEl.src).toContain('/api/stream/1')
+
+    instance.unmount()
+    host.remove()
+  })
+
+  it('从双声道切回普通立体声仍沿用挂起的 AudioContext 时，解锁按钮会等待 channelRouter.resume()', async () => {
+    media.playImpl = () => Promise.resolve()
+    const prevIsSuspended = routerMock.isSuspended
+    routerMock.isActive.mockReturnValue(true)
+    routerMock.isSuspended = () => true
+    const { instance, host, scopedPlayer } = await mountSurface()
+    try {
+      scopedPlayer.audioLayout = { layout: 'NORMAL_STEREO' }
+      scopedPlayer.pitchSemitones = 0
+      await nextTick()
+      await nextTick()
+
+      expect(scopedPlayer.audioBlockedByAutoplay).toBe(true)
+
+      routerMock.resume.mockClear()
+      routerMock.isSuspended = () => false
+      const btn = host.querySelector('.autoplay-unlock')
+      expect(btn).not.toBeNull()
+      btn.click()
+      await nextTick()
+      await nextTick()
+
+      expect(routerMock.resume).toHaveBeenCalled()
+      expect(scopedPlayer.audioBlockedByAutoplay).toBe(false)
+    } finally {
+      routerMock.isSuspended = prevIsSuspended
+      routerMock.isActive.mockReturnValue(false)
+      instance.unmount()
+      host.remove()
+    }
   })
 })

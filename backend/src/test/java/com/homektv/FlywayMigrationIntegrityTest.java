@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FlywayMigrationIntegrityTest {
 
     private static final Pattern MIGRATION_FILE_PATTERN = Pattern.compile("^V(\\d+)__(.+)\\.sql$");
-    private static final int CURRENT_LATEST_VERSION = 70;
+    private static final int CURRENT_LATEST_VERSION = 72;
 
     @Test
     void allMigrationVersionsFromOneToLatestArePresentAndContiguous() throws Exception {
@@ -156,6 +156,17 @@ class FlywayMigrationIntegrityTest {
         Path v70Path = findMigrationPath(migrationDirectory, 70);
         String v70Content = Files.readString(v70Path);
         assertThat(v70Content).contains("artist_directory_stats", "region", "idx_artist_avatar_jobs_pending_order");
+
+        Path v71Path = findMigrationPath(migrationDirectory, 71);
+        String v71Content = Files.readString(v71Path);
+        assertThat(v71Content).contains("'ALIAS'", "idx_songs_title_lower", "idx_song_external_matches_suggested_purge");
+
+        Path v72Path = findMigrationPath(migrationDirectory, 72);
+        String v72Content = Files.readString(v72Path);
+        assertThat(v72Content).contains(
+                "DROP INDEX IF EXISTS idx_playback_variants_status_lease",
+                "DROP INDEX IF EXISTS idx_song_search_terms_lower_btree",
+                "DROP TRIGGER IF EXISTS trg_songs_full_tag_search_terms_insert");
     }
 
     private Path findMigrationPath(Path migrationDirectory, int version) throws Exception {

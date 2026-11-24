@@ -4,7 +4,7 @@ import com.homektv.domain.AiAnalysisTask;
 import com.homektv.domain.MediaImportRecord;
 import com.homektv.repo.AiAnalysisTaskRepository;
 import com.homektv.repo.MediaImportRecordRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

@@ -1,4 +1,5 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.domain.Favorite;
 import com.homektv.domain.Song;
@@ -6,7 +7,7 @@ import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.queue.UserService;
 import com.homektv.repo.FavoriteRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.SongDto;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.PageRequest;

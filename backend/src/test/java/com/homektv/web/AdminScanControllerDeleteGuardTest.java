@@ -1,8 +1,9 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.config.AppProperties;
 import com.homektv.library.AdminService;
-import com.homektv.library.LibraryMode;
+import com.homektv.common.LibraryMode;
 import com.homektv.library.LibraryScanService;
 import com.homektv.library.LibraryWatchService;
 import com.homektv.library.MediaImportService;
@@ -27,29 +28,19 @@ import static org.mockito.Mockito.when;
 class AdminScanControllerDeleteGuardTest {
 
     private MediaImportService mediaImportService;
-    private AdminScanController controller;
+    private AdminSourceLibraryController controller;
 
     @BeforeEach
     void setUp() {
         AppProperties props = new AppProperties();
         props.setLibraryMode(LibraryMode.MANAGED);
         mediaImportService = mock(MediaImportService.class);
-        controller = new AdminScanController(
-                mock(LibraryScanService.class),
-                mock(LibraryWatchService.class),
-                mock(AdminService.class),
-                mediaImportService,
-                mock(SettingService.class),
-                mock(TranscodeService.class),
-                mock(TranscodeHardwareService.class),
-                mock(SongReparseService.class),
-                mock(SongMergeService.class),
-                props);
+        controller = new AdminSourceLibraryController(mediaImportService, props);
     }
 
     @Test
     void deleteSources_withEmptyIdsAndAllFalse_throwsApiException() {
-        var request = new AdminScanController.SourceLibraryRequest(
+        var request = new AdminSourceLibraryController.SourceLibraryRequest(
                 List.of(), false, null, null, null, null);
 
         assertThatThrownBy(() -> controller.deleteSources(request))
@@ -68,7 +59,7 @@ class AdminScanControllerDeleteGuardTest {
         when(mediaImportService.deleteSourcesByFilter("rock", "pending", "copy", false))
                 .thenReturn(new MediaImportService.DeleteSourcesResult(5, 5, 0, 0));
 
-        var request = new AdminScanController.SourceLibraryRequest(
+        var request = new AdminSourceLibraryController.SourceLibraryRequest(
                 List.of(), true, "rock", "pending", "copy", false);
 
         var result = controller.deleteSources(request);
@@ -83,7 +74,7 @@ class AdminScanControllerDeleteGuardTest {
         when(mediaImportService.deleteSources(List.of(10L, 20L)))
                 .thenReturn(new MediaImportService.DeleteSourcesResult(2, 2, 0, 0));
 
-        var request = new AdminScanController.SourceLibraryRequest(
+        var request = new AdminSourceLibraryController.SourceLibraryRequest(
                 List.of(10L, 20L), false, null, null, null, null);
 
         var result = controller.deleteSources(request);

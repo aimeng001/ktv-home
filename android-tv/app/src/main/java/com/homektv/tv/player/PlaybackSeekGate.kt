@@ -10,6 +10,8 @@ internal class PlaybackSeekGate {
         if (sequence > lastAppliedSequence) lastAppliedSequence = sequence
     }
 
+    fun currentSequence(): Long? = lastAppliedSequence.takeIf { it != Long.MIN_VALUE }
+
     fun reset() {
         lastAppliedSequence = Long.MIN_VALUE
     }

@@ -48,7 +48,7 @@ class AiConfigValidationTest {
 
         assertThat(service.isConfigured()).isFalse();
         org.assertj.core.api.Assertions.assertThatThrownBy(service::requireConfigured)
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasFieldOrPropertyWithValue("code", "AI_API_KEY_MISSING");
     }
 
@@ -61,7 +61,7 @@ class AiConfigValidationTest {
 
         assertThat(service.isConfigured()).isFalse();
         org.assertj.core.api.Assertions.assertThatThrownBy(service::requireConfigured)
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasFieldOrPropertyWithValue("code", "INVALID_AI_CONFIG");
     }
 }

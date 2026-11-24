@@ -406,10 +406,34 @@ class LocalAvatarResolverTest {
         assertThat(LocalAvatarResolver.extractLeadArtist("蔡依林 陶喆")).isEqualTo("蔡依林");
         assertThat(LocalAvatarResolver.extractLeadArtist("王力宏 & 陶喆")).isEqualTo("王力宏");
         assertThat(LocalAvatarResolver.extractLeadArtist("林二汶、岑宁儿")).isEqualTo("林二汶");
+        assertThat(LocalAvatarResolver.extractLeadArtist("Taylor Swift")).isEqualTo("Taylor Swift");
+        assertThat(LocalAvatarResolver.extractLeadArtist("Michael Jackson & Janet Jackson")).isEqualTo("Michael Jackson");
         assertThat(LocalAvatarResolver.extractLeadArtist("周杰伦")).isEqualTo("周杰伦");
         assertThat(LocalAvatarResolver.extractLeadArtist("群星")).isEmpty();
         assertThat(LocalAvatarResolver.extractLeadArtist("")).isEmpty();
         assertThat(LocalAvatarResolver.extractLeadArtist(null)).isEmpty();
+    }
+
+    @Test
+    void resolveSingleArtistMatchesPortraitWithoutScanningWholeLibrary(@TempDir Path tempDir) throws Exception {
+        Path avatarsDir = Files.createDirectory(tempDir.resolve("avatars"));
+        Files.write(avatarsDir.resolve("Taylor Swift.jpg"), new byte[]{1, 2, 3});
+
+        AppProperties props = new AppProperties();
+        props.setDataPath(tempDir.toString());
+        props.setAvatarLibraryPath(tempDir.toString());
+
+        AssetWriter assetWriter = mock(AssetWriter.class);
+        when(assetWriter.writeArtistCover(eq("taylorswift"), any(), eq("jpg"))).thenReturn("artist-covers/ts.jpg");
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, assetWriter, profileService);
+        boolean matched = resolver.resolveSingleArtist(new ArtistProfileService.Profile(
+                "taylorswift", "Taylor Swift", "PERSON", null, null, null, "PENDING"));
+
+        assertThat(matched).isTrue();
+        verify(profileService, never()).unresolvedProfiles(org.mockito.ArgumentMatchers.anyInt());
+        verify(profileService).setAvatarReady("taylorswift", "LOCAL_PACK", "artist-covers/ts.jpg");
     }
 
     @Test

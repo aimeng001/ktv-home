@@ -1,6 +1,6 @@
 package com.homektv.musicsource;
 
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import com.homektv.testutil.FakeFfmpegProcess;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -221,12 +221,32 @@ class CoverImageNormalizerTest {
             return FakeFfmpegProcess.failing(args);
         });
 
-        assertThatThrownBy(() -> fallback.normalize("unsupported upstream bytes".getBytes()))
+        assertThatThrownBy(() -> fallback.normalize(webpBytes()))
                 .isInstanceOf(ApiException.class)
                 .extracting(ex -> ((ApiException) ex).getCode())
                 .isEqualTo("EXTERNAL_COVER_INVALID");
 
+        assertThat(command.get()).contains("-nostdin", "-protocol_whitelist", "file");
         assertTemporaryFilesRemoved(command.get());
+    }
+
+    @Test
+    void rejectsM3uAndHtmlPayloadsWithoutLaunchingFfmpeg() {
+        AtomicBoolean processStarted = new AtomicBoolean();
+        CoverImageNormalizer fallback = new CoverImageNormalizer("fake-ffmpeg", args -> {
+            processStarted.set(true);
+            throw new AssertionError("non-image payload must never launch ffmpeg");
+        });
+
+        assertThatThrownBy(() -> fallback.normalize("#EXTM3U\nhttp://127.0.0.1:54001/secret".getBytes()))
+                .isInstanceOf(ApiException.class)
+                .extracting(ex -> ((ApiException) ex).getCode())
+                .isEqualTo("EXTERNAL_COVER_INVALID");
+        assertThatThrownBy(() -> fallback.normalize("<html><body>not an image</body></html>".getBytes()))
+                .isInstanceOf(ApiException.class)
+                .extracting(ex -> ((ApiException) ex).getCode())
+                .isEqualTo("EXTERNAL_COVER_INVALID");
+        assertThat(processStarted).isFalse();
     }
 
     @Test
@@ -239,7 +259,7 @@ class CoverImageNormalizerTest {
             return FakeFfmpegProcess.coverFallback(args, invalidOutput);
         });
 
-        assertThatThrownBy(() -> fallback.normalize("unsupported upstream bytes".getBytes()))
+        assertThatThrownBy(() -> fallback.normalize(webpBytes()))
                 .isInstanceOf(ApiException.class)
                 .extracting(ex -> ((ApiException) ex).getCode())
                 .isEqualTo("EXTERNAL_COVER_INVALID");
@@ -256,7 +276,7 @@ class CoverImageNormalizerTest {
             return FakeFfmpegProcess.coverFallback(args, emptyOutput);
         });
 
-        assertThatThrownBy(() -> fallback.normalize("unsupported upstream bytes".getBytes()))
+        assertThatThrownBy(() -> fallback.normalize(webpBytes()))
                 .isInstanceOf(ApiException.class)
                 .extracting(ex -> ((ApiException) ex).getCode())
                 .isEqualTo("EXTERNAL_COVER_INVALID");
@@ -274,7 +294,7 @@ class CoverImageNormalizerTest {
             return FakeFfmpegProcess.coverFallback(args, oversizedOutput);
         });
 
-        assertThatThrownBy(() -> fallback.normalize("unsupported upstream bytes".getBytes()))
+        assertThatThrownBy(() -> fallback.normalize(webpBytes()))
                 .isInstanceOf(ApiException.class)
                 .extracting(ex -> ((ApiException) ex).getCode())
                 .isEqualTo("EXTERNAL_COVER_INVALID");
@@ -291,7 +311,7 @@ class CoverImageNormalizerTest {
             return new ImmediateExitProcess();
         });
 
-        assertThatThrownBy(() -> fallback.normalize("unsupported upstream bytes".getBytes()))
+        assertThatThrownBy(() -> fallback.normalize(webpBytes()))
                 .isInstanceOf(ApiException.class)
                 .extracting(ex -> ((ApiException) ex).getCode())
                 .isEqualTo("EXTERNAL_COVER_INVALID");
@@ -307,7 +327,7 @@ class CoverImageNormalizerTest {
             throw new java.io.IOException("synthetic process launch failure");
         });
 
-        assertThatThrownBy(() -> fallback.normalize("unsupported upstream bytes".getBytes()))
+        assertThatThrownBy(() -> fallback.normalize(webpBytes()))
                 .isInstanceOf(ApiException.class)
                 .extracting(ex -> ((ApiException) ex).getCode())
                 .isEqualTo("EXTERNAL_COVER_INVALID");
@@ -321,7 +341,7 @@ class CoverImageNormalizerTest {
         CoverImageNormalizer fallback = new CoverImageNormalizer("fake-ffmpeg", command -> process);
 
         try {
-            assertThatThrownBy(() -> fallback.normalize("unsupported upstream bytes".getBytes()))
+            assertThatThrownBy(() -> fallback.normalize(webpBytes()))
                     .isInstanceOf(ApiException.class)
                     .hasMessageContaining("中断");
             assertThat(process.forciblyDestroyed).isTrue();
@@ -336,7 +356,7 @@ class CoverImageNormalizerTest {
         TimeoutProcess process = new TimeoutProcess();
         CoverImageNormalizer fallback = new CoverImageNormalizer("fake-ffmpeg", command -> process);
 
-        assertThatThrownBy(() -> fallback.normalize("unsupported upstream bytes".getBytes()))
+        assertThatThrownBy(() -> fallback.normalize(webpBytes()))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("超时");
 
@@ -353,11 +373,15 @@ class CoverImageNormalizerTest {
         CoverImageNormalizer fallback = new CoverImageNormalizer("fake-ffmpeg",
                 command -> FakeFfmpegProcess.coverFallback(command, converted));
 
-        byte[] normalized = fallback.normalize("unsupported upstream bytes".getBytes());
+        byte[] normalized = fallback.normalize(webpBytes());
 
         BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(normalized));
         assertThat(decoded.getWidth()).isEqualTo(3);
         assertThat(decoded.getHeight()).isEqualTo(2);
+    }
+
+    private static byte[] webpBytes() {
+        return new byte[]{'R', 'I', 'F', 'F', 0x24, 0, 0, 0, 'W', 'E', 'B', 'P', 'V', 'P', '8', ' '};
     }
 
     private static void assertTemporaryFilesRemoved(List<String> command) {

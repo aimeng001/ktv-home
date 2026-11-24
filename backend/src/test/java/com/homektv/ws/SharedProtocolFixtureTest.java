@@ -3,10 +3,10 @@ package com.homektv.ws;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import com.homektv.web.GlobalExceptionHandler;
-import com.homektv.web.dto.QueueSnapshot;
-import com.homektv.web.dto.SongDetailDto;
+import com.homektv.contract.QueueSnapshot;
+import com.homektv.contract.SongDetailDto;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 

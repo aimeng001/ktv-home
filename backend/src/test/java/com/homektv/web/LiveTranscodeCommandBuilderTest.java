@@ -58,6 +58,10 @@ class LiveTranscodeCommandBuilderTest {
             Locale.setDefault(Locale.GERMANY);
             List<String> seekCommand = builder.build(source, song, 12.3456);
             assertThat(seekCommand).containsSubsequence("-ss", "12.346", "-i", source.getAbsolutePath());
+            assertThat(seekCommand).doesNotContain("-noaccurate_seek");
+
+            List<String> copySeekCommand = builder.build(source, song, 12.3456, 0, true);
+            assertThat(copySeekCommand).containsSubsequence("-noaccurate_seek", "-ss", "12.346", "-i", source.getAbsolutePath());
 
             assertThat(builder.build(source, song, null)).doesNotContain("-ss");
             assertThat(builder.build(source, song, 0.0)).doesNotContain("-ss");
@@ -97,6 +101,13 @@ class LiveTranscodeCommandBuilderTest {
         assertThat(command).anyMatch(arg -> arg.contains("amerge=inputs=2"));
         assertThat(command).containsSubsequence("-map", "0:V:0?", "-map", "[aout]");
         assertThat(command).doesNotContain("-map 0:a:0", "-map 0:a:1");
+
+        SongFile threeTrack = new SongFile();
+        threeTrack.setAudioTracks(3);
+        threeTrack.setOriginalTrackIndex(2);
+        threeTrack.setAccompanimentTrackIndex(0);
+        List<String> threeTrackCmd = builder.build(source, threeTrack, null, null, false, true);
+        assertThat(threeTrackCmd).anyMatch(arg -> arg.contains("[0:a:2]") && arg.contains("[0:a:0]"));
     }
 
     @Test

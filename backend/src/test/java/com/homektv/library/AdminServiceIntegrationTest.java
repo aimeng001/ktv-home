@@ -3,8 +3,8 @@ package com.homektv.library;
 import com.homektv.domain.Song;
 import com.homektv.queue.UserService;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.dto.DashboardDto;
-import com.homektv.web.dto.SongEditRequest;
+import com.homektv.contract.DashboardDto;
+import com.homektv.contract.SongEditRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;
@@ -108,10 +108,10 @@ class AdminServiceIntegrationTest {
         fileRepo.save(externalFile);
 
         assertThat(adminService.listAdminSongs("", "", "EXTERNAL_READ_ONLY", 0, 20).getContent())
-                .extracting(com.homektv.web.dto.AdminSongDto::importSource)
+                .extracting(com.homektv.contract.AdminSongDto::importSource)
                 .containsExactly("EXTERNAL_READ_ONLY");
         assertThat(adminService.listAdminSongs("", "", "UNKNOWN", 0, 20).getContent())
-                .extracting(com.homektv.web.dto.AdminSongDto::importSource)
+                .extracting(com.homektv.contract.AdminSongDto::importSource)
                 .doesNotContain("EXTERNAL_READ_ONLY");
     }
 
@@ -151,7 +151,7 @@ class AdminServiceIntegrationTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> adminService.editSong(target.getId(),
                         new SongEditRequest("爱", "草蜢", null, null, null)))
-                .isInstanceOf(com.homektv.web.ApiException.class)
+                .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasFieldOrPropertyWithValue("code", "SONG_FINGERPRINT_CONFLICT");
     }
 

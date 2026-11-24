@@ -1,7 +1,7 @@
 package com.homektv.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import com.homektv.library.LibraryMode;
+import com.homektv.common.LibraryMode;
 
 /**
  * 应用配置（app.* 前缀）。

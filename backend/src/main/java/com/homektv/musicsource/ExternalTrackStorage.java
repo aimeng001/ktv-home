@@ -2,6 +2,8 @@ package com.homektv.musicsource;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,6 +16,7 @@ import java.util.Optional;
 
 @Repository
 public class ExternalTrackStorage {
+    private static final Logger log = LoggerFactory.getLogger(ExternalTrackStorage.class);
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
 
@@ -31,7 +34,6 @@ public class ExternalTrackStorage {
         catch (Exception ex) { return Optional.empty(); }
     }
 
-    @Transactional
     public void saveSearch(MusicProvider provider, String query, int limit, List<ExternalTrack> tracks, int cacheHours) {
         OffsetDateTime fetchedAt = OffsetDateTime.now();
         for (ExternalTrack track : tracks) upsertTrack(track, fetchedAt.plusDays(7));
@@ -43,12 +45,11 @@ public class ExternalTrackStorage {
                     result_json=EXCLUDED.result_json,fetched_at=EXCLUDED.fetched_at,expires_at=EXCLUDED.expires_at
                     """, searchKey(provider, query, limit), provider.name(), normalizeQuery(query), json,
                     fetchedAt, fetchedAt.plusHours(cacheHours));
-        } catch (Exception ignored) {
-            // A cache write must never turn a successful upstream response into a failed search.
+        } catch (Exception ex) {
+            log.warn("search cache write skipped for {}: {}", provider, ex.getMessage());
         }
     }
 
-    @Transactional
     public void upsertTrack(ExternalTrack track, OffsetDateTime expiresAt) {
         try {
             jdbc.update("""
@@ -61,8 +62,8 @@ public class ExternalTrackStorage {
                     """, track.provider().name(), track.externalId(), track.title(), mapper.writeValueAsString(track.artists()),
                     track.album(), track.durationMs(), track.releaseDate(), mapper.writeValueAsString(track.aliases()),
                     track.coverUrl(), track.availability(), track.fetchedAt(), expiresAt);
-        } catch (Exception ignored) {
-            // Search results are still returned if persistence is temporarily unavailable.
+        } catch (Exception ex) {
+            log.warn("external track cache write skipped for {} {}: {}", track.provider(), track.externalId(), ex.getMessage());
         }
     }
 

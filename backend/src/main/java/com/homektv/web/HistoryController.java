@@ -1,4 +1,5 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.domain.PlayHistory;
 import com.homektv.repo.PlayHistoryRepository;
@@ -12,8 +13,8 @@ import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.domain.QueueItem;
 import com.homektv.domain.AppUser;
 import com.homektv.domain.Song;
-import com.homektv.web.dto.RecentHistoryDto;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.RecentHistoryDto;
+import com.homektv.contract.SongDto;
 import com.homektv.ws.WsBroadcaster;
 import com.homektv.ws.WsEvent;
 import org.springframework.web.bind.annotation.GetMapping;

@@ -92,7 +92,7 @@ class KtvWebSocketHandlerTest {
         when(tv.getId()).thenReturn("tv-1");
         when(tv.getAttributes()).thenReturn(Map.of("client_type", "tv"));
         when(tv.isOpen()).thenReturn(true);
-        when(snapshotService.snapshot()).thenReturn(new com.homektv.web.dto.QueueSnapshot(
+        when(snapshotService.snapshot()).thenReturn(new com.homektv.contract.QueueSnapshot(
                 null, List.of(), "idle", 50, false, "accompaniment", true, 1));
         KtvWebSocketHandler liveHandler = new KtvWebSocketHandler(
                 liveBroadcaster, snapshotService, playbackService, offlineWatcher,
@@ -133,9 +133,9 @@ class KtvWebSocketHandlerTest {
         when(tv.getId()).thenReturn("tv-1");
         when(tv.getAttributes()).thenReturn(Map.of("client_type", "tv"));
         when(tv.isOpen()).thenReturn(true);
-        var online = new com.homektv.web.dto.QueueSnapshot(
+        var online = new com.homektv.contract.QueueSnapshot(
                 null, List.of(), "idle", 50, false, "accompaniment", true, 1);
-        var offline = new com.homektv.web.dto.QueueSnapshot(
+        var offline = new com.homektv.contract.QueueSnapshot(
                 null, List.of(), "idle", 50, false, "accompaniment", false, 1);
         when(snapshotService.snapshot()).thenReturn(online, offline);
         KtvWebSocketHandler liveHandler = new KtvWebSocketHandler(
@@ -759,5 +759,81 @@ class KtvWebSocketHandlerTest {
         private void advance(Duration duration) {
             instant = instant.plus(duration);
         }
+    }
+
+    @Test
+    void scheduledSweepExpiresTimedOutSoleTvLeaseAndBroadcastsOfflineSnapshot() throws Exception {
+        MutableClock clock = installShortLeaseRegistry();
+        WebSocketSession tv = mock(WebSocketSession.class);
+        when(tv.getId()).thenReturn("tv-sole");
+        when(tv.getAttributes()).thenReturn(Map.of("client_type", "tv", "client_token", "tok", "protocol_version", "2"));
+
+        handler.afterConnectionEstablished(tv);
+        clock.advance(Duration.ofSeconds(2));
+
+        handler.sweepExpiredTvLeases();
+
+        verify(broadcaster).disconnect("tv-sole");
+        verify(offlineWatcher).onTvDisconnected();
+        verify(broadcaster, org.mockito.Mockito.atLeastOnce())
+                .broadcastObservers(org.mockito.ArgumentMatchers.argThat(e -> WsEvent.PLAYER_STATE.equals(e.type())));
+    }
+
+    @Test
+    void scheduledSweepExpiresTimedOutWebPlayerLeaseAndBroadcastsObserverUpdate() throws Exception {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-23T00:00:00Z"), ZoneId.of("UTC"));
+        WebPlayerCoordinator shortCoordinator = new WebPlayerCoordinator(clock, Duration.ofSeconds(1));
+        KtvWebSocketHandler shortHandler = new KtvWebSocketHandler(
+                broadcaster, snapshotService, playbackService, offlineWatcher,
+                playerRegistry, shortCoordinator, new ObjectMapper());
+        WebSocketSession h5 = mock(WebSocketSession.class);
+        when(h5.getId()).thenReturn("h5-timeout");
+        when(h5.getAttributes()).thenReturn(Map.of("client_type", "h5", "client_token", "pc-timeout"));
+        when(broadcaster.isTvOnline()).thenReturn(false);
+
+        shortHandler.afterConnectionEstablished(h5);
+        shortHandler.handleTextMessage(h5, new TextMessage("{\"type\":\"web_player_claim\",\"payload\":{\"force\":false}}"));
+        clearInvocations(broadcaster);
+
+        clock.advance(Duration.ofSeconds(2));
+        shortHandler.sweepExpiredTvLeases();
+
+        var directEvents = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster, org.mockito.Mockito.atLeast(2)).sendTo(eq("h5-timeout"), directEvents.capture());
+        assertThat(directEvents.getAllValues()).extracting(WsEvent::type)
+                .containsExactly(WsEvent.PLAYER_ROLE, WsEvent.WEB_PLAYER_STATE);
+        verify(broadcaster).broadcastObservers(
+                org.mockito.ArgumentMatchers.argThat(e -> WsEvent.WEB_PLAYER_STATE.equals(e.type())));
+    }
+
+    @Test
+    void forceClaimWebPlayerIsRejectedWhenRoomHostIsClaimedByAnotherUser() throws Exception {
+        com.homektv.queue.RoomHostService roomHostService = mock(com.homektv.queue.RoomHostService.class);
+        when(roomHostService.isClaimed()).thenReturn(true);
+        when(roomHostService.isHost("guest-tok")).thenReturn(false);
+        WebPlayerCoordinator coordinator = new WebPlayerCoordinator();
+        KtvWebSocketHandler hostGuardedHandler = new KtvWebSocketHandler(
+                broadcaster, snapshotService, playbackService, offlineWatcher,
+                playerRegistry, coordinator, roomHostService, new ObjectMapper());
+
+        WebSocketSession guest = mock(WebSocketSession.class);
+        when(guest.getId()).thenReturn("guest-h5");
+        when(guest.getAttributes()).thenReturn(Map.of("client_type", "h5", "client_token", "guest-tok"));
+        when(broadcaster.isTvOnline()).thenReturn(false);
+
+        hostGuardedHandler.afterConnectionEstablished(guest);
+        clearInvocations(broadcaster);
+
+        hostGuardedHandler.handleTextMessage(guest, new TextMessage(
+                "{\"type\":\"web_player_claim\",\"payload\":{\"force\":true}}"));
+
+        var events = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
+        verify(broadcaster, org.mockito.Mockito.atLeast(3)).sendTo(eq(guest), events.capture());
+        assertThat(events.getAllValues()).extracting(WsEvent::type)
+                .contains(WsEvent.PLAYER_ROLE, WsEvent.WEB_PLAYER_STATE, WsEvent.TOAST);
+        WsEvent roleEvent = events.getAllValues().stream()
+                .filter(e -> WsEvent.PLAYER_ROLE.equals(e.type()))
+                .findFirst().orElseThrow();
+        assertThat(((Map<?, ?>) roleEvent.payload()).get("role")).isEqualTo("STANDBY");
     }
 }

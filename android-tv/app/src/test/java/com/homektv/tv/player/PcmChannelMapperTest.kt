@@ -30,10 +30,14 @@ class PcmChannelMapperTest {
     }
 
     @Test
-    fun originalKeepsTheFullStereoMixAndAccompanimentUsesItsDeclaredChannel() {
+    fun originalDuplicatesItsDeclaredChannelInsteadOfSplittingStereo() {
         assertEquals(
-            PcmChannelMode.STEREO,
+            PcmChannelMode.LEFT_MONO,
             PcmChannelMapper.modeFor("original", "LEFT", "RIGHT"),
+        )
+        assertEquals(
+            PcmChannelMode.RIGHT_MONO,
+            PcmChannelMapper.modeFor("original", "RIGHT", "LEFT"),
         )
         assertEquals(
             PcmChannelMode.RIGHT_MONO,
@@ -73,9 +77,9 @@ class PcmChannelMapperTest {
                 accompanimentChannel = null,
             ),
         )
-        // 原唱模式依然直通立体声
+        // 若通道未标记，按左伴右唱契约：伴唱保底 LEFT_MONO，原唱保底 RIGHT_MONO
         assertEquals(
-            PcmChannelMode.STEREO,
+            PcmChannelMode.RIGHT_MONO,
             PcmChannelMapper.modeFor(
                 vocalMode = "original",
                 originalChannel = null,

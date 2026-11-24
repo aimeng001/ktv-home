@@ -44,7 +44,7 @@ class VocalTogglePolicyTest {
     }
 
     @Test
-    fun dualChannelOriginalPassesStereoAndAccompanimentDuplicatesItsDeclaredChannel() {
+    fun dualChannelDuplicatesDeclaredChannelForBothOriginalAndAccompaniment() {
         val leftAccompaniment = AudioLayout(
             layout = "DUAL_CHANNEL",
             originalChannel = "RIGHT",
@@ -52,7 +52,7 @@ class VocalTogglePolicyTest {
         )
 
         assertEquals(
-            VocalSelectionAction.MapChannels(PcmChannelMode.STEREO),
+            VocalSelectionAction.MapChannels(PcmChannelMode.RIGHT_MONO),
             resolveVocalSelectionAction(VocalMode.ORIGINAL, leftAccompaniment, 1, null),
         )
         assertEquals(
@@ -70,7 +70,7 @@ class VocalTogglePolicyTest {
         )
 
         assertEquals(
-            PcmChannelMode.STEREO,
+            PcmChannelMode.RIGHT_MONO,
             channelMixingModeForPlayback(VocalMode.ORIGINAL, layout, audioTrackCount = 1),
         )
         assertEquals(

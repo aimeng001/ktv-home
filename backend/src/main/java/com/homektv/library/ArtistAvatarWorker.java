@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.ArtistKindClassifier;
 
 import com.homektv.musicsource.ArtistAvatarFallbackChain;
 import com.homektv.musicsource.ArtistMetadataProvider;
@@ -11,7 +12,9 @@ import com.homektv.musicsource.MusicSourceException;
 import com.homektv.musicsource.ProviderHttpException;
 import com.homektv.musicsource.ProviderRateLimitedException;
 import com.homektv.musicsource.ProviderRateStateUnavailableException;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
+import com.homektv.resource.PlaybackPressureMonitor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +51,12 @@ public class ArtistAvatarWorker {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile boolean shuttingDown = false;
     private ArtistAvatarFallbackChain fallbackChain;
+    private volatile PlaybackPressureMonitor playbackPressureMonitor;
+
+    @Autowired(required = false)
+    void setPlaybackPressureMonitor(PlaybackPressureMonitor playbackPressureMonitor) {
+        this.playbackPressureMonitor = playbackPressureMonitor;
+    }
 
     @jakarta.annotation.PreDestroy
     void shutdown() {
@@ -108,14 +117,16 @@ public class ArtistAvatarWorker {
     public void process() {
         boolean fullBatch = false;
         try {
+            boolean busy = playbackPressureMonitor != null && playbackPressureMonitor.isPlaybackBusy();
+            int batchLimit = busy ? 1 : MAX_BATCH;
             int processed = 0;
-            while (processed < MAX_BATCH && !shuttingDown && !Thread.currentThread().isInterrupted()) {
+            while (processed < batchLimit && !shuttingDown && !Thread.currentThread().isInterrupted()) {
                 Job job = claimNext();
                 if (job == null) return;
                 process(job);
                 processed++;
             }
-            fullBatch = !shuttingDown && processed >= MAX_BATCH;
+            fullBatch = !shuttingDown && !busy && processed >= MAX_BATCH;
         } finally {
             running.set(false);
             if (fullBatch && !shuttingDown) trigger();

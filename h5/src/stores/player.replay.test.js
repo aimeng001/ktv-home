@@ -96,4 +96,37 @@ describe('player 上报重放', () => {
     expect(sent).toBe(false)
     expect(socket.pending).toEqual([{ kind: 'play_error', queueId: 9, fileId: 55, message: '解码失败' }])
   })
+
+  it('断线后 onStatus(false) 即使把 webPlayerRole 置为 STANDBY 且清零 stateRevision，仍可入队并在重连后重放', () => {
+    socket.onStatus = null
+    player.connected = true
+    player.stateRevision = 88
+    player.webPlayerRole = 'ACTIVE'
+    player.webPlayerGeneration = 3
+
+    // 模拟真实 KtvSocket 断连回调把 connected 置 false、角色重置并清空 stateRevision
+    player.connected = false
+    player.wasWebHostBeforeDisconnect = true
+    player.stateRevision = 0
+    player.webPlayerRole = 'STANDBY'
+    player.webPlayerGeneration = 0
+
+    expect(player.reportFinished(12)).toBe(false)
+    expect(player.reportPlayError(77, 13, '断网后错误')).toBe(false)
+    expect(socket.pending).toEqual([
+      { kind: 'finished', queueId: 12 },
+      { kind: 'play_error', queueId: 13, fileId: 77, message: '断网后错误' },
+    ])
+
+    socket.open = true
+    player.connected = true
+    player.handleEvent('player_role', { role: 'ACTIVE', generation: 9 })
+
+    expect(player.wasWebHostBeforeDisconnect).toBe(false)
+    expect(socket.pending).toHaveLength(0)
+    expect(socket.sent).toEqual([
+      { type: 'finished', payload: { queue_id: 12, generation: 9 } },
+      { type: 'play_error', payload: { file_id: 77, queue_id: 13, message: '断网后错误', generation: 9 } },
+    ])
+  })
 })

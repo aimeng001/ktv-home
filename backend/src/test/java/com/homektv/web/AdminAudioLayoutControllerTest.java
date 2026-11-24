@@ -12,8 +12,8 @@ import com.homektv.library.SongMergeService;
 import com.homektv.library.SongReparseService;
 import com.homektv.library.TranscodeHardwareService;
 import com.homektv.library.TranscodeService;
-import com.homektv.web.dto.AudioLayoutDto;
-import com.homektv.web.dto.AudioLayoutUpdateRequest;
+import com.homektv.contract.AudioLayoutDto;
+import com.homektv.contract.AudioLayoutUpdateRequest;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

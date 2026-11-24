@@ -34,6 +34,7 @@ const SNAPSHOT_EVENTS = new Set([
 // 断线期间最多缓存多少条播放结果上报；同一 queueId 只保留一条。
 // Max number of playback reports buffered while offline; one entry per queueId.
 const MAX_PENDING_REPORTS = 20
+const PONG_TIMEOUT_MS = 8_000
 
 function utf8ByteCountAtMost(value, limit) {
   let bytes = 0
@@ -152,10 +153,12 @@ export class KtvSocket {
     this.ws = null
     this.retry = 0
     this.pingTimer = null
+    this.pongTimer = null
     this.reconnectTimer = null
     this.closed = false
     this.generation = 0
     this.pendingReports = []
+    this.inFlightReports = []
     this.snapshotChunks = new SnapshotChunkAssembler()
     this._eventsBound = false
     this._onVisibilityChange = null
@@ -180,6 +183,7 @@ export class KtvSocket {
     this._bindWindowEvents()
     this.snapshotChunks.reset()
     this._clearReconnect()
+    this._clearPongTimeout()
     const generation = ++this.generation
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     // 开发环境由 Vite 代理 /ws 请求；生产环境同源直连
@@ -198,6 +202,7 @@ export class KtvSocket {
     }
     socket.onmessage = (e) => {
       if (generation !== this.generation) return
+      this._clearPongTimeout()
       const wireBytes = utf8ByteCountAtMost(e.data, MAX_MESSAGE_BYTES)
       if (wireBytes === null) {
         socket.close()
@@ -217,6 +222,7 @@ export class KtvSocket {
     socket.onclose = () => {
       if (generation !== this.generation) return
       this._stopPing()
+      this._clearPongTimeout()
       this.onStatus(false)
       if (!this.closed) this._scheduleReconnect()
     }
@@ -267,9 +273,36 @@ export class KtvSocket {
     this.pendingReports.push({ ...descriptor })
   }
 
+  /** Tracks an already-sent report until the server confirms via playback_report_ack. */
+  trackInFlightReport(descriptor) {
+    if (!descriptor || !descriptor.kind) return
+    const key = `${descriptor.kind}:${descriptor.queueId}`
+    if (this.inFlightReports.some((item) => `${item.kind}:${item.queueId}` === key)) return
+    if (this.inFlightReports.length >= MAX_PENDING_REPORTS) this.inFlightReports.shift()
+    this.inFlightReports.push({ ...descriptor })
+  }
+
+  /** Marks a playback report acknowledged by the server so reconnect will not resend it. */
+  acknowledgeReport(kind, queueId) {
+    if (queueId == null) return
+    const match = (item) => item.queueId === queueId && (!kind || item.kind === kind)
+    this.pendingReports = this.pendingReports.filter((item) => !match(item))
+    this.inFlightReports = this.inFlightReports.filter((item) => !match(item))
+  }
+
+  /** Promotes unacknowledged sent reports back into pendingReports on socket drop. */
+  requeueUnackedReports() {
+    if (this.inFlightReports.length === 0) return
+    for (const item of this.inFlightReports) {
+      this.queueReport(item)
+    }
+    this.inFlightReports = []
+  }
+
   /** 丢弃全部待重放条目（角色降级为 STANDBY 时调用）。 */
   clearPendingReports() {
     this.pendingReports = []
+    this.inFlightReports = []
   }
 
   /** 待重放条目数量（测试与诊断用）。 */
@@ -323,6 +356,7 @@ export class KtvSocket {
     this.generation++
     this._clearReconnect()
     this._stopPing()
+    this._clearPongTimeout()
     this._unbindWindowEvents()
     this.snapshotChunks.reset()
     const socket = this.ws
@@ -399,7 +433,9 @@ export class KtvSocket {
       this.connect()
     } else if (this.ws.readyState === WebSocket.OPEN) {
       const payload = this.getPingPayload?.()
-      this.send(payload ? { type: 'ping', payload } : { type: 'ping' })
+      if (this.send(payload ? { type: 'ping', payload } : { type: 'ping' })) {
+        this._armPongTimeout(this.ws, this.generation)
+      }
     }
   }
 
@@ -418,8 +454,28 @@ export class KtvSocket {
     this._stopPing()
     this.pingTimer = setInterval(() => {
       const payload = this.getPingPayload?.()
-      this.send(payload ? { type: 'ping', payload } : { type: 'ping' })
+      if (this.send(payload ? { type: 'ping', payload } : { type: 'ping' })) {
+        this._armPongTimeout(this.ws, this.generation)
+      }
     }, 25000)
+  }
+
+  _armPongTimeout(socket, generation) {
+    this._clearPongTimeout()
+    if (!socket) return
+    this.pongTimer = setTimeout(() => {
+      this.pongTimer = null
+      if (!this.closed && generation === this.generation && this.ws === socket) {
+        socket.close()
+      }
+    }, PONG_TIMEOUT_MS)
+  }
+
+  _clearPongTimeout() {
+    if (this.pongTimer) {
+      clearTimeout(this.pongTimer)
+      this.pongTimer = null
+    }
   }
 
   /**

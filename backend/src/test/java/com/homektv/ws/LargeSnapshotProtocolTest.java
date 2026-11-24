@@ -1,9 +1,9 @@
 package com.homektv.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.homektv.web.dto.AudioLayoutDto;
-import com.homektv.web.dto.QueueSnapshot;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.AudioLayoutDto;
+import com.homektv.contract.QueueSnapshot;
+import com.homektv.contract.SongDto;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;

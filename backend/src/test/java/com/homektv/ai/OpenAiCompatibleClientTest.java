@@ -6,7 +6,7 @@ import com.homektv.domain.MediaImportRecord;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;

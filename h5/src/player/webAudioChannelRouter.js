@@ -16,9 +16,13 @@ export function resolveActiveChannelIndex(audioLayout, vocalMode) {
   }
   if (audioLayout.layout === 'DUAL_TRACK') {
     const wantsOriginal = vocalMode === 'original'
-    const targetTrack = wantsOriginal
-      ? audioLayout.originalTrackIndex
-      : audioLayout.accompanimentTrackIndex
+    const orig = audioLayout.originalTrackIndex
+    const acc = audioLayout.accompanimentTrackIndex
+    // 含 3 轨及以上的曲目在后端 mergeTracks 管道已重排为 L=原唱(0) / R=伴奏(1)
+    if ((Number.isInteger(orig) && orig >= 2) || (Number.isInteger(acc) && acc >= 2)) {
+      return wantsOriginal ? 0 : 1
+    }
+    const targetTrack = wantsOriginal ? orig : acc
     if (targetTrack === 0 || targetTrack === 1) {
       return targetTrack
     }
@@ -26,6 +30,8 @@ export function resolveActiveChannelIndex(audioLayout, vocalMode) {
   }
   return null
 }
+
+const elementSourceCache = typeof WeakMap !== 'undefined' ? new WeakMap() : null
 
 export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
   let ctx = null
@@ -54,10 +60,17 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     if (attachedElement === mediaElement && ctx && splitter && merger && gainNode) {
       return true
     }
+    const cached = elementSourceCache?.get(mediaElement)
     dispose()
     try {
-      ctx = new Ctor()
-      source = ctx.createMediaElementSource(mediaElement)
+      if (cached && cached.ctx && cached.ctx.state !== 'closed' && cached.source) {
+        ctx = cached.ctx
+        source = cached.source
+      } else {
+        ctx = new Ctor()
+        source = ctx.createMediaElementSource(mediaElement)
+        elementSourceCache?.set(mediaElement, { ctx, source })
+      }
       splitter = ctx.createChannelSplitter(2)
       merger = ctx.createChannelMerger(2)
       gainNode = ctx.createGain()
@@ -134,12 +147,16 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
   }
 
   function dispose() {
+    const ownedByCache = attachedElement && elementSourceCache?.get(attachedElement)?.ctx === ctx
     try { source?.disconnect() } catch { /* ignore */ }
     try { splitter?.disconnect() } catch { /* ignore */ }
     try { merger?.disconnect() } catch { /* ignore */ }
     try { pitchShifter?.dispose() } catch { /* ignore */ }
     try { gainNode?.disconnect() } catch { /* ignore */ }
     try { analyserNode?.disconnect() } catch { /* ignore */ }
+    if (ownedByCache && attachedElement) {
+      elementSourceCache.delete(attachedElement)
+    }
     if (ctx && typeof ctx.close === 'function') {
       try { ctx.close() } catch { /* ignore */ }
     }

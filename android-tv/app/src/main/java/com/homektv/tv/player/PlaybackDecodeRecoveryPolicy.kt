@@ -3,6 +3,7 @@ package com.homektv.tv.player
 import androidx.annotation.OptIn
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.HttpDataSource
 
 internal enum class PlaybackStallAction {
     NONE,
@@ -86,5 +87,23 @@ internal object PlaybackDecodeErrorPolicy {
         PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
         PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE -> true
         else -> false
+    }
+
+    fun isRetryableHttpStatus(statusCode: Int): Boolean =
+        statusCode != 400 && statusCode != 401 && statusCode != 403 && statusCode != 404 && statusCode != 410
+
+    fun isRetryableTransientError(error: PlaybackException): Boolean =
+        isRetryableTransientError(error.errorCode, error.cause)
+
+    fun isRetryableTransientError(errorCode: Int, initialCause: Throwable?): Boolean {
+        if (!isTransientIoError(errorCode)) return false
+        var cause: Throwable? = initialCause
+        while (cause != null) {
+            if (cause is HttpDataSource.InvalidResponseCodeException) {
+                return isRetryableHttpStatus(cause.responseCode)
+            }
+            cause = cause.cause
+        }
+        return true
     }
 }

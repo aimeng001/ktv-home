@@ -1,8 +1,9 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.config.AppProperties;
 import com.homektv.library.AdminService;
-import com.homektv.library.LibraryMode;
+import com.homektv.common.LibraryMode;
 import com.homektv.library.LibraryScanCoordinator;
 import com.homektv.library.LibraryScanService;
 import com.homektv.library.LibraryWatchService;
@@ -140,8 +141,7 @@ class AdminScanControllerTest {
         MediaImportService imports = mock(MediaImportService.class);
         MediaImportService.TranscodeProgress expected = idleTranscodeProgress();
         when(imports.startPendingTranscode(List.of(), false)).thenReturn(expected);
-        AdminScanController controller = controller(managedProps(), mock(LibraryScanService.class), imports,
-                mock(SettingService.class), mock(TranscodeService.class));
+        AdminSourceLibraryController controller = new AdminSourceLibraryController(imports, managedProps());
 
         assertThat(controller.transcodeSourceLibrary(null)).isSameAs(expected);
         verify(imports).startPendingTranscode(List.of(), false);
@@ -153,10 +153,9 @@ class AdminScanControllerTest {
         MediaImportService.TranscodeProgress expected = idleTranscodeProgress();
         List<Long> ids = List.of(4L, 9L);
         when(imports.startPendingTranscode(ids, true)).thenReturn(expected);
-        AdminScanController controller = controller(managedProps(), mock(LibraryScanService.class), imports,
-                mock(SettingService.class), mock(TranscodeService.class));
+        AdminSourceLibraryController controller = new AdminSourceLibraryController(imports, managedProps());
 
-        assertThat(controller.transcodeSourceLibrary(new AdminScanController.SourceLibraryRequest(
+        assertThat(controller.transcodeSourceLibrary(new AdminSourceLibraryController.SourceLibraryRequest(
                 ids, true, "keyword", "PENDING", "video", false))).isSameAs(expected);
         verify(imports).startPendingTranscode(ids, true);
     }
@@ -166,8 +165,7 @@ class AdminScanControllerTest {
         MediaImportService imports = mock(MediaImportService.class);
         when(imports.listSourceLibrary("keyword", "FAILED", "audio", true, 2, 10))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(2, 10), 20));
-        AdminScanController controller = controller(managedProps(), mock(LibraryScanService.class), imports,
-                mock(SettingService.class), mock(TranscodeService.class));
+        AdminSourceLibraryController controller = new AdminSourceLibraryController(imports, managedProps());
 
         assertThat(controller.sourceLibrary("keyword", "FAILED", "audio", true, 2, 10))
                 .containsEntry("content", List.of())
@@ -181,10 +179,9 @@ class AdminScanControllerTest {
     @Test
     void deleteSourcesRequiresExplicitFilterWhenIdsAreEmpty() {
         MediaImportService imports = mock(MediaImportService.class);
-        AdminScanController controller = controller(managedProps(), mock(LibraryScanService.class), imports,
-                mock(SettingService.class), mock(TranscodeService.class));
+        AdminSourceLibraryController controller = new AdminSourceLibraryController(imports, managedProps());
 
-        assertThatThrownBy(() -> controller.deleteSources(new AdminScanController.SourceLibraryRequest(
+        assertThatThrownBy(() -> controller.deleteSources(new AdminSourceLibraryController.SourceLibraryRequest(
                 List.of(), false, "", "", "", null)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("all=true");
@@ -199,12 +196,11 @@ class AdminScanControllerTest {
         List<Long> ids = List.of(6L);
         when(imports.deleteSources(ids)).thenReturn(byIds);
         when(imports.deleteSourcesByFilter("", "FAILED", "audio", true)).thenReturn(byFilter);
-        AdminScanController controller = controller(managedProps(), mock(LibraryScanService.class), imports,
-                mock(SettingService.class), mock(TranscodeService.class));
+        AdminSourceLibraryController controller = new AdminSourceLibraryController(imports, managedProps());
 
-        assertThat(controller.deleteSources(new AdminScanController.SourceLibraryRequest(
+        assertThat(controller.deleteSources(new AdminSourceLibraryController.SourceLibraryRequest(
                 ids, true, "ignored", "ignored", "ignored", false))).isSameAs(byIds);
-        assertThat(controller.deleteSources(new AdminScanController.SourceLibraryRequest(
+        assertThat(controller.deleteSources(new AdminSourceLibraryController.SourceLibraryRequest(
                 List.of(), true, "", "FAILED", "audio", true))).isSameAs(byFilter);
         verify(imports).deleteSources(ids);
         verify(imports).deleteSourcesByFilter("", "FAILED", "audio", true);
@@ -216,10 +212,7 @@ class AdminScanControllerTest {
         LibraryWatchService watcher = mock(LibraryWatchService.class);
         TranscodeHardwareService hardware = mock(TranscodeHardwareService.class);
         when(settings.getEditable()).thenReturn(Map.of("transcode_hardware_acceleration", false));
-        AppProperties props = managedProps();
-        AdminScanController controller = new AdminScanController(mock(LibraryScanService.class), watcher,
-                mock(AdminService.class), mock(MediaImportService.class), settings, mock(TranscodeService.class),
-                hardware, mock(SongReparseService.class), mock(SongMergeService.class), props);
+        AdminSettingsController controller = new AdminSettingsController(settings, hardware, watcher);
 
         assertThat(controller.putSettings(Map.of("transcode_hardware_acceleration", false)))
                 .containsEntry("transcode_hardware_acceleration", false);
@@ -237,9 +230,7 @@ class AdminScanControllerTest {
                 List.of(), List.of(), List.of(), false, "mkv", "hevc", "aac", false);
         when(settings.transcodePolicy()).thenReturn(policy);
         when(settings.getEditable()).thenReturn(Map.of("transcode_hardware_acceleration", true));
-        AdminScanController controller = new AdminScanController(mock(LibraryScanService.class), watcher,
-                mock(AdminService.class), mock(MediaImportService.class), settings, mock(TranscodeService.class),
-                hardware, mock(SongReparseService.class), mock(SongMergeService.class), managedProps());
+        AdminSettingsController controller = new AdminSettingsController(settings, hardware, watcher);
 
         controller.putSettings(Map.of("transcode_hardware_acceleration", true));
 
@@ -346,17 +337,7 @@ class AdminScanControllerTest {
         AppProperties props = new AppProperties();
         props.setLibraryMode(LibraryMode.EXTERNAL_READ_ONLY);
         MediaImportService mediaImportService = mock(MediaImportService.class);
-        AdminScanController controller = new AdminScanController(
-                mock(LibraryScanService.class),
-                mock(LibraryWatchService.class),
-                mock(AdminService.class),
-                mediaImportService,
-                mock(SettingService.class),
-                mock(TranscodeService.class),
-                mock(TranscodeHardwareService.class),
-                mock(SongReparseService.class),
-                mock(SongMergeService.class),
-                props);
+        AdminSourceLibraryController controller = new AdminSourceLibraryController(mediaImportService, props);
 
         Map<String, Object> response = controller.sourceLibrary("", "", "", null, 0, 20);
 

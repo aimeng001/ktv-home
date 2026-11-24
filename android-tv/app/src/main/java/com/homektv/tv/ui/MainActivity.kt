@@ -471,7 +471,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 // UI 以高频本地时钟平滑刷新，服务端进度仍保持 1s 上报频率。
                 val elapsedRealtimeMs = android.os.SystemClock.elapsedRealtime()
                 if (progressReportGate.shouldReport(queueId, elapsedRealtimeMs)) {
-                    socket?.sendProgress(pos, queueId)
+                    socket?.sendProgress(pos, queueId, playbackSeekGate.currentSequence())
                     progressReportGate.markReported(queueId, elapsedRealtimeMs)
                 }
                 runOnUiThread { updateProgress(pos) }
@@ -543,6 +543,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 engine?.detach(bottomDockController.playerView)
                 engine?.attach(externalPlayerView)
                 attachedExternalPlayerView = externalPlayerView
+                applyVideoScaleMode(currentVideoScaleMode)
                 // Recompute from the authoritative media type as well as display state;
                 // audio-only tracks must never reveal a video surface on disconnect.
                 cachedQueueSnapshot?.let(::renderBottomDock)
@@ -1431,11 +1432,13 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     private fun applyVideoScaleMode(mode: String) {
         currentVideoScaleMode = mode
-        bottomDockController.playerView.resizeMode = when (mode) {
+        val resizeMode = when (mode) {
             "fit" -> AspectRatioFrameLayout.RESIZE_MODE_FIT
             "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
             else -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
         }
+        bottomDockController.playerView.resizeMode = resizeMode
+        attachedExternalPlayerView?.resizeMode = resizeMode
     }
 
     private var currentVolume = 100

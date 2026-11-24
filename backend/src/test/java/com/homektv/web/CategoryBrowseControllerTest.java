@@ -2,7 +2,7 @@ package com.homektv.web;
 
 import com.homektv.domain.Song;
 import com.homektv.library.CategoryBrowseService;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.SongDto;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

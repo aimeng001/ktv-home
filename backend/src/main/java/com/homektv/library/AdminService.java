@@ -11,13 +11,13 @@ import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.PlayerStateRepository;
-import com.homektv.web.ApiException;
-import com.homektv.web.dto.DashboardDto;
-import com.homektv.web.dto.AdminSongDto;
-import com.homektv.web.dto.AudioLayoutDto;
-import com.homektv.web.dto.AudioLayoutUpdateRequest;
-import com.homektv.web.dto.SongEditRequest;
-import com.homektv.web.dto.VocalReviewDto;
+import com.homektv.common.ApiException;
+import com.homektv.contract.DashboardDto;
+import com.homektv.contract.AdminSongDto;
+import com.homektv.contract.AudioLayoutDto;
+import com.homektv.contract.AudioLayoutUpdateRequest;
+import com.homektv.contract.SongEditRequest;
+import com.homektv.contract.VocalReviewDto;
 import com.homektv.ws.WsBroadcaster;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -204,16 +204,12 @@ public class AdminService {
         boolean artistEdited = false;
         boolean artistGenderEdited = false;
         if (req.title() != null && !req.title().isBlank()) {
-            song.setTitle(req.title().trim());
-            song.setTitlePy(PinyinUtil.fullPinyin(req.title()));
-            song.setTitleInit(PinyinUtil.initials(req.title()));
+            SongMetadataWritePolicy.applyTitleWithPinyin(song, req.title());
             song.lockMetadata("title");
             manualIdentityEdited = true;
         }
         if (req.artist() != null && !req.artist().isBlank()) {
-            song.setArtist(req.artist().trim());
-            song.setArtistPy(PinyinUtil.fullPinyin(req.artist()));
-            song.setArtistInit(PinyinUtil.initials(req.artist()));
+            SongMetadataWritePolicy.applyArtistWithPinyin(song, req.artist());
             song.lockMetadata("artist");
             manualIdentityEdited = true;
             artistEdited = true;
@@ -255,12 +251,7 @@ public class AdminService {
         }
         boolean identityEdited = (req.title() != null && !req.title().isBlank())
                 || (req.artist() != null && !req.artist().isBlank());
-        boolean hasValidIdentity = song.getTitle() != null && !song.getTitle().isBlank() && !"未识别".equals(song.getTitle())
-                && song.getArtist() != null && !song.getArtist().isBlank() && !"未知歌手".equals(song.getArtist());
-        boolean promotedToOk = identityEdited && hasValidIdentity && "unrecognized".equals(song.getStatus());
-        if (promotedToOk) {
-            song.setStatus("ok");
-        }
+        boolean promotedToOk = identityEdited && SongMetadataWritePolicy.promoteUnrecognizedIfValid(song);
         Song saved = songRepo.save(song);
         if (artistEdited && artistCreditService != null) {
             artistCreditService.replace(saved.getId(), saved.getArtist());
@@ -536,15 +527,7 @@ public class AdminService {
         LibraryModePolicy.requireManaged(props, "删除曲库文件");
         Path root = Path.of(props.getKtvLibraryPath()).toAbsolutePath().normalize();
         for (SongFile file : files) {
-            Path path = Path.of(file.getFilePath()).toAbsolutePath().normalize();
-            if (!path.startsWith(root)) {
-                throw new ApiException("INVALID_LIBRARY_PATH", "拒绝删除 KTV 曲库目录以外的文件：" + path);
-            }
-            try {
-                Files.deleteIfExists(path);
-            } catch (IOException e) {
-                throw new ApiException("DELETE_LIBRARY_FILE_FAILED", "删除 KTV 文件失败：" + path + "，" + e.getMessage());
-            }
+            ManagedFilesystemGuard.deleteManagedLibraryFile(props, Path.of(file.getFilePath()));
         }
     }
 }

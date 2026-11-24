@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.LibraryMode;
 
 import com.homektv.config.AppProperties;
 import com.homektv.domain.AudioLayout;
@@ -9,7 +10,7 @@ import com.homektv.media.MediaProbe;
 import com.homektv.musicsource.CoverImageNormalizer;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.transaction.PlatformTransactionManager;

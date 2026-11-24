@@ -3,7 +3,7 @@ package com.homektv.library;
 import com.homektv.config.AppProperties;
 import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;

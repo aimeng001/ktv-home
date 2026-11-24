@@ -1,7 +1,7 @@
 package com.homektv.musicsource;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;

@@ -2,7 +2,7 @@ package com.homektv.musicsource;
 
 import com.homektv.domain.Song;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -35,21 +35,26 @@ public class MusicSourceSearchService {
     }
 
     public SearchResponse search(String keyword, Set<MusicProvider> requestedProviders, boolean refresh) {
+        return searchInternal(keyword, requestedProviders, refresh).response();
+    }
+
+    private SearchOutcome searchInternal(String keyword, Set<MusicProvider> requestedProviders, boolean refresh) {
         String query = ProviderJson.clean(keyword, 500);
         if (query == null || query.length() < 2) throw new ApiException("MUSIC_SOURCE_QUERY_INVALID", "请输入至少 2 个字符的关键词");
         MusicSourceConfig config = configService.getConfig();
-        if (!config.enabled()) throw new ApiException("MUSIC_SOURCES_NOT_CONFIGURED", "请先在系统设置中启用音乐元数据服务");
+        if (!config.enabled()) throw new ApiException("MUSIC_SOURCES_NOT_CONFIGURED", "请先在系统设置中启用元数据服务");
         Set<MusicProvider> selected = selectProviders(requestedProviders, config.providers());
         selected.retainAll(config.providers());
         if (selected.isEmpty()) throw new ApiException("MUSIC_SOURCES_NOT_CONFIGURED", "请至少启用一个音乐平台");
 
-        List<ProviderResult> providerResults = new ArrayList<>();
+        List<ProviderOutcome> outcomes = new ArrayList<>();
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<CompletableFuture<ProviderResult>> futures = selected.stream()
+            List<CompletableFuture<ProviderOutcome>> futures = selected.stream()
                     .map(provider -> CompletableFuture.supplyAsync(() -> searchProvider(provider, query, config, refresh), executor)).toList();
-            for (CompletableFuture<ProviderResult> future : futures) providerResults.add(future.join());
+            for (CompletableFuture<ProviderOutcome> future : futures) outcomes.add(future.join());
         }
-        return new SearchResponse(query, group(providerResults), providerResults);
+        List<ProviderResult> providerResults = outcomes.stream().map(ProviderOutcome::result).toList();
+        return new SearchOutcome(new SearchResponse(query, group(providerResults), providerResults), outcomes);
     }
 
     public ExternalTrack detail(MusicProvider provider, String externalId, boolean refresh) {
@@ -74,12 +79,36 @@ public class MusicSourceSearchService {
     public List<SongMatch> matches(long songId, String keyword, Set<MusicProvider> requestedProviders, boolean refresh) {
         Song song = songRepository.findById(songId).orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         String query = keyword == null || keyword.isBlank() ? song.getTitle() + " " + song.getArtist() : keyword;
-        SearchResponse result = search(query, requestedProviders, refresh);
+        SearchOutcome outcome = searchInternal(query, requestedProviders, refresh);
+        if (!outcome.outcomes().isEmpty()
+                && outcome.outcomes().stream().noneMatch(item -> item.result().success())) {
+            propagateTerminalFailure(outcome.outcomes());
+        }
+        SearchResponse result = outcome.response();
         List<SongMatch> matches = result.groups().stream().flatMap(group -> group.sources().stream())
                 .map(track -> new SongMatch(track, matcher.score(song, track)))
                 .sorted(java.util.Comparator.comparingDouble(SongMatch::score).reversed()).limit(30).toList();
         matches.forEach(match -> storage.saveMatch(songId, match.track(), match.score()));
         return matches;
+    }
+
+    private static void propagateTerminalFailure(List<ProviderOutcome> outcomes) {
+        RuntimeException rateLimited = null;
+        RuntimeException stateUnavailable = null;
+        RuntimeException firstFailure = null;
+        for (ProviderOutcome outcome : outcomes) {
+            RuntimeException failure = outcome.failure();
+            if (failure == null) continue;
+            if (firstFailure == null) firstFailure = failure;
+            if (failure instanceof ProviderRateLimitedException && rateLimited == null) {
+                rateLimited = failure;
+            } else if (failure instanceof ProviderRateStateUnavailableException && stateUnavailable == null) {
+                stateUnavailable = failure;
+            }
+        }
+        if (rateLimited != null) throw rateLimited;
+        if (stateUnavailable != null) throw stateUnavailable;
+        if (firstFailure != null) throw firstFailure;
     }
 
     public BatchMatchResponse batchMatches(List<Long> songIds) {
@@ -136,20 +165,28 @@ public class MusicSourceSearchService {
         return results;
     }
 
-    private ProviderResult searchProvider(MusicProvider provider, String query, MusicSourceConfig config, boolean refresh) {
+    private ProviderOutcome searchProvider(MusicProvider provider, String query, MusicSourceConfig config, boolean refresh) {
         long started = System.nanoTime();
         try {
             if (!refresh) {
                 var cached = storage.cachedSearch(provider, query, config.resultLimit());
-                if (cached.isPresent()) return new ProviderResult(provider, provider.displayName(), true, true, cached.get(), null, 0);
+                if (cached.isPresent()) {
+                    return new ProviderOutcome(
+                            new ProviderResult(provider, provider.displayName(), true, true, cached.get(), null, 0),
+                            null);
+                }
             }
             List<ExternalTrack> tracks = providers.get(provider).search(query, config.resultLimit(), Duration.ofSeconds(config.timeoutSeconds()));
             storage.saveSearch(provider, query, config.resultLimit(), tracks, config.searchCacheHours());
             configService.recordSuccess(provider);
-            return new ProviderResult(provider, provider.displayName(), true, false, tracks, null, elapsed(started));
+            return new ProviderOutcome(
+                    new ProviderResult(provider, provider.displayName(), true, false, tracks, null, elapsed(started)),
+                    null);
         } catch (RuntimeException ex) {
             String error = publicError(ex); configService.recordError(provider, error);
-            return new ProviderResult(provider, provider.displayName(), false, false, List.of(), error, elapsed(started));
+            return new ProviderOutcome(
+                    new ProviderResult(provider, provider.displayName(), false, false, List.of(), error, elapsed(started)),
+                    ex);
         }
     }
 
@@ -157,9 +194,16 @@ public class MusicSourceSearchService {
         Map<String, List<ExternalTrack>> grouped = new LinkedHashMap<>();
         results.stream().flatMap(result -> result.tracks().stream())
                 .forEach(track -> grouped.computeIfAbsent(matcher.groupKey(track), ignored -> new ArrayList<>()).add(track));
+        Map<String, List<Song>> candidatesByLowerTitle = new java.util.HashMap<>();
         return grouped.values().stream().map(tracks -> {
             ExternalTrack representative = tracks.getFirst();
-            List<LocalMatch> local = songRepository.findTop10ByTitleIgnoreCase(representative.title()).stream()
+            String titleKey = representative.title() == null ? "" : representative.title().trim().toLowerCase(java.util.Locale.ROOT);
+            List<Song> candidates = titleKey.isEmpty() ? List.of() : candidatesByLowerTitle.computeIfAbsent(titleKey,
+                    ignored -> {
+                        List<Song> found = songRepository.findTop10ByTitleIgnoreCase(representative.title());
+                        return found == null ? List.of() : found;
+                    });
+            List<LocalMatch> local = candidates.stream()
                     .map(song -> new LocalMatch(song.getId(), song.getTitle(), song.getArtist(), matcher.score(song, representative)))
                     .filter(match -> match.score() >= 0.72).toList();
             String state = local.stream().anyMatch(match -> match.score() >= 0.9) ? "LOCAL_EXISTS"
@@ -182,6 +226,9 @@ public class MusicSourceSearchService {
         String value = ex.getMessage();
         return ProviderJson.clean(value == null ? "平台暂时不可用" : value, 300);
     }
+
+    private record ProviderOutcome(ProviderResult result, RuntimeException failure) {}
+    private record SearchOutcome(SearchResponse response, List<ProviderOutcome> outcomes) {}
 
     public record SearchResponse(String query, List<TrackGroup> groups, List<ProviderResult> providers) {}
     public record ProviderResult(MusicProvider provider, String displayName, boolean success, boolean cached,

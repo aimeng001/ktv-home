@@ -3,7 +3,7 @@ package com.homektv.library;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.repo.SongFileRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.stereotype.Service;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -97,11 +97,6 @@ public class SongAvailabilityPolicy {
      * and by read-side DTOs so the two can never drift apart.
      */
     public static boolean isReadyMediaFile(SongFile file) {
-        return file != null
-                && file.isValid()
-                && !file.isProbePending()
-                && file.getMediaType() != null
-                && !file.getMediaType().isBlank()
-                && !PENDING_PROBE.equalsIgnoreCase(file.getMediaType());
+        return file != null && file.isReadyMedia();
     }
 }

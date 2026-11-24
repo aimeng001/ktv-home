@@ -1,6 +1,6 @@
 package com.homektv.library;
 
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import com.homektv.config.AppProperties;
 import com.homektv.resource.ResourceBudget;
 import org.junit.jupiter.api.Test;

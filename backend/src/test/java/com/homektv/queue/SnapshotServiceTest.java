@@ -14,8 +14,8 @@ import com.homektv.repo.SongRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.ws.WsBroadcaster;
 import com.homektv.playback.PlaybackResolutionService;
-import com.homektv.web.dto.PlaybackDescriptor;
-import com.homektv.web.dto.AudioLayoutDto;
+import com.homektv.contract.PlaybackDescriptor;
+import com.homektv.contract.AudioLayoutDto;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -88,13 +88,13 @@ class SnapshotServiceTest {
             return thread;
         });
         try {
-            Future<com.homektv.web.dto.QueueSnapshot> first = executor.submit(() -> {
+            Future<com.homektv.contract.QueueSnapshot> first = executor.submit(() -> {
                 Thread.currentThread().setName("snapshot-A");
                 return service.snapshot();
             });
             assertThat(firstReadEntered.await(5, TimeUnit.SECONDS)).isTrue();
 
-            Future<com.homektv.web.dto.QueueSnapshot> second = executor.submit(() -> {
+            Future<com.homektv.contract.QueueSnapshot> second = executor.submit(() -> {
                 Thread.currentThread().setName("snapshot-B");
                 return service.snapshot();
             });
@@ -153,14 +153,14 @@ class SnapshotServiceTest {
                 songRepository, userRepository, broadcaster);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
-            Future<com.homektv.web.dto.QueueSnapshot> first = executor.submit(() -> {
+            Future<com.homektv.contract.QueueSnapshot> first = executor.submit(() -> {
                 Thread.currentThread().setName("snapshot-A");
                 return service.snapshot();
             });
             assertThat(firstReadCaptured.await(5, TimeUnit.SECONDS)).isTrue();
             committedVolume.set(90);
 
-            Future<com.homektv.web.dto.QueueSnapshot> second = executor.submit(() -> {
+            Future<com.homektv.contract.QueueSnapshot> second = executor.submit(() -> {
                 Thread.currentThread().setName("snapshot-B");
                 return service.snapshot();
             });

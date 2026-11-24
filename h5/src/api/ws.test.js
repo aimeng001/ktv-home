@@ -395,4 +395,30 @@ describe('KtvSocket', () => {
     vi.advanceTimersByTime(10_000)
     expect(FakeWebSocket.instances).toHaveLength(1)
   })
+
+  it('closes a dead socket when pong does not arrive before timeout and cancels timeout on pong', () => {
+    const onStatus = vi.fn()
+    const socket = new KtvSocket({ onStatus })
+    socket.connect()
+    const first = FakeWebSocket.instances[0]
+    first.open()
+
+    // 第 1 次心跳发 ping 后收到 pong，保持在线不重连
+    vi.advanceTimersByTime(25_000)
+    expect(first.sent).toHaveLength(1)
+    first.receive(JSON.stringify({ type: 'pong' }))
+    vi.advanceTimersByTime(8_000)
+    expect(first.readyState).toBe(FakeWebSocket.OPEN)
+
+    // 第 2 次心跳发 ping 后 8s 内无 pong，主动关闭并进入退避重连
+    vi.advanceTimersByTime(17_000)
+    expect(first.sent).toHaveLength(2)
+    vi.advanceTimersByTime(8_000)
+    expect(first.readyState).toBe(3)
+    expect(onStatus).toHaveBeenLastCalledWith(false)
+
+    vi.advanceTimersByTime(1_000)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    socket.close()
+  })
 })

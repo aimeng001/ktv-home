@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import KaraokeLyricSurface from './KaraokeLyricSurface.vue'
+import { parseLrc } from '../../composables/lrc'
 
 describe('KaraokeLyricSurface 双行卡拉OK平滑扫字歌词', () => {
   let app
@@ -124,5 +125,25 @@ describe('KaraokeLyricSurface 双行卡拉OK平滑扫字歌词', () => {
     await nextTick()
 
     expect(root.querySelector('.karaoke-countdown')).toBeNull()
+  })
+
+  it('兼容 parseLrc 输出的 time 字段，绝不锁死在末句且支持逐字真实扫光', async () => {
+    const parsed = parseLrc('[00:10.00]<00:10.00>晴<00:11.00>天\n[00:14.00]微风吹过\n[00:20.00]最后一句')
+    app = createApp(KaraokeLyricSurface, {
+      lyricLines: parsed,
+      positionMs: 10500,
+      isPlaying: true
+    })
+    app.mount(root)
+    await nextTick()
+
+    const activeLine = root.querySelector('.lyric-line.active')
+    const nextLine = root.querySelector('.lyric-line.next')
+    expect(activeLine.textContent).toContain('晴天')
+    expect(nextLine.textContent).toContain('微风吹过')
+
+    // 10500ms 处于第一个字（10000~11000）的 50%，占两个字总长的 25%，即右侧裁剪 75%
+    const style = root.querySelector('.active .sweep-fill').getAttribute('style') || ''
+    expect(style).toContain('75%')
   })
 })

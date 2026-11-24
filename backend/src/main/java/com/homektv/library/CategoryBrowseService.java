@@ -1,8 +1,13 @@
 package com.homektv.library;
+import com.homektv.common.ArtistAvatarUrl;
+import com.homektv.common.ArtistCreditParser;
+import com.homektv.common.ArtistKindClassifier;
+import com.homektv.common.ArtistKind;
+import com.homektv.common.SearchKeyword;
 
 import com.homektv.domain.Song;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.dto.SongDto;
+import com.homektv.contract.SongDto;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -90,7 +95,7 @@ public class CategoryBrowseService {
         String safeRegion = normalize(region);
         String safeKeyword = normalize(keyword);
         if (!SUPPORTED_ARTIST_REGIONS.contains(safeRegion)) {
-            throw new com.homektv.web.ApiException("INVALID_ARTIST_REGION", "歌手地区筛选值无效");
+            throw new com.homektv.common.ApiException("INVALID_ARTIST_REGION", "歌手地区筛选值无效");
         }
         if ("热门".equals(safeInitial)) safeInitial = "";
 
@@ -135,7 +140,7 @@ public class CategoryBrowseService {
         String safeGender = normalize(gender);
         String safeRegion = normalize(region);
         if (!SUPPORTED_ARTIST_REGIONS.contains(safeRegion)) {
-            throw new com.homektv.web.ApiException("INVALID_ARTIST_REGION", "歌手地区筛选值无效");
+            throw new com.homektv.common.ApiException("INVALID_ARTIST_REGION", "歌手地区筛选值无效");
         }
         if (artistDirectoryProjection != null) {
             Optional<List<String>> projected = artistDirectoryProjection.initials(safeGender, safeRegion);
@@ -243,7 +248,7 @@ public class CategoryBrowseService {
         String safeMediaType = normalize(mediaType).toUpperCase(Locale.ROOT);
         int safeWordCount = wordCount == null ? 0 : wordCount;
         if (!SUPPORTED_MEDIA_TYPES.contains(safeMediaType)) {
-            throw new com.homektv.web.ApiException("INVALID_MEDIA_TYPE", "媒体格式筛选值无效");
+            throw new com.homektv.common.ApiException("INVALID_MEDIA_TYPE", "媒体格式筛选值无效");
         }
         Page<Song> rows;
         if (safeMediaType.isEmpty()) {

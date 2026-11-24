@@ -1,7 +1,9 @@
 package com.homektv.library;
 
+import com.homektv.resource.PlaybackPressureMonitor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -34,6 +36,13 @@ public final class IktvSongMatchWorker {
     private final IktvSongMatchBatchService batchService;
     private final Executor executor;
     private final AtomicBoolean running = new AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicInteger busyTicks = new java.util.concurrent.atomic.AtomicInteger();
+    private volatile PlaybackPressureMonitor playbackPressureMonitor;
+
+    @Autowired(required = false)
+    void setPlaybackPressureMonitor(PlaybackPressureMonitor playbackPressureMonitor) {
+        this.playbackPressureMonitor = playbackPressureMonitor;
+    }
 
     public IktvSongMatchWorker(JdbcTemplate jdbc,
                                PlatformTransactionManager transactionManager,
@@ -71,13 +80,20 @@ public final class IktvSongMatchWorker {
 
     private void drainWork() {
         ensureWorkBatches();
+        boolean busy = playbackPressureMonitor != null && playbackPressureMonitor.isPlaybackBusy();
+        if (busy && Math.floorMod(busyTicks.getAndIncrement(), 4) != 0) {
+            return;
+        }
+        int itemLimit = busy ? 2 : MAX_ITEMS_PER_TICK;
+        int claimSize = busy ? 2 : CLAIM_SIZE;
         int processed = 0;
-        while (processed < MAX_ITEMS_PER_TICK) {
-            List<ClaimedSong> claimed = claim(CLAIM_SIZE);
+        while (processed < itemLimit) {
+            List<ClaimedSong> claimed = claim(claimSize);
             if (claimed.isEmpty()) break;
             for (ClaimedSong item : claimed) {
                 processClaimed(item);
                 processed++;
+                if (processed >= itemLimit) break;
             }
         }
         completeDrainedBatches();

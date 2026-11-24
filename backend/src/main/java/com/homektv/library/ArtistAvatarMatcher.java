@@ -1,4 +1,5 @@
 package com.homektv.library;
+import com.homektv.common.ArtistCreditParser;
 
 import com.homektv.musicsource.ExternalArtist;
 
@@ -23,6 +24,14 @@ public final class ArtistAvatarMatcher {
     private static final String SIMP_CHARS =
             "邓学国荣杰华张刘陈杨许苏萧谭凤龙丽辉庆伟叶齐钟卢罗郑谢关黄赵孙欧阳蒋马冯蓝韩韦庄严麦乐团组宝仪韵凯东云风飞爱梦亚静诗语万与无双儿温泽涛渊汉红经纯维缘胜达远进选银铭镇铁门闪开陆随隐电灵响骏鸿鹤鹰点斋伦吴吕颜洁义礼诚刚强军滨艺声粤台湾来头余范庞龚邹汤卫纪书乔连饶钱边顾赖阎贺贾";
     private static final Map<Character, Character> TRAD_TO_SIMP = buildTradMap();
+    private static final Map<Character, Character> SONG_TRAD_TO_SIMP = Map.ofEntries(
+            Map.entry('髮', '发'), Map.entry('發', '发'), Map.entry('費', '费'),
+            Map.entry('聽', '听'), Map.entry('說', '说'), Map.entry('淚', '泪'),
+            Map.entry('時', '时'), Map.entry('間', '间'), Map.entry('後', '后'),
+            Map.entry('裡', '里'), Map.entry('裏', '里'), Map.entry('錯', '错'),
+            Map.entry('過', '过'), Map.entry('難', '难'), Map.entry('會', '会'),
+            Map.entry('現', '现'), Map.entry('場', '场')
+    );
 
     private ArtistAvatarMatcher() {}
 
@@ -105,12 +114,14 @@ public final class ArtistAvatarMatcher {
         return List.of("男", "女", "组合", "乐队", "群星", "singer", "band").contains(key);
     }
 
-    static String toSimplified(String input) {
+    public static String toSimplified(String input) {
         if (input == null || input.isEmpty()) return "";
         StringBuilder sb = new StringBuilder(input.length());
         for (int i = 0; i < input.length(); i++) {
             char ch = input.charAt(i);
-            sb.append(TRAD_TO_SIMP.getOrDefault(ch, ch));
+            Character mapped = TRAD_TO_SIMP.get(ch);
+            if (mapped == null) mapped = SONG_TRAD_TO_SIMP.get(ch);
+            sb.append(mapped != null ? mapped : ch);
         }
         return sb.toString();
     }

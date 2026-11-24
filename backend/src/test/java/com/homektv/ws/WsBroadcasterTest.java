@@ -253,6 +253,34 @@ class WsBroadcasterTest {
         }
     }
 
+    @Test
+    void progressBurstCoalescesPendingProgressFramesInsteadOfDisconnectingSession() throws Exception {
+        WsBroadcaster broadcaster = new WsBroadcaster(new ObjectMapper());
+        WebSocketSession slowSession = session("slow-tv", "tv");
+        CountDownLatch sendStarted = new CountDownLatch(1);
+        CountDownLatch releaseSend = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger deliveredCount = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(invocation -> {
+            if (deliveredCount.getAndIncrement() == 0) {
+                sendStarted.countDown();
+                releaseSend.await(5, TimeUnit.SECONDS);
+            }
+            return null;
+        }).when(slowSession).sendMessage(any(TextMessage.class));
+        broadcaster.register(slowSession);
+
+        try {
+            broadcaster.broadcast(WsEvent.of(WsEvent.PLAYER_STATE, Map.of("state", "playing")));
+            assertThat(sendStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            for (int index = 0; index < 200; index++) {
+                broadcaster.broadcast(WsEvent.of(WsEvent.PROGRESS, Map.of("position_ms", index * 1000L)));
+            }
+            assertThat(broadcaster.sessionCount()).isEqualTo(1);
+        } finally {
+            releaseSend.countDown();
+        }
+    }
+
     private static void awaitSessionCount(WsBroadcaster broadcaster, int expected) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (broadcaster.sessionCount() != expected && System.nanoTime() < deadline) {

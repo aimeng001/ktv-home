@@ -1,8 +1,8 @@
 package com.homektv.ws;
 
-import com.homektv.web.dto.AudioLayoutDto;
-import com.homektv.web.dto.PlaybackDescriptor;
-import com.homektv.web.dto.QueueSnapshot;
+import com.homektv.contract.AudioLayoutDto;
+import com.homektv.contract.PlaybackDescriptor;
+import com.homektv.contract.QueueSnapshot;
 
 /** Snapshot fields repeated once per chunk instead of once per queue entry. */
 public record QueueSnapshotHeader(

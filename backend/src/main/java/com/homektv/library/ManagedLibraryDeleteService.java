@@ -8,7 +8,7 @@ import com.homektv.domain.ManagedDeleteOperation;
 import com.homektv.domain.SongFile;
 import com.homektv.repo.ManagedDeleteOperationRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;

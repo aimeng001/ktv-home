@@ -1,12 +1,14 @@
 package com.homektv.ai;
 
+import com.homektv.config.AppProperties;
 import com.homektv.domain.Song;
 import com.homektv.library.ArtistCreditService;
 import com.homektv.library.ArtistDirectoryProjectionService;
 import com.homektv.library.MediaClassifier;
-import com.homektv.library.PinyinUtil;
+import com.homektv.library.SettingService;
+import com.homektv.library.SongMetadataWritePolicy;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -14,6 +16,7 @@ import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 将 AI 分类结果应用到歌曲实体上，包括语言、年代、流派、主题、年龄段、演唱形式等字段的归一化与合并。
@@ -31,10 +34,22 @@ public class AiClassificationApplier {
     private final ArtistCreditService artistCreditService;
     private final ArtistDirectoryProjectionService directoryProjection;
     private com.homektv.library.CatalogRevisionService catalogRevisionService;
+    private SettingService settingService;
+    private AppProperties appProperties;
 
     @Autowired(required = false)
     void setCatalogRevisionService(com.homektv.library.CatalogRevisionService catalogRevisionService) {
         this.catalogRevisionService = catalogRevisionService;
+    }
+
+    @Autowired(required = false)
+    void setSettingService(SettingService settingService) {
+        this.settingService = settingService;
+    }
+
+    @Autowired(required = false)
+    void setAppProperties(AppProperties appProperties) {
+        this.appProperties = appProperties;
     }
 
     /**
@@ -113,7 +128,44 @@ public class AiClassificationApplier {
     }
 
     private boolean applyValues(Song song, AiSongClassification result, boolean reviewed) {
-        boolean changed = false;
+        double classificationThreshold = configService.resolve().classificationThreshold();
+        boolean applyGender = !song.isMetadataLocked("artistGender") && validArtistGender(result.artistGender())
+                && !"未知".equals(result.artistGender())
+                && (reviewed || result.confidence() >= classificationThreshold);
+        boolean structuredProtectedLanguage = !reviewed
+                && SongMetadataWritePolicy.isProtectedField(song, "language", isFilenameMetadataPreferred());
+        boolean applyLanguage = !song.isMetadataLocked("language") && validLanguage(result.language())
+                && !structuredProtectedLanguage
+                && (reviewed || result.languageConfidence() >= classificationThreshold);
+        boolean applyVocalForm = !song.isMetadataLocked("vocalForm") && validVocalForm(result.vocalForm())
+                && (reviewed || result.vocalFormConfidence() >= classificationThreshold);
+        boolean applyIdentity = canApplyIdentity(song, result, reviewed);
+
+        // Tasks falling below auto-apply thresholds go to 'review'; never mutate
+        // managed Song entities ahead of exit or Hibernate dirty checking will persist tags.
+        if (!reviewed && !applyGender && !applyLanguage && !applyVocalForm && !applyIdentity) {
+            return false;
+        }
+
+        if (applyIdentity) {
+            String title = song.isMetadataLocked("title") ? song.getTitle() : result.title().trim();
+            String artist = song.isMetadataLocked("artist") ? song.getArtist() : result.artist().trim();
+            String fingerprint = MediaClassifier.fingerprint(artist, title, song.getDurationMs());
+            songRepository.findByFingerprint(fingerprint).filter(existing -> !existing.getId().equals(song.getId()))
+                    .ifPresent(existing -> { throw new ApiException("AI_IDENTITY_CONFLICT", "建议身份与歌曲 #" + existing.getId() + " 重复，请在审核页合并或保留独立歌曲"); });
+            if (!song.isMetadataLocked("title")) {
+                SongMetadataWritePolicy.applyTitleWithPinyin(song, title);
+            }
+            if (!song.isMetadataLocked("artist")) {
+                SongMetadataWritePolicy.applyArtistWithPinyin(song, artist);
+            }
+            song.setFingerprint(fingerprint);
+            SongMetadataWritePolicy.promoteUnrecognizedIfValid(song);
+        }
+        if (applyGender) song.setArtistGender(result.artistGender());
+        if (applyLanguage) song.setLanguage(result.language());
+        if (applyVocalForm) song.setVocalForm(result.vocalForm());
+
         song.setAiLanguage(validLanguage(result.language()) ? result.language() : "未知");
         song.setAiEra(normalize(result.era()));
         song.setAiGenres(clean(result.genres()));
@@ -124,44 +176,13 @@ public class AiClassificationApplier {
         if (!song.isMetadataLocked("tags")) {
             song.setTags(mergeTags(song.getTags(), result));
         }
-        double classificationThreshold = configService.resolve().classificationThreshold();
-        if (!song.isMetadataLocked("artistGender") && validArtistGender(result.artistGender())
-                && !"未知".equals(result.artistGender())
-                && (reviewed || result.confidence() >= classificationThreshold)) {
-            song.setArtistGender(result.artistGender());
-            changed = true;
-        }
-        if (!song.isMetadataLocked("language") && validLanguage(result.language())
-                && (reviewed || result.languageConfidence() >= classificationThreshold)) {
-            song.setLanguage(result.language());
-            changed = true;
-        }
-        if (!song.isMetadataLocked("vocalForm") && validVocalForm(result.vocalForm())
-                && (reviewed || result.vocalFormConfidence() >= classificationThreshold)) {
-            song.setVocalForm(result.vocalForm());
-            changed = true;
-        }
-        if (canApplyIdentity(song, result, reviewed)) {
-            String title = song.isMetadataLocked("title") ? song.getTitle() : result.title().trim();
-            String artist = song.isMetadataLocked("artist") ? song.getArtist() : result.artist().trim();
-            String fingerprint = MediaClassifier.fingerprint(artist, title, song.getDurationMs());
-            songRepository.findByFingerprint(fingerprint).filter(existing -> !existing.getId().equals(song.getId()))
-                    .ifPresent(existing -> { throw new ApiException("AI_IDENTITY_CONFLICT", "建议身份与歌曲 #" + existing.getId() + " 重复，请在审核页合并或保留独立歌曲"); });
-            if (!song.isMetadataLocked("title")) {
-                song.setTitle(title);
-                song.setTitlePy(PinyinUtil.fullPinyin(title));
-                song.setTitleInit(PinyinUtil.initials(title));
-            }
-            if (!song.isMetadataLocked("artist")) {
-                song.setArtist(artist);
-                song.setArtistPy(PinyinUtil.fullPinyin(artist));
-                song.setArtistInit(PinyinUtil.initials(artist));
-            }
-            song.setFingerprint(fingerprint);
-            changed = true;
-        }
         song.setNeedsAiOptimization(false);
-        return changed || reviewed;
+        return true;
+    }
+
+    private boolean isFilenameMetadataPreferred() {
+        boolean configured = appProperties != null && appProperties.isStructuredFilenameMetadataPreferred();
+        return settingService != null ? settingService.isFilenameMetadataPreferred(configured) : configured;
     }
 
     private boolean canApplyIdentity(Song song, AiSongClassification result, boolean reviewed) {

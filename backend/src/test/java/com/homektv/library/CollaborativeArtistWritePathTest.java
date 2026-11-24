@@ -17,7 +17,7 @@ import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
-import com.homektv.web.dto.SongEditRequest;
+import com.homektv.contract.SongEditRequest;
 import com.homektv.ws.WsBroadcaster;
 import org.junit.jupiter.api.Test;
 
@@ -181,6 +181,34 @@ class CollaborativeArtistWritePathTest {
         new SongReparseService(songs, files, mock(ArtistCreditService.class)).apply(List.of(8L), "artist_title");
 
         org.assertj.core.api.Assertions.assertThat(song.getCatalogNumber()).isEqualTo("8765432101");
+    }
+
+    @Test
+    void multiSongReparseSkipsFingerprintConflictInsteadOfRollingBackWholeBatch() {
+        Song first = song(11L, "旧歌名", "旧歌手");
+        Song second = song(12L, "旧歌名2", "旧歌手2");
+        Song existing = song(99L, "晴天", "周杰伦");
+        SongFile f1 = new SongFile(); f1.setSongId(11L); f1.setFilePath("/source/周杰伦-晴天-国语-流行.mkv");
+        SongFile f2 = new SongFile(); f2.setSongId(12L); f2.setFilePath("/source/林俊杰-江南-国语-流行.mkv");
+
+        SongRepository songs = mock(SongRepository.class);
+        SongFileRepository files = mock(SongFileRepository.class);
+        when(songs.findById(11L)).thenReturn(Optional.of(first));
+        when(songs.findById(12L)).thenReturn(Optional.of(second));
+        when(files.findBySongIdAndValidTrueOrderByPriorityDesc(11L)).thenReturn(List.of(f1));
+        when(files.findBySongIdAndValidTrueOrderByPriorityDesc(12L)).thenReturn(List.of(f2));
+        when(songs.findByFingerprint(MediaClassifier.fingerprint("周杰伦", "晴天", 180_000)))
+                .thenReturn(Optional.of(existing));
+        when(songs.findByFingerprint(MediaClassifier.fingerprint("林俊杰", "江南", 180_000)))
+                .thenReturn(Optional.empty());
+        when(songs.save(any(Song.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SongReparseService.ApplyResult result = new SongReparseService(songs, files, mock(ArtistCreditService.class))
+                .apply(List.of(11L, 12L), "artist_title");
+
+        org.assertj.core.api.Assertions.assertThat(result.updated()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(result.skipped()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(second.getTitle()).isEqualTo("江南");
     }
 
     @Test

@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.domain.AudioLayout;
 import com.homektv.domain.Setting;
 import com.homektv.repo.SettingRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

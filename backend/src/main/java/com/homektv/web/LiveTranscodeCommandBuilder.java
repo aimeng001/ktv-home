@@ -37,7 +37,10 @@ final class LiveTranscodeCommandBuilder {
         command.add("-loglevel");
         command.add("error");
         if (startSeconds != null && startSeconds > 0) {
-            command.add("-noaccurate_seek");
+            if (copyVideo) {
+                // -c:v copy 只能在关键帧切入，保留 -noaccurate_seek 防首帧花屏
+                command.add("-noaccurate_seek");
+            }
             command.add("-ss");
             command.add(String.format(Locale.US, "%.3f", startSeconds));
         }
@@ -46,8 +49,20 @@ final class LiveTranscodeCommandBuilder {
 
         boolean shouldMerge = mergeTracks && audioTrack == null && songFile.getAudioTracks() >= 2;
         if (shouldMerge) {
+            int trackCount = Math.max(2, songFile.getAudioTracks());
+            int origIdx = songFile.getOriginalTrackIndex() != null
+                    && songFile.getOriginalTrackIndex() >= 0
+                    && songFile.getOriginalTrackIndex() < trackCount
+                    ? songFile.getOriginalTrackIndex() : 0;
+            int accIdx = songFile.getAccompanimentTrackIndex() != null
+                    && songFile.getAccompanimentTrackIndex() >= 0
+                    && songFile.getAccompanimentTrackIndex() < trackCount
+                    ? songFile.getAccompanimentTrackIndex() : (origIdx == 0 ? 1 : 0);
+            int leftSourceTrack = (origIdx >= 2 || accIdx >= 2) ? origIdx : 0;
+            int rightSourceTrack = (origIdx >= 2 || accIdx >= 2) ? accIdx : 1;
             command.add("-filter_complex");
-            command.add("[0:a:0]aformat=sample_rates=48000:channel_layouts=mono[a0];[0:a:1]aformat=sample_rates=48000:channel_layouts=mono[a1];[a0][a1]amerge=inputs=2[aout]");
+            command.add("[0:a:" + leftSourceTrack + "]aformat=sample_rates=48000:channel_layouts=mono[a0];[0:a:"
+                    + rightSourceTrack + "]aformat=sample_rates=48000:channel_layouts=mono[a1];[a0][a1]amerge=inputs=2[aout]");
             command.add("-map");
             command.add("0:V:0?");
             command.add("-map");

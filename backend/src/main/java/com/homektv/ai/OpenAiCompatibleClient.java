@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.homektv.common.OutboundUrlGuard;
 import com.homektv.domain.MediaImportRecord;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
@@ -67,10 +68,7 @@ public class OpenAiCompatibleClient {
         this.restClientBuilder = restClientBuilder;
         this.fileRepository = fileRepository;
         this.retrySleeper = Objects.requireNonNull(retrySleeper, "retrySleeper");
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .build();
+        this.httpClient = OutboundUrlGuard.newNoRedirectHttpClient(Duration.ofSeconds(30));
     }
 
     public AiSongClassification classify(Song song, String role) {

@@ -6,7 +6,7 @@ import com.homektv.domain.AppSecret;
 import com.homektv.domain.Setting;
 import com.homektv.repo.AppSecretRepository;
 import com.homektv.repo.SettingRepository;
-import com.homektv.web.ApiException;
+import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

@@ -1,4 +1,5 @@
 package com.homektv.web;
+import com.homektv.common.ApiException;
 
 import com.homektv.config.AppProperties;
 import com.homektv.library.AdminService;
@@ -13,15 +14,13 @@ import com.homektv.library.TranscodeHardwareService;
 import com.homektv.library.SongReparseService;
 import com.homektv.library.SongMergeService;
 import com.homektv.domain.Song;
-import com.homektv.domain.MediaImportRecord;
-import com.homektv.web.dto.DashboardDto;
-import com.homektv.web.dto.AdminSongDto;
-import com.homektv.web.dto.AudioLayoutDto;
-import com.homektv.web.dto.AudioLayoutUpdateRequest;
-import com.homektv.web.dto.MediaImportRecordDto;
-import com.homektv.web.dto.SongDto;
-import com.homektv.web.dto.SongEditRequest;
-import com.homektv.web.dto.VocalReviewDto;
+import com.homektv.contract.DashboardDto;
+import com.homektv.contract.AdminSongDto;
+import com.homektv.contract.AudioLayoutDto;
+import com.homektv.contract.AudioLayoutUpdateRequest;
+import com.homektv.contract.SongDto;
+import com.homektv.contract.SongEditRequest;
+import com.homektv.contract.VocalReviewDto;
 import org.springframework.data.domain.Page;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -140,149 +139,6 @@ public class AdminScanController {
         boolean rebound = scanCoordinator != null
                 && scanCoordinator.rebindCurrentRoot();
         return Map.of("rebound", rebound);
-    }
-
-    /**
-     * 分页查询源库文件列表，支持关键词、状态、格式分析等筛选条件。
-     *
-     * Paginated query of the source library file list, with filters for keyword, status, and format analysis.
-     * @param keyword search keyword
-     * @param status import status filter
-     * @param formatAnalysis format analysis filter
-     * @param sourceDeleted whether the source has been deleted
-     * @param page page number (0-based)
-     * @param size page size
-     * @return paginated source library records
-     */
-    @GetMapping("/source-library")
-    public Map<String, Object> sourceLibrary(@RequestParam(defaultValue = "") String keyword,
-                                             @RequestParam(defaultValue = "") String status,
-                                             @RequestParam(defaultValue = "") String formatAnalysis,
-                                             @RequestParam(required = false) Boolean sourceDeleted,
-                                             @RequestParam(defaultValue = "0") int page,
-                                             @RequestParam(defaultValue = "20") int size) {
-        if (LibraryModePolicy.isExternalReadOnly(props)) {
-            return Map.of(
-                    "content", List.of(),
-                    "total", 0L,
-                    "page", page,
-                    "totalPages", 0,
-                    "libraryMode", props.getLibraryMode().name()
-            );
-        }
-        Page<MediaImportRecord> records = mediaImportService.listSourceLibrary(
-                keyword, status, formatAnalysis, sourceDeleted, page, size);
-        return Map.of(
-                "content", records.getContent().stream().map(MediaImportRecordDto::from).toList(),
-                "total", records.getTotalElements(),
-                "page", records.getNumber(),
-                "totalPages", records.getTotalPages(),
-                "libraryMode", props.getLibraryMode().name()
-        );
-    }
-
-    /**
-     * 启动源库文件的转码任务，支持指定 ID 列表或全部待转码文件。
-     *
-     * Start transcoding for source library files. Supports specific ID list or all pending files.
-     * @param request optional body containing file IDs and/or "all" flag
-     * @return transcode progress
-     */
-    @PostMapping("/source-library/transcode")
-    public MediaImportService.TranscodeProgress transcodeSourceLibrary(
-            @RequestBody(required = false) SourceLibraryRequest request) {
-        return mediaImportService.startPendingTranscode(
-                request == null ? List.of() : request.ids(),
-                request != null && request.all());
-    }
-
-    /**
-     * 获取源库转码任务的当前进度。
-     *
-     * Get current progress of the source library transcode task.
-     * @return transcode progress details
-     */
-    @GetMapping("/source-library/progress")
-    public MediaImportService.TranscodeProgress sourceLibraryProgress() {
-        return mediaImportService.getProgress();
-    }
-
-    /**
-     * 将指定文件的转码任务提升为优先处理。
-     *
-     * Prioritize the transcode task for the specified file.
-     * @param request request containing the file ID to prioritize
-     * @return priority result
-     */
-    @PostMapping("/source-library/transcode/priority")
-    public MediaImportService.PriorityResult prioritizeSourceTranscode(@RequestBody PriorityTranscodeRequest request) {
-        return mediaImportService.prioritizeTranscode(request.id());
-    }
-
-    /**
-     * 清理已导入的源文件。
-     *
-     * Clean up source files that have already been imported.
-     * @return auto cleanup result
-     */
-    @PostMapping("/source-library/cleanup")
-    public MediaImportService.AutoCleanupResult cleanupImportedSources() {
-        return mediaImportService.cleanupImportedSources();
-    }
-
-    /**
-     * 删除源库文件，支持按 ID 列表删除或按条件筛选删除。
-     *
-     * Delete source library files by ID list or by filter criteria.
-     * @param request request containing IDs or filter criteria
-     * @return deletion result
-     */
-    @DeleteMapping("/source-library")
-    public MediaImportService.DeleteSourcesResult deleteSources(@RequestBody SourceLibraryRequest request) {
-        if (!request.ids().isEmpty()) {
-            return mediaImportService.deleteSources(request.ids());
-        }
-        if (!request.all()) {
-            throw new ApiException("DELETE_FILTER_REQUIRED",
-                    "按条件删除源文件必须显式传 all=true 或提供 ids");
-        }
-        return mediaImportService.deleteSourcesByFilter(
-                request.keyword(), request.status(), request.formatAnalysis(), request.sourceDeleted());
-    }
-
-    /**
-     * 分页查询导入记录列表，支持按操作类型筛选。
-     *
-     * Paginated query of import records, with optional action filter.
-     * @param action import action filter
-     * @param page page number (0-based)
-     * @param size page size
-     * @return paginated import records
-     */
-    @GetMapping("/imports")
-    public Map<String, Object> imports(@RequestParam(defaultValue = "") String action,
-                                       @RequestParam(defaultValue = "0") int page,
-                                       @RequestParam(defaultValue = "20") int size) {
-        org.springframework.data.domain.Page<MediaImportRecord> p = mediaImportService.listRecords(action, page, size);
-        return Map.of(
-                "content", p.getContent().stream().map(MediaImportRecordDto::from).toList(),
-                "total", p.getTotalElements(),
-                "page", p.getNumber(),
-                "totalPages", p.getTotalPages()
-        );
-    }
-
-    /**
-     * 删除单个源文件记录。
-     *
-     * Delete a single source file record.
-     * @param id source record ID
-     * @return status confirmation
-     */
-    @DeleteMapping("/imports/{id}/source")
-    public Map<String, Object> deleteSource(@PathVariable Long id) {
-        mediaImportService.deleteSource(id);
-        return Map.of("status", "deleted", "id", id);
     }
 
     /**
@@ -455,58 +311,6 @@ public class AdminScanController {
     }
 
     /**
-     * 读取设置（P2.6）。
-     *
-     * Read all settings (P2.6).
-     * @return current settings map
-     */
-    @GetMapping("/settings")
-    public Map<String, Object> getSettings() {
-        return settingService.getEditable();
-    }
-
-    /**
-     * 写入设置（P2.6）。
-     *
-     * Write/update settings (P2.6).
-     * @param settings key-value settings to apply
-     * @return updated settings map
-     */
-    @PutMapping("/settings")
-    public Map<String, Object> putSettings(@RequestBody Map<String, Object> settings) {
-        if (Boolean.TRUE.equals(settings.get("transcode_hardware_acceleration"))) {
-            String codec = String.valueOf(settings.getOrDefault("transcode_video_codec",
-                    settingService.transcodePolicy().videoCodec())).toLowerCase();
-            transcodeHardwareService.requireAvailable(codec);
-        }
-        settingService.putEditable(settings);
-        libraryWatchService.reloadFromSettings();
-        return settingService.getEditable();
-    }
-
-    /**
-     * 检测转码硬件加速能力。
-     *
-     * Detect transcode hardware acceleration capabilities.
-     * @return hardware status including available codecs
-     */
-    @GetMapping("/settings/transcode-hardware")
-    public TranscodeHardwareService.HardwareStatus transcodeHardware() {
-        return transcodeHardwareService.detect();
-    }
-
-    /**
-     * 重置转码配置为默认值。
-     *
-     * Reset transcode settings to their default values.
-     * @return default transcode settings map
-     */
-    @PostMapping("/settings/transcode-defaults")
-    public Map<String, Object> resetTranscodeDefaults() {
-        return settingService.resetTranscodeDefaults();
-    }
-
-    /**
      * 预览歌曲重新解析的结果。
      *
      * Preview the result of re-parsing songs without applying changes.
@@ -544,15 +348,8 @@ public class AdminScanController {
 
     public record ReparseRequest(List<Long> songIds, String rule) {}
     public record MergeSongRequest(Long sourceSongId) {}
-    public record PriorityTranscodeRequest(Long id) {}
     public record SongIdsRequest(List<Long> ids) {
         public SongIdsRequest {
-            ids = ids == null ? List.of() : ids;
-        }
-    }
-    public record SourceLibraryRequest(List<Long> ids, boolean all, String keyword, String status,
-                                       String formatAnalysis, Boolean sourceDeleted) {
-        public SourceLibraryRequest {
             ids = ids == null ? List.of() : ids;
         }
     }
