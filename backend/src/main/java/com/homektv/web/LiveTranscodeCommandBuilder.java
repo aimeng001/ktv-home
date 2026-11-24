@@ -9,10 +9,21 @@ import java.util.Locale;
 
 /** Builds the live pipe command while keeping HTTP admission and process ownership elsewhere. */
 final class LiveTranscodeCommandBuilder {
+    static final int DEFAULT_LIVE_TRANSCODE_THREADS = 2;
+    static final int MAX_LIVE_TRANSCODE_THREADS = 4;
+    static final String DEFAULT_PROBE_SIZE = "2097152";
+    static final String DEFAULT_ANALYZE_DURATION = "1500000";
+
     private final String ffmpegPath;
+    private final int liveTranscodeThreads;
 
     LiveTranscodeCommandBuilder(String ffmpegPath) {
+        this(ffmpegPath, DEFAULT_LIVE_TRANSCODE_THREADS);
+    }
+
+    LiveTranscodeCommandBuilder(String ffmpegPath, int liveTranscodeThreads) {
         this.ffmpegPath = ffmpegPath;
+        this.liveTranscodeThreads = Math.max(1, Math.min(liveTranscodeThreads, MAX_LIVE_TRANSCODE_THREADS));
     }
 
     List<String> build(File source, SongFile songFile, Double startSeconds) {
@@ -36,6 +47,10 @@ final class LiveTranscodeCommandBuilder {
         command.add("-hide_banner");
         command.add("-loglevel");
         command.add("error");
+        command.add("-probesize");
+        command.add(DEFAULT_PROBE_SIZE);
+        command.add("-analyzeduration");
+        command.add(DEFAULT_ANALYZE_DURATION);
         if (startSeconds != null && startSeconds > 0) {
             if (copyVideo) {
                 // -c:v copy 只能在关键帧切入，保留 -noaccurate_seek 防首帧花屏
@@ -93,6 +108,8 @@ final class LiveTranscodeCommandBuilder {
         } else {
             command.add("-c:v");
             command.add("libx264");
+            command.add("-threads");
+            command.add(String.valueOf(liveTranscodeThreads));
             command.add("-preset");
             command.add("veryfast");
             command.add("-tune");

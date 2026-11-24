@@ -107,7 +107,66 @@ public class ArtistDirectoryProjectionService {
             LEFT JOIN artist_profiles p ON p.artist_key = a.artist_key
             LEFT JOIN active_iktv_artist_regions ref ON ref.artist_key = a.artist_key
             LEFT JOIN inferred_gender inferred ON inferred.artist_key = a.artist_key
+            ON CONFLICT (artist_key) DO UPDATE SET
+                name = EXCLUDED.name,
+                initial = EXCLUDED.initial,
+                gender = EXCLUDED.gender,
+                song_count = EXCLUDED.song_count,
+                reviewed = EXCLUDED.reviewed,
+                artist_kind = EXCLUDED.artist_kind,
+                avatar_path = EXCLUDED.avatar_path,
+                artist_init = EXCLUDED.artist_init,
+                artist_py = EXCLUDED.artist_py,
+                region = EXCLUDED.region,
+                updated_at = EXCLUDED.updated_at
+            WHERE (artist_directory_stats.name,
+                   artist_directory_stats.initial,
+                   artist_directory_stats.gender,
+                   artist_directory_stats.song_count,
+                   artist_directory_stats.reviewed,
+                   artist_directory_stats.artist_kind,
+                   artist_directory_stats.avatar_path,
+                   artist_directory_stats.artist_init,
+                   artist_directory_stats.artist_py,
+                   artist_directory_stats.region)
+               IS DISTINCT FROM
+                  (EXCLUDED.name,
+                   EXCLUDED.initial,
+                   EXCLUDED.gender,
+                   EXCLUDED.song_count,
+                   EXCLUDED.reviewed,
+                   EXCLUDED.artist_kind,
+                   EXCLUDED.avatar_path,
+                   EXCLUDED.artist_init,
+                   EXCLUDED.artist_py,
+                   EXCLUDED.region)
             """;
+
+    static final String PRUNE_STALE_SQL = """
+            DELETE FROM artist_directory_stats s
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM song_artists sa
+                JOIN songs sg ON sg.id = sa.song_id
+                WHERE sg.status = 'ok'
+                  AND trim(sa.artist_name) <> ''
+                  AND sa.artist_key = s.artist_key
+            )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM songs sg
+                WHERE sg.status = 'ok'
+                  AND sg.artist IS NOT NULL
+                  AND trim(sg.artist) <> ''
+                  AND NOT EXISTS (SELECT 1 FROM song_artists sa2 WHERE sa2.song_id = sg.id)
+                  AND lower(regexp_replace(trim(sg.artist), '[[:space:]]+', '', 'g')) = s.artist_key
+            )
+            """;
+
+    private static final long METADATA_CACHE_TTL_NANOS = 15_000_000_000L;
+    private volatile long readyCachedUntilNanos;
+    private volatile Boolean cachedRegionRef;
+    private volatile long regionRefCachedUntilNanos;
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate refreshTransaction;
@@ -239,13 +298,15 @@ public class ArtistDirectoryProjectionService {
     }
 
     private void refreshInternal() {
-        jdbc.update("DELETE FROM artist_directory_stats");
         jdbc.update(REFRESH_SQL);
+        jdbc.update(PRUNE_STALE_SQL);
         jdbc.update("""
                 INSERT INTO artist_directory_projection_state(projection_key, refreshed_at)
                 VALUES (?, now())
                 ON CONFLICT (projection_key) DO UPDATE SET refreshed_at = EXCLUDED.refreshed_at
                 """, ACTIVE_PROJECTION);
+        readyCachedUntilNanos = System.nanoTime() + METADATA_CACHE_TTL_NANOS;
+        regionRefCachedUntilNanos = 0L;
     }
 
     @PreDestroy
@@ -340,18 +401,34 @@ public class ArtistDirectoryProjectionService {
     }
 
     public boolean hasRegionReference() {
-        return Boolean.TRUE.equals(jdbc.queryForObject("""
+        long now = System.nanoTime();
+        Boolean cached = cachedRegionRef;
+        if (cached != null && now < regionRefCachedUntilNanos) {
+            return cached;
+        }
+        boolean active = Boolean.TRUE.equals(jdbc.queryForObject("""
                 SELECT EXISTS (SELECT 1 FROM iktv_artist_reference_snapshots WHERE status = 'ACTIVE')
                 """, Boolean.class));
+        cachedRegionRef = active;
+        regionRefCachedUntilNanos = now + METADATA_CACHE_TTL_NANOS;
+        return active;
     }
 
     private boolean isReady() {
+        long now = System.nanoTime();
+        if (now < readyCachedUntilNanos) {
+            return true;
+        }
         Boolean ready = jdbc.queryForObject("""
                 SELECT EXISTS (
                     SELECT 1 FROM artist_directory_projection_state WHERE projection_key = ?
                 )
                 """, Boolean.class, ACTIVE_PROJECTION);
-        return Boolean.TRUE.equals(ready);
+        if (Boolean.TRUE.equals(ready)) {
+            readyCachedUntilNanos = now + METADATA_CACHE_TTL_NANOS;
+            return true;
+        }
+        return false;
     }
 
     private static String normalize(String value) {

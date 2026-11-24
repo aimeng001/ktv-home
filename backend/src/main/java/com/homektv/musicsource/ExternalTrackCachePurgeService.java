@@ -1,7 +1,9 @@
 package com.homektv.musicsource;
 
+import com.homektv.resource.PlaybackPressureMonitor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -11,13 +13,22 @@ public class ExternalTrackCachePurgeService {
     private static final Logger log = LoggerFactory.getLogger(ExternalTrackCachePurgeService.class);
     private static final int PURGE_BATCH_SIZE = 5_000;
     private final JdbcTemplate jdbc;
+    private volatile PlaybackPressureMonitor playbackPressureMonitor;
 
     public ExternalTrackCachePurgeService(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
     }
 
+    @Autowired(required = false)
+    void setPlaybackPressureMonitor(PlaybackPressureMonitor playbackPressureMonitor) {
+        this.playbackPressureMonitor = playbackPressureMonitor;
+    }
+
     @Scheduled(fixedDelayString = "${home-ktv.metadata-cache.purge-delay-ms:3600000}")
     public PurgeResult purgeExpired() {
+        if (playbackPressureMonitor != null && playbackPressureMonitor.isPlaybackBusy()) {
+            return new PurgeResult(0, 0);
+        }
         purgeExpiredSuggestedMatches();
         int searchCacheRows = deleteInBatches("""
                 DELETE FROM music_source_search_cache

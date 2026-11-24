@@ -1,8 +1,10 @@
 package com.homektv.library;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homektv.resource.PlaybackPressureMonitor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -16,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.sql.Array;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -39,12 +42,19 @@ public class AssetCleanupService {
     private static final Duration ORPHAN_GRACE = Duration.ofHours(1);
     private static final List<String> APPLICATION_ASSET_DIRECTORIES = List.of(
             "covers", "lyrics", "artist-covers", "playlist-covers", "standby");
-    static final int SWEEP_BATCH_SIZE = 256;
+    static final int SWEEP_BATCH_SIZE = 1024;
 
     private final JdbcTemplate jdbc;
     private final AssetWriter assetWriter;
     private final ObjectMapper mapper;
+    private volatile PlaybackPressureMonitor playbackPressureMonitor;
 
+    @Autowired(required = false)
+    void setPlaybackPressureMonitor(PlaybackPressureMonitor playbackPressureMonitor) {
+        this.playbackPressureMonitor = playbackPressureMonitor;
+    }
+
+    @Autowired
     public AssetCleanupService(JdbcTemplate jdbc, AssetWriter assetWriter, ObjectMapper mapper) {
         this.jdbc = jdbc;
         this.assetWriter = assetWriter;
@@ -88,13 +98,10 @@ public class AssetCleanupService {
             return 0;
         }
         Instant cutoff = Instant.now().minus(ORPHAN_GRACE);
-        List<String> candidates = collectExpiredCandidates(cutoff);
-        if (candidates.isEmpty()) return 0;
 
         List<String> toDelete;
         try {
-            toDelete = jdbc.execute((ConnectionCallback<List<String>>) connection ->
-                    findUnreferencedInTransaction(connection, candidates));
+            toDelete = streamAndFindUnreferenced(cutoff);
         } catch (RuntimeException failure) {
             log.error("资产引用快照或孤儿清理失败", failure);
             return 0;
@@ -109,28 +116,67 @@ public class AssetCleanupService {
         return deleted;
     }
 
-    private List<String> collectExpiredCandidates(Instant cutoff) {
-        List<String> candidates = new ArrayList<>();
+    private List<String> streamAndFindUnreferenced(Instant cutoff) {
+        List<String> batch = new ArrayList<>(SWEEP_BATCH_SIZE);
+        List<String> firstBatch = new ArrayList<>(SWEEP_BATCH_SIZE);
         Path dataRoot = assetWriter.dataRootForCleanup();
-        for (String directory : APPLICATION_ASSET_DIRECTORIES) {
-            Path root = dataRoot.resolve(directory).normalize();
-            if (Files.isSymbolicLink(root) || !Files.isDirectory(root)) continue;
-            try (Stream<Path> paths = Files.walk(root)) {
-                Iterator<Path> iterator = paths.iterator();
-                while (iterator.hasNext()) {
-                    Path path = iterator.next();
-                    if (!isOldRegularFile(path, cutoff)) continue;
-                    candidates.add(dataRoot.relativize(path).toString()
-                            .replace(path.getFileSystem().getSeparator(), "/"));
+        List<Stream<Path>> walkStreams = new ArrayList<>();
+        try {
+            for (String directory : APPLICATION_ASSET_DIRECTORIES) {
+                Path root = dataRoot.resolve(directory).normalize();
+                if (Files.isSymbolicLink(root) || !Files.isDirectory(root)) continue;
+                try {
+                    Stream<Path> walk = Files.walk(root);
+                    walkStreams.add(walk);
+                } catch (IOException | UncheckedIOException failure) {
+                    log.warn("应用资产孤儿扫描失败：{} - {}", root, failure.getMessage());
                 }
-            } catch (IOException | UncheckedIOException failure) {
-                log.warn("应用资产孤儿扫描失败：{} - {}", root, failure.getMessage());
+            }
+            if (walkStreams.isEmpty()) return List.of();
+            Iterator<Path> combined = new Iterator<>() {
+                private int idx = 0;
+                private Iterator<Path> current = walkStreams.get(0).iterator();
+
+                @Override
+                public boolean hasNext() {
+                    while (!current.hasNext()) {
+                        idx++;
+                        if (idx >= walkStreams.size()) return false;
+                        current = walkStreams.get(idx).iterator();
+                    }
+                    return true;
+                }
+
+                @Override
+                public Path next() {
+                    return current.next();
+                }
+            };
+            while (firstBatch.size() < SWEEP_BATCH_SIZE && combined.hasNext()) {
+                Path path = combined.next();
+                if (!isOldRegularFile(path, cutoff)) continue;
+                firstBatch.add(dataRoot.relativize(path).toString()
+                        .replace(path.getFileSystem().getSeparator(), "/"));
+            }
+            if (firstBatch.isEmpty()) {
+                return List.of();
+            }
+            return jdbc.execute((ConnectionCallback<List<String>>) connection ->
+                    findUnreferencedStreamingInTransaction(connection, firstBatch, combined, batch, dataRoot, cutoff));
+        } finally {
+            for (Stream<Path> s : walkStreams) {
+                try { s.close(); } catch (RuntimeException ignored) {}
             }
         }
-        return candidates;
     }
 
-    private List<String> findUnreferencedInTransaction(Connection connection, List<String> candidates) throws SQLException {
+    private List<String> findUnreferencedStreamingInTransaction(
+            Connection connection,
+            List<String> firstBatch,
+            Iterator<Path> remainingPaths,
+            List<String> batchBuffer,
+            Path dataRoot,
+            Instant cutoff) throws SQLException {
         // This task owns its temp-table DDL; never run it inside a caller's transaction.
         if (!connection.getAutoCommit()) {
             throw new IllegalStateException("孤儿资产清理必须在独立事务中运行");
@@ -141,9 +187,21 @@ public class AssetCleanupService {
         connection.setAutoCommit(false);
         try {
             createTemporaryReferenceSnapshot(connection, temporaryTable);
-            for (int start = 0; start < candidates.size(); start += SWEEP_BATCH_SIZE) {
-                List<String> batch = candidates.subList(start, Math.min(candidates.size(), start + SWEEP_BATCH_SIZE));
-                unreferenced.addAll(filterUnreferencedBatch(connection, temporaryTable, batch));
+            unreferenced.addAll(filterUnreferencedBatch(connection, temporaryTable, firstBatch));
+            batchBuffer.clear();
+            while (remainingPaths.hasNext()) {
+                Path path = remainingPaths.next();
+                if (!isOldRegularFile(path, cutoff)) continue;
+                batchBuffer.add(dataRoot.relativize(path).toString()
+                        .replace(path.getFileSystem().getSeparator(), "/"));
+                if (batchBuffer.size() >= SWEEP_BATCH_SIZE) {
+                    unreferenced.addAll(filterUnreferencedBatch(connection, temporaryTable, batchBuffer));
+                    batchBuffer.clear();
+                }
+            }
+            if (!batchBuffer.isEmpty()) {
+                unreferenced.addAll(filterUnreferencedBatch(connection, temporaryTable, batchBuffer));
+                batchBuffer.clear();
             }
             try (Statement statement = connection.createStatement()) {
                 statement.execute("DROP TABLE " + temporaryTable);
@@ -220,15 +278,28 @@ public class AssetCleanupService {
 
     private List<String> filterUnreferencedBatch(Connection connection, String temporaryTable,
                                                  List<String> candidates) throws SQLException {
-        String placeholders = String.join(",", Collections.nCopies(candidates.size(), "?"));
         Set<String> referenced = new HashSet<>();
-        try (PreparedStatement statement = connection.prepareStatement(
-                "SELECT path FROM " + temporaryTable + " WHERE path IN (" + placeholders + ")")) {
-            for (int index = 0; index < candidates.size(); index++) {
-                statement.setString(index + 1, candidates.get(index));
+        if (isPostgreSql(connection)) {
+            Array array = connection.createArrayOf("text", candidates.toArray(new String[0]));
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT path FROM " + temporaryTable + " WHERE path = ANY(?)")) {
+                statement.setArray(1, array);
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) referenced.add(rows.getString(1));
+                }
+            } finally {
+                array.free();
             }
-            try (ResultSet rows = statement.executeQuery()) {
-                while (rows.next()) referenced.add(rows.getString(1));
+        } else {
+            String placeholders = String.join(",", Collections.nCopies(candidates.size(), "?"));
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT path FROM " + temporaryTable + " WHERE path IN (" + placeholders + ")")) {
+                for (int index = 0; index < candidates.size(); index++) {
+                    statement.setString(index + 1, candidates.get(index));
+                }
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) referenced.add(rows.getString(1));
+                }
             }
         }
 
@@ -239,8 +310,20 @@ public class AssetCleanupService {
         return unreferenced;
     }
 
-    @Scheduled(fixedDelayString = "${home-ktv.asset-cleanup.interval-ms:3600000}")
+    private static boolean isPostgreSql(Connection connection) {
+        try {
+            String product = connection.getMetaData().getDatabaseProductName();
+            return product != null && product.toLowerCase(java.util.Locale.ROOT).contains("postgresql");
+        } catch (SQLException ignored) {
+            return false;
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${home-ktv.asset-cleanup.interval-ms:21600000}")
     public void scheduledSweep() {
+        if (playbackPressureMonitor != null && playbackPressureMonitor.isPlaybackBusy()) {
+            return;
+        }
         sweepOrphans();
     }
 

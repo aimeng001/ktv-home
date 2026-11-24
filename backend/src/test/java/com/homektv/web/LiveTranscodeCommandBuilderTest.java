@@ -162,4 +162,23 @@ class LiveTranscodeCommandBuilderTest {
         assertThat(command).containsSubsequence("-c:v", "copy", "-c:a", "aac");
         assertThat(command).doesNotContain("-c:a copy");
     }
+
+    @Test
+    void capsLiveSoftTranscodeThreadsAndAddsProbeLimitsBeforeInput() {
+        File source = temp.resolve("legacy.rmvb").toFile();
+        SongFile song = new SongFile();
+
+        List<String> defaultCmd = builder.build(source, song, null, null, false, false, false);
+        assertThat(defaultCmd).containsSubsequence(
+                "-probesize", LiveTranscodeCommandBuilder.DEFAULT_PROBE_SIZE,
+                "-analyzeduration", LiveTranscodeCommandBuilder.DEFAULT_ANALYZE_DURATION,
+                "-i", source.getAbsolutePath());
+        assertThat(defaultCmd).containsSubsequence("-c:v", "libx264", "-threads", "2");
+
+        LiveTranscodeCommandBuilder clampedHigh = new LiveTranscodeCommandBuilder("ffmpeg-test", 16);
+        assertThat(clampedHigh.build(source, song, null)).containsSubsequence("-c:v", "libx264", "-threads", "4");
+
+        LiveTranscodeCommandBuilder clampedLow = new LiveTranscodeCommandBuilder("ffmpeg-test", 0);
+        assertThat(clampedLow.build(source, song, null)).containsSubsequence("-c:v", "libx264", "-threads", "1");
+    }
 }

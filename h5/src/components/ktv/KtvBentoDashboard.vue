@@ -38,6 +38,7 @@ function tileArtwork(tile) {
 
 onMounted(() => {
   carouselTimer = setInterval(() => {
+    if (typeof document !== 'undefined' && document.hidden) return
     carouselIndex.value = (carouselIndex.value + 1) % 3
   }, 10000)
 })

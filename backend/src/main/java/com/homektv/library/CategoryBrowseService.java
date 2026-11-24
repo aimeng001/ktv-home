@@ -29,6 +29,12 @@ public class CategoryBrowseService {
     private final SongRepository songRepository;
     private final SongAvailabilityPolicy availabilityPolicy;
     private final ArtistDirectoryProjectionService artistDirectoryProjection;
+    private CategorySongBrowseRepository dynamicBrowseRepository;
+
+    @Autowired(required = false)
+    void setDynamicBrowseRepository(CategorySongBrowseRepository dynamicBrowseRepository) {
+        this.dynamicBrowseRepository = dynamicBrowseRepository;
+    }
     public CategoryBrowseService(SongRepository songRepository) {
         this(songRepository, null, null);
     }
@@ -199,6 +205,12 @@ public class CategoryBrowseService {
 
     public List<SongDto> songs(String artist, String artistGender, String language, String tag, String vocalForm, String sort, int limit) {
         int safeLimit = Math.max(1, Math.min(limit, 200));
+        if (dynamicBrowseRepository != null) {
+            CategorySongBrowseRepository.BrowseResult result = dynamicBrowseRepository.browse(
+                    new CategorySongBrowseRepository.BrowseCriteria(
+                            artist, "", artistGender, language, tag, vocalForm, "", "", 0, sort, 0, safeLimit));
+            return toSongDtos(result.songs());
+        }
         Sort sortOrder = songSort(sort);
         Page<Song> page = songRepository.browseCategorySongs(
                 normalize(artist), normalize(artistGender), normalize(language),
@@ -249,6 +261,13 @@ public class CategoryBrowseService {
         int safeWordCount = wordCount == null ? 0 : wordCount;
         if (!SUPPORTED_MEDIA_TYPES.contains(safeMediaType)) {
             throw new com.homektv.common.ApiException("INVALID_MEDIA_TYPE", "媒体格式筛选值无效");
+        }
+        if (dynamicBrowseRepository != null) {
+            CategorySongBrowseRepository.BrowseResult result = dynamicBrowseRepository.browse(
+                    new CategorySongBrowseRepository.BrowseCriteria(
+                            artist, normalizedKey, artistGender, language, tag, vocalForm,
+                            keyword, safeMediaType, safeWordCount, sort, safePage, safeSize));
+            return new SongPage(toSongDtos(result.songs()), result.total(), safePage, safeSize);
         }
         Page<Song> rows;
         if (safeMediaType.isEmpty()) {

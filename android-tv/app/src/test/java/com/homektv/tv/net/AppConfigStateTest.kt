@@ -418,6 +418,32 @@ class AppConfigStateTest {
             }
         }
     }
+
+    @Test
+    fun credentialStoreCachesSecretKeyAndDecryptedValueInMemory() {
+        val context = InMemoryContext()
+        val keyBytes = ByteArray(16) { (it + 1).toByte() }
+        val secretKey = javax.crypto.spec.SecretKeySpec(keyBytes, "AES")
+        var keyCalls = 0
+        val store = CredentialStore(
+            context,
+            CredentialKeyProvider {
+                keyCalls++
+                secretKey
+            },
+        )
+        val server = SavedServer("nas-cache:8080", "NAS Cache")
+        store.write("cached-secret", server)
+        assertEquals(1, keyCalls)
+
+        assertEquals("cached-secret", store.read(server))
+        assertEquals("cached-secret", store.read(server))
+        assertEquals(1, keyCalls)
+
+        store.clear(server)
+        assertEquals("", store.read(server))
+        assertEquals(1, keyCalls)
+    }
 }
 
 private class InMemoryContext : ContextWrapper(null) {

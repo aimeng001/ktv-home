@@ -19,6 +19,7 @@ public final class ArtistCreditParser {
     private static final Pattern COLLABORATOR_SEPARATOR = Pattern.compile(
             "\\s*(?:_|、|&|＆|/|／|,|，|;|；|×|✕|(?<!\\+)\\+(?!\\+)|(?<!\\uFF0B)\\uFF0B(?!\\uFF0B))\\s*"
                     + "|\\s+(?i:feat\\.?|ft\\.?|featuring|vs\\.?)\\s+");
+    private static final Pattern WHITESPACE_PATTERN = Pattern.compile("\\s+");
 
     private ArtistCreditParser() {}
 
@@ -44,7 +45,7 @@ public final class ArtistCreditParser {
                 ? pre.getLookup()
                 : new KnownArtistsLookup(knownArtists);
 
-        List<String> explicit = List.of(trimmed.split(COLLABORATOR_SEPARATOR.pattern(), -1));
+        List<String> explicit = List.of(COLLABORATOR_SEPARATOR.split(trimmed, -1));
         if (explicit.size() <= 1) {
             String exact = lookup.findExact(trimmed);
             if (exact != null) return List.of(exact);
@@ -183,18 +184,29 @@ public final class ArtistCreditParser {
 
     private static List<String> splitByKnownArtists(String artistCredit,
                                                     KnownArtistsLookup lookup) {
-        if (artistCredit == null || !artistCredit.trim().matches(".*\\s+.*")
-                || lookup == null || lookup.isEmpty()) return null;
+        if (artistCredit == null || lookup == null || lookup.isEmpty()) return null;
+        String trimmed = artistCredit.trim();
+        if (!containsWhitespace(trimmed)) return null;
 
         Map<String, String> known = lookup.map();
         String exact = lookup.findExact(artistCredit);
         if (exact != null) return List.of(exact);
 
-        List<String> tokens = Arrays.stream(artistCredit.trim().split("\\s+"))
-                .filter(token -> !token.isBlank()).toList();
+        String[] rawTokens = WHITESPACE_PATTERN.split(trimmed);
+        List<String> tokens = new ArrayList<>(rawTokens.length);
+        for (String token : rawTokens) {
+            if (!token.isBlank()) tokens.add(token);
+        }
         Map<Integer, List<String>> memo = new HashMap<>();
         List<String> matched = coverTokens(tokens, 0, known, memo);
         return matched == null || matched.size() < 2 ? null : matched;
+    }
+
+    private static boolean containsWhitespace(String s) {
+        for (int i = 0, len = s.length(); i < len; i++) {
+            if (Character.isWhitespace(s.charAt(i))) return true;
+        }
+        return false;
     }
 
     private static List<String> coverTokens(List<String> tokens, int from,
@@ -234,7 +246,22 @@ public final class ArtistCreditParser {
     }
 
     public static String key(String artistName) {
-        return artistName == null ? ""
-                : artistName.trim().replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
+        if (artistName == null || artistName.isEmpty()) return "";
+        int len = artistName.length();
+        StringBuilder sb = new StringBuilder(len);
+        boolean allAscii = true;
+        for (int i = 0; i < len; i++) {
+            char c = artistName.charAt(i);
+            // Match regex \s semantics (\s covers ASCII whitespace + Java regex whitespace) and Unicode whitespace.
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == 0x0B || Character.isWhitespace(c)) {
+                continue;
+            }
+            if (c >= 128) {
+                allAscii = false;
+            }
+            sb.append(c >= 'A' && c <= 'Z' ? (char) (c + 32) : c);
+        }
+        String compact = sb.toString();
+        return allAscii ? compact : compact.toLowerCase(Locale.ROOT);
     }
 }

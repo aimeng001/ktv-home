@@ -111,6 +111,10 @@ class ControllerViewModel(
         registerUser()
     }
 
+    fun clearSearchCache() {
+        searchCache.clear()
+    }
+
     /** Starts/ends catalog status polling with the owning screen lifecycle. */
     override fun setCatalogVisible(visible: Boolean) {
         catalogVisible = visible

@@ -154,12 +154,13 @@ class KtvWebSocketHandlerTest {
         when(playbackService.updatePosition(21L, -4L))
                 .thenReturn(PositionUpdateResult.accepted(new com.homektv.domain.PlayerState()));
 
-        handler.handleTextMessage(activeLegacySession(), new TextMessage(
+        WebSocketSession session = activeLegacySession();
+        handler.handleTextMessage(session, new TextMessage(
                 "{\"type\":\"progress\",\"payload\":{\"queue_id\":21,\"position_ms\":-4}}"));
 
         verify(playbackService).updatePosition(21L, -4L);
         var event = org.mockito.ArgumentCaptor.forClass(WsEvent.class);
-        verify(broadcaster).broadcastPlayback(event.capture());
+        verify(broadcaster).broadcastPlaybackExcept(org.mockito.ArgumentMatchers.eq(session.getId()), event.capture());
         assertThat(event.getValue().type()).isEqualTo(WsEvent.PROGRESS);
         assertThat(event.getValue().payload()).isInstanceOf(Map.class);
         Map<?, ?> payload = (Map<?, ?>) event.getValue().payload();
@@ -189,6 +190,7 @@ class KtvWebSocketHandlerTest {
                 "{\"type\":\"progress\",\"payload\":{\"queue_id\":21,\"position_ms\":500}}"));
 
         verify(broadcaster, org.mockito.Mockito.never()).broadcastPlayback(any(WsEvent.class));
+        verify(broadcaster, org.mockito.Mockito.never()).broadcastPlaybackExcept(any(), any(WsEvent.class));
     }
 
     @Test

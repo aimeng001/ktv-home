@@ -251,7 +251,7 @@ defineExpose({ triggerEffect })
 
 .banner-pop-enter-active,
 .banner-pop-leave-active {
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
 }
 
 .banner-pop-enter-from {

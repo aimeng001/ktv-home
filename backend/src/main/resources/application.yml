@@ -22,6 +22,11 @@ spring:
     properties:
       hibernate:
         format_sql: false
+        jdbc:
+          batch_size: 100
+          batch_versioned_data: true
+        order_inserts: true
+        order_updates: true
   flyway:
     enabled: true
     baseline-on-migrate: true
@@ -34,6 +39,10 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  compression:
+    enabled: true
+    min-response-size: 1024
+    mime-types: application/json,text/html,text/css,text/javascript,application/javascript,text/plain,image/svg+xml
 
 build:
   git-sha: ${KTV_BUILD_GIT_SHA:${BUILD_GIT_SHA:unknown}}
@@ -83,6 +92,7 @@ app:
   ffprobe-path: ${KTV_FFPROBE_PATH:ffprobe}
   transcode:
     ffmpeg-path: ${KTV_FFMPEG_PATH:ffmpeg}
+    live-threads: ${KTV_LIVE_TRANSCODE_THREADS:2}
     timeout-seconds: ${KTV_TRANSCODE_TIMEOUT_SECONDS:1800}
     dri-path: ${KTV_DRI_PATH:/dev/dri}
     drm-sys-path: ${KTV_DRM_SYS_PATH:/sys/class/drm}

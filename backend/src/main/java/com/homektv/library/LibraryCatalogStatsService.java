@@ -24,21 +24,27 @@ public class LibraryCatalogStatsService {
     static final String ACTIVE_LIBRARY_KEY = LibraryScanStateStore.ACTIVE_LIBRARY_KEY;
 
     static final String REFRESH_SQL = """
+            WITH active_role_agg AS (
+                SELECT COUNT(DISTINCT s.id) AS indexed_songs,
+                       COUNT(DISTINCT s.id) FILTER (
+                           WHERE f.probe_pending = FALSE
+                             AND f.media_type IS NOT NULL
+                             AND TRIM(f.media_type) <> ''
+                             AND LOWER(TRIM(f.media_type)) <> 'pending_probe'
+                       ) AS ready_songs
+                  FROM songs s
+                  JOIN song_files f ON f.song_id = s.id
+                 WHERE s.status = 'ok'
+                   AND f.file_role = ?
+                   AND f.valid = TRUE
+            )
             INSERT INTO library_catalog_stats(
                 library_key, total_songs, indexed_songs, ready_songs,
                 probe_pending_files, refreshed_at)
             SELECT ?,
                    (SELECT COUNT(*) FROM songs),
-                   (SELECT COUNT(DISTINCT s.id)
-                      FROM songs s JOIN song_files f ON f.song_id = s.id
-                     WHERE s.status = 'ok' AND f.file_role = ? AND f.valid = TRUE),
-                   (SELECT COUNT(DISTINCT s.id)
-                      FROM songs s JOIN song_files f ON f.song_id = s.id
-                     WHERE s.status = 'ok' AND f.file_role = ? AND f.valid = TRUE
-                       AND f.probe_pending = FALSE
-                       AND f.media_type IS NOT NULL
-                       AND TRIM(f.media_type) <> ''
-                       AND LOWER(TRIM(f.media_type)) <> 'pending_probe'),
+                   COALESCE((SELECT indexed_songs FROM active_role_agg), 0),
+                   COALESCE((SELECT ready_songs FROM active_role_agg), 0),
                    (SELECT COUNT(*) FROM song_files f
                      WHERE f.file_role = ? AND f.probe_pending = TRUE),
                    CURRENT_TIMESTAMP
@@ -52,6 +58,9 @@ public class LibraryCatalogStatsService {
 
     private final JdbcTemplate jdbc;
     private final AppProperties props;
+    private volatile com.homektv.resource.PlaybackPressureMonitor playbackPressureMonitor;
+    private volatile long lastRefreshNanos;
+    private static final long BUSY_REFRESH_COOLDOWN_NANOS = 5_000_000_000L;
     private final ExecutorService refreshExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "library-catalog-stats-refresh");
         thread.setDaemon(true);
@@ -65,6 +74,11 @@ public class LibraryCatalogStatsService {
         this.props = props;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setPlaybackPressureMonitor(com.homektv.resource.PlaybackPressureMonitor playbackPressureMonitor) {
+        this.playbackPressureMonitor = playbackPressureMonitor;
+    }
+
     /** Coalesces scan/admin revisions so one request wave performs one counter pass. */
     public void requestRefresh() {
         refreshRequested.set(true);
@@ -73,6 +87,11 @@ public class LibraryCatalogStatsService {
             refreshExecutor.execute(() -> {
                 try {
                     refreshRequested.set(false);
+                    if (playbackPressureMonitor != null && playbackPressureMonitor.isPlaybackBusy()
+                            && lastRefreshNanos > 0
+                            && (System.nanoTime() - lastRefreshNanos) < BUSY_REFRESH_COOLDOWN_NANOS) {
+                        return;
+                    }
                     refresh();
                 } catch (RuntimeException failure) {
                     log.warn("library catalog counters refresh failed: {}", failure.getMessage());
@@ -95,7 +114,8 @@ public class LibraryCatalogStatsService {
     public void refresh() {
         String role = LibraryModePolicy.isExternalReadOnly(props)
                 ? LibraryModePolicy.EXTERNAL_FILE_ROLE : "LIBRARY";
-        jdbc.update(REFRESH_SQL, ACTIVE_LIBRARY_KEY, role, role, role);
+        jdbc.update(REFRESH_SQL, role, ACTIVE_LIBRARY_KEY, role);
+        lastRefreshNanos = System.nanoTime();
     }
 
     public Optional<Stats> find() {

@@ -80,6 +80,7 @@ class KtvKioskOverlayController(
     initialExternalDisplayActive: Boolean = false,
     private val globalSearchEnabled: () -> Boolean = { true },
     private val onRequestExitConfirm: (hasPlaying: Boolean) -> Unit = {},
+    sharedAvatarCache: WeightedLruCache<String, android.graphics.Bitmap>? = null,
 ) {
 
     private val ActivityMainBinding.kioskOverlay: ViewKtvKioskOverlayBinding
@@ -117,11 +118,13 @@ class KtvKioskOverlayController(
         onBottomRowDown = ::focusPaginationBarFromSongGrid,
         onShowActions = ::showSongActionsDialog,
     )
-    private val singerAvatarCache = WeightedLruCache<String, android.graphics.Bitmap>(
-        capacity = 128,
-        maxBytes = 16L * 1024L * 1024L,
-        weight = { it.allocationByteCount.toLong() },
-    )
+    private val singerAvatarCache: WeightedLruCache<String, android.graphics.Bitmap> =
+        sharedAvatarCache ?: WeightedLruCache<String, android.graphics.Bitmap>(
+            capacity = 128,
+            maxBytes = 16L * 1024L * 1024L,
+            weight = { it.allocationByteCount.toLong() },
+        )
+    private val avatarLoadSemaphore = kotlinx.coroutines.sync.Semaphore(permits = 4)
     private val pendingAvatarCallbacks = mutableMapOf<String, MutableList<(android.graphics.Bitmap?) -> Unit>>()
 
     private val singerAdapter = SingerCardAdapter(
@@ -179,67 +182,11 @@ class KtvKioskOverlayController(
 
     private fun setupViews() {
         val overlay = binding.kioskOverlay
-        browserBinding = ViewKtvThreeColumnBrowserBinding.inflate(
-            LayoutInflater.from(activity),
-            overlay.kioskMainContent,
-            false,
-        )
-        browserBinding.root.visibility = View.GONE
-        overlay.kioskMainContent.addView(
-            browserBinding.root,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
-        )
 
         // 1. 列表布局绑定
         overlay.singerRecyclerView.layoutManager = LinearLayoutManager(activity)
         overlay.singerRecyclerView.adapter = singerAdapter
         overlay.singerRecyclerView.itemAnimator = null
-
-        browserBinding.browserResultsRecyclerView.layoutManager = object : GridLayoutManager(
-            activity,
-            KioskSongGridPaginationPolicy.COLUMNS,
-        ) {
-            override fun canScrollVertically(): Boolean = false
-        }
-        browserBinding.browserResultsRecyclerView.adapter = browserSongAdapter
-        browserBinding.browserResultsRecyclerView.itemAnimator = null
-        browserBinding.browserSingerRecyclerView.layoutManager = GridLayoutManager(activity, 8)
-        browserBinding.browserSingerRecyclerView.adapter = singerAdapter
-        browserBinding.browserSingerRecyclerView.itemAnimator = null
-        bindCommercialCapsuleDpadNavigation()
-        installPaging(browserBinding.browserSingerRecyclerView) {
-            catalogActions.loadMoreCatalog()
-        }
-        reparentView(overlay.kioskKeyboard, browserBinding.browserKeyboardContainer)
-        reparentView(overlay.singerRecyclerView, browserBinding.browserSingerListContainer)
-        val browserSingerFilters = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        moveIntoLinearLayout(
-            overlay.singerFilterRow,
-            browserSingerFilters,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
-        )
-        moveIntoLinearLayout(
-            overlay.txtSingerStatus,
-            browserSingerFilters,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
-        )
-        moveIntoLinearLayout(
-            overlay.btnSingerRetry,
-            browserSingerFilters,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT),
-        )
-        browserBinding.browserSingerFilterContainer.addView(
-            browserSingerFilters,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ),
-        )
 
         val singerFilters = KtvSingerFilterPolicy.filters
         overlay.btnSingerAll.setOnClickListener { loadSingerGender(singerFilters[0].gender) }
@@ -292,6 +239,131 @@ class KtvKioskOverlayController(
                 com.homektv.tv.ui.kiosk.KtvDashboardTile.FAVORITES -> openCommercialRoute(KioskCommercialRoute.FAVORITES)
             }
         }
+
+        // 3. 软键盘绑定
+        overlay.kioskKeyboard.onKeywordChanged = { keyword ->
+            coordinator.resetIdleTimer()
+            focusController.hasInputText = keyword.isNotEmpty()
+            onKeywordInput(keyword)
+        }
+        overlay.kioskKeyboard.onImeRequest = {
+            coordinator.resetIdleTimer()
+            coordinator.setModalActive(true)
+            val imm = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as? android.view.inputmethod.InputMethodManager
+            val inputView = android.widget.EditText(activity).apply {
+                setText(overlay.kioskKeyboard.state.currentKeyword)
+                setSelection(text.length)
+                hint = "输入首字母或歌曲名"
+                setTextColor(android.graphics.Color.WHITE)
+                setHintTextColor(0xFFA8B3C5.toInt())
+                setSingleLine(true)
+                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            }
+            val dialog = androidx.appcompat.app.AlertDialog.Builder(activity, R.style.Theme_HomeKtvTv_UpdateDialog)
+                .setTitle("切换系统输入法")
+                .setView(inputView)
+                .setPositiveButton("确定") { _, _ ->
+                    val text = inputView.text.toString().trim()
+                    overlay.kioskKeyboard.setKeyword(text)
+                }
+                .setNegativeButton("取消", null)
+                .create()
+            inputView.setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+                    actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                ) {
+                    overlay.kioskKeyboard.setKeyword(inputView.text.toString().trim())
+                    dialog.dismiss()
+                    true
+                } else {
+                    false
+                }
+            }
+            dialog.window?.setSoftInputMode(
+                android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE,
+            )
+            dialog.setOnShowListener {
+                inputView.post {
+                    inputView.requestRemoteFocus()
+                    imm?.showSoftInput(inputView, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                }
+            }
+            val cleanup = {
+                imm?.hideSoftInputFromWindow(inputView.windowToken, 0)
+                coordinator.setModalActive(false)
+                overlay.kioskKeyboard.restoreModeBeforeSystemIme()
+                overlay.kioskKeyboard.post { overlay.kioskKeyboard.requestRemoteFocus() }
+            }
+            val hostActivity = activity as? MainActivity
+            if (hostActivity != null) {
+                hostActivity.showTrackedAlertDialog(dialog) { cleanup() }
+            } else {
+                dialog.setOnDismissListener { cleanup() }
+                dialog.show()
+            }
+        }
+    }
+
+    private fun ensureBrowserBinding(): ViewKtvThreeColumnBrowserBinding {
+        if (::browserBinding.isInitialized) return browserBinding
+        val overlay = binding.kioskOverlay
+        browserBinding = ViewKtvThreeColumnBrowserBinding.inflate(
+            LayoutInflater.from(activity),
+            overlay.kioskMainContent,
+            false,
+        )
+        browserBinding.root.visibility = View.GONE
+        overlay.kioskMainContent.addView(
+            browserBinding.root,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+
+        browserBinding.browserResultsRecyclerView.layoutManager = object : GridLayoutManager(
+            activity,
+            KioskSongGridPaginationPolicy.COLUMNS,
+        ) {
+            override fun canScrollVertically(): Boolean = false
+        }
+        browserBinding.browserResultsRecyclerView.adapter = browserSongAdapter
+        browserBinding.browserResultsRecyclerView.itemAnimator = null
+        browserBinding.browserSingerRecyclerView.layoutManager = GridLayoutManager(activity, 8)
+        browserBinding.browserSingerRecyclerView.adapter = singerAdapter
+        browserBinding.browserSingerRecyclerView.itemAnimator = null
+        bindCommercialCapsuleDpadNavigation()
+        installPaging(browserBinding.browserSingerRecyclerView) {
+            catalogActions.loadMoreCatalog()
+        }
+        reparentView(overlay.kioskKeyboard, browserBinding.browserKeyboardContainer)
+        reparentView(overlay.singerRecyclerView, browserBinding.browserSingerListContainer)
+        val browserSingerFilters = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        moveIntoLinearLayout(
+            overlay.singerFilterRow,
+            browserSingerFilters,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        moveIntoLinearLayout(
+            overlay.txtSingerStatus,
+            browserSingerFilters,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        moveIntoLinearLayout(
+            overlay.btnSingerRetry,
+            browserSingerFilters,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        browserBinding.browserSingerFilterContainer.addView(
+            browserSingerFilters,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
 
         browserBinding.browserNavHome.setOnClickListener {
             openDashboardHome()
@@ -372,70 +444,7 @@ class KtvKioskOverlayController(
         browserBinding.varietyMad.setOnClickListener { selectVarietyProgram("我为歌狂") }
         browserBinding.varietyStar.setOnClickListener { selectVarietyProgram("全能星战") }
         browserBinding.varietySong.setOnClickListener { selectVarietyProgram("中国好歌曲") }
-
-        // 3. 软键盘绑定
-        overlay.kioskKeyboard.onKeywordChanged = { keyword ->
-            coordinator.resetIdleTimer()
-            focusController.hasInputText = keyword.isNotEmpty()
-            onKeywordInput(keyword)
-        }
-        overlay.kioskKeyboard.onImeRequest = {
-            coordinator.resetIdleTimer()
-            coordinator.setModalActive(true)
-            val imm = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                as? android.view.inputmethod.InputMethodManager
-            val inputView = android.widget.EditText(activity).apply {
-                setText(overlay.kioskKeyboard.state.currentKeyword)
-                setSelection(text.length)
-                hint = "输入首字母或歌曲名"
-                setTextColor(android.graphics.Color.WHITE)
-                setHintTextColor(0xFFA8B3C5.toInt())
-                setSingleLine(true)
-                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
-            }
-            val dialog = androidx.appcompat.app.AlertDialog.Builder(activity, R.style.Theme_HomeKtvTv_UpdateDialog)
-                .setTitle("切换系统输入法")
-                .setView(inputView)
-                .setPositiveButton("确定") { _, _ ->
-                    val text = inputView.text.toString().trim()
-                    overlay.kioskKeyboard.setKeyword(text)
-                }
-                .setNegativeButton("取消", null)
-                .create()
-            inputView.setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
-                    actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE
-                ) {
-                    overlay.kioskKeyboard.setKeyword(inputView.text.toString().trim())
-                    dialog.dismiss()
-                    true
-                } else {
-                    false
-                }
-            }
-            dialog.window?.setSoftInputMode(
-                android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE,
-            )
-            dialog.setOnShowListener {
-                inputView.post {
-                    inputView.requestRemoteFocus()
-                    imm?.showSoftInput(inputView, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
-                }
-            }
-            val cleanup = {
-                imm?.hideSoftInputFromWindow(inputView.windowToken, 0)
-                coordinator.setModalActive(false)
-                overlay.kioskKeyboard.restoreModeBeforeSystemIme()
-                overlay.kioskKeyboard.post { overlay.kioskKeyboard.requestRemoteFocus() }
-            }
-            val hostActivity = activity as? MainActivity
-            if (hostActivity != null) {
-                hostActivity.showTrackedAlertDialog(dialog) { cleanup() }
-            } else {
-                dialog.setOnDismissListener { cleanup() }
-                dialog.show()
-            }
-        }
+        return browserBinding
     }
 
     /** Keeps left/right remote navigation inside the 11-route capsule row. */
@@ -614,14 +623,25 @@ class KtvKioskOverlayController(
         if (!singerAvatarCache.tryStartLoad(url)) return
 
         activity.lifecycleScope.launch {
-            val bytes = withContext(Dispatchers.IO) {
-                val response = transport.getBytes(url)
-                (response as? KtvApiResult.Success)?.value
-            }
-            val bitmap = bytes?.let {
-                withContext(Dispatchers.Default) {
-                    ArtworkDecoder.decode(it, ArtworkProfile.AVATAR)
+            val bitmap = try {
+                avatarLoadSemaphore.acquire()
+                try {
+                    val bytes = withContext(Dispatchers.IO) {
+                        val response = transport.getBytes(url)
+                        (response as? KtvApiResult.Success)?.value
+                    }
+                    bytes?.let {
+                        withContext(Dispatchers.Default) {
+                            ArtworkDecoder.decode(it, ArtworkProfile.AVATAR)
+                        }
+                    }
+                } finally {
+                    avatarLoadSemaphore.release()
                 }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                singerAvatarCache.fail(url)
+                pendingAvatarCallbacks.remove(url)
+                throw cancelled
             }
             val waiting = pendingAvatarCallbacks.remove(url).orEmpty()
             if (bitmap != null) {
@@ -635,6 +655,17 @@ class KtvKioskOverlayController(
     }
 
     private fun renderCatalogState(state: ControllerUiState) {
+        if (!::browserBinding.isInitialized && !isThreeColumnTab(presentationState.currentTab.value)) {
+            if (state.artists.isNotEmpty()) artistsLoaded = true
+            if (state.ranking.isNotEmpty()) rankingsLoaded = true
+            if (state.newSongs.isNotEmpty()) categoryLoadPolicy.markLoaded(KioskCategoryMode.NEW)
+            if (state.languages.isNotEmpty()) categoryLoadPolicy.markLoaded(KioskCategoryMode.LANGUAGES)
+            if (state.tags.isNotEmpty()) categoryLoadPolicy.markLoaded(KioskCategoryMode.TAGS)
+            return
+        }
+        if (isThreeColumnTab(presentationState.currentTab.value)) {
+            ensureBrowserBinding()
+        }
         val overlay = binding.kioskOverlay
         val selectedArtist = presentationState.selectedArtist.value
 
@@ -1263,6 +1294,7 @@ class KtvKioskOverlayController(
     }
 
     private fun showVarietyPanel(show: Boolean) {
+        if (!::browserBinding.isInitialized) return
         browserBinding.panelVarietyShows.visibility = if (show) View.VISIBLE else View.GONE
         if (show) {
             categoryMode = KioskCategoryMode.TAGS
@@ -1924,10 +1956,15 @@ class KtvKioskOverlayController(
         if (pendingCommercialRouteFocus != presentationState.commercialRoute.value) {
             pendingCommercialRouteFocus = null
         }
-        val browserHadFocus = browserBinding.root.hasFocus()
         val isThreeColumnTab = isThreeColumnTab(tab)
+        if (isThreeColumnTab) {
+            ensureBrowserBinding()
+        }
+        val browserHadFocus = ::browserBinding.isInitialized && browserBinding.root.hasFocus()
 
-        browserBinding.root.visibility = if (isThreeColumnTab) View.VISIBLE else View.GONE
+        if (::browserBinding.isInitialized) {
+            browserBinding.root.visibility = if (isThreeColumnTab) View.VISIBLE else View.GONE
+        }
         overlay.kioskDashboardView.visibility = if (tab == KioskTab.DASHBOARD) View.VISIBLE else View.GONE
         if (isThreeColumnTab) {
             hasOpenedBrowser = true
@@ -2114,6 +2151,7 @@ class KtvKioskOverlayController(
     }
 
     private fun openCommercialRoute(route: KioskCommercialRoute) {
+        ensureBrowserBinding()
         coordinator.resetIdleTimer()
         pendingCommercialRouteFocus = route
         pendingCommercialTagRoute = null
@@ -2675,6 +2713,7 @@ class KtvKioskOverlayController(
 
     /** Opens the global search surface and restores the initiating control when it closes. */
     fun openGlobalSearch(returnFocus: View) {
+        ensureBrowserBinding()
         if (focusController.isKioskActive && isThreeColumnTab(presentationState.currentTab.value)) {
             pushNavigationSnapshot()
         }
@@ -2733,6 +2772,7 @@ class KtvKioskOverlayController(
     }
 
     fun selectTab(tab: KioskTab) {
+        if (isThreeColumnTab(tab)) ensureBrowserBinding()
         presentationState.selectTab(tab)
     }
 
@@ -2753,6 +2793,7 @@ class KtvKioskOverlayController(
                 binding.kioskOverlay.kioskDashboardView.requestDashboardFocus()
                 if (!artistsLoaded && controllerState.artists.isEmpty()) loadArtists()
             } else if (isThreeColumnTab(currentTab)) {
+                ensureBrowserBinding()
                 if (!restorePendingFocusInBrowser()) {
                     threeColumnFocusTarget(currentTab).requestFocus()
                     threeColumnFocusTarget(currentTab).post {
@@ -2880,6 +2921,7 @@ class KtvKioskOverlayController(
     }
 
     private fun resetToSingersTab() {
+        ensureBrowserBinding()
         val peek = navigationHistory.peek()
         if (peek != null && peek.tab == KioskTab.SINGERS && peek.selectedArtist == null) {
             popAndRestoreNavigationEntry()
@@ -2973,6 +3015,7 @@ class KtvKioskOverlayController(
     }
 
     private fun currentFocusedBrowserItemKey(): String? {
+        if (!::browserBinding.isInitialized) return null
         val focused = activity.currentFocus ?: return null
         if (focused.isDescendantOf(browserBinding.browserSingerRecyclerView)) {
             val itemView = browserBinding.browserSingerRecyclerView.findContainingItemView(focused) ?: return null
@@ -2990,6 +3033,7 @@ class KtvKioskOverlayController(
     }
 
     private fun restorePendingFocusInBrowser(): Boolean {
+        if (!::browserBinding.isInitialized) return false
         val key = pendingRestoreFocusKey ?: return false
         if (key.startsWith("artist:") && browserBinding.browserSingerRecyclerView.isShown) {
             val index = singerAdapter.currentList.indexOfFirst { "artist:${it.artistKey}" == key }

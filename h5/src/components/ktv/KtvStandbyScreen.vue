@@ -149,9 +149,9 @@ const currentHostUrl = computed(() => {
   border-radius: 999px;
   font-size: 13px;
   font-weight: 700;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.14);
   border: 1px solid rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(6px);
 }
 
 .lib-badge {
@@ -174,10 +174,10 @@ const currentHostUrl = computed(() => {
   gap: 32px;
   padding: 28px 40px;
   border-radius: 24px;
-  background: rgba(14, 20, 32, 0.78);
+  background: rgba(14, 20, 32, 0.84);
   border: 1px solid rgba(255, 198, 75, 0.35);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65), 0 0 32px rgba(255, 198, 75, 0.15);
-  backdrop-filter: blur(20px);
+  backdrop-filter: blur(8px);
 }
 
 .qr-frame {
@@ -236,9 +236,9 @@ const currentHostUrl = computed(() => {
   gap: 10px;
   padding: 10px 24px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.14);
   border: 1px solid rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(6px);
   animation: pulseWake 2.4s ease-in-out infinite;
 }
 

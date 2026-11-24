@@ -1,7 +1,10 @@
 package com.homektv.queue;
 
+import com.homektv.common.QueueSnapshotInvalidatedEvent;
 import com.homektv.domain.AppUser;
 import com.homektv.repo.AppUserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,6 +18,8 @@ public class UserService {
     public static final int MAX_NICKNAME_LENGTH = 40;
 
     private final AppUserRepository userRepo;
+    @Autowired(required = false)
+    private ApplicationEventPublisher eventPublisher;
 
     public UserService(AppUserRepository userRepo) {
         this.userRepo = userRepo;
@@ -63,7 +68,11 @@ public class UserService {
         } else if (u.getNickname() == null) {
             u.setNickname(defaultNickname());
         }
-        return userRepo.save(u);
+        AppUser saved = userRepo.save(u);
+        if (eventPublisher != null) {
+            eventPublisher.publishEvent(new QueueSnapshotInvalidatedEvent());
+        }
+        return saved;
     }
 
     /**

@@ -9,7 +9,14 @@ export const MAX_SEMITONES = 6
 const BUFFER_SIZE = 4096
 const PITCH_WINDOW_SIZE = 1764 // ~36.75ms at 48kHz, ~40ms at 44.1kHz (optimal dual-tap window)
 const CIRCULAR_BUFFER_SIZE = 8192
+const CIRCULAR_BUFFER_MASK = CIRCULAR_BUFFER_SIZE - 1
 const TWO_PI = 2 * Math.PI
+const HANN_LUT_SIZE = 2048
+const HANN_LUT_MASK = HANN_LUT_SIZE - 1
+const HANN_LUT = new Float32Array(HANN_LUT_SIZE)
+for (let i = 0; i < HANN_LUT_SIZE; i++) {
+  HANN_LUT[i] = 0.5 * (1 - Math.cos((TWO_PI * i) / HANN_LUT_SIZE))
+}
 
 export function clampSemitones(semitones) {
   const val = Number.isFinite(Number(semitones)) ? Math.round(Number(semitones)) : 0
@@ -58,6 +65,23 @@ export function createPitchShifter(audioContext) {
     phase = 0
   }
 
+  function ensureProcessorAttached() {
+    if (processorNode || !audioContext || !sourceNode || !activeNode) return
+    if (typeof audioContext.createScriptProcessor !== 'function') return
+    processorNode = audioContext.createScriptProcessor(BUFFER_SIZE, 2, 2)
+    processorNode.onaudioprocess = processAudio
+    sourceNode.connect?.(processorNode)
+    processorNode.connect?.(activeNode)
+  }
+
+  function detachProcessor() {
+    if (!processorNode) return
+    try { sourceNode?.disconnect?.(processorNode) } catch { /* ignore */ }
+    try { processorNode.disconnect?.() } catch { /* ignore */ }
+    processorNode.onaudioprocess = null
+    processorNode = null
+  }
+
   function setSemitones(newSemitones) {
     const next = clampSemitones(newSemitones)
     if (next === semitones) return
@@ -66,6 +90,11 @@ export function createPitchShifter(audioContext) {
     }
     semitones = next
     pitchRatio = semitonesToPitchRatio(semitones)
+    if (next === 0) {
+      detachProcessor()
+    } else {
+      ensureProcessorAttached()
+    }
     updateRouting()
   }
 
@@ -99,30 +128,34 @@ export function createPitchShifter(audioContext) {
       bufferL[writePos] = inputL[i]
       bufferR[writePos] = inputR[i]
 
-      // Dual-tap Hann-window overlap-add calculation
+      // Dual-tap Hann-window overlap-add calculation using precomputed LUT & bitmasks
       const delay1 = phase * windowSize
-      const phase2 = (phase + 0.5) % 1
+      const phase2Raw = phase + 0.5
+      const phase2 = phase2Raw >= 1 ? phase2Raw - 1 : phase2Raw
       const delay2 = phase2 * windowSize
 
-      const w1 = 0.5 * (1 - Math.cos(TWO_PI * phase))
+      const w1 = HANN_LUT[((phase * HANN_LUT_SIZE) | 0) & HANN_LUT_MASK]
       const w2 = 1 - w1
 
-      const r1 = (writePos - delay1 + bufLen) % bufLen
-      const r1Floor = Math.floor(r1)
-      const r1Frac = r1 - r1Floor
-      const s1L = bufferL[r1Floor] * (1 - r1Frac) + bufferL[(r1Floor + 1) % bufLen] * r1Frac
-      const s1R = bufferR[r1Floor] * (1 - r1Frac) + bufferR[(r1Floor + 1) % bufLen] * r1Frac
+      const r1 = (writePos - delay1 + bufLen) & CIRCULAR_BUFFER_MASK
+      const r1Floor = r1 | 0
+      const r1Next = (r1Floor + 1) & CIRCULAR_BUFFER_MASK
+      const r1Raw = writePos - delay1 + bufLen
+      const r1Frac = r1Raw - (r1Raw | 0)
+      const s1L = bufferL[r1Floor] * (1 - r1Frac) + bufferL[r1Next] * r1Frac
+      const s1R = bufferR[r1Floor] * (1 - r1Frac) + bufferR[r1Next] * r1Frac
 
-      const r2 = (writePos - delay2 + bufLen) % bufLen
-      const r2Floor = Math.floor(r2)
-      const r2Frac = r2 - r2Floor
-      const s2L = bufferL[r2Floor] * (1 - r2Frac) + bufferL[(r2Floor + 1) % bufLen] * r2Frac
-      const s2R = bufferR[r2Floor] * (1 - r2Frac) + bufferR[(r2Floor + 1) % bufLen] * r2Frac
+      const r2Raw = writePos - delay2 + bufLen
+      const r2Floor = (r2Raw | 0) & CIRCULAR_BUFFER_MASK
+      const r2Next = (r2Floor + 1) & CIRCULAR_BUFFER_MASK
+      const r2Frac = r2Raw - (r2Raw | 0)
+      const s2L = bufferL[r2Floor] * (1 - r2Frac) + bufferL[r2Next] * r2Frac
+      const s2R = bufferR[r2Floor] * (1 - r2Frac) + bufferR[r2Next] * r2Frac
 
       outputL[i] = w1 * s1L + w2 * s2L
       outputR[i] = w1 * s1R + w2 * s2R
 
-      writePos = (writePos + 1) % bufLen
+      writePos = (writePos + 1) & CIRCULAR_BUFFER_MASK
       phase += dPhase
       if (phase >= 1) phase -= 1
       else if (phase < 0) phase += 1
@@ -139,22 +172,12 @@ export function createPitchShifter(audioContext) {
       bypassNode = audioContext.createGain ? audioContext.createGain() : { gain: { value: 1 } }
       activeNode = audioContext.createGain ? audioContext.createGain() : { gain: { value: 0 } }
 
-      // Processor node (ScriptProcessor fallback for cross-protocol HTTP LAN compatibility)
-      if (typeof audioContext.createScriptProcessor === 'function') {
-        processorNode = audioContext.createScriptProcessor(BUFFER_SIZE, 2, 2)
-        processorNode.onaudioprocess = processAudio
-      }
-
-      // Graph:
-      // source -> bypassNode -> destination
-      // source -> processorNode -> activeNode -> destination
+      // Graph starts in 0-overhead bypass mode; ScriptProcessorNode is mounted lazily only when semitones !== 0.
       source.connect?.(bypassNode)
       bypassNode.connect?.(destination)
 
-      if (processorNode) {
-        source.connect?.(processorNode)
-        processorNode.connect?.(activeNode)
-        activeNode.connect?.(destination)
+      if (semitones !== 0) {
+        ensureProcessorAttached()
       }
 
       updateRouting()
@@ -170,13 +193,9 @@ export function createPitchShifter(audioContext) {
     try { sourceNode?.disconnect?.() } catch { /* ignore */ }
     try { bypassNode?.disconnect?.() } catch { /* ignore */ }
     try { activeNode?.disconnect?.() } catch { /* ignore */ }
-    if (processorNode) {
-      try { processorNode.disconnect?.() } catch { /* ignore */ }
-      processorNode.onaudioprocess = null
-    }
+    detachProcessor()
     sourceNode = null
     destinationNode = null
-    processorNode = null
     bypassNode = null
     activeNode = null
   }

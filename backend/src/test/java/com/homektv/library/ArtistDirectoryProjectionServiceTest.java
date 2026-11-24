@@ -212,8 +212,8 @@ class ArtistDirectoryProjectionServiceTest {
 
         verify(transactionManager).getTransaction(any(TransactionDefinition.class));
         verify(transactionManager).commit(status);
-        verify(jdbc).update("DELETE FROM artist_directory_stats");
         verify(jdbc).update(ArtistDirectoryProjectionService.REFRESH_SQL);
+        verify(jdbc).update(ArtistDirectoryProjectionService.PRUNE_STALE_SQL);
     }
 
     @Test
@@ -427,7 +427,8 @@ class ArtistDirectoryProjectionServiceTest {
 
         service.onApplicationReady();
         assertThat(refreshComplete.await(3, TimeUnit.SECONDS)).isTrue();
-        verify(jdbc).update("DELETE FROM artist_directory_stats");
+        verify(jdbc).update(ArtistDirectoryProjectionService.REFRESH_SQL);
+        verify(jdbc).update(ArtistDirectoryProjectionService.PRUNE_STALE_SQL);
     }
 
     @Test

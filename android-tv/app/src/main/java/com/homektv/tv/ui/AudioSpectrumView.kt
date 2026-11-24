@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.View
@@ -24,6 +25,7 @@ class AudioSpectrumView @JvmOverloads constructor(
         alpha = 178
     }
     private val density = resources.displayMetrics.density
+    private val barPath = Path()
 
     init {
         isClickable = false
@@ -48,20 +50,23 @@ class AudioSpectrumView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val count = 96
-        val gap = 3f * density
+        val count = 48
+        val gap = 4f * density
         val barWidth = ((width - gap * (count - 1)) / count).coerceAtLeast(2f * density)
+        val radius = barWidth / 2f
         val now = SystemClock.uptimeMillis() / 1000f
-        repeat(count) { index ->
-            val envelope = 0.22f + 0.78f * abs(sin(index * 0.37f + now * 2.1f))
-            val pulse = 0.42f + 0.58f * abs(sin(index * 0.91f - now * 4.3f))
+        barPath.rewind()
+        for (index in 0 until count) {
+            val envelope = 0.22f + 0.78f * abs(sin(index * 0.74f + now * 2.1f))
+            val pulse = 0.42f + 0.58f * abs(sin(index * 1.82f - now * 4.3f))
             val barHeight = height * (0.06f + 0.72f * envelope * pulse)
             val left = index * (barWidth + gap)
             val top = (height - barHeight) / 2f
-            canvas.drawRoundRect(left, top, left + barWidth, top + barHeight, barWidth / 2f, barWidth / 2f, paint)
+            barPath.addRoundRect(left, top, left + barWidth, top + barHeight, radius, radius, Path.Direction.CW)
         }
+        canvas.drawPath(barPath, paint)
         if (SpectrumAnimationPolicy.shouldScheduleNextFrame(isShown, isAttachedToWindow)) {
-            postInvalidateOnAnimation()
+            postInvalidateDelayed(33L)
         }
     }
 }

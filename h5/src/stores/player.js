@@ -1,3 +1,4 @@
+import { markRaw } from 'vue'
 import { defineStore } from 'pinia'
 import { KtvSocket } from '../api/ws'
 import { useUserStore } from './user'
@@ -223,7 +224,11 @@ export const usePlayerStore = defineStore('player', {
       const prevQueueId = this.nowPlaying?.queueId
       const playing = snap.playing ?? null
       this.nowPlaying = playing
-        ? { queueId: playing.queueId, song: playing.song, orderedByNick: playing.orderedByNick }
+        ? {
+            queueId: playing.queueId,
+            song: playing.song && typeof playing.song === 'object' ? markRaw(playing.song) : playing.song,
+            orderedByNick: playing.orderedByNick
+          }
         : null
       if (playing?.queueId !== prevQueueId) {
         this.resetPitch()
@@ -235,7 +240,12 @@ export const usePlayerStore = defineStore('player', {
       this.muted = snap.muted ?? false
       this.vocalMode = snap.vocalMode ?? this.vocalMode
       this.audioLayout = snap.audioLayout ?? this.audioLayout
-      this.queue = snap.list ?? []
+      const rawList = snap.list ?? []
+      this.queue = rawList.map(item =>
+        item && item.song && typeof item.song === 'object'
+          ? { ...item, song: markRaw(item.song) }
+          : item
+      )
       if (typeof snap.tvOnline === 'boolean') this.tvOnline = snap.tvOnline
       this.connectedPhones = snap.connectedPhones ?? 0
       this.playback = snap.playback ?? { kind: 'NONE', status: 'IDLE' }

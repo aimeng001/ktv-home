@@ -58,9 +58,23 @@ public final class IktvSongMatchWorker {
         this.executor = executor;
     }
 
+    private volatile int idleTicksToSkip = 0;
+    private volatile int idleBackoffLevel = 0;
+
+    /** Resets idle backoff when new scan/reference work arrives. */
+    public void wakeUp() {
+        idleTicksToSkip = 0;
+        idleBackoffLevel = 0;
+    }
+
     @Scheduled(fixedDelayString = "${app.iktv-reference.match-delay-ms:1000}",
             initialDelayString = "${app.iktv-reference.match-initial-delay-ms:45000}")
     public void processScheduledWork() {
+        int remaining = idleTicksToSkip;
+        if (remaining > 0) {
+            idleTicksToSkip = remaining - 1;
+            return;
+        }
         if (!running.compareAndSet(false, true)) return;
         try {
             executor.execute(() -> {
@@ -97,7 +111,15 @@ public final class IktvSongMatchWorker {
             }
         }
         completeDrainedBatches();
-        if (processed > 0) log.info("IKTV Home-song matching processed {} queue items", processed);
+        if (processed > 0) {
+            idleTicksToSkip = 0;
+            idleBackoffLevel = 0;
+            log.info("IKTV Home-song matching processed {} queue items", processed);
+        } else if (!busy) {
+            int nextLevel = Math.min(2, idleBackoffLevel + 1);
+            idleBackoffLevel = nextLevel;
+            idleTicksToSkip = nextLevel == 1 ? 14 : 59; // 15s then 60s between idle checks
+        }
     }
 
     private void ensureWorkBatches() {

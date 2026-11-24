@@ -198,6 +198,14 @@ class MediaApi(
     /** 拉流地址：http://host/api/stream/{fileId} */
     fun streamUrl(fileId: Long): String = "${config.apiBase()}/stream/$fileId"
 
+    /** 将服务端下发的相对或绝对 streamUrl 规整为完整可拉流地址。 */
+    fun resolveStreamUrl(rawUrl: String): String {
+        val trimmed = rawUrl.trim()
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
+        val base = config.apiBase().removeSuffix("/api")
+        return base + "/" + trimmed.removePrefix("/")
+    }
+
     /** 二维码地址：http://host/api/qr?size=xxx（P1.30 待机页扫码引导） */
     fun qrUrl(size: Int): String = "${config.apiBase()}/qr?size=$size"
 

@@ -154,7 +154,7 @@
             :class="{ on: selectedVariety === preset.key }"
             @click="selectVariety(preset.key)"
           >
-            <img :src="preset.image" :alt="preset.label" />
+            <img :src="preset.image" :alt="preset.label" loading="lazy" decoding="async" />
             <span>{{ preset.label }}</span>
           </button>
         </template>
@@ -266,7 +266,7 @@
         <!-- 歌手头部提示 -->
         <div v-if="activeTab === 'singer' && selectedArtist" class="artist-banner">
           <div class="artist-mini-av" :style="!avatarUrlFor(selectedArtist, avatarFailures) ? getArtistAvatarStyle(selectedArtist.name) : undefined">
-            <img v-if="avatarUrlFor(selectedArtist, avatarFailures)" :src="avatarUrlFor(selectedArtist, avatarFailures)" alt="" @error="rememberAvatar(selectedArtist)" />
+            <img v-if="avatarUrlFor(selectedArtist, avatarFailures)" :src="avatarUrlFor(selectedArtist, avatarFailures)" alt="" loading="lazy" decoding="async" @error="rememberAvatar(selectedArtist)" />
             <span v-else>{{ (selectedArtist.name || '?').slice(0, 1) }}</span>
           </div>
           <div>
@@ -305,6 +305,8 @@
                 v-if="avatarUrlFor(artist, avatarFailures)"
                 :src="avatarUrlFor(artist, avatarFailures)"
                 :alt="artist.name"
+                loading="lazy"
+                decoding="async"
                 @error="rememberAvatar(artist)"
               />
               <span v-else>{{ (artist.name || '?').slice(0, 1) }}</span>
@@ -324,6 +326,7 @@
                 :src="songThumbUrl(item.song)"
                 alt=""
                 loading="lazy"
+                decoding="async"
                 @error="rememberSongThumbFailure(item.song)"
               />
               <span v-else>{{ (item.song?.title || '歌').slice(0, 1) }}</span>
@@ -363,6 +366,7 @@
                 :src="songThumbUrl(song)"
                 alt=""
                 loading="lazy"
+                decoding="async"
                 @error="rememberSongThumbFailure(song)"
               />
               <span v-else>{{ (song.artist || song.title || '音').slice(0, 1) }}</span>
@@ -983,8 +987,19 @@ async function loadArtistsOnly() {
   }
 }
 
+const CATALOG_META_CACHE_TTL_MS = 60_000
+const languagesMetaCache = new WeakMap()
+const tagsMetaCache = new WeakMap()
+
 async function ensureLanguagesLoaded() {
   if (languages.value.length) {
+    if (!selectedLanguage.value) selectedLanguage.value = languages.value[0].name
+    return Boolean(selectedLanguage.value)
+  }
+  const loader = api.browseLanguages
+  const cached = typeof loader === 'function' ? languagesMetaCache.get(loader) : null
+  if (cached && cached.expiresAt > Date.now() && cached.items.length) {
+    languages.value = cached.items
     if (!selectedLanguage.value) selectedLanguage.value = languages.value[0].name
     return Boolean(selectedLanguage.value)
   }
@@ -995,6 +1010,9 @@ async function ensureLanguagesLoaded() {
     const list = await api.browseLanguages({ signal: req.signal })
     if (!reqGate.isCurrent(req.id)) return false
     languages.value = Array.isArray(list) ? list : []
+    if (typeof loader === 'function' && languages.value.length) {
+      languagesMetaCache.set(loader, { items: languages.value, expiresAt: Date.now() + CATALOG_META_CACHE_TTL_MS })
+    }
     if (languages.value.length && !selectedLanguage.value) {
       selectedLanguage.value = languages.value[0].name
     }
@@ -1013,6 +1031,13 @@ async function ensureTagsLoaded() {
     if (!selectedTag.value) selectedTag.value = tags.value[0].name
     return Boolean(selectedTag.value)
   }
+  const loader = api.browseTags
+  const cached = typeof loader === 'function' ? tagsMetaCache.get(loader) : null
+  if (cached && cached.expiresAt > Date.now() && cached.items.length) {
+    tags.value = cached.items
+    if (!selectedTag.value) selectedTag.value = tags.value[0].name
+    return Boolean(selectedTag.value)
+  }
   const req = reqGate.begin()
   loading.value = true
   loadError.value = ''
@@ -1020,6 +1045,9 @@ async function ensureTagsLoaded() {
     const list = await api.browseTags({ signal: req.signal })
     if (!reqGate.isCurrent(req.id)) return false
     tags.value = Array.isArray(list) ? list : []
+    if (typeof loader === 'function' && tags.value.length) {
+      tagsMetaCache.set(loader, { items: tags.value, expiresAt: Date.now() + CATALOG_META_CACHE_TTL_MS })
+    }
     if (tags.value.length && !selectedTag.value) {
       selectedTag.value = tags.value[0].name
     }

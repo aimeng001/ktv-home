@@ -59,6 +59,12 @@ public class AdminService {
     private ArtistDirectoryProjectionService artistDirectoryProjectionService;
     private com.homektv.queue.SnapshotService snapshotService;
     private com.homektv.queue.PlaybackService playbackService;
+    private AdminSongQueryRepository adminSongQueryRepository;
+
+    @Autowired(required = false)
+    void setAdminSongQueryRepository(AdminSongQueryRepository adminSongQueryRepository) {
+        this.adminSongQueryRepository = adminSongQueryRepository;
+    }
 
     @Autowired(required = false)
     void setArtistDirectoryProjectionService(ArtistDirectoryProjectionService artistDirectoryProjectionService) {
@@ -172,9 +178,13 @@ public class AdminService {
     public Page<AdminSongDto> listAdminSongs(String keyword, String type, String source, int page, int size) {
         int safeSize = Math.max(1, Math.min(size, 200));
         int safePage = Math.max(0, page);
-        Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt"));
-        Page<Song> songs = songRepo.searchAdminSongs(normalizeFilter(keyword), normalizeFilter(type),
-                normalizeFilter(source), pageable);
+        String cleanKeyword = normalizeFilter(keyword);
+        String cleanType = normalizeFilter(type);
+        String cleanSource = normalizeFilter(source);
+        Page<Song> songs = adminSongQueryRepository != null
+                ? adminSongQueryRepository.searchAdminSongs(cleanKeyword, cleanType, cleanSource, safePage, safeSize)
+                : songRepo.searchAdminSongs(cleanKeyword, cleanType, cleanSource,
+                        PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt")));
         List<Long> songIds = songs.getContent().stream().map(Song::getId).toList();
         Map<Long, SongFile> primaryFiles = new LinkedHashMap<>();
         if (!songIds.isEmpty()) {
@@ -480,9 +490,26 @@ public class AdminService {
             artistDirectoryProjectionService.requestRefreshAfterCommit();
         }
         bumpCatalogRevision();
+        if (snapshotService != null) {
+            invalidateSnapshotAfterCommit();
+        }
         if (!queueItems.isEmpty() && broadcaster != null && snapshotService != null) {
             afterCommitBroadcast(deletedCurrent);
         }
+    }
+
+    private void invalidateSnapshotAfterCommit() {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            snapshotService.invalidateCache();
+            return;
+        }
+        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        snapshotService.invalidateCache();
+                    }
+                });
     }
 
     private void afterCommitBroadcast(boolean deletedCurrent) {

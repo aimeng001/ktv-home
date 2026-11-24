@@ -60,10 +60,18 @@ describe('pitchShifter 纯前端 Web Audio 变调器', () => {
     expect(shifter.isBypassed()).toBe(true)
   })
 
-  it('在无 AudioWorklet 环境下（HTTP 降级），使用 ScriptProcessorNode 正常构建', () => {
+  it('原调（semitones === 0）时不创建 ScriptProcessorNode；仅在非零变调时惰性挂载并在归零时释放', () => {
     const shifter = createPitchShifter(mockContext)
     shifter.connect(mockInputNode, mockOutputNode)
-    expect(mockContext.createScriptProcessor).toHaveBeenCalled()
+    expect(mockContext.createScriptProcessor).not.toHaveBeenCalled()
+
+    shifter.setSemitones(2)
+    expect(mockContext.createScriptProcessor).toHaveBeenCalledTimes(1)
+    const scriptProcessor = mockContext.createScriptProcessor.mock.results[0].value
+
+    shifter.setSemitones(0)
+    expect(scriptProcessor.disconnect).toHaveBeenCalled()
+    expect(scriptProcessor.onaudioprocess).toBeNull()
     shifter.dispose()
   })
 
@@ -72,10 +80,13 @@ describe('pitchShifter 纯前端 Web Audio 变调器', () => {
     expect(() => shifter.reset()).not.toThrow()
   })
 
-  it('处于 bypass 状态时 processAudio 立即跳过计算，0 CPU 占用', () => {
+  it('处于 bypass 状态时（或异步残留回调），processAudio 立即跳过计算，0 CPU 占用', () => {
     const shifter = createPitchShifter(mockContext)
     shifter.connect(mockInputNode, mockOutputNode)
+    shifter.setSemitones(2)
     const scriptProcessor = mockContext.createScriptProcessor.mock.results[0].value
+    const handler = scriptProcessor.onaudioprocess
+    shifter.setSemitones(0)
     const inputL = { length: 4096 }
     const event = {
       inputBuffer: {
@@ -86,8 +97,7 @@ describe('pitchShifter 纯前端 Web Audio 变调器', () => {
         getChannelData: vi.fn(() => ({ length: 4096 }))
       }
     }
-    // 原调时调用
-    scriptProcessor.onaudioprocess(event)
+    handler(event)
     expect(event.inputBuffer.getChannelData).not.toHaveBeenCalled()
   })
 

@@ -249,6 +249,7 @@ const countdownProgress = computed(() => {
   color: #ffc64b; /* 金黄色卡拉OK经典扫光高亮 */
   white-space: nowrap;
   pointer-events: none;
+  contain: layout style;
   transition: clip-path 0.08s linear;
 }
 
@@ -285,7 +286,7 @@ const countdownProgress = computed(() => {
   background: rgba(255, 255, 255, 0.22);
   border: 2px solid rgba(255, 255, 255, 0.45);
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
-  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .countdown-dot.active {

@@ -97,13 +97,19 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
 
                 SELECT s.id AS song_id, 0 AS term_rank
                 FROM songs s
+                WHERE :numericId > 0
+                  AND s.id = :numericId
+                  AND s.status = 'ok'
+                  AND (:mediaType = '' OR s.media_type = :mediaType)
+
+                UNION ALL
+
+                SELECT s.id AS song_id, 0 AS term_rank
+                FROM songs s
                 WHERE s.status = 'ok'
                   AND (:mediaType = '' OR s.media_type = :mediaType)
-                  AND (
-                      (:numericId > 0 AND s.id = :numericId)
-                      OR (s.catalog_number <> '' AND s.catalog_number = :kw)
-                      OR LPAD(s.id::text, 6, '0') = :kw
-                  )
+                  AND s.catalog_number <> ''
+                  AND s.catalog_number = :kw
             ), term_candidates AS (
                 SELECT term.song_id,
                        CASE
@@ -273,16 +279,23 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
 
                     UNION ALL
 
-                    -- 7. 纯数字点歌号或主键精准匹配
+                    -- 7a. 主键精准匹配（同时等价覆盖 6 位补零数字串）
+                    SELECT s.id AS song_id
+                    FROM songs s
+                    WHERE :numericId > 0
+                      AND s.id = :numericId
+                      AND s.status = 'ok'
+                      AND (:mediaType = '' OR s.media_type = :mediaType)
+
+                    UNION ALL
+
+                    -- 7b. 点歌编号精准匹配（命中 idx_songs_ok_catalog_number）
                     SELECT s.id AS song_id
                     FROM songs s
                     WHERE s.status = 'ok'
                       AND (:mediaType = '' OR s.media_type = :mediaType)
-                      AND (
-                          (:numericId > 0 AND s.id = :numericId)
-                          OR (s.catalog_number <> '' AND s.catalog_number = :kw)
-                          OR LPAD(s.id::text, 6, '0') = :kw
-                      )
+                      AND s.catalog_number <> ''
+                      AND s.catalog_number = :kw
                 ) raw_candidates
                 GROUP BY song_id
             )
@@ -368,7 +381,7 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
                   AND (:mediaType = '' OR s.media_type = :mediaType)
                   AND lower(s.title_init) LIKE :likeKw || '%' ESCAPE '\\'
 
-                UNION
+                UNION ALL
 
                 SELECT s.id, 1 AS match_priority
                 FROM songs s
@@ -376,7 +389,7 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
                   AND (:mediaType = '' OR s.media_type = :mediaType)
                   AND lower(s.artist_init) LIKE :likeKw || '%' ESCAPE '\\'
 
-                UNION
+                UNION ALL
 
                 SELECT sa.song_id, 2 AS match_priority
                 FROM song_artists sa
@@ -395,7 +408,7 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
             ORDER BY
               (LOWER(s.title) = :kw) DESC,
               (LOWER(s.title_init) = :kw) DESC,
-              (s.title ILIKE :likeKw || '%' ESCAPE '\\') DESC,
+              (LOWER(s.title) LIKE :likeKw || '%' ESCAPE '\\') DESC,
               (LOWER(s.title_init) LIKE :likeKw || '%' ESCAPE '\\') DESC,
               (LOWER(s.artist) = :kw) DESC,
               (LOWER(s.artist_init) = :kw) DESC,

@@ -1543,7 +1543,7 @@ class PlaybackEngine(
     companion object {
         private const val TAG = "PlaybackEngine"
         private const val PITCH_PARAMETER_EPSILON = 0.0001f
-        private const val PROGRESS_INTERVAL_MS = 100L
+        private const val PROGRESS_INTERVAL_MS = 250L
     }
 
     private var transientRetryCount = 0

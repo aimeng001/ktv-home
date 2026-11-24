@@ -34,6 +34,10 @@ class KaraokeLyricView @JvmOverloads constructor(
     private var sampledPositionMs = 0L
     private var sampledAtMs = 0L
     private var playing = false
+    private var cachedTotalWidth = 0f
+    private var cachedLeft = 0f
+    private var cachedBaseline = 0f
+    private var cachedAnchors: List<LyricSweepCalculator.Anchor> = emptyList()
 
     /**
      * 设置当前歌词行及其结束时间。
@@ -46,6 +50,7 @@ class KaraokeLyricView @JvmOverloads constructor(
         lineEndMs = maxOf(endMs, (value?.startMs ?: 0L) + 1L)
         contentDescription = value?.text.orEmpty()
         adjustTextSize(width, height)
+        rebuildLayoutCache(width, height)
         invalidate()
     }
 
@@ -59,12 +64,34 @@ class KaraokeLyricView @JvmOverloads constructor(
     fun stopAnimation() {
         playing = false
         line = null
+        cachedTotalWidth = 0f
+        cachedLeft = 0f
+        cachedBaseline = 0f
+        cachedAnchors = emptyList()
         invalidate()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         adjustTextSize(w, h)
+        rebuildLayoutCache(w, h)
+    }
+
+    private fun rebuildLayoutCache(w: Int, h: Int) {
+        val current = line
+        val text = current?.text.orEmpty()
+        if (current == null || text.isEmpty() || w <= 0 || h <= 0) {
+            cachedTotalWidth = 0f
+            cachedLeft = 0f
+            cachedBaseline = 0f
+            cachedAnchors = emptyList()
+            return
+        }
+        val totalWidth = paint.measureText(text)
+        cachedTotalWidth = totalWidth
+        cachedLeft = (w - totalWidth) / 2f
+        cachedBaseline = h / 2f - (paint.ascent() + paint.descent()) / 2f
+        cachedAnchors = buildAnchors(current, text, totalWidth)
     }
 
     private fun adjustTextSize(w: Int, h: Int) {
@@ -95,16 +122,18 @@ class KaraokeLyricView @JvmOverloads constructor(
         val current = line ?: return
         val text = current.text
         if (text.isEmpty()) return
-        val totalWidth = paint.measureText(text)
-        val left = (width - totalWidth) / 2f
-        val baseline = height / 2f - (paint.ascent() + paint.descent()) / 2f
+        if (cachedAnchors.isEmpty() && width > 0 && height > 0) {
+            rebuildLayoutCache(width, height)
+        }
+        val totalWidth = cachedTotalWidth
+        val left = cachedLeft
+        val baseline = cachedBaseline
         val position = sampledPositionMs + if (playing) SystemClock.elapsedRealtime() - sampledAtMs else 0L
 
         paint.color = pendingColor
         canvas.drawText(text, left, baseline, paint)
 
-        val anchors = buildAnchors(current, text, totalWidth)
-        val revealed = LyricSweepCalculator.offsetAt(position, anchors, totalWidth)
+        val revealed = LyricSweepCalculator.offsetAt(position, cachedAnchors, totalWidth)
         if (revealed > 0f) {
             canvas.save()
             canvas.clipRect(left, 0f, left + revealed, height.toFloat())
@@ -116,16 +145,20 @@ class KaraokeLyricView @JvmOverloads constructor(
     }
 
     private fun buildAnchors(current: LyricLine, text: String, totalWidth: Float): List<LyricSweepCalculator.Anchor> {
-        val anchors = mutableListOf(LyricSweepCalculator.Anchor(current.startMs, 0f))
+        val anchors = ArrayList<LyricSweepCalculator.Anchor>(current.words.size + 2)
+        anchors.add(LyricSweepCalculator.Anchor(current.startMs, 0f))
         var prefixLength = 0
         current.words.forEach { word ->
-            anchors += LyricSweepCalculator.Anchor(
-                word.startMs,
-                paint.measureText(text.substring(0, prefixLength.coerceAtMost(text.length))),
+            val end = prefixLength.coerceAtMost(text.length)
+            anchors.add(
+                LyricSweepCalculator.Anchor(
+                    word.startMs,
+                    paint.measureText(text, 0, end),
+                ),
             )
             prefixLength += word.text.length
         }
-        anchors += LyricSweepCalculator.Anchor(lineEndMs, totalWidth)
+        anchors.add(LyricSweepCalculator.Anchor(lineEndMs, totalWidth))
         return anchors
     }
 }

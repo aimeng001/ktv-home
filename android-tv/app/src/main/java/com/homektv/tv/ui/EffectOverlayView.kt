@@ -41,6 +41,7 @@ class EffectOverlayView(context: Context) : View(context) {
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val panel = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val badgeRect = RectF()
     private val bursts = mutableListOf<Burst>()
     private val density = resources.displayMetrics.density
 
@@ -48,9 +49,6 @@ class EffectOverlayView(context: Context) : View(context) {
         isClickable = false
         isFocusable = false
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            setLayerType(LAYER_TYPE_SOFTWARE, null)
-        }
     }
 
     /**
@@ -60,6 +58,9 @@ class EffectOverlayView(context: Context) : View(context) {
      */
     fun play(effectId: String) {
         val spec = EffectVisuals.find(effectId) ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P && layerType != LAYER_TYPE_SOFTWARE) {
+            setLayerType(LAYER_TYPE_SOFTWARE, null)
+        }
         val seed = SystemClock.elapsedRealtime().toInt() xor effectId.hashCode()
         bursts += Burst(spec, SystemClock.elapsedRealtime(), createParticles(spec, Random(seed)))
         if (bursts.size > 3) bursts.removeAt(0)
@@ -70,6 +71,9 @@ class EffectOverlayView(context: Context) : View(context) {
     fun clear() {
         bursts.clear()
         visibility = GONE
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P && layerType != LAYER_TYPE_NONE) {
+            setLayerType(LAYER_TYPE_NONE, null)
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -77,7 +81,14 @@ class EffectOverlayView(context: Context) : View(context) {
         val now = SystemClock.elapsedRealtime()
         bursts.removeAll { now - it.startedAt >= it.spec.durationMs }
         bursts.forEach { drawBurst(canvas, it, now) }
-        if (bursts.isNotEmpty()) postInvalidateOnAnimation() else visibility = GONE
+        if (bursts.isNotEmpty()) {
+            postInvalidateOnAnimation()
+        } else {
+            visibility = GONE
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P && layerType != LAYER_TYPE_NONE) {
+                setLayerType(LAYER_TYPE_NONE, null)
+            }
+        }
     }
 
     private fun drawBurst(canvas: Canvas, burst: Burst, now: Long) {
@@ -124,10 +135,10 @@ class EffectOverlayView(context: Context) : View(context) {
         val centerY = height * if (spec.kind == EffectVisualKind.TOAST) 0.44f else 0.34f
         val badgeWidth = 360f * density * bounce
         val badgeHeight = 116f * density * bounce
-        val rect = RectF(centerX - badgeWidth / 2, centerY - badgeHeight / 2, centerX + badgeWidth / 2, centerY + badgeHeight / 2)
+        badgeRect.set(centerX - badgeWidth / 2, centerY - badgeHeight / 2, centerX + badgeWidth / 2, centerY + badgeHeight / 2)
         panel.color = Color.argb((185 * fade).toInt(), 8, 9, 13)
         panel.setShadowLayer(28f * density, 0f, 8f * density, spec.colors.first().toInt())
-        canvas.drawRoundRect(rect, 28f * density, 28f * density, panel)
+        canvas.drawRoundRect(badgeRect, 28f * density, 28f * density, panel)
         panel.clearShadowLayer()
         paint.alpha = (255 * fade).toInt()
         paint.textAlign = Paint.Align.CENTER

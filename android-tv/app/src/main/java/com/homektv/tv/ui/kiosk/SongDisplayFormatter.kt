@@ -17,6 +17,9 @@ object SongDisplayFormatter {
     fun formatTitle(rawTitle: String?): String {
         val raw = rawTitle?.trim().orEmpty()
         if (raw.isEmpty()) return ""
+        if (isAlreadyCleanText(raw, allowUnspacedSlash = false)) {
+            return raw
+        }
 
         var cleaned = raw
             .replace(technicalTagPattern, " ")
@@ -35,6 +38,9 @@ object SongDisplayFormatter {
     fun formatArtist(rawArtist: String?): String {
         val raw = rawArtist?.trim().orEmpty()
         if (raw.isEmpty()) return ""
+        if (isAlreadyCleanText(raw, allowUnspacedSlash = true)) {
+            return raw
+        }
 
         var cleaned = raw
             .replace(technicalTagPattern, " ")
@@ -50,6 +56,31 @@ object SongDisplayFormatter {
         }
         return cleaned
     }
+
+    private fun isAlreadyCleanText(value: String, allowUnspacedSlash: Boolean): Boolean {
+        val len = value.length
+        val first = value[0]
+        val last = value[len - 1]
+        if (isBorderTrimChar(first) || isBorderTrimChar(last)) return false
+        var prevSpace = false
+        for (i in 0 until len) {
+            val c = value[i]
+            if (c == '[' || c == '【' || c == '^' || c == '_') return false
+            if (c.isWhitespace()) {
+                if (c != ' ' || prevSpace) return false
+                prevSpace = true
+            } else {
+                if (allowUnspacedSlash && c == '/' && (prevSpace || (i + 1 < len && value[i + 1].isWhitespace()))) {
+                    return false
+                }
+                prevSpace = false
+            }
+        }
+        return true
+    }
+
+    private fun isBorderTrimChar(c: Char): Boolean =
+        c == ' ' || c == '-' || c == '/' || c == '|' || c == '·' || c.isWhitespace()
 
     fun formatMediaLabel(mediaType: String?): String =
         when (mediaType.orEmpty().trim().uppercase()) {

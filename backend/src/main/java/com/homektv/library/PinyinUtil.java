@@ -13,6 +13,10 @@ import net.sourceforge.pinyin4j.format.exception.BadHanyuPinyinOutputFormatCombi
  */
 public final class PinyinUtil {
 
+    private static final int CJK_START = 0x4E00;
+    private static final int CJK_END = 0x9FFF;
+    private static final String NO_PINYIN = "";
+    private static final String[] CJK_PINYIN_CACHE = new String[CJK_END - CJK_START + 1];
     private static final HanyuPinyinOutputFormat FORMAT = new HanyuPinyinOutputFormat();
 
     static {
@@ -25,8 +29,10 @@ public final class PinyinUtil {
     /** 全拼：周杰伦 → zhoujielun；Jay 周 → jayzhou */
     public static String fullPinyin(String text) {
         if (text == null || text.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        for (char c : text.toCharArray()) {
+        int len = text.length();
+        StringBuilder sb = new StringBuilder(len * 4);
+        for (int i = 0; i < len; i++) {
+            char c = text.charAt(i);
             String py = pinyinOfChar(c);
             if (py != null) {
                 sb.append(py);
@@ -41,8 +47,10 @@ public final class PinyinUtil {
     /** 首字母：周杰伦 → zjl；G.E.M. → gem */
     public static String initials(String text) {
         if (text == null || text.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        for (char c : text.toCharArray()) {
+        int len = text.length();
+        StringBuilder sb = new StringBuilder(len);
+        for (int i = 0; i < len; i++) {
+            char c = text.charAt(i);
             String py = pinyinOfChar(c);
             if (py != null && !py.isEmpty()) {
                 sb.append(py.charAt(0));
@@ -53,17 +61,24 @@ public final class PinyinUtil {
         return sb.toString();
     }
 
-    /** 返回单个汉字的拼音（无声调小写）；非汉字返回 null */
+    /** 返回单个汉字的拼音（无声调小写）；非汉字返回 null。对 CJK 基本区惰性缓存（~84KB）避免重复锁与正则开销。 */
     private static String pinyinOfChar(char c) {
-        if (c < 0x4E00 || c > 0x9FFF) return null; // 非 CJK 基本区
+        if (c < CJK_START || c > CJK_END) return null; // 非 CJK 基本区
+        int idx = c - CJK_START;
+        String cached = CJK_PINYIN_CACHE[idx];
+        if (cached != null) {
+            return cached == NO_PINYIN ? null : cached;
+        }
+        String resolved = NO_PINYIN;
         try {
             String[] arr = PinyinHelper.toHanyuPinyinStringArray(c, FORMAT);
-            if (arr != null && arr.length > 0) {
-                return arr[0]; // 多音字取第一个读音
+            if (arr != null && arr.length > 0 && arr[0] != null) {
+                resolved = arr[0]; // 多音字取第一个读音
             }
         } catch (BadHanyuPinyinOutputFormatCombination ignored) {
             // 不会发生（格式固定）
         }
-        return null;
+        CJK_PINYIN_CACHE[idx] = resolved;
+        return resolved == NO_PINYIN ? null : resolved;
     }
 }

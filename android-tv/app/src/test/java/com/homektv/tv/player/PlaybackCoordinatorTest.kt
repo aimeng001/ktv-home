@@ -850,6 +850,130 @@ class PlaybackCoordinatorTest {    @Test
         scope.cancel()
     }
 
+    @Test
+    fun readySnapshotDescriptorStartsPlaybackWithZeroRestRoundTrips() = runBlocking {
+        var restCalls = 0
+        val desired = DesiredPlaybackState().also {
+            it.update(
+                QueueSnapshot(
+                    playing = NowPlaying(
+                        queueId = 91L,
+                        song = com.homektv.tv.net.SongDto(id = 404L, title = "晴天", artist = "周杰伦", mediaType = "KTV_VIDEO"),
+                    ),
+                    state = "playing",
+                    playback = PlaybackDescriptor(
+                        kind = "NATIVE",
+                        status = "READY",
+                        sourceFileId = 888L,
+                        streamUrl = "/api/stream/888",
+                        audioTracks = 2,
+                        vocalTrackIndex = 1,
+                        audioLayout = AudioLayout(layout = "DUAL_TRACK", originalTrackIndex = 0, accompanimentTrackIndex = 1),
+                        format = "mkv",
+                    ),
+                ),
+            )
+        }
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        var readyFile: FileSource? = null
+        var readyUrl: String? = null
+        val coordinator = PlaybackCoordinator(
+            source = object : PlaybackSource {
+                override suspend fun resolveFileSource(songId: Long): FileSourceResolution =
+                    error("fast path should not call resolveFileSource")
+
+                override suspend fun resolvePlayback(songId: Long, forceTranscode: Boolean): PlaybackResolution {
+                    restCalls += 1
+                    error("fast path should not call resolvePlayback")
+                }
+
+                override fun streamUrl(fileId: Long): String = "http://nas:54001/api/stream/$fileId"
+                override fun resolveStreamUrl(rawUrl: String): String = "http://nas:54001$rawUrl"
+            },
+            desiredState = desired,
+            scope = scope,
+            onBeginReplacement = {},
+            onFileReady = { _, file, _, url ->
+                readyFile = file
+                readyUrl = url
+            },
+            onMissingSource = { error("unexpected missing source") },
+            retryDelay = {},
+        )
+
+        val ticket = coordinator.replace(PlaybackReplacementRequest(queueId = 91L, songId = 404L))
+        ticket.job.join()
+
+        assertEquals(0, restCalls)
+        assertEquals(888L, readyFile?.id)
+        assertEquals("mkv", readyFile?.format)
+        assertEquals(2, readyFile?.audioTracks)
+        assertEquals("http://nas:54001/api/stream/888", readyUrl)
+        scope.cancel()
+    }
+
+    @Test
+    fun forceTranscodeBypassesSnapshotFastPathAndCallsResolvePlayback() = runBlocking {
+        var restCalls = 0
+        val desired = DesiredPlaybackState().also {
+            it.update(
+                QueueSnapshot(
+                    playing = NowPlaying(
+                        queueId = 92L,
+                        song = com.homektv.tv.net.SongDto(id = 405L, title = "老歌", artist = "歌手", mediaType = "KTV_VIDEO"),
+                    ),
+                    state = "playing",
+                    playback = PlaybackDescriptor(
+                        kind = "NATIVE",
+                        status = "READY",
+                        sourceFileId = 889L,
+                        streamUrl = "/api/stream/889",
+                        format = "mkv",
+                    ),
+                ),
+            )
+        }
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        var readyUrl: String? = null
+        val coordinator = PlaybackCoordinator(
+            source = object : PlaybackSource {
+                override suspend fun resolveFileSource(songId: Long): FileSourceResolution =
+                    error("resolvePlayback should be called")
+
+                override suspend fun resolvePlayback(songId: Long, forceTranscode: Boolean): PlaybackResolution {
+                    restCalls += 1
+                    assertTrue(forceTranscode)
+                    return PlaybackResolution.Ready(
+                        FileSource(id = 889L, format = "mp4"),
+                        PlaybackDescriptor(
+                            kind = "LIVE_TRANSCODE",
+                            status = "READY",
+                            sourceFileId = 889L,
+                            streamUrl = "http://nas:54001/api/stream/889?transcode=true",
+                        ),
+                    )
+                }
+
+                override fun streamUrl(fileId: Long): String = "http://nas:54001/api/stream/$fileId"
+            },
+            desiredState = desired,
+            scope = scope,
+            onBeginReplacement = {},
+            onFileReady = { _, _, _, url -> readyUrl = url },
+            onMissingSource = { error("unexpected missing source") },
+            retryDelay = {},
+        )
+
+        val ticket = coordinator.replace(
+            PlaybackReplacementRequest(queueId = 92L, songId = 405L, forceTranscode = true),
+        )
+        ticket.job.join()
+
+        assertEquals(1, restCalls)
+        assertEquals("http://nas:54001/api/stream/889?transcode=true", readyUrl)
+        scope.cancel()
+    }
+
     private fun readyPlaybackSource(file: FileSource, descriptor: PlaybackDescriptor) = object : PlaybackSource {
         override suspend fun resolveFileSource(songId: Long): FileSourceResolution =
             FileSourceResolution.Ready(file)

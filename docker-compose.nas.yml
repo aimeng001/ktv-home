@@ -15,6 +15,18 @@ services:
   db:
     image: "${KTV_IMAGE_REGISTRY:-docker.m.daocloud.io}/library/postgres:16-alpine"
     container_name: ${KTV_DB_CONTAINER_NAME:-ktv-db}
+    command:
+      - postgres
+      - -c
+      - log_checkpoints=off
+      - -c
+      - shared_buffers=${KTV_PG_SHARED_BUFFERS:-512MB}
+      - -c
+      - work_mem=${KTV_PG_WORK_MEM:-16MB}
+      - -c
+      - effective_cache_size=${KTV_PG_EFFECTIVE_CACHE_SIZE:-1536MB}
+      - -c
+      - random_page_cost=${KTV_PG_RANDOM_PAGE_COST:-2.0}
     environment:
       POSTGRES_DB: *db-name
       POSTGRES_USER: *db-user
@@ -61,9 +73,10 @@ services:
       KTV_DISCOVERY_ENABLED: "true"
       KTV_DISCOVERY_NAME: "${KTV_DISCOVERY_NAME:-家庭KTV}"
       KTV_AI_ALLOW_PRIVATE_NETWORK: "${KTV_AI_ALLOW_PRIVATE_NETWORK:-false}"
+      KTV_LIVE_TRANSCODE_THREADS: "${KTV_LIVE_TRANSCODE_THREADS:-2}"
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"
-      JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--Xms256m -Xmx2048m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -XX:+ExitOnOutOfMemoryError}"
+      JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--Xms256m -Xmx2048m -XX:MaxMetaspaceSize=256m -XX:MaxGCPauseMillis=100 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -XX:+ExitOnOutOfMemoryError}"
       TZ: *timezone
     mem_limit: ${KTV_APP_MEMORY_LIMIT:-4g}
     ports:

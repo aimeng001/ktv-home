@@ -146,6 +146,19 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     }
   }
 
+  function suspend() {
+    if (ctx && ctx.state === 'running' && typeof ctx.suspend === 'function') {
+      try {
+        const p = ctx.suspend()
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {})
+        }
+      } catch {
+        // ignore suspend failure during teardown
+      }
+    }
+  }
+
   function dispose() {
     const ownedByCache = attachedElement && elementSourceCache?.get(attachedElement)?.ctx === ctx
     try { source?.disconnect() } catch { /* ignore */ }
@@ -190,6 +203,7 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     getAnalyser() { return analyserNode },
     resume,
     resumeDirect,
+    suspend,
     dispose,
     isActive() { return Boolean(ctx) },
     isSuspended() { return Boolean(ctx && ctx.state === 'suspended') },

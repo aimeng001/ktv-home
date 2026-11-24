@@ -154,15 +154,20 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var audioTrackCount: Int = 1
     private var lyricLines: List<LyricLine> = emptyList()
     private var lastLyricIndex = -1
+    private var lastElapsedSecond = -1L
+    private var lastAudioDurationSecond = -1L
     private val progressReportGate = ProgressReportGate()
     private val clock = android.os.Handler(android.os.Looper.getMainLooper())
+    private val clockTimeFormat by lazy { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    private val clockDateFormat by lazy { SimpleDateFormat("yyyy/MM/dd", Locale.CHINA) }
+    private val clockWeekdayFormat by lazy { SimpleDateFormat("EEEE", Locale.CHINA) }
     private val clockTick = object : Runnable {
         override fun run() {
             if (::binding.isInitialized) {
                 val now = Date()
-                binding.txtClock.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
-                binding.txtHeaderDate.text = SimpleDateFormat("yyyy/MM/dd", Locale.CHINA).format(now)
-                binding.txtHeaderWeekday.text = SimpleDateFormat("EEEE", Locale.CHINA).format(now)
+                binding.txtClock.text = clockTimeFormat.format(now)
+                binding.txtHeaderDate.text = clockDateFormat.format(now)
+                binding.txtHeaderWeekday.text = clockWeekdayFormat.format(now)
             }
             clock.postDelayed(this, 30_000L)
         }
@@ -173,7 +178,14 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     private var activeMarqueeNotification: KtvMarqueeNotificationController.Notification? = null
     private var baselineMarqueeText = ""
     private val marqueeNotificationDismiss = Runnable { dismissMarqueeNotification() }
-    private val artistAvatars = LinkedHashMap<String, android.graphics.Bitmap>(128, 0.75f, true)
+    private val avatarCacheMaxBytes: Long by lazy { resolveAvatarCacheBudgetBytes() }
+    private val sharedAvatarCache: WeightedLruCache<String, android.graphics.Bitmap> by lazy {
+        WeightedLruCache(
+            capacity = 128,
+            maxBytes = avatarCacheMaxBytes,
+            weight = { it.allocationByteCount.toLong() },
+        )
+    }
     private var artistAvatarUrl: String? = null
     private var artistAvatarRequestAt = 0L
     private var artistAvatarRequestId = 0L
@@ -243,6 +255,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             shouldExitOnBack = { tvSettingsStore.snapshot().exitOnBackEnabled },
             globalSearchEnabled = { tvSettingsStore.snapshot().globalSearchEnabled },
             onRequestExitConfirm = ::showExitConfirmDialog,
+            sharedAvatarCache = sharedAvatarCache,
         )
         cachedQueueSnapshot?.let(kioskController::updateSnapshot)
         cachedKioskQrBitmap?.let(kioskController::setCachedQrBitmap)
@@ -294,6 +307,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.homektv.tv.net.SharedHttpClients.installDiskCache(cacheDir)
         config = AppConfig(this)
         sessionFingerprint = DeviceSessionFingerprint(
             serverHost = config.serverHost,
@@ -390,6 +404,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 override suspend fun resolvePlayback(songId: Long, forceTranscode: Boolean) =
                     mediaApi.resolvePlayback(songId, forceTranscode)
                 override fun streamUrl(fileId: Long): String = mediaApi.streamUrl(fileId)
+                override fun resolveStreamUrl(rawUrl: String): String = mediaApi.resolveStreamUrl(rawUrl)
             },
             desiredState = desiredPlaybackState,
             scope = lifecycleScope,
@@ -2256,12 +2271,39 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         renderFullscreenPlaybackPanel(snapshot.positionMs)
     }
 
+    private fun resolveAvatarCacheBudgetBytes(): Long {
+        val am = getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        val isLowRam = am?.isLowRamDevice == true
+        val memInfo = android.app.ActivityManager.MemoryInfo()
+        am?.getMemoryInfo(memInfo)
+        val totalMb = memInfo.totalMem / (1024L * 1024L)
+        return if (isLowRam || (totalMb in 1L..2300L)) 8L * 1024L * 1024L else 16L * 1024L * 1024L
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        @Suppress("DEPRECATION")
+        when {
+            level >= android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE ||
+                level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+                level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
+                sharedAvatarCache.clear()
+                kioskViewModel.clearSearchCache()
+                cachedKioskQrBitmap = null
+            }
+            level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN ||
+                level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE -> {
+                sharedAvatarCache.trimToBytes(avatarCacheMaxBytes / 2L)
+            }
+        }
+    }
+
     /** Loads the cached server avatar without blocking playback or allowing stale songs to win. */
     private fun updateArtistAvatar(rawUrl: String?) {
         if (!::binding.isInitialized) return
         val url = rawUrl?.trim()?.takeIf { it.isNotEmpty() }
         val now = System.currentTimeMillis()
-        val cached = url?.let { artistAvatars[it] }
+        val cached = url?.let { sharedAvatarCache[it] }
         if (url == artistAvatarUrl && (cached != null || now - artistAvatarRequestAt < 30_000L)) return
 
         artistAvatarUrl = url
@@ -2286,8 +2328,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                 }
             }
             if (bitmap != null) {
-                artistAvatars[url] = bitmap
-                if (artistAvatars.size > 128) artistAvatars.remove(artistAvatars.entries.first().key)
+                sharedAvatarCache[url] = bitmap
             }
             if (requestId != artistAvatarRequestId || url != artistAvatarUrl) return@launch
             if (bitmap != null) showArtistAvatar(bitmap)
@@ -2302,46 +2343,94 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun updateProgress(positionMs: Long) {
-        val duration = engine?.durationMs ?: 0L
-        binding.playProgress.progress = if (duration > 0) ((positionMs * 1000) / duration).toInt().coerceIn(0, 1000) else 0
-        audioOverlayBinding?.let { audioUi ->
-            audioUi.audioProgress.progress = binding.playProgress.progress
-            audioUi.txtAudioElapsed.text = formatMs(positionMs)
-            audioUi.txtAudioDuration.text = formatMs(duration)
+        val ktvOverlayVisible = ::binding.isInitialized && binding.ktvOverlay.visibility == View.VISIBLE
+        val audioUi = audioOverlayBinding
+        val audioOverlayVisible = audioUi?.root?.visibility == View.VISIBLE
+        if (!ktvOverlayVisible && !audioOverlayVisible) {
+            return
         }
-        binding.txtElapsed.text = formatMs(positionMs)
-        renderFullscreenPlaybackPanel(positionMs)
+        val duration = engine?.durationMs ?: 0L
+        val progressVal = if (duration > 0) ((positionMs * 1000) / duration).toInt().coerceIn(0, 1000) else 0
+        val elapsedSec = TimeUnit.MILLISECONDS.toSeconds(positionMs.coerceAtLeast(0))
+        val elapsedChanged = elapsedSec != lastElapsedSecond
+        val formattedElapsed = if (elapsedChanged) formatMs(positionMs).also { lastElapsedSecond = elapsedSec } else null
+
+        if (ktvOverlayVisible) {
+            binding.playProgress.progress = progressVal
+            if (formattedElapsed != null) {
+                binding.txtElapsed.text = formattedElapsed
+            }
+            renderFullscreenPlaybackPanel(positionMs)
+        }
+        if (audioUi != null && audioOverlayVisible) {
+            audioUi.audioProgress.progress = progressVal
+            if (formattedElapsed != null) {
+                audioUi.txtAudioElapsed.text = formattedElapsed
+            }
+            val durationSec = TimeUnit.MILLISECONDS.toSeconds(duration.coerceAtLeast(0))
+            if (durationSec != lastAudioDurationSecond) {
+                lastAudioDurationSecond = durationSec
+                audioUi.txtAudioDuration.text = formatMs(duration)
+            }
+        }
         if (lyricLines.isNotEmpty()) {
-            binding.txtLyricPrevious.visibility = View.VISIBLE
-            binding.txtLyricCurrent.visibility = View.VISIBLE
-            val index = lyricLines.indexOfLast { it.startMs <= positionMs }.coerceAtLeast(0)
-            if (index != lastLyricIndex) {
+            if (ktvOverlayVisible) {
+                binding.txtLyricPrevious.visibility = View.VISIBLE
+                binding.txtLyricCurrent.visibility = View.VISIBLE
+            }
+            val index = findLyricIndex(lyricLines, positionMs)
+            val indexChanged = index != lastLyricIndex
+            if (indexChanged) {
                 lastLyricIndex = index
-                binding.txtLyricPrevious.animate().cancel()
-                binding.txtLyricCurrent.animate().cancel()
-                binding.txtLyricPrevious.alpha = 0.55f
-                binding.txtLyricCurrent.alpha = 0.35f
-                binding.txtLyricPrevious.animate().alpha(1f).setDuration(180L).start()
-                binding.txtLyricCurrent.animate().alpha(1f).setDuration(240L).start()
+                val nextLineText = lyricLines.getOrNull(index + 1)?.text.orEmpty()
+                if (ktvOverlayVisible) {
+                    binding.txtLyricPrevious.animate().cancel()
+                    binding.txtLyricCurrent.animate().cancel()
+                    binding.txtLyricPrevious.alpha = 0.55f
+                    binding.txtLyricCurrent.alpha = 0.35f
+                    binding.txtLyricPrevious.animate().alpha(1f).setDuration(180L).start()
+                    binding.txtLyricCurrent.animate().alpha(1f).setDuration(240L).start()
+                    binding.txtLyricCurrent.text = nextLineText
+                }
+                if (audioUi != null && audioOverlayVisible) {
+                    audioUi.txtAudioLyricNext.text = nextLineText
+                }
             }
             // 常规点歌机布局：当前演唱行在上，下一行预告在下。
             val lineEndMs = lyricLines.getOrNull(index + 1)?.startMs
                 ?: duration.takeIf { it > lyricLines[index].startMs }
                 ?: lyricLines[index].startMs + 5_000L
-            binding.txtLyricPrevious.setLine(lyricLines[index], lineEndMs)
-            binding.txtLyricPrevious.updatePlayback(positionMs, currentPlaybackState == "playing")
-            binding.txtLyricCurrent.text = lyricLines.getOrNull(index + 1)?.text.orEmpty()
-            val audioUi = audioOverlayBinding
-            if (audioUi?.root?.visibility == View.VISIBLE) {
+            val isPlayingNow = currentPlaybackState == "playing"
+            if (ktvOverlayVisible) {
+                binding.txtLyricPrevious.setLine(lyricLines[index], lineEndMs)
+                binding.txtLyricPrevious.updatePlayback(positionMs, isPlayingNow)
+            }
+            if (audioUi != null && audioOverlayVisible) {
                 audioUi.txtAudioLyricCurrent.setLine(lyricLines[index], lineEndMs)
-                audioUi.txtAudioLyricCurrent.updatePlayback(positionMs, currentPlaybackState == "playing")
-                audioUi.txtAudioLyricNext.text = lyricLines.getOrNull(index + 1)?.text.orEmpty()
+                audioUi.txtAudioLyricCurrent.updatePlayback(positionMs, isPlayingNow)
             }
         }
     }
 
+    private fun findLyricIndex(lines: List<LyricLine>, positionMs: Long): Int {
+        var low = 0
+        var high = lines.size - 1
+        var result = 0
+        while (low <= high) {
+            val mid = (low + high) ushr 1
+            if (lines[mid].startMs <= positionMs) {
+                result = mid
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return result
+    }
+
     private fun renderFullscreenPlaybackPanel(fallbackPositionMs: Long? = null) {
         if (!::fullscreenPlaybackPanel.isInitialized) return
+        if (!bottomDockController.isFullscreen && binding.ktvOverlay.visibility != View.VISIBLE) return
         val snapshot = cachedQueueSnapshot
         val song = snapshot?.playing?.song
         val loadedCurrent = snapshot?.playing?.queueId == loadedQueueId
@@ -2362,8 +2451,15 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
     }
 
     private fun formatMs(ms: Long): String {
-        val seconds = TimeUnit.MILLISECONDS.toSeconds(ms.coerceAtLeast(0))
-        return "%02d:%02d".format(seconds / 60, seconds % 60)
+        val totalSeconds = TimeUnit.MILLISECONDS.toSeconds(ms.coerceAtLeast(0))
+        val minutes = totalSeconds / 60
+        val seconds = totalSeconds % 60
+        val sb = StringBuilder(5)
+        if (minutes < 10) sb.append('0')
+        sb.append(minutes).append(':')
+        if (seconds < 10) sb.append('0')
+        sb.append(seconds)
+        return sb.toString()
     }
 
     /** 播放失败：通知服务端推进队列，不将一次客户端播放失败视为源文件失效。 */

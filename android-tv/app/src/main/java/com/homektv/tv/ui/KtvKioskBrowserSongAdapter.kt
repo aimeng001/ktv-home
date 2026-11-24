@@ -58,13 +58,17 @@ class KtvKioskBrowserSongAdapter(
         val normalized = keyword.trim().uppercase()
         if (searchKeyword == normalized) return
         searchKeyword = normalized
-        notifyVisibleItems()
+        notifyVisibleItems(PAYLOAD_KEYWORD_CHANGED)
     }
 
-    private fun notifyVisibleItems() {
+    private fun notifyVisibleItems(payload: String = PAYLOAD_STATE_CHANGED) {
         if (itemCount == 0) return
         try {
-            notifyItemRangeChanged(0, itemCount, PAYLOAD_STATE_CHANGED)
+            if (payload == PAYLOAD_STATE_CHANGED) {
+                notifyItemRangeChanged(0, itemCount, PAYLOAD_STATE_CHANGED)
+            } else {
+                notifyItemRangeChanged(0, itemCount, payload)
+            }
         } catch (_: Throwable) {
             // Android's local JVM stubs may not have adapter observers initialized.
         }
@@ -96,8 +100,15 @@ class KtvKioskBrowserSongAdapter(
         position: Int,
         payloads: MutableList<Any>,
     ) {
-        if (payloads.contains(PAYLOAD_STATE_CHANGED)) {
-            holder.bindDynamicState(getItem(position))
+        if (payloads.isEmpty()) {
+            super.onBindViewHolder(holder, position, payloads)
+            return
+        }
+        val item = getItem(position)
+        val rebindTitle = payloads.contains(PAYLOAD_KEYWORD_CHANGED)
+        val rebindQueueFav = payloads.contains(PAYLOAD_STATE_CHANGED)
+        if (rebindTitle || rebindQueueFav) {
+            holder.bindPartial(item, rebindTitle = rebindTitle, rebindQueueFav = rebindQueueFav)
         } else {
             super.onBindViewHolder(holder, position, payloads)
         }
@@ -121,6 +132,10 @@ class KtvKioskBrowserSongAdapter(
         private var hasVocalTrack = false
         private var boundSong: SongDto? = null
         private var boundQueueState: SongQueueState? = null
+        private var cachedDisplayTitle: String = ""
+        private val goldHighlightColor: Int by lazy {
+            ContextCompat.getColor(binding.root.context, R.color.gold)
+        }
 
         init {
             binding.btnBrowserSongOrder.isFocusable = false
@@ -203,6 +218,7 @@ class KtvKioskBrowserSongAdapter(
             boundSong = song
             hasVocalTrack = song.hasVocalTrack
             val displayTitle = com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatTitle(song.title)
+            cachedDisplayTitle = displayTitle
             val displayArtist = com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatArtist(song.artist)
             binding.root.contentDescription = "$displayTitle，$displayArtist"
             val initial = ArtistInitialResolver.resolve(displayArtist)
@@ -222,8 +238,12 @@ class KtvKioskBrowserSongAdapter(
                     }
                 }
             }
-            binding.txtBrowserSongArtist.text =
-                com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatArtistSubtitle(song.artist, song.mediaType)
+            val label = com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatMediaLabel(song.mediaType)
+            binding.txtBrowserSongArtist.text = when {
+                displayArtist.isNotEmpty() && label.isNotEmpty() -> "$displayArtist | $label"
+                displayArtist.isNotEmpty() -> displayArtist
+                else -> label
+            }
             val resolution = song.resolution?.trim()?.takeIf { it.isNotEmpty() }
             binding.txtBrowserSongQuality.text = when (song.mediaType.uppercase()) {
                 "KTV_VIDEO" -> "KTV 视频 · ${resolution ?: "清晰度未标注"}"
@@ -232,13 +252,19 @@ class KtvKioskBrowserSongAdapter(
             }
             binding.txtBrowserSongVocal.visibility = View.GONE
 
-            bindDynamicState(song)
+            bindPartial(song, rebindTitle = true, rebindQueueFav = true)
         }
 
-        fun bindDynamicState(song: SongDto) {
+        fun bindPartial(song: SongDto, rebindTitle: Boolean, rebindQueueFav: Boolean) {
             boundSong = song
             hasVocalTrack = song.hasVocalTrack
-            renderTitle(song)
+            if (rebindTitle) {
+                val title = cachedDisplayTitle.ifEmpty {
+                    com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatTitle(song.title).also { cachedDisplayTitle = it }
+                }
+                renderTitle(title)
+            }
+            if (!rebindQueueFav) return
 
             val queueState = getQueueProjection()[song.id]
             boundQueueState = queueState
@@ -291,14 +317,13 @@ class KtvKioskBrowserSongAdapter(
             else -> ""
         }
 
-        private fun renderTitle(song: SongDto) {
-            val title = com.homektv.tv.ui.kiosk.SongDisplayFormatter.formatTitle(song.title)
+        private fun renderTitle(title: String) {
             val keyword = getSearchKeyword()
             val matchIndex = if (keyword.isNotBlank()) title.indexOf(keyword, ignoreCase = true) else -1
             if (matchIndex >= 0) {
                 val styled = SpannableString(title)
                 styled.setSpan(
-                    ForegroundColorSpan(ContextCompat.getColor(binding.root.context, R.color.gold)),
+                    ForegroundColorSpan(goldHighlightColor),
                     matchIndex,
                     matchIndex + keyword.length,
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
@@ -365,6 +390,7 @@ class KtvKioskBrowserSongAdapter(
 
     companion object {
         private const val PAYLOAD_STATE_CHANGED = "state_changed"
+        private const val PAYLOAD_KEYWORD_CHANGED = "keyword_changed"
 
         private val DIFF_CALLBACK = object : DiffUtil.ItemCallback<SongDto>() {
             override fun areItemsTheSame(oldItem: SongDto, newItem: SongDto): Boolean = oldItem.id == newItem.id

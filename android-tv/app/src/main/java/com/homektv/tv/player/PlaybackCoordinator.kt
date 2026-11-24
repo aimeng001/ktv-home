@@ -28,6 +28,7 @@ internal data class PlaybackReplacementRequest(
 internal interface PlaybackSource {
     suspend fun resolveFileSource(songId: Long): FileSourceResolution
     fun streamUrl(fileId: Long): String
+    fun resolveStreamUrl(rawUrl: String): String = rawUrl
 
     /** Compatibility bridge for tests and old transports; MediaApi overrides it. */
     suspend fun resolvePlayback(songId: Long, forceTranscode: Boolean = false): PlaybackResolution =
@@ -111,18 +112,23 @@ internal class PlaybackCoordinator(
             var waitingReported = false
             var preparingReported = false
             while (isCurrent(token)) {
-                val result = try {
-                    source.resolvePlayback(request.songId, request.forceTranscode)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Exception) {
-                    PlaybackResolution.Retryable(
-                        KtvApiError(
-                            kind = KtvApiErrorKind.NETWORK,
-                            code = "FILE_SOURCE_RESOLUTION_FAILED",
-                            message = error.message ?: "文件源暂时不可用",
-                        ),
-                    )
+                val snapshotFastPath = tryResolveFromSnapshot(request)
+                val result = if (snapshotFastPath != null) {
+                    snapshotFastPath
+                } else {
+                    try {
+                        source.resolvePlayback(request.songId, request.forceTranscode)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        PlaybackResolution.Retryable(
+                            KtvApiError(
+                                kind = KtvApiErrorKind.NETWORK,
+                                code = "FILE_SOURCE_RESOLUTION_FAILED",
+                                message = error.message ?: "文件源暂时不可用",
+                            ),
+                        )
+                    }
                 }
                 if (!isCurrent(token)) return@launch
                 when (result) {
@@ -205,6 +211,38 @@ internal class PlaybackCoordinator(
         synchronized(lock) {
             generation == token.generation && activeRequest == token.request
         }
+
+    /**
+     * Zero-RTT fast path: when QueueSnapshot already carries an authoritative READY
+     * playback descriptor for the requested song and no transcode fallback is forced,
+     * build PlaybackResolution.Ready directly without an extra REST round-trip.
+     */
+    private fun tryResolveFromSnapshot(request: PlaybackReplacementRequest): PlaybackResolution.Ready? {
+        if (request.forceTranscode) return null
+        val snapshot = desiredState.forQueue(request.queueId) ?: return null
+        val song = snapshot.playing?.song ?: return null
+        if (song.id != request.songId) return null
+        val descriptor = snapshot.playback
+        if (!descriptor.status.equals("READY", ignoreCase = true)) return null
+        val fileId = descriptor.sourceFileId ?: return null
+        if (fileId <= 0L) return null
+        val rawUrl = descriptor.streamUrl?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        val supportedKind = descriptor.kind.equals("NATIVE", ignoreCase = true) ||
+            descriptor.kind.equals("LIVE_TRANSCODE", ignoreCase = true)
+        if (!supportedKind) return null
+
+        val resolvedUrl = source.resolveStreamUrl(rawUrl)
+        val normalizedDescriptor = descriptor.copy(streamUrl = resolvedUrl)
+        val fileSource = FileSource(
+            id = fileId,
+            format = descriptor.format.orEmpty(),
+            audioTracks = descriptor.audioTracks.coerceAtLeast(1),
+            vocalTrackIndex = descriptor.vocalTrackIndex ?: descriptor.audioLayout.accompanimentTrackIndex,
+            ready = true,
+            audioLayout = descriptor.audioLayout,
+        )
+        return PlaybackResolution.Ready(fileSource, normalizedDescriptor)
+    }
 
     private fun PlaybackResolution.Ready.playableFile(): FileSource {
         val descriptor = descriptor

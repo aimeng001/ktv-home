@@ -73,8 +73,10 @@ import com.homektv.media.MediaProbe;
 @RequestMapping("/api")
 public class StreamController {
 
-    private static final int BUF = 64 * 1024;
+    private static final int BUF = 256 * 1024;
     private static final double MAX_TRANSCODE_START_SECONDS = 24 * 60 * 60;
+    private static final int MAX_STREAM_FILE_CACHE_ENTRIES = 256;
+    private static final long STREAM_FILE_CACHE_TTL_NANOS = 30_000_000_000L;
 
     private final SongFileRepository fileRepo;
     private final AppProperties props;
@@ -104,6 +106,22 @@ public class StreamController {
             lease.closeBeforeBodyIfReserved();
         }
     }
+
+    private record ResolvedStreamEntry(
+            SongFile songFile,
+            Path safePath,
+            long fileSize,
+            long lastModifiedMillis,
+            long expiresAtNanos
+    ) {}
+
+    private final Map<Long, ResolvedStreamEntry> resolvedStreamCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<Long, ResolvedStreamEntry> eldest) {
+                    return size() > MAX_STREAM_FILE_CACHE_ENTRIES;
+                }
+            });
 
     private final Map<String, ActiveClientTranscode> activeTranscodesByClient = new ConcurrentHashMap<>();
 
@@ -136,10 +154,22 @@ public class StreamController {
         this(fileRepo, props, availabilityPolicy, ffmpegPath, processLauncher, resourceBudget, null);
     }
 
+    public StreamController(SongFileRepository fileRepo, AppProperties props,
+                            SongAvailabilityPolicy availabilityPolicy,
+                            String ffmpegPath,
+                            ProcessLauncher processLauncher,
+                            ResourceBudget resourceBudget,
+                            FFprobeService ffprobeService) {
+        this(fileRepo, props, availabilityPolicy, ffmpegPath,
+                LiveTranscodeCommandBuilder.DEFAULT_LIVE_TRANSCODE_THREADS,
+                processLauncher, resourceBudget, ffprobeService);
+    }
+
     @Autowired
     public StreamController(SongFileRepository fileRepo, AppProperties props,
                             SongAvailabilityPolicy availabilityPolicy,
                             @Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath,
+                            @Value("${app.transcode.live-threads:2}") int liveTranscodeThreads,
                             @Autowired(required = false) ProcessLauncher processLauncher,
                             ResourceBudget resourceBudget,
                             @Autowired(required = false) FFprobeService ffprobeService) {
@@ -147,7 +177,7 @@ public class StreamController {
         this.props = props;
         this.availabilityPolicy = availabilityPolicy;
         String executable = (ffmpegPath != null && !ffmpegPath.isBlank()) ? ffmpegPath : "ffmpeg";
-        this.transcodeCommandBuilder = new LiveTranscodeCommandBuilder(executable);
+        this.transcodeCommandBuilder = new LiveTranscodeCommandBuilder(executable, liveTranscodeThreads);
         this.processLauncher = processLauncher != null ? processLauncher : ProcessBuilder::start;
         this.resourceBudget = resourceBudget;
         this.ffprobeService = ffprobeService;
@@ -234,27 +264,54 @@ public class StreamController {
             boolean softVideo,
             HttpServletRequest request) {
 
-        SongFile sf = fileRepo.findById(fileId).orElse(null);
+        boolean canUseFastPathCache = !forceTranscode && audioTrack == null && !mergeTracks && !softVideo;
+        SongFile sf = null;
+        Path safePath = null;
+        File file = null;
+        if (canUseFastPathCache) {
+            ResolvedStreamEntry cached = resolvedStreamCache.get(fileId);
+            if (cached != null) {
+                long now = System.nanoTime();
+                File cachedFile = cached.safePath().toFile();
+                if (now < cached.expiresAtNanos()
+                        && cachedFile.isFile()
+                        && cachedFile.length() == cached.fileSize()
+                        && cachedFile.lastModified() == cached.lastModifiedMillis()) {
+                    sf = cached.songFile();
+                    safePath = cached.safePath();
+                    file = cachedFile;
+                } else {
+                    resolvedStreamCache.remove(fileId, cached);
+                }
+            }
+        }
         if (sf == null) {
-            return ResponseEntity.notFound().build();
-        }
-        if (!availabilityPolicy.isReadyFile(sf)) {
-            return ResponseEntity.notFound().build();
-        }
+            sf = fileRepo.findById(fileId).orElse(null);
+            if (sf == null) {
+                return ResponseEntity.notFound().build();
+            }
+            if (!availabilityPolicy.isReadyFile(sf)) {
+                return ResponseEntity.notFound().build();
+            }
 
-        if (sf.getFilePath() == null || sf.getFilePath().isBlank()) {
-            return ResponseEntity.notFound().build();
-        }
-        Path safePath;
-        try {
-            safePath = LibraryModePolicy.requireReadablePathInsideActiveLibrary(
-                    props, Path.of(sf.getFilePath()));
-        } catch (ApiException e) {
-            return ResponseEntity.notFound().build();
-        }
-        File file = safePath.toFile();
-        if (!file.exists() || !file.isFile()) {
-            return ResponseEntity.notFound().build();
+            if (sf.getFilePath() == null || sf.getFilePath().isBlank()) {
+                return ResponseEntity.notFound().build();
+            }
+            try {
+                safePath = LibraryModePolicy.requireReadablePathInsideActiveLibrary(
+                        props, Path.of(sf.getFilePath()));
+            } catch (ApiException e) {
+                return ResponseEntity.notFound().build();
+            }
+            file = safePath.toFile();
+            if (!file.exists() || !file.isFile()) {
+                return ResponseEntity.notFound().build();
+            }
+            if (canUseFastPathCache && !PlaybackTransportPolicy.requiresLiveTranscode(sf, false)) {
+                resolvedStreamCache.put(fileId, new ResolvedStreamEntry(
+                        sf, safePath, file.length(), file.lastModified(),
+                        System.nanoTime() + STREAM_FILE_CACHE_TTL_NANOS));
+            }
         }
 
         boolean isHead = request != null && "HEAD".equalsIgnoreCase(request.getMethod());
@@ -386,16 +443,22 @@ public class StreamController {
                 raced.closePreempted();
             }
         }
+        Runnable cleanupActiveEntry = clientKey != null
+                ? () -> activeTranscodesByClient.remove(clientKey, activeEntry)
+                : null;
         if (request != null) {
             request.setAttribute(TranscodeAsyncLifecycleInterceptor.SESSION_ATTRIBUTE, session);
+            if (cleanupActiveEntry != null) {
+                request.setAttribute(TranscodeAsyncLifecycleInterceptor.CLEANUP_ATTRIBUTE, cleanupActiveEntry);
+            }
         }
         try {
             StreamingResponseBody body = output -> {
                 try {
                     session.streamTo(output);
                 } finally {
-                    if (clientKey != null) {
-                        activeTranscodesByClient.remove(clientKey, activeEntry);
+                    if (cleanupActiveEntry != null) {
+                        cleanupActiveEntry.run();
                     }
                 }
             };
@@ -404,8 +467,8 @@ public class StreamController {
                     .header(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate")
                     .body(mediaStreamLease.wrap(body));
         } catch (RuntimeException | Error error) {
-            if (clientKey != null) {
-                activeTranscodesByClient.remove(clientKey, activeEntry);
+            if (cleanupActiveEntry != null) {
+                cleanupActiveEntry.run();
             }
             session.close();
             mediaStreamLease.closeBeforeBodyIfReserved();
@@ -429,12 +492,16 @@ public class StreamController {
     private ResponseEntity<StreamingResponseBody> serveStaticRangeStream(
             File file, SongFile sf, String rangeHeader, HttpServletRequest request, boolean isHead) {
         long length = file.length();
+        long lastModified = file.lastModified();
+        String weakEtag = "W/\"" + sf.getId() + "-" + length + "-" + lastModified + "\"";
         MediaType contentType = mediaTypeFor(sf.getFormat(), file.getName());
 
         // 无 Range：整段返回，声明 Accept-Ranges 以便客户端后续 seek
         if (rangeHeader == null || rangeHeader.isBlank()) {
             ResponseEntity.BodyBuilder response = ResponseEntity.ok()
                     .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                    .eTag(weakEtag)
+                    .lastModified(lastModified)
                     .contentType(contentType)
                     .contentLength(length);
             if (isHead) {
@@ -464,6 +531,8 @@ public class StreamController {
         ResponseEntity.BodyBuilder response = ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
                 .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                 .header(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + end + "/" + length)
+                .eTag(weakEtag)
+                .lastModified(lastModified)
                 .contentType(contentType)
                 .contentLength(count);
         if (isHead) {

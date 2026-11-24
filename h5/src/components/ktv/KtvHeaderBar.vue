@@ -108,7 +108,10 @@ const clockDate = computed(() => {
 })
 
 onMounted(() => {
-  clockTimer = setInterval(() => { nowRef.value = new Date() }, 15000)
+  clockTimer = setInterval(() => {
+    if (typeof document !== 'undefined' && document.hidden) return
+    nowRef.value = new Date()
+  }, 15000)
   netStatus.start()
 })
 onBeforeUnmount(() => {

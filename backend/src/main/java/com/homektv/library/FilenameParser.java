@@ -18,6 +18,14 @@ public final class FilenameParser {
 
     private static final String DEFAULT_RULE = "artist_title";
     private static final Pattern CATALOG_PREFIX = Pattern.compile("^\\s*([0-9]{5,10})\\s*[-._]\\s*");
+    private static final Pattern LEADING_BRACKET_INDEX = Pattern.compile("^\\s*[（(【\\[]\\s*\\d{1,5}\\s*[)）】\\]]\\s*");
+    private static final Pattern LEADING_NUMERIC_DOT = Pattern.compile("^\\s*\\d{1,5}\\s*[.、)】]\\s*");
+    private static final Pattern LEADING_CATEGORY_BRACKET = Pattern.compile("^\\s*【[^】]+】\\s*");
+    private static final Pattern LEADING_TECH_TAG = Pattern.compile("(?i)^\\s*\\[(?:\\d+|KTV|MTV|MV|LIVE|4K|1080P|HD|UHD|超清|高清|修复|无损|经典|新歌|儿歌|戏曲|民歌)[^\\]]*\\]\\s*");
+    private static final Pattern TRAILING_SQUARE_TAG = Pattern.compile("(?i)\\s*\\[(?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|4K|1080P|HD|UHD|超清|高清|修复|无损)\\]\\s*$");
+    private static final Pattern TRAILING_PAREN_TAG = Pattern.compile("(?i)\\s*\\((?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|Official Video|4K|1080P|HD|UHD|超清|高清|修复|无损)\\)\\s*$");
+    private static final Pattern TRAILING_DASH_TAG = Pattern.compile("(?i)\\s*[-|]\\s*(KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|4K|1080P|HD|UHD)\\s*$");
+    private static final Pattern TRACK_INDEX_SEGMENT = Pattern.compile("^\\d{1,8}$");
 
     private static final Map<String, String> LANGUAGE_ALIASES = Map.ofEntries(
             Map.entry("国语", "国语"),
@@ -137,13 +145,13 @@ public final class FilenameParser {
         if (base.isBlank()) return ParsedMeta.unrecognized(base);
 
         // Strip catalogue numbers, category brackets, and transport/version markers before identifying fields.
-        base = base.replaceFirst("^\\s*[（(【\\[]\\s*\\d{1,5}\\s*[)）】\\]]\\s*", "");
-        base = base.replaceFirst("^\\s*\\d{1,5}\\s*[.、)】]\\s*", "");
-        base = base.replaceFirst("^\\s*【[^】]+】\\s*", "");
-        base = base.replaceFirst("(?i)^\\s*\\[(?:\\d+|KTV|MTV|MV|LIVE|4K|1080P|HD|UHD|超清|高清|修复|无损|经典|新歌|儿歌|戏曲|民歌)[^\\]]*\\]\\s*", "");
-        base = base.replaceAll("(?i)\\s*\\[(?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|4K|1080P|HD|UHD|超清|高清|修复|无损)\\]\\s*$", "");
-        base = base.replaceAll("(?i)\\s*\\((?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|Official Video|4K|1080P|HD|UHD|超清|高清|修复|无损)\\)\\s*$", "");
-        base = base.replaceAll("(?i)\\s*[-|]\\s*(KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|4K|1080P|HD|UHD)\\s*$", "");
+        base = LEADING_BRACKET_INDEX.matcher(base).replaceFirst("");
+        base = LEADING_NUMERIC_DOT.matcher(base).replaceFirst("");
+        base = LEADING_CATEGORY_BRACKET.matcher(base).replaceFirst("");
+        base = LEADING_TECH_TAG.matcher(base).replaceFirst("");
+        base = TRAILING_SQUARE_TAG.matcher(base).replaceAll("");
+        base = TRAILING_PAREN_TAG.matcher(base).replaceAll("");
+        base = TRAILING_DASH_TAG.matcher(base).replaceAll("");
 
         String dashSeparated = normalizeDashSeparators(base);
         List<String> dashParts = splitParts(dashSeparated);
@@ -196,7 +204,7 @@ public final class FilenameParser {
         }
 
         // 剥离可能存在的曲目序号前缀（例如："01-周杰伦-晴天-国语-流行"，此时 identity 有 3 段以上）
-        if (identity.size() >= 3 && identity.get(0).matches("^\\d{1,8}$")) {
+        if (identity.size() >= 3 && TRACK_INDEX_SEGMENT.matcher(identity.get(0)).matches()) {
             identity.remove(0);
         }
 

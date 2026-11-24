@@ -67,12 +67,18 @@ public class AiLibraryService {
     private final MediaImportRecordRepository importRecordRepository;
     private final AiTaskDispatchFailureRecorder dispatchFailureRecorder;
     private volatile com.homektv.resource.PlaybackPressureMonitor playbackPressureMonitor;
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @jakarta.persistence.PersistenceContext
     private jakarta.persistence.EntityManager entityManager;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setPlaybackPressureMonitor(com.homektv.resource.PlaybackPressureMonitor playbackPressureMonitor) {
         this.playbackPressureMonitor = playbackPressureMonitor;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setJdbcTemplate(org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     public AiLibraryService(AiAnalysisTaskRepository taskRepository, SongRepository songRepository,
@@ -1067,6 +1073,32 @@ public class AiLibraryService {
             order = Math.max(order, item.getSortOrder() + 1);
         }
         int maximum = playlistLimit(limit);
+        if (jdbcTemplate != null) {
+            long afterId = 0L;
+            while (existing.size() < maximum) {
+                List<Song> batch = songRepository.findTop500ByIdGreaterThanOrderByIdAsc(afterId);
+                if (batch == null || batch.isEmpty()) break;
+                for (Song song : batch) {
+                    if (song == null || song.getId() == null) continue;
+                    afterId = Math.max(afterId, song.getId());
+                    if (existing.size() >= maximum) break;
+                    if (!matches(song, normalizedTag) || existing.contains(song.getId())) continue;
+                    PlaylistSong item = new PlaylistSong();
+                    item.setPlaylistId(playlist.getId());
+                    item.setSongId(song.getId());
+                    item.setSortOrder(order++);
+                    item.setManual(false);
+                    playlistSongRepository.save(item);
+                    existing.add(song.getId());
+                }
+                if (entityManager != null) {
+                    entityManager.flush();
+                    entityManager.clear();
+                }
+                if (batch.size() < SONG_PAGE_SIZE) break;
+            }
+            return playlist;
+        }
         for (int pageNumber = 0; existing.size() < maximum; pageNumber++) {
             Page<Song> page = songPage(pageNumber);
             if (page == null || page.isEmpty()) break;
@@ -1081,6 +1113,10 @@ public class AiLibraryService {
                 playlistSongRepository.save(item);
                 existing.add(song.getId());
             }
+            if (entityManager != null) {
+                entityManager.flush();
+                entityManager.clear();
+            }
             if (!page.hasNext()) break;
         }
         return playlist;
@@ -1092,6 +1128,20 @@ public class AiLibraryService {
     }
 
     private void forEachSong(Consumer<Song> consumer) {
+        if (jdbcTemplate != null) {
+            long afterId = 0L;
+            while (true) {
+                List<Song> batch = songRepository.findTop500ByIdGreaterThanOrderByIdAsc(afterId);
+                if (batch == null || batch.isEmpty()) return;
+                for (Song song : batch) {
+                    if (song == null) continue;
+                    if (song.getId() != null) afterId = Math.max(afterId, song.getId());
+                    consumer.accept(song);
+                }
+                if (entityManager != null) entityManager.clear();
+                if (batch.size() < SONG_PAGE_SIZE) return;
+            }
+        }
         for (int pageNumber = 0; ; pageNumber++) {
             Page<Song> page = songPage(pageNumber);
             if (page == null || page.isEmpty()) return;

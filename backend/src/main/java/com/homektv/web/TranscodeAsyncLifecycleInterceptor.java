@@ -11,6 +11,7 @@ import java.io.IOException;
 /** Releases reserved media resources if servlet async processing ends before the body can finish. */
 final class TranscodeAsyncLifecycleInterceptor implements AsyncHandlerInterceptor {
     static final String SESSION_ATTRIBUTE = TranscodeAsyncLifecycleInterceptor.class.getName() + ".session";
+    static final String CLEANUP_ATTRIBUTE = TranscodeAsyncLifecycleInterceptor.class.getName() + ".cleanup";
 
     @Override
     public void afterConcurrentHandlingStarted(
@@ -19,22 +20,23 @@ final class TranscodeAsyncLifecycleInterceptor implements AsyncHandlerIntercepto
             Object handler) {
         LiveTranscodeSession session = session(request);
         MediaStreamLease mediaStreamLease = mediaStreamLease(request);
-        if (session == null && mediaStreamLease == null) return;
+        Runnable cleanup = cleanup(request);
+        if (session == null && mediaStreamLease == null && cleanup == null) return;
         try {
             request.getAsyncContext().addListener(new AsyncListener() {
                 @Override
                 public void onComplete(AsyncEvent event) {
-                    closeAsyncResources(session, mediaStreamLease);
+                    closeAsyncResources(session, mediaStreamLease, cleanup);
                 }
 
                 @Override
                 public void onTimeout(AsyncEvent event) {
-                    closeAsyncResources(session, mediaStreamLease);
+                    closeAsyncResources(session, mediaStreamLease, cleanup);
                 }
 
                 @Override
                 public void onError(AsyncEvent event) {
-                    closeAsyncResources(session, mediaStreamLease);
+                    closeAsyncResources(session, mediaStreamLease, cleanup);
                 }
 
                 @Override
@@ -44,7 +46,7 @@ final class TranscodeAsyncLifecycleInterceptor implements AsyncHandlerIntercepto
             });
         } catch (IllegalStateException ignored) {
             // If async already completed, close the same idempotent resource owners.
-            closeAsyncResources(session, mediaStreamLease);
+            closeAsyncResources(session, mediaStreamLease, cleanup);
         }
     }
 
@@ -55,10 +57,7 @@ final class TranscodeAsyncLifecycleInterceptor implements AsyncHandlerIntercepto
             Object handler,
             Exception ex) {
         if (!request.isAsyncStarted()) {
-            LiveTranscodeSession session = session(request);
-            if (session != null) session.close();
-            MediaStreamLease mediaStreamLease = mediaStreamLease(request);
-            if (mediaStreamLease != null) mediaStreamLease.closeBeforeBodyIfReserved();
+            closeAsyncResources(session(request), mediaStreamLease(request), cleanup(request));
         }
     }
 
@@ -72,7 +71,13 @@ final class TranscodeAsyncLifecycleInterceptor implements AsyncHandlerIntercepto
         return value instanceof MediaStreamLease lease ? lease : null;
     }
 
-    private void closeAsyncResources(LiveTranscodeSession session, MediaStreamLease mediaStreamLease) {
+    private Runnable cleanup(HttpServletRequest request) {
+        Object value = request.getAttribute(CLEANUP_ATTRIBUTE);
+        return value instanceof Runnable runnable ? runnable : null;
+    }
+
+    private void closeAsyncResources(LiveTranscodeSession session, MediaStreamLease mediaStreamLease, Runnable cleanup) {
+        if (cleanup != null) cleanup.run();
         if (session != null) session.close();
         if (mediaStreamLease != null) mediaStreamLease.closeBeforeBodyIfReserved();
     }

@@ -398,6 +398,7 @@ function syncAudioRouter() {
     }
   } else {
     channelRouter.setGain(0, true)
+    channelRouter?.suspend?.()
     el.muted = true
   }
 }
@@ -663,7 +664,10 @@ watch(() => player.state, (state) => {
   const el = videoEl.value
   if (!el || !streamSpec.value.url) return
   if (state === 'playing') attemptPlay()
-  else el.pause()
+  else {
+    el.pause()
+    channelRouter?.suspend?.()
+  }
 })
 
 watch(() => player.isWebHost, (isHost) => {
@@ -751,16 +755,55 @@ watch(() => player.pitchSemitones, () => {
 
 const spectrumCanvas = ref(null)
 let spectrumAnimId = null
+let cachedSpectrumCanvas = null
+let cachedSpectrumCtx = null
+let cachedSpectrumGradient = null
+let cachedSpectrumWidth = 0
+let cachedSpectrumHeight = 0
+let lastSpectrumDrawTime = 0
+const SPECTRUM_FRAME_INTERVAL_MS = 33
 
-function renderSpectrumFrame() {
-  if (!spectrumCanvas.value) return
-  const canvas = spectrumCanvas.value
-  let ctx = null
-  try {
-    ctx = canvas.getContext ? canvas.getContext('2d') : null
-  } catch {
-    ctx = null
+function resetSpectrumCache() {
+  cachedSpectrumCanvas = null
+  cachedSpectrumCtx = null
+  cachedSpectrumGradient = null
+  cachedSpectrumWidth = 0
+  cachedSpectrumHeight = 0
+}
+
+function shouldRunSpectrum() {
+  if (typeof document !== 'undefined' && document.hidden) return false
+  return Boolean(
+    props.fullscreen
+    && (isAudioOnly.value || !hasVideoStream.value || mirrorStreamFailed.value)
+    && player.isPlaying
+  )
+}
+
+function renderSpectrumFrame(nowTs = 0) {
+  if (!spectrumCanvas.value || !shouldRunSpectrum()) {
+    spectrumAnimId = null
+    return
   }
+
+  const ts = typeof nowTs === 'number' && nowTs > 0 ? nowTs : Date.now()
+  if (lastSpectrumDrawTime > 0 && (ts - lastSpectrumDrawTime) < SPECTRUM_FRAME_INTERVAL_MS) {
+    spectrumAnimId = requestAnimationFrame(renderSpectrumFrame)
+    return
+  }
+  lastSpectrumDrawTime = ts
+
+  const canvas = spectrumCanvas.value
+  if (cachedSpectrumCanvas !== canvas || !cachedSpectrumCtx) {
+    try {
+      cachedSpectrumCtx = canvas.getContext ? canvas.getContext('2d') : null
+      cachedSpectrumCanvas = canvas
+      cachedSpectrumGradient = null
+    } catch {
+      cachedSpectrumCtx = null
+    }
+  }
+  const ctx = cachedSpectrumCtx
   if (!ctx) return
 
   const width = canvas.width || 600
@@ -769,45 +812,51 @@ function renderSpectrumFrame() {
     ctx.clearRect(0, 0, width, height)
   }
 
+  if (!cachedSpectrumGradient || cachedSpectrumWidth !== width || cachedSpectrumHeight !== height) {
+    cachedSpectrumWidth = width
+    cachedSpectrumHeight = height
+    if (typeof ctx.createLinearGradient === 'function') {
+      const gradient = ctx.createLinearGradient(0, height, 0, 0)
+      gradient.addColorStop(0, 'rgba(0, 229, 255, 0.7)')
+      gradient.addColorStop(0.5, 'rgba(168, 85, 247, 0.85)')
+      gradient.addColorStop(1, 'rgba(255, 215, 0, 0.95)')
+      cachedSpectrumGradient = gradient
+    } else {
+      cachedSpectrumGradient = '#00e5ff'
+    }
+  }
+  ctx.fillStyle = cachedSpectrumGradient
+
   const isPlaying = Boolean(player.isPlaying)
   const freqData = channelRouter?.getFrequencyData?.()
   const barCount = 40
   const barWidth = Math.max(3, (width / barCount) - 4)
   const maxBarHeight = height * 0.75
+  const startOffset = (width - (barCount * (barWidth + 4))) / 2
+  const fallbackPhase = ts / 300
 
-  if (typeof ctx.createLinearGradient === 'function') {
-    const gradient = ctx.createLinearGradient(0, height, 0, 0)
-    gradient.addColorStop(0, 'rgba(0, 229, 255, 0.7)')
-    gradient.addColorStop(0.5, 'rgba(168, 85, 247, 0.85)')
-    gradient.addColorStop(1, 'rgba(255, 215, 0, 0.95)')
-    ctx.fillStyle = gradient
-  } else {
-    ctx.fillStyle = '#00e5ff'
-  }
-
+  if (typeof ctx.beginPath === 'function') ctx.beginPath()
   for (let i = 0; i < barCount; i++) {
     let value = 0
     if (isPlaying && freqData && freqData.length > 0) {
       const freqIndex = Math.floor((i / barCount) * Math.min(freqData.length, 48))
       value = (freqData[freqIndex] || 0) / 255
     } else if (isPlaying) {
-      const t = Date.now() / 300
-      value = (Math.sin(t + i * 0.3) + 1) * 0.15 + 0.05
+      value = (Math.sin(fallbackPhase + i * 0.3) + 1) * 0.15 + 0.05
     }
     const barHeight = Math.max(4, value * maxBarHeight)
-    const x = i * (barWidth + 4) + (width - (barCount * (barWidth + 4))) / 2
+    const x = i * (barWidth + 4) + startOffset
     const y = height - barHeight
-    
-    if (typeof ctx.beginPath === 'function') ctx.beginPath()
+
     if (typeof ctx.roundRect === 'function') {
       ctx.roundRect(x, y, barWidth, barHeight, [4, 4, 0, 0])
     } else if (typeof ctx.rect === 'function') {
       ctx.rect(x, y, barWidth, barHeight)
     }
-    if (typeof ctx.fill === 'function') ctx.fill()
   }
+  if (typeof ctx.fill === 'function') ctx.fill()
 
-  if (props.fullscreen && (isAudioOnly.value || !hasVideoStream.value || mirrorStreamFailed.value) && player.isPlaying) {
+  if (shouldRunSpectrum()) {
     spectrumAnimId = requestAnimationFrame(renderSpectrumFrame)
   } else {
     spectrumAnimId = null
@@ -816,8 +865,7 @@ function renderSpectrumFrame() {
 
 function startSpectrumAnimation() {
   stopSpectrumAnimation()
-  if (!props.fullscreen || !(isAudioOnly.value || !hasVideoStream.value || mirrorStreamFailed.value)) return
-  if (!player.isPlaying) return
+  if (!shouldRunSpectrum()) return
 
   if (spectrumCanvas.value) {
     const rect = spectrumCanvas.value.getBoundingClientRect ? spectrumCanvas.value.getBoundingClientRect() : null
@@ -829,6 +877,7 @@ function startSpectrumAnimation() {
       spectrumCanvas.value.height = 180
     }
   }
+  lastSpectrumDrawTime = 0
   spectrumAnimId = requestAnimationFrame(renderSpectrumFrame)
 }
 
@@ -837,9 +886,12 @@ function stopSpectrumAnimation() {
     cancelAnimationFrame(spectrumAnimId)
     spectrumAnimId = null
   }
+  lastSpectrumDrawTime = 0
   if (spectrumCanvas.value) {
     try {
-      const ctx = spectrumCanvas.value.getContext ? spectrumCanvas.value.getContext('2d') : null
+      const ctx = cachedSpectrumCanvas === spectrumCanvas.value && cachedSpectrumCtx
+        ? cachedSpectrumCtx
+        : (spectrumCanvas.value.getContext ? spectrumCanvas.value.getContext('2d') : null)
       if (ctx && typeof ctx.clearRect === 'function') {
         ctx.clearRect(0, 0, spectrumCanvas.value.width || 0, spectrumCanvas.value.height || 0)
       }
@@ -849,8 +901,16 @@ function stopSpectrumAnimation() {
   }
 }
 
+function onDocumentVisibilityChange() {
+  if (shouldRunSpectrum()) {
+    if (!spectrumAnimId) startSpectrumAnimation()
+  } else {
+    stopSpectrumAnimation()
+  }
+}
+
 watch([() => props.fullscreen, isAudioOnly, hasVideoStream, mirrorStreamFailed, () => player.isPlaying], () => {
-  if (props.fullscreen && (isAudioOnly.value || !hasVideoStream.value || mirrorStreamFailed.value) && player.isPlaying) {
+  if (shouldRunSpectrum()) {
     startSpectrumAnimation()
   } else {
     stopSpectrumAnimation()
@@ -858,7 +918,8 @@ watch([() => props.fullscreen, isAudioOnly, hasVideoStream, mirrorStreamFailed, 
 }, { immediate: true })
 
 watch(spectrumCanvas, (canvas) => {
-  if (canvas && props.fullscreen && (isAudioOnly.value || !hasVideoStream.value || mirrorStreamFailed.value) && player.isPlaying) {
+  resetSpectrumCache()
+  if (canvas && shouldRunSpectrum()) {
     startSpectrumAnimation()
   }
 })
@@ -874,6 +935,9 @@ onMounted(() => {
     window.addEventListener('click', onGlobalUserGesture, { capture: true })
     window.addEventListener('keydown', onGlobalUserGesture, { capture: true })
   }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onDocumentVisibilityChange)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -882,7 +946,11 @@ onBeforeUnmount(() => {
     window.removeEventListener('click', onGlobalUserGesture, { capture: true })
     window.removeEventListener('keydown', onGlobalUserGesture, { capture: true })
   }
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
+  }
   stopSpectrumAnimation()
+  resetSpectrumCache()
   clearTimeout(osdTimer)
   clearTimeout(effectTimer)
   clearTimeout(songBannerTimer)
@@ -899,8 +967,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(2px);
+  background: rgba(0, 0, 0, 0.58);
   color: rgba(255, 255, 255, 0.9);
   font-size: 14px;
   gap: 10px;

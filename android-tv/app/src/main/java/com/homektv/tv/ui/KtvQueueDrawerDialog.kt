@@ -68,6 +68,14 @@ class KtvQueueDrawerAdapter(
         holder.bind(getItem(position), position + 1)
     }
 
+    override fun onBindViewHolder(holder: QueueViewHolder, position: Int, payloads: MutableList<Any>) {
+        if (payloads.contains(PAYLOAD_ACTIONS_AVAILABLE)) {
+            holder.bindActionAvailability(getItem(position))
+        } else {
+            super.onBindViewHolder(holder, position, payloads)
+        }
+    }
+
     fun updateActor(currentUserId: Long?, isHost: Boolean) {
         if (actorUserId == currentUserId && actorIsHost == isHost) return
         val changedPositions = currentList.mapIndexedNotNull { index, entry ->
@@ -97,7 +105,13 @@ class KtvQueueDrawerAdapter(
     fun setActionsAvailable(available: Boolean) {
         if (actionsAvailable == available) return
         actionsAvailable = available
-        notifyDataSetChanged()
+        if (itemCount > 0) {
+            try {
+                notifyItemRangeChanged(0, itemCount, PAYLOAD_ACTIONS_AVAILABLE)
+            } catch (_: Throwable) {
+                notifyDataSetChanged()
+            }
+        }
     }
 
     class QueueViewHolder(
@@ -173,9 +187,20 @@ class KtvQueueDrawerAdapter(
                 binding.btnQueueDelete.setOnClickListener(null)
             }
         }
+
+        fun bindActionAvailability(entry: QueueEntry) {
+            val qId = entry.queueId
+            val canManage = qId != null && QueuePermissionPolicy.canManage(entry, currentUserId(), isHost())
+            val topPending = qId != null && ActionKey("control:top", qId) in pendingActions()
+            val cancelPending = qId != null && ActionKey("control:cancel", qId) in pendingActions()
+            binding.btnQueueTop.isEnabled = canManage && actionsAvailable() && !topPending
+            binding.btnQueueDelete.isEnabled = canManage && actionsAvailable() && !cancelPending
+        }
     }
 
     companion object {
+        private const val PAYLOAD_ACTIONS_AVAILABLE = "actions_available"
+
         val DIFF_CALLBACK = object : DiffUtil.ItemCallback<QueueEntry>() {
             override fun areItemsTheSame(oldItem: QueueEntry, newItem: QueueEntry): Boolean =
                 oldItem.queueId == newItem.queueId

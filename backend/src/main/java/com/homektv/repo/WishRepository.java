@@ -13,4 +13,8 @@ import java.util.List;
 public interface WishRepository extends JpaRepository<Wish, Long> {
 
     List<Wish> findAllByOrderByCreatedAtDesc();
+
+    List<Wish> findTop500ByOrderByCreatedAtDesc();
+
+    List<Wish> findTop5000ByOrderByCreatedAtDesc();
 }

@@ -32,7 +32,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
 import { Check, ChevronDown, Image as ImageIcon, RefreshCw, Sparkles, UsersRound, X } from 'lucide-vue-next'
 import api from '../../api/client'
@@ -43,7 +43,7 @@ import { artistKindLabel } from './artistKind'
 import { useFocusTrap } from '../../composables/useFocusTrap'
 import { getArtistAvatarStyle } from '../../utils/avatarColor'
 
-const artists = ref([]), loading = ref(false), refreshing = ref(false), matchingAvatars = ref(false), backfillingAvatars = ref(false), matchingGender = ref(false), avatarBackfillMessage = ref(''), genderClassificationMessage = ref(''), selectedKeys = ref(new Set()), avatarProgress = ref(null), avatarProgressState = ref('idle'), scrapingKey = ref('')
+const artists = shallowRef([]), loading = ref(false), refreshing = ref(false), matchingAvatars = ref(false), backfillingAvatars = ref(false), matchingGender = ref(false), avatarBackfillMessage = ref(''), genderClassificationMessage = ref(''), selectedKeys = ref(new Set()), avatarProgress = ref(null), avatarProgressState = ref('idle'), scrapingKey = ref('')
 const router = useRouter()
 const reviewOpen = ref(false), selected = ref(null), suggestion = ref(null), analyzing = ref(false), saving = ref(false), uploadingAvatar = ref(false), reviewGender = ref('未知')
 const batchOpen = ref(false), batchAnalyzing = ref(false), batchSaving = ref(false), batchRows = ref([]), batchProgress = ref(0), batchTotal = ref(0), batchSaveProgress = ref(0)
@@ -126,6 +126,10 @@ async function refreshAvatarProgress(silent = false) {
     if (!avatarPollDisposed && (avatarProgress.value?.pendingCount > 0 || avatarProgress.value?.queuedJobs > 0)) {
       avatarPollTimer = setTimeout(() => {
         avatarPollTimer = null
+        if (typeof document !== 'undefined' && document.hidden) {
+          avatarPollTimer = setTimeout(() => { avatarPollTimer = null; refreshAvatarProgress(true) }, 5000)
+          return
+        }
         refreshAvatarProgress(true)
       }, 5000)
     }

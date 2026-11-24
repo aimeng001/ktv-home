@@ -114,7 +114,9 @@ internal class KtvFullscreenPlaybackPanel(
         vocalMode = currentVocalMode
         muted = isMuted
         seekAvailable = canSeek && durationMs > 0L
-        render()
+        if (fullscreen || overlay.visibility == View.VISIBLE) {
+            render()
+        }
     }
 
     fun handleKeyEvent(event: KeyEvent): Boolean {

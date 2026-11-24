@@ -122,4 +122,18 @@ class SharedOkHttpClientLifecycleTest {
         assertSame(SharedHttpClients.baseClient.dispatcher, transport.dispatcher)
         assertFalse(SharedHttpClients.baseClient.dispatcher.executorService.isShutdown)
     }
+
+    @Test
+    fun installDiskCacheAttachesSharedCacheToReadAndApiClientsOnly() {
+        val tempDir = kotlin.io.path.createTempDirectory("ktv-okhttp-cache-test").toFile()
+        try {
+            val installed = SharedHttpClients.installDiskCache(tempDir)
+            assertTrue(installed != null)
+            assertSame(installed, SharedHttpClients.apiClient().cache)
+            assertSame(installed, SharedHttpClients.browseReadClient().cache)
+            assertTrue(SharedHttpClients.transportClient().cache == null)
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
 }

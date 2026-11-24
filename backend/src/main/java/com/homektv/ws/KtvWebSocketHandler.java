@@ -167,7 +167,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 progress.put("position_ms", result.state().getPositionMs());
                 progress.put("queue_id", queueId);
                 progress.put("seek_sequence", result.state().getSeekSequence());
-                broadcaster.broadcastPlayback(WsEvent.of(WsEvent.PROGRESS, progress));
+                broadcaster.broadcastPlaybackExcept(session.getId(), WsEvent.of(WsEvent.PROGRESS, progress));
             }
             case "finished" -> {
                 // TV 上报当前曲目播放完成 → 推进队列并广播

@@ -4,7 +4,7 @@ import androidx.annotation.MainThread
 
 /** Access-ordered cache with both entry and weighted byte limits. */
 @MainThread
-internal class WeightedLruCache<K, V>(
+class WeightedLruCache<K, V>(
     private val capacity: Int,
     private val maxBytes: Long,
     private val weight: (V) -> Long,
@@ -47,6 +47,20 @@ internal class WeightedLruCache<K, V>(
         loading.clear()
         values.clear()
         byteSize = 0L
+    }
+
+    fun trimToBytes(targetBytes: Long) {
+        val safeTarget = targetBytes.coerceAtLeast(0L)
+        while (byteSize > safeTarget) {
+            val iterator = values.entries.iterator()
+            if (!iterator.hasNext()) {
+                byteSize = 0L
+                return
+            }
+            val removed = iterator.next()
+            byteSize -= weightOf(removed.value)
+            iterator.remove()
+        }
     }
 
     val size: Int

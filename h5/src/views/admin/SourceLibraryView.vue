@@ -70,7 +70,7 @@
  *
  * Source library management page — manages scanned source materials, duplicate detection, and transcode import tasks.
  */
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, shallowRef } from 'vue'
 import { ChevronDown, ListRestart, RefreshCw, Trash2 } from 'lucide-vue-next'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
@@ -79,7 +79,7 @@ import { createLatestRequest } from '../latestRequest'
 import { createProgressPollGate } from './progressPollGate'
 
 // 列表数据、分页、选中项 / List data, pagination, selected items
-const rows = ref([]), total = ref(0), page = ref(0), totalPages = ref(1), selected = ref([]), libraryMode = ref(null)
+const rows = shallowRef([]), total = ref(0), page = ref(0), totalPages = ref(1), selected = ref([]), libraryMode = ref(null)
 const externalMode = computed(() => libraryMode.value === 'EXTERNAL_READ_ONLY')
 const managedMode = computed(() => libraryMode.value === 'MANAGED')
 const cleaning = ref(false)
@@ -169,7 +169,10 @@ async function loadProgress() {
 function startProgressPolling() {
   progressPollGate.invalidate({ queueLatest: true })
   if (timer) clearInterval(timer)
-  timer = setInterval(loadProgress, 1500)
+  timer = setInterval(() => {
+    if (typeof document !== 'undefined' && document.hidden) return
+    loadProgress()
+  }, 1500)
 }
 
 function stopProgressPolling() {

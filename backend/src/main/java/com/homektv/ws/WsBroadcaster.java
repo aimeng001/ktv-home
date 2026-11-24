@@ -228,9 +228,17 @@ public class WsBroadcaster {
      * second projection.
      */
     public void broadcastPlayback(WsEvent event) {
+        broadcastPlaybackExcept(null, event);
+    }
+
+    /** Broadcasts playback events to eligible sessions while skipping the originating sender. */
+    public void broadcastPlaybackExcept(String excludedSessionId, WsEvent event) {
         String activeSessionId = playerRegistry.activeSessionId().orElse(null);
         OutboundBatch batch = prepareOutbound(event);
         for (WebSocketSession session : sessions.values()) {
+            if (excludedSessionId != null && excludedSessionId.equals(session.getId())) {
+                continue;
+            }
             String type = sessionTypes.get(session.getId());
             if (!"tv".equals(type) || session.getId().equals(activeSessionId)) {
                 sendPrepared(session, batch);
@@ -280,6 +288,12 @@ public class WsBroadcaster {
 
         SessionOutboundQueue queue = outboundQueues.computeIfAbsent(session.getId(),
                 ignored -> new SessionOutboundQueue(session));
+        if (!isCurrentSession(session)) {
+            if (outboundQueues.remove(session.getId(), queue)) {
+                queue.close();
+            }
+            return;
+        }
         if (!queue.enqueue(batch)) {
             log.warn("WebSocket 会话发送队列超限，关闭慢会话: session={}, frames={}, bytes={}",
                     session.getId(), batch.frameCount(), batch.byteCount());

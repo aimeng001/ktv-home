@@ -112,6 +112,8 @@ public class LibraryScanService {
     private final LibraryScanSeenPathStore seenPathStore;
     private CoverImageNormalizer coverImageNormalizer;
     private CatalogRevisionService catalogRevisionService;
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private com.homektv.resource.PlaybackPressureMonitor playbackPressureMonitor;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -195,6 +197,16 @@ public class LibraryScanService {
     @Autowired(required = false)
     void setCatalogRevisionService(CatalogRevisionService catalogRevisionService) {
         this.catalogRevisionService = catalogRevisionService;
+    }
+
+    @Autowired(required = false)
+    void setJdbcTemplate(org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Autowired(required = false)
+    void setPlaybackPressureMonitor(com.homektv.resource.PlaybackPressureMonitor playbackPressureMonitor) {
+        this.playbackPressureMonitor = playbackPressureMonitor;
     }
 
     public enum ScanState {
@@ -512,6 +524,7 @@ public class LibraryScanService {
         Map<Long, Song> songsForFilenameRepair = loadSongsForFilenameRepair(resolvedBatch, unrecognizedSongIds);
         int updatesBeforeBatch = counters.dbUpdates;
         Runnable work = () -> {
+            List<FastIndexEntry> newEntries = new ArrayList<>();
             for (FastIndexEntry entry : resolvedBatch) {
                 LibrarySnapshotPolicy.Change change = snapshotChange(entry);
                 if (change == LibrarySnapshotPolicy.Change.UNCHANGED) {
@@ -532,9 +545,18 @@ public class LibraryScanService {
                     } else {
                         totals.skipped++;
                     }
+                } else if (entry.existing().isEmpty() && jdbcTemplate != null) {
+                    newEntries.add(entry);
                 } else {
                     // classify() returns MEDIA_CHANGED after the two states above.
                     prepareFastIndex(entry, counters, externalDefault, knownArtists);
+                }
+            }
+            if (!newEntries.isEmpty()) {
+                if (newEntries.size() >= 2) {
+                    batchPrepareNewFastIndex(newEntries, counters, externalDefault, knownArtists);
+                } else {
+                    prepareFastIndex(newEntries.getFirst(), counters, externalDefault, knownArtists);
                 }
             }
         };
@@ -565,6 +587,188 @@ public class LibraryScanService {
         publishProgress(true, discovered, counters.fastIndexed, null, totals,
                 PHASE_FAST_INDEX, counters.fastIndexed, 0, totals.probeCompleted,
                 startedAt, null);
+        yieldBrieflyIfPlaybackBusy();
+    }
+
+    private void yieldBrieflyIfPlaybackBusy() {
+        if (playbackPressureMonitor == null || !playbackPressureMonitor.isPlaybackBusy()) return;
+        try {
+            Thread.sleep(100L);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void batchPrepareNewFastIndex(List<FastIndexEntry> entries, ScanCounters counters,
+                                          AudioLayout externalDefault, Collection<String> knownArtists) {
+        int n = entries.size();
+        String[] fingerprints = new String[n];
+        for (int i = 0; i < n; i++) {
+            fingerprints[i] = MediaClassifier.fastIndexFingerprint(entries.get(i).path());
+        }
+        Set<String> collidingFingerprints = new HashSet<>();
+        jdbcTemplate.query(con -> {
+            var ps = con.prepareStatement("SELECT fingerprint FROM songs WHERE fingerprint = ANY(?)");
+            ps.setArray(1, con.createArrayOf("text", fingerprints));
+            return ps;
+        }, rs -> {
+            collidingFingerprints.add(rs.getString(1));
+        });
+
+        List<FastIndexEntry> batchEligible = new ArrayList<>(n);
+        Set<String> seenInBatch = new HashSet<>(n * 2);
+        for (int i = 0; i < n; i++) {
+            String fp = fingerprints[i];
+            if (collidingFingerprints.contains(fp) || !seenInBatch.add(fp)) {
+                prepareFastIndex(entries.get(i), counters, externalDefault, knownArtists);
+            } else {
+                batchEligible.add(entries.get(i));
+            }
+        }
+        if (batchEligible.isEmpty()) return;
+
+        int m = batchEligible.size();
+        String[] catalogNumbers = new String[m];
+        String[] titles = new String[m];
+        String[] artists = new String[m];
+        String[] titlePys = new String[m];
+        String[] titleInits = new String[m];
+        String[] artistPys = new String[m];
+        String[] artistInits = new String[m];
+        String[] languages = new String[m];
+        String[] vocalForms = new String[m];
+        String[] statuses = new String[m];
+        String[] categoryTags = new String[m];
+        String[] batchFingerprints = new String[m];
+        Boolean[] needsAi = new Boolean[m];
+        String provenance = "{\"title\":{\"source\":\"filename_fast_index\"},\"artist\":{\"source\":\"filename_fast_index\"}}";
+
+        for (int i = 0; i < m; i++) {
+            FastIndexEntry entry = batchEligible.get(i);
+            ParsedMeta parsed = entry.filenameMeta();
+            String title = parsed.title().isBlank() ? entry.file().getFileName().toString() : parsed.title();
+            String artist = parsed.artist().isBlank() ? "未知歌手" : parsed.artist();
+            catalogNumbers[i] = parsed.catalogNumber().isBlank() ? "" : parsed.catalogNumber().trim();
+            titles[i] = title;
+            artists[i] = artist;
+            titlePys[i] = PinyinUtil.fullPinyin(title);
+            titleInits[i] = PinyinUtil.initials(title);
+            artistPys[i] = PinyinUtil.fullPinyin(artist);
+            artistInits[i] = PinyinUtil.initials(artist);
+            languages[i] = parsed.language().isBlank() ? "未知" : normalizeLanguage(parsed.language());
+            vocalForms[i] = parsed.vocalForm().isBlank() ? "未知" : parsed.vocalForm().trim();
+            statuses[i] = parsed.recognized() ? "ok" : "unrecognized";
+            categoryTags[i] = parsed.category().isBlank() ? "" : parsed.category().trim();
+            batchFingerprints[i] = MediaClassifier.fastIndexFingerprint(entry.path());
+            needsAi[i] = !parsed.recognized();
+        }
+
+        List<Long> insertedSongIds = jdbcTemplate.query(con -> {
+            var ps = con.prepareStatement("""
+                    INSERT INTO songs (
+                        catalog_number, title, artist, title_py, title_init, artist_py, artist_init,
+                        language, vocal_form, artist_gender, metadata_locks, metadata_provenance,
+                        needs_ai_optimization, tags, media_type, has_vocal_track, duration_ms,
+                        aliases, lyric_type, lyric_source, play_count, ai_genres, ai_themes,
+                        status, fingerprint
+                    )
+                    SELECT t.catalog_number, t.title, t.artist, t.title_py, t.title_init,
+                           t.artist_py, t.artist_init, t.language, t.vocal_form, '未知',
+                           ARRAY[]::text[], ?::jsonb, t.needs_ai,
+                           CASE WHEN t.category_tag = '' THEN ARRAY[]::text[] ELSE ARRAY[t.category_tag] END,
+                           ?, false, 0,
+                           ARRAY[]::text[], ?, ?, 0, ARRAY[]::text[], ARRAY[]::text[],
+                           t.status, t.fingerprint
+                    FROM unnest(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         WITH ORDINALITY AS t(
+                             catalog_number, title, artist, title_py, title_init,
+                             artist_py, artist_init, language, vocal_form, status,
+                             category_tag, fingerprint, needs_ai, ord
+                         )
+                    ORDER BY t.ord
+                    RETURNING id
+                    """);
+            ps.setString(1, provenance);
+            ps.setString(2, MediaClassifier.PENDING_PROBE);
+            ps.setString(3, LyricType.NONE);
+            ps.setString(4, Song.LYRIC_SOURCE_NONE);
+            ps.setArray(5, con.createArrayOf("text", catalogNumbers));
+            ps.setArray(6, con.createArrayOf("text", titles));
+            ps.setArray(7, con.createArrayOf("text", artists));
+            ps.setArray(8, con.createArrayOf("text", titlePys));
+            ps.setArray(9, con.createArrayOf("text", titleInits));
+            ps.setArray(10, con.createArrayOf("text", artistPys));
+            ps.setArray(11, con.createArrayOf("text", artistInits));
+            ps.setArray(12, con.createArrayOf("text", languages));
+            ps.setArray(13, con.createArrayOf("text", vocalForms));
+            ps.setArray(14, con.createArrayOf("text", statuses));
+            ps.setArray(15, con.createArrayOf("text", categoryTags));
+            ps.setArray(16, con.createArrayOf("text", batchFingerprints));
+            ps.setArray(17, con.createArrayOf("boolean", needsAi));
+            return ps;
+        }, (rs, rowNum) -> rs.getLong(1));
+
+        if (artistCreditService != null) {
+            List<Object[]> artistBatchArgs = new ArrayList<>(m * 2);
+            for (int i = 0; i < m; i++) {
+                long songId = insertedSongIds.get(i);
+                List<String> parsedArtists = knownArtists == null || knownArtists.isEmpty()
+                        ? com.homektv.common.ArtistCreditParser.parse(artists[i])
+                        : com.homektv.common.ArtistCreditParser.parse(artists[i], knownArtists);
+                List<String> normalizedArtists = com.homektv.common.ArtistCreditParser.normalize(parsedArtists);
+                for (int order = 0; order < normalizedArtists.size(); order++) {
+                    String name = normalizedArtists.get(order);
+                    artistBatchArgs.add(new Object[]{
+                            songId, name, com.homektv.common.ArtistCreditParser.key(name),
+                            PinyinUtil.fullPinyin(name), PinyinUtil.initials(name), order
+                    });
+                }
+                counters.initialArtistCreditSongIds.add(songId);
+            }
+            if (!artistBatchArgs.isEmpty()) {
+                jdbcTemplate.batchUpdate("""
+                        INSERT INTO song_artists (song_id, artist_name, artist_key, artist_py, artist_init, artist_order)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT (song_id, artist_key) DO NOTHING
+                        """, artistBatchArgs);
+            }
+        }
+
+        String activeRole = activeFileRole();
+        String audioLayoutName = LibraryModePolicy.isExternalReadOnly(props) && externalDefault != null
+                ? externalDefault.name()
+                : AudioLayout.NORMAL_STEREO.name();
+        List<Object[]> fileBatchArgs = new ArrayList<>(m);
+        for (int i = 0; i < m; i++) {
+            FastIndexEntry entry = batchEligible.get(i);
+            long songId = insertedSongIds.get(i);
+            OffsetDateTime normalizedMtime = normalizeMtime(entry.mtime());
+            OffsetDateTime normalizedMediaMtime = normalizeMtime(entry.mediaMtime());
+            LyricSnapshot lyric = entry.lyricSnapshot();
+            Long lyricSize = lyric.readable() ? lyric.size() : null;
+            OffsetDateTime lyricMtime = lyric.readable() ? normalizeMtime(lyric.mtime()) : null;
+            String lyricIdentity = lyric.readable() ? lyric.fileIdentity() : null;
+            Integer lyricVersion = lyric.readable() ? LYRIC_SNAPSHOT_VERSION : null;
+            fileBatchArgs.add(new Object[]{
+                    songId, entry.path(), entry.relativePath(), extOf(entry.file()),
+                    1, MediaClassifier.PENDING_PROBE, audioLayoutName, AudioLayoutSource.AUTO_DEFAULT.name(),
+                    com.homektv.domain.AudioChannel.LEFT.name(), com.homektv.domain.AudioChannel.RIGHT.name(),
+                    entry.size(), normalizedMtime, 0, true, activeRole,
+                    false, false, entry.fileIdentity(), normalizedMediaMtime, entry.mediaIdentity(),
+                    lyricSize, lyricMtime, lyricIdentity, lyricVersion, true
+            });
+        }
+        jdbcTemplate.batchUpdate("""
+                INSERT INTO song_files (
+                    song_id, file_path, relative_path, format,
+                    audio_tracks, media_type, audio_layout, audio_layout_source,
+                    original_channel, accompaniment_channel,
+                    file_size, file_mtime, priority, valid, file_role,
+                    transcode_required, source_deleted, file_identity, media_mtime, media_file_identity,
+                    lyric_size, lyric_mtime, lyric_file_identity, lyric_snapshot_version, probe_pending
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, fileBatchArgs);
+        counters.dbUpdates += m * 2;
     }
 
     private Set<Long> loadUnrecognizedSongIds() {

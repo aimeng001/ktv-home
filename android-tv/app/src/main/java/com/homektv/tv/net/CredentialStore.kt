@@ -25,13 +25,20 @@ internal class CredentialStore(
 ) {
     private val securePrefs = context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
     private val legacyPrefs = context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
+    private var cachedKey: SecretKey? = null
+    private val cachedValues = HashMap<String, String>(4)
 
     @Synchronized
     fun read(server: SavedServer?): String {
         val scope = server?.hostPort.orEmpty().trim()
         val scopedKey = server?.instanceId?.let { identityKey(it) } ?: scopedKey(scope)
+        cachedValues[scopedKey]?.let { return it }
         val stored = securePrefs.getString(scopedKey, null)
-        if (!stored.isNullOrBlank()) return decrypt(stored).orEmpty()
+        if (!stored.isNullOrBlank()) {
+            val decrypted = decrypt(stored).orEmpty()
+            cachedValues[scopedKey] = decrypted
+            return decrypted
+        }
 
         // Once an instance id is known, do not fall back to another instance's
         // host namespace. A newly identified server starts with an empty scope.
@@ -44,6 +51,7 @@ internal class CredentialStore(
             ""
         }
         if (legacy.isBlank() || !writeEncrypted(scopedKey, legacy)) return ""
+        cachedValues[scopedKey] = legacy
         legacyPrefs.edit().remove(LEGACY_KEY).apply()
         return legacy
     }
@@ -54,15 +62,18 @@ internal class CredentialStore(
         val scopedKey = server?.instanceId?.let { identityKey(it) } ?: scopedKey(scope)
         val trimmed = value.trim()
         if (trimmed.isBlank()) {
+            cachedValues.remove(scopedKey)
             securePrefs.edit().remove(scopedKey).apply()
             legacyPrefs.edit().remove(LEGACY_KEY).apply()
             return
         }
         // Fail closed: never introduce a new plaintext fallback if Keystore is
         // unavailable or the key has been invalidated.
-        if (writeEncrypted(scopedKey, trimmed) &&
-            shouldMigrateLegacyCredential(legacyPrefs.getString(LEGACY_HOST_KEY, null), scope)) {
-            legacyPrefs.edit().remove(LEGACY_KEY).apply()
+        if (writeEncrypted(scopedKey, trimmed)) {
+            cachedValues[scopedKey] = trimmed
+            if (shouldMigrateLegacyCredential(legacyPrefs.getString(LEGACY_HOST_KEY, null), scope)) {
+                legacyPrefs.edit().remove(LEGACY_KEY).apply()
+            }
         }
     }
 
@@ -70,6 +81,7 @@ internal class CredentialStore(
     fun clear(server: SavedServer?) {
         val scope = server?.hostPort.orEmpty().trim()
         val scopedKey = server?.instanceId?.let { identityKey(it) } ?: scopedKey(scope)
+        cachedValues.remove(scopedKey)
         securePrefs.edit().remove(scopedKey).apply()
         clearLegacyCredentialFor(scope)
     }
@@ -83,6 +95,8 @@ internal class CredentialStore(
     fun clearAllScopes(server: SavedServer?) {
         val hostKey = scopedKey(server?.hostPort.orEmpty().trim())
         val identityKey = server?.instanceId?.let { identityKey(it) }
+        cachedValues.remove(hostKey)
+        identityKey?.let(cachedValues::remove)
         val editor = securePrefs.edit()
         editor.remove(hostKey)
         identityKey?.let(editor::remove)
@@ -137,10 +151,17 @@ internal class CredentialStore(
     }.getOrNull()
 
     private fun key(): SecretKey {
-        keyProvider?.let { return it.getOrCreate() }
+        cachedKey?.let { return it }
+        keyProvider?.let {
+            val resolved = it.getOrCreate()
+            cachedKey = resolved
+            return resolved
+        }
         val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (store.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE).apply {
+        val resolved = (store.getKey(KEY_ALIAS, null) as? SecretKey) ?: KeyGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_AES,
+            ANDROID_KEYSTORE,
+        ).apply {
             init(
                 KeyGenParameterSpec.Builder(
                     KEY_ALIAS,
@@ -152,6 +173,8 @@ internal class CredentialStore(
                     .build(),
             )
         }.generateKey()
+        cachedKey = resolved
+        return resolved
     }
 
     private fun encode(value: ByteArray): String =

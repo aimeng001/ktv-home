@@ -76,9 +76,9 @@ class KtvMiniSpectrumView @JvmOverloads constructor(
             canvas.drawRoundRect(left, top, left + barWidth, totalHeight, radius, radius, paint)
         }
 
-        // 仅在可见且附着到窗口时调度下一帧动画，杜绝祖先视图隐藏时的后台消耗
+        // 仅在可见且附着到窗口时以 30fps 调度下一帧动画，杜绝祖先视图隐藏时的后台消耗
         if (SpectrumAnimationPolicy.shouldScheduleNextFrame(isShown, isAttachedToWindow)) {
-            postInvalidateOnAnimation()
+            postInvalidateDelayed(33L)
         }
     }
 }

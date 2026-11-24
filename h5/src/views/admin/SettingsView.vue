@@ -390,7 +390,27 @@ async function load(failedOnly=false){
   loading.value=false
 }
 async function retryFailedSections(){await load(true)}
-watch([form,aiForm,musicForm],()=>{ if(!loading.value) dirty.value=snapshot(form)!==original.value||snapshot(aiForm)!==aiOriginal.value||snapshot(musicForm)!==musicOriginal.value },{deep:true})
+let formDirty = false
+let aiFormDirty = false
+let musicFormDirty = false
+function syncCombinedDirty() {
+  dirty.value = formDirty || aiFormDirty || musicFormDirty
+}
+watch(form, () => {
+  if (loading.value) return
+  formDirty = snapshot(form) !== original.value
+  syncCombinedDirty()
+}, { deep: true })
+watch(aiForm, () => {
+  if (loading.value) return
+  aiFormDirty = snapshot(aiForm) !== aiOriginal.value
+  syncCombinedDirty()
+}, { deep: true })
+watch(musicForm, () => {
+  if (loading.value) return
+  musicFormDirty = snapshot(musicForm) !== musicOriginal.value
+  syncCombinedDirty()
+}, { deep: true })
 async function saveAll(){
   if(!canStartSettingsSave(saving.value) || restoring.value)return
   if(standbySongsTruncated.value){await alertDialog(standbySongsHint.value,{title:'待机歌曲数量超限',tone:'warning'});return}

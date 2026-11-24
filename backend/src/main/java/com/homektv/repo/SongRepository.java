@@ -527,20 +527,18 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.title ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
-                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.artist ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
-                  OR s.id::text = LOWER(:keyword)
-                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
+                  OR (LOWER(:keyword) ~ '^[0-9]{1,10}$' AND s.id = CAST(LOWER(:keyword) AS BIGINT))
               )
               AND (
                   :wordCount <= 0
-                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
-                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+                  OR LEAST(char_length(s.title), 6) = LEAST(:wordCount, 6)
               )
             """,
             countQuery = """
@@ -574,20 +572,18 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.title ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
-                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.artist ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
-                  OR s.id::text = LOWER(:keyword)
-                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
+                  OR (LOWER(:keyword) ~ '^[0-9]{1,10}$' AND s.id = CAST(LOWER(:keyword) AS BIGINT))
               )
               AND (
                   :wordCount <= 0
-                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
-                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+                  OR LEAST(char_length(s.title), 6) = LEAST(:wordCount, 6)
               )
             """,
             nativeQuery = true)
@@ -649,20 +645,18 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.title ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
-                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.artist ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
-                  OR s.id::text = LOWER(:keyword)
-                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
+                  OR (LOWER(:keyword) ~ '^[0-9]{1,10}$' AND s.id = CAST(LOWER(:keyword) AS BIGINT))
               )
               AND (
                   :wordCount <= 0
-                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
-                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+                  OR LEAST(char_length(s.title), 6) = LEAST(:wordCount, 6)
               )
             """,
             countQuery = """
@@ -703,20 +697,18 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.title ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
-                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.artist ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
-                  OR s.id::text = LOWER(:keyword)
-                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
+                  OR (LOWER(:keyword) ~ '^[0-9]{1,10}$' AND s.id = CAST(LOWER(:keyword) AS BIGINT))
               )
               AND (
                   :wordCount <= 0
-                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
-                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+                  OR LEAST(char_length(s.title), 6) = LEAST(:wordCount, 6)
               )
             """,
             nativeQuery = true)
@@ -771,20 +763,18 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.title ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
-                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.artist ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
-                  OR s.id::text = LOWER(:keyword)
-                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
+                  OR (LOWER(:keyword) ~ '^[0-9]{1,10}$' AND s.id = CAST(LOWER(:keyword) AS BIGINT))
               )
               AND (
                   :wordCount <= 0
-                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
-                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+                  OR LEAST(char_length(s.title), 6) = LEAST(:wordCount, 6)
               )
             """,
             countQuery = """
@@ -819,20 +809,18 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.title ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
-                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.artist ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
-                  OR s.id::text = LOWER(:keyword)
-                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
+                  OR (LOWER(:keyword) ~ '^[0-9]{1,10}$' AND s.id = CAST(LOWER(:keyword) AS BIGINT))
               )
               AND (
                   :wordCount <= 0
-                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
-                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+                  OR LEAST(char_length(s.title), 6) = LEAST(:wordCount, 6)
               )
             """,
             nativeQuery = true)
@@ -891,20 +879,18 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.title ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
-                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.artist ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
-                  OR s.id::text = LOWER(:keyword)
-                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
+                  OR (LOWER(:keyword) ~ '^[0-9]{1,10}$' AND s.id = CAST(LOWER(:keyword) AS BIGINT))
               )
               AND (
                   :wordCount <= 0
-                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
-                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+                  OR LEAST(char_length(s.title), 6) = LEAST(:wordCount, 6)
               )
             """,
             countQuery = """
@@ -946,20 +932,18 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               ))
               AND (
                   :keyword = ''
-                  OR LOWER(s.title) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.title ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.title_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.title_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
-                  OR LOWER(s.artist) LIKE '%' || LOWER(:keyword) || '%' ESCAPE '\\'
+                  OR s.artist ILIKE '%' || :keyword || '%' ESCAPE '\\'
                   OR LOWER(s.artist_init) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR LOWER(s.artist_py) LIKE LOWER(:keyword) || '%' ESCAPE '\\'
                   OR (s.catalog_number <> '' AND s.catalog_number = LOWER(:keyword))
-                  OR s.id::text = LOWER(:keyword)
-                  OR LPAD(s.id::text, 6, '0') = LOWER(:keyword)
+                  OR (LOWER(:keyword) ~ '^[0-9]{1,10}$' AND s.id = CAST(LOWER(:keyword) AS BIGINT))
               )
               AND (
                   :wordCount <= 0
-                  OR (:wordCount < 6 AND char_length(s.title) = :wordCount)
-                  OR (:wordCount >= 6 AND char_length(s.title) >= 6)
+                  OR LEAST(char_length(s.title), 6) = LEAST(:wordCount, 6)
               )
             """,
             nativeQuery = true)
@@ -996,28 +980,39 @@ public interface SongRepository extends JpaRepository<Song, Long> {
     List<String> findDistinctArtistByStatus(@Param("status") String status);
 
     /**
-     * Returns songs credited to one canonical artist key. The second branch
-     * keeps rows usable if a legacy record has not received its song_artists
-     * backfill yet; it never treats a combined credit as an individual match.
+     * Returns songs credited to one canonical artist key using an indexed song_artists
+     * lookup first and falling back to unindexed legacy rows only when none match.
      */
+    @Query(value = """
+            SELECT DISTINCT s.*
+            FROM songs s
+            JOIN song_artists sa ON sa.song_id = s.id
+            WHERE s.status = :status
+              AND sa.artist_key = :artistKey
+            ORDER BY s.id
+            """, nativeQuery = true)
+    List<Song> findIndexedByArtistKeyAndStatus(@Param("artistKey") String artistKey,
+                                               @Param("status") String status);
+
     @Query(value = """
             SELECT s.*
             FROM songs s
             WHERE s.status = :status
-              AND (
-                  EXISTS (
-                      SELECT 1 FROM song_artists sa
-                      WHERE sa.song_id = s.id AND sa.artist_key = :artistKey
-                  )
-                  OR (
-                      NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
-                      AND lower(regexp_replace(trim(coalesce(s.artist, '')), '[[:space:]]+', '', 'g')) = :artistKey
-                  )
-              )
+              AND NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
+              AND lower(regexp_replace(trim(coalesce(s.artist, '')), '[[:space:]]+', '', 'g')) = :artistKey
             ORDER BY s.id
             """, nativeQuery = true)
-    List<Song> findByArtistKeyAndStatus(@Param("artistKey") String artistKey,
-                                        @Param("status") String status);
+    List<Song> findLegacyByArtistKeyAndStatus(@Param("artistKey") String artistKey,
+                                              @Param("status") String status);
+
+    default List<Song> findByArtistKeyAndStatus(String artistKey, String status) {
+        List<Song> indexed = findIndexedByArtistKeyAndStatus(artistKey, status);
+        if (indexed != null && !indexed.isEmpty()) {
+            return indexed;
+        }
+        List<Song> legacy = findLegacyByArtistKeyAndStatus(artistKey, status);
+        return legacy == null ? List.of() : legacy;
+    }
 
     @Query(value = """
             SELECT s.*
@@ -1033,47 +1028,74 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                      @Param("maxId") long maxId,
                                      @Param("limit") int limit);
 
+    List<Song> findTop500ByIdGreaterThanOrderByIdAsc(Long afterId);
+
     @Query("SELECT COALESCE(MAX(song.id), 0) FROM Song song WHERE song.status = :status")
     long findMaxIdByStatus(@Param("status") String status);
 
     @Query(value = """
             SELECT COUNT(DISTINCT s.id)
             FROM songs s
+            JOIN song_artists sa ON sa.song_id = s.id
             WHERE s.status = :status
-              AND (
-                  EXISTS (
-                      SELECT 1 FROM song_artists sa
-                      WHERE sa.song_id = s.id AND sa.artist_key = :artistKey
-                  )
-                  OR (
-                      NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
-                      AND lower(regexp_replace(trim(coalesce(s.artist, '')), '[[:space:]]+', '', 'g')) = :artistKey
-                  )
-              )
+              AND sa.artist_key = :artistKey
             """, nativeQuery = true)
-    long countByArtistKeyAndStatus(@Param("artistKey") String artistKey,
-                                   @Param("status") String status);
+    long countIndexedByArtistKeyAndStatus(@Param("artistKey") String artistKey,
+                                          @Param("status") String status);
+
+    @Query(value = """
+            SELECT COUNT(*)
+            FROM songs s
+            WHERE s.status = :status
+              AND NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
+              AND lower(regexp_replace(trim(coalesce(s.artist, '')), '[[:space:]]+', '', 'g')) = :artistKey
+            """, nativeQuery = true)
+    long countLegacyByArtistKeyAndStatus(@Param("artistKey") String artistKey,
+                                         @Param("status") String status);
+
+    default long countByArtistKeyAndStatus(String artistKey, String status) {
+        long indexed = countIndexedByArtistKeyAndStatus(artistKey, status);
+        if (indexed > 0L) {
+            return indexed;
+        }
+        return countLegacyByArtistKeyAndStatus(artistKey, status);
+    }
 
     /** Same association lookup, bounded for AI representative-song samples. */
     @Query(value = """
             SELECT s.*
             FROM songs s
+            JOIN song_artists sa ON sa.song_id = s.id
             WHERE s.status = :status
-              AND (
-                  EXISTS (
-                      SELECT 1 FROM song_artists sa
-                      WHERE sa.song_id = s.id AND sa.artist_key = :artistKey
-                  )
-                  OR (
-                      NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
-                      AND lower(regexp_replace(trim(coalesce(s.artist, '')), '[[:space:]]+', '', 'g')) = :artistKey
-                  )
-              )
+              AND sa.artist_key = :artistKey
             ORDER BY s.play_count DESC, s.title ASC, s.id ASC
             """, nativeQuery = true)
-    List<Song> findRepresentativeSongsByArtistKeyAndStatus(@Param("artistKey") String artistKey,
-                                                            @Param("status") String status,
-                                                            Pageable pageable);
+    List<Song> findIndexedRepresentativeSongsByArtistKeyAndStatus(@Param("artistKey") String artistKey,
+                                                                   @Param("status") String status,
+                                                                   Pageable pageable);
+
+    @Query(value = """
+            SELECT s.*
+            FROM songs s
+            WHERE s.status = :status
+              AND NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
+              AND lower(regexp_replace(trim(coalesce(s.artist, '')), '[[:space:]]+', '', 'g')) = :artistKey
+            ORDER BY s.play_count DESC, s.title ASC, s.id ASC
+            """, nativeQuery = true)
+    List<Song> findLegacyRepresentativeSongsByArtistKeyAndStatus(@Param("artistKey") String artistKey,
+                                                                  @Param("status") String status,
+                                                                  Pageable pageable);
+
+    default List<Song> findRepresentativeSongsByArtistKeyAndStatus(String artistKey,
+                                                                   String status,
+                                                                   Pageable pageable) {
+        List<Song> indexed = findIndexedRepresentativeSongsByArtistKeyAndStatus(artistKey, status, pageable);
+        if (indexed != null && !indexed.isEmpty()) {
+            return indexed;
+        }
+        List<Song> legacy = findLegacyRepresentativeSongsByArtistKeyAndStatus(artistKey, status, pageable);
+        return legacy == null ? List.of() : legacy;
+    }
 
     List<Song> findByArtistIgnoreCaseAndStatus(String artist, String status);
 

@@ -36,32 +36,33 @@ class AssetWriterTest {
     @Test
     void writesUtf8LyricsAndTreatsNullTextAsEmpty() throws Exception {
         assertThat(writer.writeLyric("song-1", "中文歌词"))
-                .isEqualTo("lyrics/song-1.lrc");
-        assertThat(Files.readString(dataRoot.resolve("lyrics/song-1.lrc")))
+                .isEqualTo("lyrics/so/song-1.lrc");
+        assertThat(Files.readString(dataRoot.resolve("lyrics/so/song-1.lrc")))
                 .isEqualTo("中文歌词");
 
         assertThat(writer.writeLyric("song-2", null))
-                .isEqualTo("lyrics/song-2.lrc");
-        assertThat(Files.readAllBytes(dataRoot.resolve("lyrics/song-2.lrc")))
+                .isEqualTo("lyrics/so/song-2.lrc");
+        assertThat(Files.readAllBytes(dataRoot.resolve("lyrics/so/song-2.lrc")))
                 .isEmpty();
     }
 
     @Test
     void acceptsMaximumLyricSizeAndRejectsOneByteOver() throws Exception {
         String maxSize = "x".repeat(AssetWriter.MAX_LYRIC_BYTES);
-        writer.writeLyric("max", maxSize);
-        assertThat(Files.size(dataRoot.resolve("lyrics/max.lrc")))
+        String rel = writer.writeLyric("max", maxSize);
+        assertThat(rel).isEqualTo("lyrics/ma/max.lrc");
+        assertThat(Files.size(dataRoot.resolve(rel)))
                 .isEqualTo(AssetWriter.MAX_LYRIC_BYTES);
 
         assertApiCode("LYRIC_TOO_LARGE", () -> writer.writeLyric("too-large", maxSize + "x"));
-        assertThat(Files.exists(dataRoot.resolve("lyrics/too-large.lrc"))).isFalse();
+        assertThat(Files.exists(dataRoot.resolve("lyrics/to/too-large.lrc"))).isFalse();
     }
 
     @Test
     void writesCoverAndArtistCoverWithSafeDeterministicNames() throws Exception {
         assertThat(writer.writeCover("song-1", new byte[]{1, 2, 3}, null))
-                .isEqualTo("covers/song-1.jpg");
-        assertThat(Files.readAllBytes(dataRoot.resolve("covers/song-1.jpg")))
+                .isEqualTo("covers/so/song-1.jpg");
+        assertThat(Files.readAllBytes(dataRoot.resolve("covers/so/song-1.jpg")))
                 .containsExactly(1, 2, 3);
 
         String first = writer.writeArtistCover("../../artist/name", new byte[]{4, 5}, null);
@@ -79,7 +80,7 @@ class AssetWriterTest {
         assertApiCode("INVALID_IMAGE", () -> writer.writeCover("empty", new byte[0], "jpg"));
         assertApiCode("IMAGE_TOO_LARGE", () -> writer.writeCover("large",
                 new byte[AssetWriter.MAX_IMAGE_BYTES + 1], "jpg"));
-        assertThat(Files.exists(dataRoot.resolve("covers/large.jpg"))).isFalse();
+        assertThat(Files.exists(dataRoot.resolve("covers/la/large.jpg"))).isFalse();
     }
 
     @Test

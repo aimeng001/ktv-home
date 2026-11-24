@@ -15,11 +15,17 @@ import com.homektv.repo.SongRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.common.ApiException;
 import com.homektv.common.PlaybackStateChangedEvent;
+import com.homektv.common.PlayerControlChangedEvent;
 import com.homektv.common.QueueSnapshotInvalidatedEvent;
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -40,6 +46,19 @@ public class PlaybackService {
 
     private static final Duration CONSECUTIVE_ERROR_WINDOW = Duration.ofSeconds(15);
     private static final int CONSECUTIVE_ERROR_THRESHOLD = 3;
+    private static final long DEFAULT_POSITION_PERSIST_INTERVAL_MS = 15_000L;
+
+    private record LivePositionState(
+            long queueId,
+            String state,
+            int volume,
+            boolean muted,
+            String vocalMode,
+            long positionMs,
+            long seekSequence,
+            long lastPersistedAtMs,
+            boolean dirty
+    ) {}
 
     private final PlayerStateRepository playerRepo;
     private final QueueItemRepository queueRepo;
@@ -49,13 +68,22 @@ public class PlaybackService {
     private final SongAvailabilityPolicy availabilityPolicy;
     @Autowired(required = false)
     private ApplicationEventPublisher eventPublisher;
+    @Autowired(required = false)
+    private PlatformTransactionManager transactionManager;
     private Clock errorClock = Clock.systemUTC();
     private Instant consecutiveErrorWindowStart;
     private int consecutiveErrorCount;
     private Long lastFailedQueueId;
+    private final Object livePositionLock = new Object();
+    private volatile LivePositionState livePosition;
+    private volatile long positionPersistIntervalMs = DEFAULT_POSITION_PERSIST_INTERVAL_MS;
 
     void setErrorClock(Clock errorClock) {
         this.errorClock = errorClock != null ? errorClock : Clock.systemUTC();
+    }
+
+    void setPositionPersistIntervalMs(long positionPersistIntervalMs) {
+        this.positionPersistIntervalMs = Math.max(0L, positionPersistIntervalMs);
     }
 
     /** Compatibility constructor for direct unit callers; Spring uses the injected policy below. */
@@ -87,9 +115,11 @@ public class PlaybackService {
         if (ps.getCurrentQueueId() == null) {
             advanceToNext(ps);
         } else {
+            syncLivePositionBeforeSave(ps);
             ps.setState("playing");
         }
         PlayerState saved = playerRepo.save(ps);
+        scheduleLivePositionSync(saved, true);
         publishPlaybackStateChanged();
         return saved;
     }
@@ -103,7 +133,8 @@ public class PlaybackService {
             return false;
         }
         advanceToNext(ps);
-        playerRepo.save(ps);
+        PlayerState saved = playerRepo.save(ps);
+        scheduleLivePositionSync(saved, true);
         if (ps.getCurrentQueueId() != null) {
             publishPlaybackStateChanged();
             return true;
@@ -114,10 +145,12 @@ public class PlaybackService {
     @Transactional
     public PlayerState pause() {
         PlayerState ps = playerRepo.getSingletonForUpdate();
+        syncLivePositionBeforeSave(ps);
         if ("playing".equals(ps.getState())) {
             ps.setState("paused");
         }
         PlayerState saved = playerRepo.save(ps);
+        scheduleLivePositionSync(saved, true);
         publishPlaybackStateChanged();
         return saved;
     }
@@ -126,8 +159,10 @@ public class PlaybackService {
     @Transactional
     public PlayerState stop() {
         PlayerState ps = playerRepo.getSingletonForUpdate();
+        syncLivePositionBeforeSave(ps);
         ps.setState("idle");
         PlayerState saved = playerRepo.save(ps);
+        scheduleLivePositionSync(null, true);
         publishPlaybackStateChanged();
         return saved;
     }
@@ -154,44 +189,123 @@ public class PlaybackService {
         ps.setPositionMs(clamped);
         ps.setSeekSequence(ps.getSeekSequence() + 1);
         PlayerState saved = playerRepo.save(ps);
-        publishSnapshotInvalidated();
+        scheduleLivePositionSync(saved, true);
+        publishPlayerControlChanged(saved);
         return saved;
     }
 
     /**
-     * Persist a player-reported position. The WebSocket layer requires a queue
-     * id for registered players; the nullable argument keeps direct/API callers
-     * backward-compatible while still rejecting mismatched ids when provided.
+     * Updates playback position in memory at 1Hz and flushes to PostgreSQL at bounded intervals
+     * to avoid synchronous WAL writes and player_state row-lock contention during active playback.
      */
-    @Transactional
     public PositionUpdateResult updatePosition(Long expectedQueueId, long positionMs) {
         return updatePosition(expectedQueueId, positionMs, null);
     }
 
-    @Transactional
     public PositionUpdateResult updatePosition(Long expectedQueueId, long positionMs, Long seekSequence) {
+        long normalized = Math.max(0, positionMs);
+        long nowMs = errorClock.millis();
+        LivePositionState cached = livePosition;
+        if (expectedQueueId != null
+                && cached != null
+                && expectedQueueId.equals(cached.queueId())
+                && "playing".equals(cached.state())
+                && positionPersistIntervalMs > 0
+                && nowMs - cached.lastPersistedAtMs() < positionPersistIntervalMs) {
+            if (seekSequence != null && seekSequence < cached.seekSequence()) {
+                return PositionUpdateResult.rejected(snapshotStateFromLive(cached));
+            }
+            if (normalized > 0) {
+                resetConsecutiveErrors();
+            }
+            synchronized (livePositionLock) {
+                LivePositionState latest = livePosition;
+                if (latest != null
+                        && expectedQueueId.equals(latest.queueId())
+                        && "playing".equals(latest.state())
+                        && nowMs - latest.lastPersistedAtMs() < positionPersistIntervalMs) {
+                    if (seekSequence != null && seekSequence < latest.seekSequence()) {
+                        return PositionUpdateResult.rejected(snapshotStateFromLive(latest));
+                    }
+                    LivePositionState updated = new LivePositionState(
+                            latest.queueId(),
+                            latest.state(),
+                            latest.volume(),
+                            latest.muted(),
+                            latest.vocalMode(),
+                            normalized,
+                            latest.seekSequence(),
+                            latest.lastPersistedAtMs(),
+                            latest.dirty() || normalized != latest.positionMs());
+                    livePosition = updated;
+                    return PositionUpdateResult.accepted(snapshotStateFromLive(updated));
+                }
+            }
+        }
+        return persistPositionInTransaction(expectedQueueId, normalized, seekSequence, nowMs);
+    }
+
+    private PositionUpdateResult persistPositionInTransaction(
+            Long expectedQueueId, long normalized, Long seekSequence, long nowMs) {
+        if (transactionManager == null) {
+            return persistPositionInternal(expectedQueueId, normalized, seekSequence, nowMs);
+        }
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        return tx.execute(status -> persistPositionInternal(expectedQueueId, normalized, seekSequence, nowMs));
+    }
+
+    private PositionUpdateResult persistPositionInternal(
+            Long expectedQueueId, long normalized, Long seekSequence, long nowMs) {
         PlayerState ps = playerRepo.getSingletonForUpdate();
         if (expectedQueueId != null && !expectedQueueId.equals(ps.getCurrentQueueId())) {
             return PositionUpdateResult.rejected(ps);
         }
         if (ps.getCurrentQueueId() == null || "idle".equals(ps.getState())) {
+            livePosition = null;
             return PositionUpdateResult.rejected(ps);
         }
         // 若客户端携带了 seek_sequence 且小于当前服务端的 seekSequence，说明属于旧进度在途包，丢弃防回跳
         if (seekSequence != null && seekSequence < ps.getSeekSequence()) {
             return PositionUpdateResult.rejected(ps);
         }
-        long normalized = Math.max(0, positionMs);
         if (normalized > 0) {
             resetConsecutiveErrors();
         }
         if (ps.getPositionMs() != normalized) {
+            boolean firstSyncForQueue = livePosition == null || !ps.getCurrentQueueId().equals(livePosition.queueId());
             ps.setPositionMs(normalized);
-            PositionUpdateResult accepted = PositionUpdateResult.accepted(playerRepo.save(ps));
-            publishSnapshotInvalidated();
-            return accepted;
+            PlayerState saved = playerRepo.save(ps);
+            updateLivePositionFromSaved(saved, nowMs, false);
+            if (firstSyncForQueue) {
+                publishPlayerControlChanged(saved);
+            }
+            return PositionUpdateResult.accepted(saved);
         }
+        updateLivePositionFromSaved(ps, nowMs, false);
         return PositionUpdateResult.accepted(ps);
+    }
+
+    /** Returns the most recent in-memory position when it matches the active DB queue item. */
+    public long resolveLivePositionMs(Long currentQueueId, String state, long persistedPositionMs) {
+        LivePositionState cached = livePosition;
+        if (currentQueueId == null || cached == null || !currentQueueId.equals(cached.queueId())) {
+            return persistedPositionMs;
+        }
+        if (!"playing".equals(state)) {
+            return persistedPositionMs;
+        }
+        return cached.positionMs();
+    }
+
+    @PreDestroy
+    public void flushPendingPositionOnShutdown() {
+        LivePositionState cached = livePosition;
+        if (cached == null || !cached.dirty()) return;
+        try {
+            persistPositionInTransaction(cached.queueId(), cached.positionMs(), cached.seekSequence(), errorClock.millis());
+        } catch (RuntimeException ignored) {
+            // Shutdown may run after datasource teardown in tests.
+        }
     }
 
     /** 切歌：当前行标记 skipped，推进到下一首（详设§9.2）。 */
@@ -203,6 +317,7 @@ public class PlaybackService {
         markCurrent(ps, QueueService.SKIPPED, true);
         advanceToNext(ps);
         PlayerState saved = playerRepo.save(ps);
+        scheduleLivePositionSync(saved, true);
         publishPlaybackStateChanged();
         return saved;
     }
@@ -234,6 +349,7 @@ public class PlaybackService {
         recordHistory(item);
         advanceToNext(ps);
         PlayerState saved = playerRepo.save(ps);
+        scheduleLivePositionSync(saved, true);
         publishPlaybackStateChanged();
         return FinishResult.applied(saved, expectedQueueId);
     }
@@ -251,10 +367,12 @@ public class PlaybackService {
             return PlaybackTransitionResult.rejected(ps);
         }
         if (recordPlayErrorAndCheckCircuitBreak(expectedQueueId)) {
+            syncLivePositionBeforeSave(ps);
             if ("playing".equals(ps.getState())) {
                 ps.setState("paused");
             }
             PlayerState saved = playerRepo.save(ps);
+            scheduleLivePositionSync(saved, true);
             publishPlaybackStateChanged();
             return PlaybackTransitionResult.circuitBroken(saved);
         }
@@ -264,6 +382,7 @@ public class PlaybackService {
         markCurrent(ps, QueueService.SKIPPED, false);
         advanceToNext(ps);
         PlayerState saved = playerRepo.save(ps);
+        scheduleLivePositionSync(saved, true);
         publishPlaybackStateChanged();
         return PlaybackTransitionResult.accepted(saved);
     }
@@ -317,6 +436,7 @@ public class PlaybackService {
             ps.setState("idle");
             advanceToNext(ps);
             PlayerState saved = playerRepo.save(ps);
+            scheduleLivePositionSync(saved, true);
             publishPlaybackStateChanged();
             return saved;
         }
@@ -332,6 +452,7 @@ public class PlaybackService {
         ps.setCurrentQueueId(current.getId());
         ps.setState("playing");
         PlayerState saved = playerRepo.save(ps);
+        scheduleLivePositionSync(saved, true);
         publishPlaybackStateChanged();
         return saved;
     }
@@ -347,6 +468,7 @@ public class PlaybackService {
         ps.setPositionMs(0);
         ps.setSeekSequence(ps.getSeekSequence() + 1);
         PlayerState saved = playerRepo.save(ps);
+        scheduleLivePositionSync(saved, true);
         publishPlaybackStateChanged();
         return saved;
     }
@@ -354,18 +476,22 @@ public class PlaybackService {
     @Transactional
     public PlayerState setVolume(int volume) {
         PlayerState ps = playerRepo.getSingletonForUpdate();
+        syncLivePositionBeforeSave(ps);
         ps.setVolume(Math.max(0, Math.min(100, volume)));
         PlayerState saved = playerRepo.save(ps);
-        publishSnapshotInvalidated();
+        scheduleLivePositionSync(saved, false);
+        publishPlayerControlChanged(saved);
         return saved;
     }
 
     @Transactional
     public PlayerState setMuted(boolean muted) {
         PlayerState ps = playerRepo.getSingletonForUpdate();
+        syncLivePositionBeforeSave(ps);
         ps.setMuted(muted);
         PlayerState saved = playerRepo.save(ps);
-        publishSnapshotInvalidated();
+        scheduleLivePositionSync(saved, false);
+        publishPlayerControlChanged(saved);
         return saved;
     }
 
@@ -376,9 +502,11 @@ public class PlaybackService {
             throw new ApiException("INVALID_ACTION", "无效的原伴唱模式：" + mode);
         }
         PlayerState ps = playerRepo.getSingletonForUpdate();
+        syncLivePositionBeforeSave(ps);
         ps.setVocalMode(mode);
         PlayerState saved = playerRepo.save(ps);
-        publishSnapshotInvalidated();
+        scheduleLivePositionSync(saved, false);
+        publishPlayerControlChanged(saved);
         return saved;
     }
 
@@ -434,8 +562,74 @@ public class PlaybackService {
         ps.setState("idle");
         ps.setPositionMs(0);
         playerRepo.save(ps);
+        scheduleLivePositionSync(null, true);
         publishPlaybackStateChanged();
         return true;
+    }
+
+    private void syncLivePositionBeforeSave(PlayerState ps) {
+        LivePositionState cached = livePosition;
+        if (ps == null || cached == null || ps.getCurrentQueueId() == null) return;
+        if (ps.getCurrentQueueId().equals(cached.queueId()) && cached.dirty()) {
+            ps.setPositionMs(Math.max(ps.getPositionMs(), cached.positionMs()));
+        }
+    }
+
+    private void scheduleLivePositionSync(PlayerState saved, boolean clearWhenIdle) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    applyPostCommitLivePosition(saved, clearWhenIdle);
+                }
+            });
+        } else {
+            applyPostCommitLivePosition(saved, clearWhenIdle);
+        }
+    }
+
+    private void applyPostCommitLivePosition(PlayerState saved, boolean clearWhenIdle) {
+        if (saved == null || saved.getCurrentQueueId() == null || "idle".equals(saved.getState())) {
+            livePosition = null;
+            return;
+        }
+        if (clearWhenIdle) {
+            livePosition = null;
+            return;
+        }
+        updateLivePositionFromSaved(saved, errorClock.millis(), false);
+    }
+
+    private void updateLivePositionFromSaved(PlayerState ps, long persistedAtMs, boolean dirty) {
+        if (ps == null || ps.getCurrentQueueId() == null || !"playing".equals(ps.getState())) {
+            livePosition = null;
+            return;
+        }
+        synchronized (livePositionLock) {
+            livePosition = new LivePositionState(
+                    ps.getCurrentQueueId(),
+                    ps.getState(),
+                    ps.getVolume(),
+                    ps.isMuted(),
+                    ps.getVocalMode(),
+                    ps.getPositionMs(),
+                    ps.getSeekSequence(),
+                    persistedAtMs,
+                    dirty);
+        }
+    }
+
+    private static PlayerState snapshotStateFromLive(LivePositionState live) {
+        PlayerState copy = new PlayerState();
+        copy.setId(PlayerState.SINGLETON_ID);
+        copy.setCurrentQueueId(live.queueId());
+        copy.setState(live.state());
+        copy.setVolume(live.volume());
+        copy.setMuted(live.muted());
+        copy.setVocalMode(live.vocalMode());
+        copy.setPositionMs(live.positionMs());
+        copy.setSeekSequence(live.seekSequence());
+        return copy;
     }
 
     private void publishPlaybackStateChanged() {
@@ -447,6 +641,19 @@ public class PlaybackService {
     private void publishSnapshotInvalidated() {
         if (eventPublisher != null) {
             eventPublisher.publishEvent(new QueueSnapshotInvalidatedEvent());
+        }
+    }
+
+    private void publishPlayerControlChanged(PlayerState ps) {
+        if (eventPublisher != null && ps != null) {
+            eventPublisher.publishEvent(new PlayerControlChangedEvent(
+                    ps.getCurrentQueueId(),
+                    ps.getState(),
+                    ps.getVolume(),
+                    ps.isMuted(),
+                    ps.getVocalMode(),
+                    ps.getPositionMs(),
+                    ps.getSeekSequence()));
         }
     }
 

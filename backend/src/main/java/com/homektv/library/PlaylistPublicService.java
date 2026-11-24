@@ -77,11 +77,42 @@ public class PlaylistPublicService {
         Map<Long, List<PlaylistSong>> rowsByPlaylist = rows.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
                         PlaylistSong::getPlaylistId, LinkedHashMap::new, java.util.stream.Collectors.toList()));
-        Map<Long, Song> songs = loadSongs(rows.stream().map(PlaylistSong::getSongId).toList());
+        // Only materialize up to 10 preview candidates per playlist (tolerate up to 7 deleted songs
+        // while keeping at least 3 valid preview cards without hydrating all 10k+ playlist songs).
+        List<Long> previewCandidateSongIds = new java.util.ArrayList<>();
+        for (Playlist playlist : playlists) {
+            List<PlaylistSong> items = rowsByPlaylist.getOrDefault(playlist.getId(), List.of());
+            int cap = Math.min(items.size(), 10);
+            for (int i = 0; i < cap; i++) {
+                Long sid = items.get(i).getSongId();
+                if (sid != null) previewCandidateSongIds.add(sid);
+            }
+        }
+        Map<Long, Song> songs = loadSongs(previewCandidateSongIds);
         Map<Long, SongDto> songDtos = toDtos(songs.values());
         return playlists.stream()
                 .map(playlist -> {
                     List<PlaylistSong> items = rowsByPlaylist.getOrDefault(playlist.getId(), List.of());
+                    List<SongDto> preview = items.stream()
+                            .limit(10)
+                            .map(item -> songDtos.get(item.getSongId()))
+                            .filter(Objects::nonNull)
+                            .limit(3)
+                            .toList();
+                    if (preview.size() < 3 && items.size() > 10) {
+                        List<Long> tailIds = items.stream().skip(10).map(PlaylistSong::getSongId)
+                                .filter(Objects::nonNull).toList();
+                        Map<Long, SongDto> tailDtos = toDtos(loadSongs(tailIds).values());
+                        List<SongDto> merged = new java.util.ArrayList<>(preview);
+                        for (Long tid : tailIds) {
+                            SongDto dto = tailDtos.get(tid);
+                            if (dto != null) {
+                                merged.add(dto);
+                                if (merged.size() >= 3) break;
+                            }
+                        }
+                        preview = merged;
+                    }
                     Map<String, Object> value = new LinkedHashMap<>();
                     value.put("id", playlist.getId());
                     value.put("name", playlist.getName());
@@ -90,8 +121,7 @@ public class PlaylistPublicService {
                     value.put("coverUrl", playlist.getCoverPath() == null ? null : "/api/playlists/" + playlist.getId() + "/cover");
                     value.put("aiGenerated", playlist.isAiGenerated());
                     value.put("songCount", items.size());
-                    value.put("preview", items.stream().map(item -> songDtos.get(item.getSongId()))
-                            .filter(Objects::nonNull).limit(3).toList());
+                    value.put("preview", preview);
                     return value;
                 }).toList();
     }

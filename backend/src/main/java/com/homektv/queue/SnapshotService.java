@@ -10,9 +10,13 @@ import com.homektv.repo.PlayerStateRepository;
 import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.repo.SongFileRepository;
+import com.homektv.library.CatalogRevisionService;
 import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.playback.PlaybackResolutionService;
 import com.homektv.common.ApiException;
+import com.homektv.common.PlaybackStateChangedEvent;
+import com.homektv.common.PlayerControlChangedEvent;
+import com.homektv.common.QueueSnapshotInvalidatedEvent;
 import com.homektv.contract.AudioLayoutDto;
 import com.homektv.contract.PlaybackDescriptor;
 import com.homektv.contract.QueueSnapshot;
@@ -21,18 +25,25 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 /** 组装队列+播放状态快照（详设§11.1 / §4.2 sync_full）。 */
 @Service
 public class SnapshotService {
+
+    private record CachedBaseSnapshot(QueueSnapshot base, long generation, long catalogRevision) {}
 
     private final PlayerStateRepository playerRepo;
     private final QueueItemRepository queueRepo;
@@ -43,8 +54,16 @@ public class SnapshotService {
     private final PlaybackResolutionService playbackResolution;
     @Autowired(required = false)
     private PlatformTransactionManager transactionManager;
+    @Autowired(required = false)
+    private PlaybackService playbackService;
+    @Autowired(required = false)
+    private CatalogRevisionService catalogRevisionService;
     /** Monotonic wire revision used to reject an older HTTP response. */
     private final AtomicLong snapshotRevision = new AtomicLong(System.currentTimeMillis());
+    private final AtomicLong cacheGeneration = new AtomicLong(0L);
+    private final Object rebuildLock = new Object();
+    private volatile CachedBaseSnapshot cachedSnapshot;
+    private volatile Boolean cacheEnabledOverride;
 
     @Autowired
     public SnapshotService(PlayerStateRepository playerRepo, QueueItemRepository queueRepo,
@@ -76,20 +95,154 @@ public class SnapshotService {
         this(playerRepo, queueRepo, songRepo, userRepo, broadcaster, songFileRepo, null);
     }
 
-    /**
-     * Capture one ordered, consistent wire view. Acquiring the monitor before
-     * opening the REPEATABLE_READ transaction ensures waiting callers never hold
-     * HikariCP pool connections while blocked on the serialization lock.
-     */
-    public synchronized QueueSnapshot snapshot() {
-        if (transactionManager == null) {
-            return captureSnapshot();
+    void setCacheEnabledForTest(boolean enabled) {
+        this.cacheEnabledOverride = enabled;
+        if (!enabled) {
+            invalidateCache();
         }
-        TransactionTemplate tx = new TransactionTemplate(transactionManager);
-        tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        tx.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
-        tx.setReadOnly(true);
-        return tx.execute(status -> captureSnapshot());
+    }
+
+    void setPlaybackService(PlaybackService playbackService) {
+        this.playbackService = playbackService;
+    }
+
+    public void invalidateCache() {
+        cacheGeneration.incrementAndGet();
+        cachedSnapshot = null;
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onQueueSnapshotInvalidated(QueueSnapshotInvalidatedEvent event) {
+        invalidateCache();
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onPlaybackStateChanged(PlaybackStateChangedEvent event) {
+        invalidateCache();
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onPlayerControlChanged(PlayerControlChangedEvent event) {
+        if (event == null) {
+            invalidateCache();
+            return;
+        }
+        CachedBaseSnapshot current = cachedSnapshot;
+        if (current == null || cacheGeneration.get() != current.generation()) {
+            invalidateCache();
+            return;
+        }
+        Long cachedQueueId = current.base().playing() != null ? current.base().playing().queueId() : null;
+        if (!Objects.equals(cachedQueueId, event.currentQueueId())) {
+            invalidateCache();
+            return;
+        }
+        synchronized (rebuildLock) {
+            CachedBaseSnapshot latest = cachedSnapshot;
+            if (latest == null || cacheGeneration.get() != latest.generation()) {
+                invalidateCache();
+                return;
+            }
+            QueueSnapshot base = latest.base();
+            QueueSnapshot patched = new QueueSnapshot(
+                    base.playing(),
+                    base.list(),
+                    event.state(),
+                    event.volume(),
+                    event.muted(),
+                    event.vocalMode(),
+                    base.audioLayout(),
+                    base.tvOnline(),
+                    base.connectedPhones(),
+                    event.positionMs(),
+                    event.seekSequence(),
+                    base.stateRevision(),
+                    base.playback());
+            long nextGen = cacheGeneration.incrementAndGet();
+            cachedSnapshot = new CachedBaseSnapshot(patched, nextGen, latest.catalogRevision());
+        }
+    }
+
+    private boolean isCacheEnabled() {
+        Boolean override = cacheEnabledOverride;
+        return override != null ? override : transactionManager != null;
+    }
+
+    /**
+     * Capture one ordered, consistent wire view. When caching is enabled,
+     * unchanged reads materialize from the committed base snapshot with zero DB
+     * queries and zero lock contention; misses rebuild inside REPEATABLE_READ.
+     */
+    public QueueSnapshot snapshot() {
+        if (!isCacheEnabled()) {
+            synchronized (this) {
+                if (transactionManager == null) {
+                    return materializeWireSnapshot(captureSnapshot());
+                }
+                TransactionTemplate tx = new TransactionTemplate(transactionManager);
+                tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                tx.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+                tx.setReadOnly(true);
+                return materializeWireSnapshot(tx.execute(status -> captureSnapshot()));
+            }
+        }
+        long currentRevision = currentCatalogRevision();
+        CachedBaseSnapshot hit = cachedSnapshot;
+        if (hit != null
+                && hit.catalogRevision() == currentRevision
+                && cacheGeneration.get() == hit.generation()) {
+            return materializeWireSnapshot(hit.base());
+        }
+        synchronized (rebuildLock) {
+            currentRevision = currentCatalogRevision();
+            hit = cachedSnapshot;
+            if (hit != null
+                    && hit.catalogRevision() == currentRevision
+                    && cacheGeneration.get() == hit.generation()) {
+                return materializeWireSnapshot(hit.base());
+            }
+            long genBefore = cacheGeneration.get();
+            QueueSnapshot built;
+            if (transactionManager == null) {
+                built = captureSnapshot();
+            } else {
+                TransactionTemplate tx = new TransactionTemplate(transactionManager);
+                tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                tx.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+                tx.setReadOnly(true);
+                built = tx.execute(status -> captureSnapshot());
+            }
+            if (built != null && cacheGeneration.get() == genBefore && currentCatalogRevision() == currentRevision) {
+                cachedSnapshot = new CachedBaseSnapshot(built, genBefore, currentRevision);
+            }
+            return materializeWireSnapshot(built);
+        }
+    }
+
+    private long currentCatalogRevision() {
+        return catalogRevisionService != null ? catalogRevisionService.current() : 0L;
+    }
+
+    private QueueSnapshot materializeWireSnapshot(QueueSnapshot base) {
+        long stateRevision = snapshotRevision.incrementAndGet();
+        Long currentQueueId = base.playing() != null ? base.playing().queueId() : null;
+        long livePositionMs = playbackService != null
+                ? playbackService.resolveLivePositionMs(currentQueueId, base.state(), base.positionMs())
+                : base.positionMs();
+        return new QueueSnapshot(
+                base.playing(),
+                base.list(),
+                base.state(),
+                base.volume(),
+                base.muted(),
+                base.vocalMode(),
+                base.audioLayout(),
+                broadcaster.isTvOnline(),
+                broadcaster.connectedPhonesCount(),
+                livePositionMs,
+                base.seekSequence(),
+                stateRevision,
+                base.playback());
     }
 
     private QueueSnapshot captureSnapshot() {
@@ -148,8 +301,8 @@ public class SnapshotService {
 
         return new QueueSnapshot(nowPlaying, list, ps.getState(), ps.getVolume(),
                 ps.isMuted(), ps.getVocalMode(), audioLayout,
-                broadcaster.isTvOnline(), broadcaster.connectedPhonesCount(),
-                ps.getPositionMs(), ps.getSeekSequence(), stateRevision, playback);
+                false, 0L,
+                ps.getPositionMs(), ps.getSeekSequence(), 0L, playback);
     }
 
     private void addIds(QueueItem item, Set<Long> songIds, Set<Long> userIds) {

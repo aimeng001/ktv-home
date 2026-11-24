@@ -52,7 +52,7 @@
  * KTV Library Management Page — manages the official playable song library,
  * supports filtering, editing, and deleting songs.
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, triggerRef } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChevronDown, ListPlus, Pencil, Tags, Trash2, X } from 'lucide-vue-next'
 import api from '../../api/client'
@@ -66,7 +66,7 @@ import { alertDialog, confirmDialog } from '../../composables/useDialog'
 import { buildSongEditPayload } from './editSongState'
 import { createLatestRequest } from '../latestRequest'
 /** 歌曲列表、总数、当前页、总页数、已选集合 / Song list, total, page, total pages, selected set */
-const songs=ref([]),total=ref(0),page=ref(0),totalPages=ref(1),selected=ref(new Set())
+const songs=shallowRef([]),total=ref(0),page=ref(0),totalPages=ref(1),selected=ref(new Set())
 const router=useRouter()
 const playlistPickerOpen=ref(false),playlistPickerSong=ref(null),playlistOptions=ref([]),playlistLoading=ref(false),playlistAddingId=ref(null)
 const songEditorOpen=ref(false),editingSong=ref(null),songSaving=ref(false)
@@ -129,6 +129,7 @@ async function saveSongEdit(){
     const updated=await api.adminEditSong(editingSong.value.id,payload)
     if(updated){
       Object.assign(editingSong.value,updated,{language:updated.language!==undefined?updated.language:payload.language,tags:updated.tags!==undefined?updated.tags:payload.tags})
+      triggerRef(songs)
     }
     songEditorOpen.value=false
   }catch(err){
@@ -172,7 +173,7 @@ function audioLayoutDetail(value){
   if(value?.layout==='DUAL_CHANNEL') return `${value.originalChannel || 'LEFT'} / ${value.accompanimentChannel || 'RIGHT'}`
   return '无原唱/伴唱切换'
 }
-function updateSongAudioLayout(song, value){song.audioLayout=value}
+function updateSongAudioLayout(song, value){song.audioLayout=value;triggerRef(songs)}
 onMounted(load)
 </script>
 

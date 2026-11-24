@@ -141,12 +141,14 @@ public class AdminAuthService {
 
     public boolean isAuthenticated(String token) {
         if (!isConfigured() || token == null || token.isBlank()) return false;
-        synchronized (authStateGate) {
-            Instant now = Instant.now(clock);
-            purgeExpired(now);
-            // Expired sessions are removed before lookup, so membership means still authenticated.
-            return sessions.containsKey(token);
+        Instant expiry = sessions.get(token);
+        if (expiry == null) return false;
+        Instant now = Instant.now(clock);
+        if (!now.isBefore(expiry)) {
+            sessions.remove(token, expiry);
+            return false;
         }
+        return true;
     }
 
     public void logout(String token) {

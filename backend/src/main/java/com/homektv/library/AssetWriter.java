@@ -17,6 +17,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -44,9 +45,9 @@ public class AssetWriter {
         LibraryModePolicy.requireCacheOutsideExternalSource(props, dataRoot);
     }
 
-    /** 写歌词缓存，返回相对路径 lyrics/{fingerprint}.lrc */
+    /** 写歌词缓存，新文件按 2 字符前缀分桶：lyrics/{xx}/{fingerprint}.lrc */
     public String writeLyric(String fingerprint, String lyricText) {
-        String rel = "lyrics/" + fingerprint + ".lrc";
+        String rel = "lyrics/" + shardPrefix(fingerprint) + "/" + fingerprint + ".lrc";
         byte[] bytes = lyricText == null ? new byte[0] : lyricText.getBytes(StandardCharsets.UTF_8);
         if (bytes.length > MAX_LYRIC_BYTES) {
             throw new ApiException("LYRIC_TOO_LARGE", "歌词不能超过 1MB");
@@ -55,17 +56,18 @@ public class AssetWriter {
         return rel;
     }
 
-    /** 写封面缓存，返回相对路径 covers/{fingerprint}.{ext} */
+    /** 写封面缓存，新文件按 2 字符前缀分桶：covers/{xx}/{fingerprint}.{ext} */
     public String writeCover(String fingerprint, byte[] image, String ext) {
-        String rel = "covers/" + fingerprint + "." + (ext == null ? "jpg" : ext);
+        String rel = "covers/" + shardPrefix(fingerprint) + "/" + fingerprint + "." + (ext == null ? "jpg" : ext);
         requireImageSize(image);
         write(rel, image);
         return rel;
     }
 
-    /** Write an artist avatar to an application-owned cache, keyed by artist identity. */
+    /** Write an artist avatar to an application-owned 2-char bucketed cache, keyed by artist identity. */
     public String writeArtistCover(String artistKey, byte[] image, String ext) {
-        String rel = "artist-covers/" + digest(artistKey) + "." + (ext == null ? "jpg" : ext);
+        String hash = digest(artistKey);
+        String rel = "artist-covers/" + hash.substring(0, 2) + "/" + hash + "." + (ext == null ? "jpg" : ext);
         requireImageSize(image);
         Path target = dataRoot.resolve(rel);
         long previousSize = Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) ? safeFileSize(target) : 0L;
@@ -193,7 +195,7 @@ public class AssetWriter {
                 long deletedSize = isArtistCover && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
                         ? Files.size(path) : 0L;
                 if (Files.deleteIfExists(path) && isArtistCover) {
-                    adjustCachedArtistCoverBytes(-deletedSize, path.getParent());
+                    adjustCachedArtistCoverBytes(-deletedSize, dataRootForCleanup().resolve("artist-covers"));
                 }
             } catch (IOException failure) {
                 log.debug("资源缓存清理失败：{} - {}", relativePath, failure.getMessage());
@@ -278,7 +280,8 @@ public class AssetWriter {
                     ? Files.size(target) : 0L;
             Files.write(target, data);
             if (isArtistCover) {
-                adjustCachedArtistCoverBytes(data.length - previousSize, target.getParent());
+                adjustCachedArtistCoverBytes(data.length - previousSize,
+                        dataRoot.toAbsolutePath().normalize().resolve("artist-covers"));
             }
         } catch (IOException e) {
             log.warn("资源落盘失败：{} - {}", relPath, e.getMessage());
@@ -286,13 +289,31 @@ public class AssetWriter {
         }
     }
 
+    private static String shardPrefix(String key) {
+        if (key == null || key.isEmpty()) return "00";
+        char first = 0;
+        char second = 0;
+        for (int i = 0, len = key.length(); i < len; i++) {
+            char c = key.charAt(i);
+            if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+                if (first == 0) first = c;
+                else { second = c; break; }
+            } else if (c >= 'A' && c <= 'Z') {
+                char lower = (char) (c + 32);
+                if (first == 0) first = lower;
+                else { second = lower; break; }
+            }
+        }
+        if (first == 0) return "00";
+        if (second == 0) return new String(new char[]{first, '0'});
+        return new String(new char[]{first, second});
+    }
+
     private static String digest(String value) {
         try {
             byte[] bytes = MessageDigest.getInstance("SHA-256")
                     .digest((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
-            StringBuilder out = new StringBuilder(bytes.length * 2);
-            for (byte item : bytes) out.append(String.format("%02x", item & 0xff));
-            return out.toString();
+            return HexFormat.of().formatHex(bytes);
         } catch (Exception failure) {
             throw new IllegalStateException("无法生成艺术家缓存键", failure);
         }

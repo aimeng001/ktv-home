@@ -62,7 +62,10 @@ public class WishController {
      */
     @GetMapping("/admin/wishes")
     public List<Wish> list() {
-        return wishRepo.findAllByOrderByCreatedAtDesc();
+        List<Wish> bounded = wishRepo.findTop500ByOrderByCreatedAtDesc();
+        if (bounded != null) return bounded;
+        List<Wish> fallback = wishRepo.findAllByOrderByCreatedAtDesc();
+        return fallback == null ? List.of() : fallback.stream().limit(500).toList();
     }
 
     /**
@@ -86,7 +89,14 @@ public class WishController {
      */
     @GetMapping(value = "/admin/wishes/export", produces = "text/csv; charset=UTF-8")
     public ResponseEntity<byte[]> exportCsv() {
-        List<Wish> list = wishRepo.findAllByOrderByCreatedAtDesc();
+        List<Wish> list = wishRepo.findTop5000ByOrderByCreatedAtDesc();
+        if (list == null) {
+            list = wishRepo.findAllByOrderByCreatedAtDesc();
+            if (list != null && list.size() > 5000) {
+                list = list.subList(0, 5000);
+            }
+        }
+        if (list == null) list = List.of();
         StringBuilder csv = new StringBuilder();
         csv.append('\ufeff'); // UTF-8 BOM
         csv.append("ID,关键词,创建者ID,创建时间\n");
