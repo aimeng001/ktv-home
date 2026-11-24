@@ -68,12 +68,18 @@ public class AiLibraryService {
     private final AiTaskDispatchFailureRecorder dispatchFailureRecorder;
     private volatile com.homektv.resource.PlaybackPressureMonitor playbackPressureMonitor;
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private com.homektv.library.ArtistProfileService artistProfileService;
     @jakarta.persistence.PersistenceContext
     private jakarta.persistence.EntityManager entityManager;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setPlaybackPressureMonitor(com.homektv.resource.PlaybackPressureMonitor playbackPressureMonitor) {
         this.playbackPressureMonitor = playbackPressureMonitor;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setArtistProfileService(com.homektv.library.ArtistProfileService artistProfileService) {
+        this.artistProfileService = artistProfileService;
     }
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -748,13 +754,34 @@ public class AiLibraryService {
      */
     public Map<String, Object> playlistDetail(Long playlistId) {
         Playlist playlist = requirePlaylist(playlistId);
-        List<Map<String, Object>> songs = playlistSongRepository.findByPlaylistIdOrderBySortOrder(playlistId).stream()
+        List<PlaylistSong> playlistRows = playlistSongRepository.findByPlaylistIdOrderBySortOrder(playlistId);
+        List<Long> songIds = playlistRows.stream().map(PlaylistSong::getSongId).filter(Objects::nonNull).distinct().toList();
+        Map<Long, Song> songById = new LinkedHashMap<>();
+        if (!songIds.isEmpty()) {
+            Iterable<Song> batch = songRepository.findAllById(songIds);
+            if (batch != null) batch.forEach(s -> songById.put(s.getId(), s));
+            if (songById.isEmpty()) {
+                for (Long songId : songIds) {
+                    songRepository.findById(songId).ifPresent(s -> songById.put(s.getId(), s));
+                }
+            }
+        }
+        Map<String, String> avatarUrls = artistProfileService == null || songById.isEmpty()
+                ? null
+                : artistProfileService.resolveAvatarUrlsForCredits(
+                        songById.values().stream().map(Song::getArtist).filter(Objects::nonNull).toList());
+        List<Map<String, Object>> songs = playlistRows.stream()
                 .map(item -> {
-                    Song song = songRepository.findById(item.getSongId()).orElse(null);
+                    Song song = songById.get(item.getSongId());
                     Map<String, Object> value = new LinkedHashMap<>();
                     value.put("songId", item.getSongId());
                     value.put("title", song == null ? "歌曲已删除" : song.getTitle());
                     value.put("artist", song == null ? "" : song.getArtist());
+                    value.put("coverUrl", song != null && song.getCoverPath() != null ? "/api/cover/" + song.getId() : null);
+                    value.put("artistAvatarUrl", song == null ? null
+                            : avatarUrls != null
+                                ? (song.getArtist() == null ? null : avatarUrls.get(song.getArtist()))
+                                : com.homektv.common.ArtistAvatarUrl.forCredit(song.getArtist()));
                     value.put("manual", item.isManual());
                     value.put("sortOrder", item.getSortOrder());
                     return value;

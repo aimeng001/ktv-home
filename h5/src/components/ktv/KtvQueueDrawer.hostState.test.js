@@ -182,4 +182,49 @@ describe('KtvQueueDrawer 房主状态错误态', () => {
     expect(topBtn.disabled).toBe(false)
     expect(topBtn.textContent).toContain('顶歌')
   })
+
+  it('正在演唱、待播队列与已唱历史均渲染歌手头像并在失败时降级首字', async () => {
+    apiMock.roomHostStatus.mockResolvedValue({ claimed: false })
+    apiMock.recentHistory.mockResolvedValue([
+      {
+        historyId: 501,
+        playedByNick: '家人',
+        playedAt: '2026-11-25T00:00:00Z',
+        song: { id: 3, title: '晴天', artist: '周杰伦', artistAvatarUrl: '/api/artists/avatar?key=zjl' }
+      }
+    ])
+    player.nowPlaying = {
+      queueId: 100,
+      orderedByNick: '主持人',
+      song: { id: 1, title: '朋友', artist: '谭咏麟', artistAvatarUrl: '/api/artists/avatar?key=tyl' }
+    }
+    player.queue = [
+      {
+        queueId: 202,
+        orderedBy: 9,
+        orderedByNick: '点歌人',
+        song: { id: 2, title: '海阔天空', artist: 'Beyond', artistAvatarUrl: null }
+      }
+    ]
+    await mountDrawer()
+
+    const nowImg = root.querySelector('.now-card .q-avatar img')
+    expect(nowImg?.getAttribute('src')).toBe('/api/artists/avatar?key=tyl')
+
+    const queueAvatar = root.querySelector('.queue-list .q-item .q-avatar')
+    expect(queueAvatar.querySelector('img')).toBeNull()
+    expect(queueAvatar.textContent.trim()).toBe('B')
+
+    nowImg.dispatchEvent(new Event('error'))
+    await nextTick()
+    expect(root.querySelector('.now-card .q-avatar img')).toBeNull()
+    expect(root.querySelector('.now-card .q-avatar').textContent.trim()).toBe('谭')
+
+    buttonByText(root, '已唱历史').click()
+    await nextTick()
+    await nextTick()
+    await nextTick()
+    expect(root.querySelector('.queue-list .q-item .q-avatar img')?.getAttribute('src'))
+      .toBe('/api/artists/avatar?key=zjl')
+  })
 })

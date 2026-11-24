@@ -78,4 +78,23 @@ class SongDtoArtistAvatarTest {
         assertThat(dto.artistInitials()).isEqualTo("ZXC");
     }
 
+    @Test
+    void supportsClearingArtistAvatarUrlOnSongAndDetailDtosAndExposesItOnAdminSongDto() {
+        Song song = new Song();
+        song.setId(42L);
+        song.setTitle("七里香");
+        song.setArtist("周杰伦");
+        song.setCoverPath("covers/42.jpg");
+
+        SongDto clearedDto = SongDto.from(song).withArtistAvatarUrl(null);
+        assertThat(clearedDto.artistAvatarUrl()).isNull();
+        assertThat(clearedDto.title()).isEqualTo("七里香");
+
+        SongDetailDto detailCleared = SongDetailDto.from(song, List.of()).withArtistAvatarUrl(null);
+        assertThat(detailCleared.artistAvatarUrl()).isNull();
+
+        AdminSongDto adminDto = AdminSongDto.from(song, null, "/api/artists/avatar?key=%E5%91%A8%E6%9D%B0%E4%BC%A6");
+        assertThat(adminDto.coverUrl()).isEqualTo("/api/cover/42");
+        assertThat(adminDto.artistAvatarUrl()).isEqualTo("/api/artists/avatar?key=%E5%91%A8%E6%9D%B0%E4%BC%A6");
+    }
 }

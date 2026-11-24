@@ -3,6 +3,7 @@ package com.homektv.web;
 import com.homektv.config.AppProperties;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
+import com.homektv.library.ArtistProfileService;
 import com.homektv.library.AssetWriter;
 import com.homektv.library.MediaClassifier;
 import com.homektv.library.SongAvailabilityPolicy;
@@ -47,6 +48,7 @@ public class SongController {
     private final SongFileRepository fileRepo;
     private final AssetWriter assetWriter;
     private SongAvailabilityPolicy availabilityPolicy;
+    private ArtistProfileService artistProfileService;
 
     /** Compatibility constructor for test callers providing AppProperties directly. */
     public SongController(SongSearchService searchService, SongRepository songRepo,
@@ -66,6 +68,11 @@ public class SongController {
     @Autowired(required = false)
     void setAvailabilityPolicy(SongAvailabilityPolicy availabilityPolicy) {
         this.availabilityPolicy = availabilityPolicy;
+    }
+
+    @Autowired(required = false)
+    void setArtistProfileService(ArtistProfileService artistProfileService) {
+        this.artistProfileService = artistProfileService;
     }
 
     /**
@@ -88,20 +95,23 @@ public class SongController {
         if (songs.isEmpty()) return List.of();
         List<SongFile> files = loadValidFiles(songs);
         Map<Long, String> resolutions = extractVideoResolutions(files);
+        List<SongDto> dtos;
         if (availabilityPolicy == null) {
-            return songs.stream()
+            dtos = songs.stream()
                     .map(song -> SongDto.from(song, true, null, resolutions.get(song.getId())))
                     .toList();
+        } else {
+            // Reuse preloaded valid files for playability so production searches hit song_files once.
+            java.util.Set<Long> playableIds = !files.isEmpty()
+                    ? availabilityPolicy.playableSongIdsFromFiles(songs, files)
+                    : availabilityPolicy.playableSongIds(songs);
+            dtos = songs.stream()
+                    .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
+                            playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY,
+                            resolutions.get(song.getId())))
+                    .toList();
         }
-        // Reuse preloaded valid files for playability so production searches hit song_files once.
-        java.util.Set<Long> playableIds = !files.isEmpty()
-                ? availabilityPolicy.playableSongIdsFromFiles(songs, files)
-                : availabilityPolicy.playableSongIds(songs);
-        return songs.stream()
-                .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
-                        playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY,
-                        resolutions.get(song.getId())))
-                .toList();
+        return artistProfileService == null ? dtos : artistProfileService.resolveSongAvatars(dtos);
     }
 
     /** Loads valid files once for the current search page; never opens media files. */
@@ -149,8 +159,10 @@ public class SongController {
     @GetMapping("/songs/{id}")
     public ResponseEntity<SongDetailDto> detail(@PathVariable Long id) {
         return songRepo.findById(id)
-                .map(s -> ResponseEntity.ok(
-                        SongDetailDto.from(s, fileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(id))))
+                .map(s -> {
+                    SongDetailDto dto = SongDetailDto.from(s, fileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(id));
+                    return ResponseEntity.ok(artistProfileService == null ? dto : artistProfileService.resolveSongDetailAvatar(dto));
+                })
                 .orElse(ResponseEntity.notFound().build());
     }
 

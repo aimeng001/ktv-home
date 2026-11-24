@@ -58,6 +58,7 @@ public class SnapshotService {
     private PlaybackService playbackService;
     @Autowired(required = false)
     private CatalogRevisionService catalogRevisionService;
+    private com.homektv.library.ArtistProfileService artistProfileService;
     /** Monotonic wire revision used to reject an older HTTP response. */
     private final AtomicLong snapshotRevision = new AtomicLong(System.currentTimeMillis());
     private final AtomicLong cacheGeneration = new AtomicLong(0L);
@@ -104,6 +105,11 @@ public class SnapshotService {
 
     void setPlaybackService(PlaybackService playbackService) {
         this.playbackService = playbackService;
+    }
+
+    @Autowired(required = false)
+    void setArtistProfileService(com.homektv.library.ArtistProfileService artistProfileService) {
+        this.artistProfileService = artistProfileService;
     }
 
     public void invalidateCache() {
@@ -262,12 +268,19 @@ public class SnapshotService {
         for (QueueItem item : waiting) addIds(item, songIds, userIds);
 
         Map<Long, Song> songs = loadSongs(songIds);
+        Map<String, String> avatarUrls = artistProfileService == null || songs.isEmpty()
+                ? null
+                : artistProfileService.resolveAvatarUrlsForCredits(
+                        songs.values().stream()
+                                .filter(song -> song != null && song.getArtist() != null)
+                                .map(Song::getArtist)
+                                .toList());
         Map<Long, String> nicks = loadNicknames(userIds);
         QueueSnapshot.NowPlaying nowPlaying = null;
         if (current != null) {
             Song song = songs.get(current.getSongId());
             nowPlaying = new QueueSnapshot.NowPlaying(current.getId(),
-                    song != null ? SongDto.from(song) : null,
+                    toSnapshotSongDto(song, avatarUrls),
                     nicks.get(current.getOrderedBy()));
         }
 
@@ -275,7 +288,7 @@ public class SnapshotService {
                 .map(q -> {
                     Song song = songs.get(q.getSongId());
                     return new QueueSnapshot.QueueEntry(q.getId(),
-                            song != null ? SongDto.from(song) : null,
+                            toSnapshotSongDto(song, avatarUrls),
                             q.getOrderedBy(), nicks.get(q.getOrderedBy()), q.getStatus());
                 })
                 .toList();
@@ -327,5 +340,12 @@ public class SnapshotService {
             if (found != null) found.forEach(user -> nicks.put(user.getId(), user.getNickname()));
         }
         return nicks;
+    }
+
+    private static SongDto toSnapshotSongDto(Song song, Map<String, String> avatarUrls) {
+        if (song == null) return null;
+        SongDto dto = SongDto.from(song);
+        if (avatarUrls == null) return dto;
+        return dto.withArtistAvatarUrl(song.getArtist() == null ? null : avatarUrls.get(song.getArtist()));
     }
 }

@@ -36,7 +36,7 @@
     >
       <div
         class="spectrum-bg-kenburns"
-        :style="song.coverUrl ? { backgroundImage: `url(${song.coverUrl})` } : {}"
+        :style="audioStageBackdropUrl ? { backgroundImage: `url(${audioStageBackdropUrl})` } : {}"
       />
       <div class="spectrum-scrim" />
       <canvas ref="spectrumCanvas" class="spectrum-canvas" />
@@ -44,7 +44,13 @@
 
     <!-- 音频曲目 / 镜像流不可用降级封面展示 (非全屏小窗时使用) -->
     <div v-if="song && !fullscreen && (!hasVideoStream || mirrorStreamFailed || isAudioOnly)" class="poster-fallback">
-      <img v-if="song.coverUrl" :src="song.coverUrl" alt="" class="poster-img" />
+      <img
+        v-if="audioPosterUrl"
+        :src="audioPosterUrl"
+        alt=""
+        class="poster-img"
+        @error="markMediaUrlFailed(audioPosterUrl)"
+      />
       <div class="poster-badge">
         <strong>{{ song.title }}</strong>
         <span>{{ song.artist }}</span>
@@ -65,9 +71,20 @@
           <Minimize2 :size="16" /> 返回选歌
         </button>
         <div class="fs-now">
-          <strong>{{ song?.title || '暂无播放' }}</strong>
-          <small v-if="song">{{ song.artist }} · {{ player.nowPlaying?.orderedByNick || '' }} 点</small>
-          <small v-if="nextSong" class="next-hint">下一首：{{ nextSong.title }}</small>
+          <div v-if="song" class="fs-artist-avatar" :style="!fsArtistAvatarUrl ? getArtistAvatarStyle(song.artist || song.title) : undefined">
+            <img
+              v-if="fsArtistAvatarUrl"
+              :src="fsArtistAvatarUrl"
+              alt=""
+              @error="markMediaUrlFailed(fsArtistAvatarUrl)"
+            />
+            <span v-else>{{ songAvatarInitial(song) }}</span>
+          </div>
+          <div class="fs-now-copy">
+            <strong>{{ song?.title || '暂无播放' }}</strong>
+            <small v-if="song">{{ song.artist }} · {{ player.nowPlaying?.orderedByNick || '' }} 点</small>
+            <small v-if="nextSong" class="next-hint">下一首：{{ nextSong.title }}</small>
+          </div>
         </div>
         <div class="fs-badges">
           <span class="fs-mode-tag">{{ isSilentConsole ? '控制台镜像' : 'Web KTV 全屏' }}</span>
@@ -202,6 +219,13 @@ import { VOLUME_STEP } from './ktvControlSteps'
 import { createWebAudioChannelRouter } from '../../player/webAudioChannelRouter'
 import { useToast } from '../../composables/useToast'
 import { formatDurationMs } from './ktvCatalogPresets'
+import { getArtistAvatarStyle } from '../../utils/avatarColor'
+import {
+  rememberFailedThumbUrl,
+  resolveSongArtistAvatarUrl,
+  resolveSongThumbUrl,
+  songAvatarInitial,
+} from '../../utils/songThumbnail'
 
 const props = defineProps({
   fullscreen: { type: Boolean, default: false },
@@ -272,6 +296,15 @@ const lyricLoader = createLyricLoader({
 
 const song = computed(() => player.nowPlaying?.song || null)
 const nextSong = computed(() => player.queue?.[0]?.song || null)
+const failedMediaUrls = ref(new Set())
+const audioStageBackdropUrl = computed(() => resolveSongThumbUrl(song.value, failedMediaUrls.value))
+const audioPosterUrl = computed(() => resolveSongThumbUrl(song.value, failedMediaUrls.value))
+const fsArtistAvatarUrl = computed(() => resolveSongArtistAvatarUrl(song.value, failedMediaUrls.value))
+
+function markMediaUrlFailed(url) {
+  if (!url) return
+  failedMediaUrls.value = rememberFailedThumbUrl(failedMediaUrls.value, url)
+}
 const isSilentConsole = computed(() => {
   return player.isSilentConsole ?? (
     player.isTvConsole ||
@@ -1158,6 +1191,31 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 .fs-now {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.fs-artist-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 800;
+  color: #191304;
+}
+.fs-artist-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.fs-now-copy {
   flex: 1;
   min-width: 0;
   display: flex;

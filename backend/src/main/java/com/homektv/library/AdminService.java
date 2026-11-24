@@ -60,10 +60,16 @@ public class AdminService {
     private com.homektv.queue.SnapshotService snapshotService;
     private com.homektv.queue.PlaybackService playbackService;
     private AdminSongQueryRepository adminSongQueryRepository;
+    private ArtistProfileService artistProfileService;
 
     @Autowired(required = false)
     void setAdminSongQueryRepository(AdminSongQueryRepository adminSongQueryRepository) {
         this.adminSongQueryRepository = adminSongQueryRepository;
+    }
+
+    @Autowired(required = false)
+    void setArtistProfileService(ArtistProfileService artistProfileService) {
+        this.artistProfileService = artistProfileService;
     }
 
     @Autowired(required = false)
@@ -191,14 +197,26 @@ public class AdminService {
             fileRepo.findBySongIdInAndValidTrueOrderByPriorityDesc(songIds)
                     .forEach(file -> primaryFiles.putIfAbsent(file.getSongId(), file));
         }
-        return songs.map(song -> AdminSongDto.from(song, primaryFiles.get(song.getId())));
+        Map<String, String> avatarUrls = artistProfileService == null || songs.getContent().isEmpty()
+                ? null
+                : artistProfileService.resolveAvatarUrlsForCredits(
+                        songs.getContent().stream().map(Song::getArtist).filter(artist -> artist != null).toList());
+        return songs.map(song -> AdminSongDto.from(
+                song,
+                primaryFiles.get(song.getId()),
+                avatarUrls != null
+                        ? (song.getArtist() == null ? null : avatarUrls.get(song.getArtist()))
+                        : com.homektv.common.ArtistAvatarUrl.forCredit(song.getArtist())));
     }
 
     @Transactional(readOnly = true)
     public AdminSongDto getAdminSong(Long id) {
         Song song = songRepo.findById(id).orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         SongFile file = fileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(id).stream().findFirst().orElse(null);
-        return AdminSongDto.from(song, file);
+        String avatarUrl = artistProfileService != null && song.getArtist() != null
+                ? artistProfileService.resolveAvatarUrlsForCredits(List.of(song.getArtist())).get(song.getArtist())
+                : com.homektv.common.ArtistAvatarUrl.forCredit(song.getArtist());
+        return AdminSongDto.from(song, file, avatarUrl);
     }
 
     private static String normalizeFilter(String value) {

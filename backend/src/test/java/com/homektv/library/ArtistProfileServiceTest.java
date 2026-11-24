@@ -469,6 +469,53 @@ class ArtistProfileServiceTest {
                 eq(List.of("tanyonglin")), eq(1), any());
     }
 
+    @Test
+    void resolveSongAvatarsClearsUrlsForUncachedArtistsWhileKeepingCachedOnes() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            RowCallbackHandler handler = invocation.getArgument(1);
+            ResultSet rs = mock(ResultSet.class);
+            when(rs.getString("artist_key")).thenReturn("周杰伦");
+            handler.processRow(rs);
+            return null;
+        }).when(jdbc).query(
+                org.mockito.ArgumentMatchers.contains("avatar_path IS NOT NULL"),
+                any(RowCallbackHandler.class),
+                org.mockito.ArgumentMatchers.any(Object[].class));
+
+        com.homektv.domain.Song cachedSong = new com.homektv.domain.Song();
+        cachedSong.setId(1L);
+        cachedSong.setArtist("周杰伦");
+        com.homektv.domain.Song uncachedSong = new com.homektv.domain.Song();
+        uncachedSong.setId(2L);
+        uncachedSong.setArtist("未刮削歌手");
+
+        List<com.homektv.contract.SongDto> dtos = List.of(
+                com.homektv.contract.SongDto.from(cachedSong),
+                com.homektv.contract.SongDto.from(uncachedSong));
+
+        List<com.homektv.contract.SongDto> resolved = new ArtistProfileService(jdbc).resolveSongAvatars(dtos);
+
+        assertThat(resolved.get(0).artistAvatarUrl())
+                .isEqualTo("/api/artists/avatar?key=%E5%91%A8%E6%9D%B0%E4%BC%A6");
+        assertThat(resolved.get(1).artistAvatarUrl()).isNull();
+    }
+
+    @Test
+    void resolveAvatarUrlsForCreditsKeepsFallbackUrlsWhenDatabaseLookupFails() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        org.mockito.Mockito.doThrow(new DataAccessResourceFailureException("db unavailable"))
+                .when(jdbc).query(
+                        org.mockito.ArgumentMatchers.contains("avatar_path IS NOT NULL"),
+                        any(RowCallbackHandler.class),
+                        org.mockito.ArgumentMatchers.any(Object[].class));
+
+        Map<String, String> resolved = new ArtistProfileService(jdbc)
+                .resolveAvatarUrlsForCredits(List.of("周杰伦"));
+
+        assertThat(resolved).containsEntry("周杰伦", "/api/artists/avatar?key=%E5%91%A8%E6%9D%B0%E4%BC%A6");
+    }
+
     private static ResultSet profileRow() throws Exception {
         ResultSet row = mock(ResultSet.class);
         when(row.getString("artist_key")).thenReturn("zhoujielun");

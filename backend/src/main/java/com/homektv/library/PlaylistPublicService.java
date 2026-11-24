@@ -46,6 +46,7 @@ public class PlaylistPublicService {
     private final WsBroadcaster broadcaster;
     private SongAvailabilityPolicy availabilityPolicy;
     private AssetWriter assetWriter;
+    private ArtistProfileService artistProfileService;
 
     public PlaylistPublicService(PlaylistRepository playlistRepository, PlaylistSongRepository playlistSongRepository,
                                  SongRepository songRepository, QueueService queueService,
@@ -64,6 +65,11 @@ public class PlaylistPublicService {
     @Autowired(required = false)
     void setAvailabilityPolicy(SongAvailabilityPolicy availabilityPolicy) {
         this.availabilityPolicy = availabilityPolicy;
+    }
+
+    @Autowired(required = false)
+    void setArtistProfileService(ArtistProfileService artistProfileService) {
+        this.artistProfileService = artistProfileService;
     }
 
     public List<Map<String, Object>> list() {
@@ -215,13 +221,21 @@ public class PlaylistPublicService {
         if (songs == null || songs.isEmpty()) return Map.of();
         java.util.Set<Long> playableIds = availabilityPolicy == null
                 ? java.util.Set.of() : availabilityPolicy.playableSongIds(songs);
+        Map<String, String> avatarUrls = artistProfileService == null
+                ? null
+                : artistProfileService.resolveAvatarUrlsForCredits(
+                        songs.stream().filter(Objects::nonNull).map(Song::getArtist).filter(Objects::nonNull).toList());
         Map<Long, SongDto> result = new LinkedHashMap<>();
         for (Song song : songs) {
             if (song == null) continue;
-            result.put(song.getId(), availabilityPolicy == null
+            SongDto dto = availabilityPolicy == null
                     ? SongDto.from(song)
                     : SongDto.from(song, playableIds.contains(song.getId()),
-                    playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY));
+                    playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY);
+            if (avatarUrls != null) {
+                dto = dto.withArtistAvatarUrl(song.getArtist() == null ? null : avatarUrls.get(song.getArtist()));
+            }
+            result.put(song.getId(), dto);
         }
         return result;
     }

@@ -30,10 +30,16 @@ public class CategoryBrowseService {
     private final SongAvailabilityPolicy availabilityPolicy;
     private final ArtistDirectoryProjectionService artistDirectoryProjection;
     private CategorySongBrowseRepository dynamicBrowseRepository;
+    private ArtistProfileService artistProfileService;
 
     @Autowired(required = false)
     void setDynamicBrowseRepository(CategorySongBrowseRepository dynamicBrowseRepository) {
         this.dynamicBrowseRepository = dynamicBrowseRepository;
+    }
+
+    @Autowired(required = false)
+    void setArtistProfileService(ArtistProfileService artistProfileService) {
+        this.artistProfileService = artistProfileService;
     }
     public CategoryBrowseService(SongRepository songRepository) {
         this(songRepository, null, null);
@@ -322,12 +328,17 @@ public class CategoryBrowseService {
 
     private List<SongDto> toSongDtos(List<Song> songs) {
         if (songs == null || songs.isEmpty()) return List.of();
-        if (availabilityPolicy == null) return songs.stream().map(SongDto::from).toList();
-        Set<Long> playableIds = availabilityPolicy.playableSongIds(songs);
-        return songs.stream()
-                .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
-                        playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY))
-                .toList();
+        List<SongDto> dtos;
+        if (availabilityPolicy == null) {
+            dtos = songs.stream().map(SongDto::from).toList();
+        } else {
+            Set<Long> playableIds = availabilityPolicy.playableSongIds(songs);
+            dtos = songs.stream()
+                    .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
+                            playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY))
+                    .toList();
+        }
+        return artistProfileService == null ? dtos : artistProfileService.resolveSongAvatars(dtos);
     }
 
     private static Sort songSort(String sort) {

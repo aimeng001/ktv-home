@@ -57,10 +57,16 @@ public class HistoryController {
     private final WsBroadcaster broadcaster;
     private SongAvailabilityPolicy availabilityPolicy;
     private com.homektv.library.SongProbeService songProbeService;
+    private com.homektv.library.ArtistProfileService artistProfileService;
 
     @Autowired(required = false)
     void setSongProbeService(com.homektv.library.SongProbeService songProbeService) {
         this.songProbeService = songProbeService;
+    }
+
+    @Autowired(required = false)
+    void setArtistProfileService(com.homektv.library.ArtistProfileService artistProfileService) {
+        this.artistProfileService = artistProfileService;
     }
 
     /**
@@ -185,12 +191,20 @@ public class HistoryController {
         if (values.isEmpty()) return Map.of();
         Set<Long> playableIds = availabilityPolicy == null
                 ? Set.of() : availabilityPolicy.playableSongIds(values);
+        Map<String, String> avatarUrls = artistProfileService == null
+                ? null
+                : artistProfileService.resolveAvatarUrlsForCredits(
+                        values.stream().map(Song::getArtist).filter(Objects::nonNull).toList());
         Map<Long, SongDto> result = new LinkedHashMap<>();
         for (Song song : values) {
-            result.put(song.getId(), availabilityPolicy == null
+            SongDto dto = availabilityPolicy == null
                     ? SongDto.from(song)
                     : SongDto.from(song, playableIds.contains(song.getId()),
-                    playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY));
+                    playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY);
+            if (avatarUrls != null) {
+                dto = dto.withArtistAvatarUrl(song.getArtist() == null ? null : avatarUrls.get(song.getArtist()));
+            }
+            result.put(song.getId(), dto);
         }
         return result;
     }

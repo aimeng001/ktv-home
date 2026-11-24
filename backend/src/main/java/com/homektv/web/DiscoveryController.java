@@ -1,6 +1,7 @@
 package com.homektv.web;
 
 import com.homektv.domain.Song;
+import com.homektv.library.ArtistProfileService;
 import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.SongRepository;
@@ -27,6 +28,7 @@ public class DiscoveryController {
     private final PlayHistoryRepository historyRepo;
     private final SongRepository songRepo;
     private SongAvailabilityPolicy availabilityPolicy;
+    private ArtistProfileService artistProfileService;
 
     public DiscoveryController(PlayHistoryRepository historyRepo, SongRepository songRepo) {
         this.historyRepo = historyRepo;
@@ -36,6 +38,11 @@ public class DiscoveryController {
     @Autowired(required = false)
     void setAvailabilityPolicy(SongAvailabilityPolicy availabilityPolicy) {
         this.availabilityPolicy = availabilityPolicy;
+    }
+
+    @Autowired(required = false)
+    void setArtistProfileService(ArtistProfileService artistProfileService) {
+        this.artistProfileService = artistProfileService;
     }
 
     /**
@@ -86,11 +93,17 @@ public class DiscoveryController {
     }
 
     private List<SongDto> toDtos(List<Song> songs) {
-        if (availabilityPolicy == null || songs.isEmpty()) return songs.stream().map(SongDto::from).toList();
-        java.util.Set<Long> playableIds = availabilityPolicy.playableSongIds(songs);
-        return songs.stream()
-                .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
-                        playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY))
-                .toList();
+        if (songs == null || songs.isEmpty()) return List.of();
+        List<SongDto> dtos;
+        if (availabilityPolicy == null) {
+            dtos = songs.stream().map(SongDto::from).toList();
+        } else {
+            java.util.Set<Long> playableIds = availabilityPolicy.playableSongIds(songs);
+            dtos = songs.stream()
+                    .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
+                            playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY))
+                    .toList();
+        }
+        return artistProfileService == null ? dtos : artistProfileService.resolveSongAvatars(dtos);
     }
 }

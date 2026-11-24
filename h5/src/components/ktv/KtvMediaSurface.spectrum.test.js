@@ -130,4 +130,33 @@ describe('KtvMediaSurface 纯音频伴奏全屏频谱跳动与写真动效', () 
 
     expect(cancelRafSpy).toHaveBeenCalled()
   })
+
+  it('无歌曲封面时纯音频背景兜底使用 artistAvatarUrl，并在全屏顶栏展示歌手头像', async () => {
+    player.nowPlaying = {
+      song: {
+        id: 89,
+        title: '一生中最爱',
+        artist: '谭咏麟',
+        coverUrl: null,
+        artistAvatarUrl: '/api/artists/avatar?key=tanyonglin',
+        hasVocalTrack: true
+      },
+      orderedByNick: 'K歌达人'
+    }
+    app = createApp(KtvMediaSurface, { fullscreen: true })
+    app.use(pinia)
+    app.mount(root)
+    await nextTick()
+
+    const kenBurnsBg = root.querySelector('.spectrum-bg-kenburns')
+    expect(kenBurnsBg.style.backgroundImage).toContain('/api/artists/avatar?key=tanyonglin')
+
+    const topbarAvatar = root.querySelector('.fs-artist-avatar img')
+    expect(topbarAvatar?.getAttribute('src')).toBe('/api/artists/avatar?key=tanyonglin')
+
+    topbarAvatar.dispatchEvent(new Event('error'))
+    await nextTick()
+    expect(root.querySelector('.fs-artist-avatar img')).toBeNull()
+    expect(root.querySelector('.fs-artist-avatar').textContent.trim()).toBe('谭')
+  })
 })

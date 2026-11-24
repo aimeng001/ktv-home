@@ -44,6 +44,13 @@ public record SongDetailDto(
         this(id, title, artist, language, tags, mediaType, hasVocalTrack, durationMs, lyricType,
                 coverUrl, artistAvatarUrl, lyricUrl, playCount, files, "");
     }
+
+    public SongDetailDto withArtistAvatarUrl(String resolvedArtistAvatarUrl) {
+        return new SongDetailDto(
+                id, title, artist, language, tags, mediaType, hasVocalTrack, durationMs,
+                lyricType, coverUrl, resolvedArtistAvatarUrl, lyricUrl, playCount, files, catalogNumber
+        );
+    }
     /**
      * 文件源信息：包含格式、音轨数、人声轨道索引等。
      *

@@ -2033,19 +2033,36 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
                         Log.w("MainActivity", "optional lyric load failed: " + failure.javaClass.simpleName)
                     }
                 }
-                if (audioMode) launch {
-                    try {
-                        val coverBytes = mediaApi.fetchCover(songId) ?: return@launch
-                        val bitmap = withContext(Dispatchers.Default) {
-                            ArtworkDecoder.decode(coverBytes, ArtworkProfile.COVER)
+                if (audioMode) {
+                    val avatarFallbackUrl = snapshot.playing?.song?.artistAvatarUrl?.trim()?.takeIf { it.isNotEmpty() }
+                    launch {
+                        try {
+                            val coverBytes = mediaApi.fetchCover(songId)
+                            var bitmap = if (coverBytes != null) {
+                                withContext(Dispatchers.Default) {
+                                    ArtworkDecoder.decode(coverBytes, ArtworkProfile.COVER)
+                                }
+                            } else {
+                                null
+                            }
+                            if (bitmap == null && avatarFallbackUrl != null) {
+                                bitmap = sharedAvatarCache[avatarFallbackUrl]
+                                    ?: mediaApi.fetchUrl(avatarFallbackUrl)?.let { avatarBytes ->
+                                        withContext(Dispatchers.Default) {
+                                            ArtworkDecoder.decode(avatarBytes, ArtworkProfile.AVATAR)
+                                        }?.also { decoded ->
+                                            sharedAvatarCache[avatarFallbackUrl] = decoded
+                                        }
+                                    }
+                            }
+                            if (bitmap != null && isCurrentPlaybackAssets(loadTicket, token, file.id)) {
+                                ensureAudioOverlayBinding().imgAudioCover.setImageBitmap(bitmap)
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            Log.w("MainActivity", "optional artwork load failed: " + failure.javaClass.simpleName)
                         }
-                        if (bitmap != null && isCurrentPlaybackAssets(loadTicket, token, file.id)) {
-                            ensureAudioOverlayBinding().imgAudioCover.setImageBitmap(bitmap)
-                        }
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (failure: Exception) {
-                        Log.w("MainActivity", "optional artwork load failed: " + failure.javaClass.simpleName)
                     }
                 }
             }

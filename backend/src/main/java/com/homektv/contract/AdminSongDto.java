@@ -30,9 +30,11 @@ public record AdminSongDto(
         String importSource,
         Long fileId,
         int audioTracks,
-        AudioLayoutDto audioLayout
+        AudioLayoutDto audioLayout,
+        String coverUrl,
+        String artistAvatarUrl
 ) {
-    /** Source-compatible constructor for callers omitting vocalForm. */
+    /** Source-compatible constructor for callers omitting vocalForm and avatar URL. */
     public AdminSongDto(Long id, String title, String artist, String album, String releaseDate,
                         String[] aliases, String coverPath, String[] metadataLocks, String language,
                         String artistGender, String[] tags, String mediaType, String lyricType,
@@ -40,7 +42,18 @@ public record AdminSongDto(
                         Long fileId, int audioTracks, AudioLayoutDto audioLayout) {
         this(id, title, artist, album, releaseDate, aliases, coverPath, metadataLocks, language,
                 "未知", artistGender, tags, mediaType, lyricType, durationMs, playCount,
-                filePath, importSource, fileId, audioTracks, audioLayout);
+                filePath, importSource, fileId, audioTracks, audioLayout, null, null);
+    }
+
+    /** Source-compatible constructor for callers omitting coverUrl and artistAvatarUrl. */
+    public AdminSongDto(Long id, String title, String artist, String album, String releaseDate,
+                        String[] aliases, String coverPath, String[] metadataLocks, String language,
+                        String vocalForm, String artistGender, String[] tags, String mediaType,
+                        String lyricType, int durationMs, int playCount, String filePath,
+                        String importSource, Long fileId, int audioTracks, AudioLayoutDto audioLayout) {
+        this(id, title, artist, album, releaseDate, aliases, coverPath, metadataLocks, language,
+                vocalForm, artistGender, tags, mediaType, lyricType, durationMs, playCount,
+                filePath, importSource, fileId, audioTracks, audioLayout, null, null);
     }
 
     /**
@@ -54,10 +67,18 @@ public record AdminSongDto(
      * @return 构建好的管理后台歌曲 DTO / the constructed admin song DTO
      */
     public static AdminSongDto from(Song song, SongFile file) {
+        return from(song, file, null);
+    }
+
+    /** Builds an admin song DTO with a verified artist avatar URL. */
+    public static AdminSongDto from(Song song, SongFile file, String artistAvatarUrl) {
         String source = file == null ? "UNKNOWN"
                 : "EXTERNAL_READ_ONLY".equals(file.getFileRole()) ? "EXTERNAL_READ_ONLY"
                 : file.getSourcePath() == null ? "UNKNOWN"
                 : file.isTranscodeRequired() ? "TRANSCODED" : "COPIED";
+        String coverUrl = song.getCoverPath() != null && !song.getCoverPath().isBlank()
+                ? "/api/cover/" + song.getId()
+                : null;
         return new AdminSongDto(song.getId(), song.getTitle(), song.getArtist(), song.getAlbum(), song.getReleaseDate(),
                 song.getAliases(), song.getCoverPath(), song.getMetadataLocks(), song.getLanguage(),
                 song.getVocalForm(), song.getArtistGender(), song.getTags(),
@@ -65,6 +86,6 @@ public record AdminSongDto(
                 file == null ? null : file.getFilePath(), source,
                 file == null ? null : file.getId(),
                 file == null ? 0 : file.getAudioTracks(),
-                AudioLayoutDto.from(file));
+                AudioLayoutDto.from(file), coverUrl, artistAvatarUrl);
     }
 }

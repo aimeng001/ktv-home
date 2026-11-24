@@ -1,7 +1,10 @@
 package com.homektv.library;
+import com.homektv.common.ArtistAvatarUrl;
 import com.homektv.common.ArtistCreditParser;
 import com.homektv.common.ArtistKindClassifier;
 import com.homektv.common.ArtistKind;
+import com.homektv.contract.SongDetailDto;
+import com.homektv.contract.SongDto;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +18,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /** Stores application-owned artist profiles without touching source media. */
@@ -568,6 +572,93 @@ public class ArtistProfileService {
         } catch (DataAccessException failure) {
             return Map.of();
         }
+    }
+
+    public Optional<java.util.Set<String>> findCachedAvatarKeys(Collection<String> artistKeys) {
+        if (artistKeys == null || artistKeys.isEmpty()) return Optional.of(java.util.Set.of());
+        List<String> keys = artistKeys.stream()
+                .filter(k -> k != null && !k.isBlank())
+                .distinct()
+                .toList();
+        if (keys.isEmpty()) return Optional.of(java.util.Set.of());
+        try {
+            java.util.Set<String> cached = new java.util.HashSet<>();
+            for (int start = 0; start < keys.size(); start += PROFILE_PAGE_SIZE) {
+                List<String> batch = keys.subList(start, Math.min(keys.size(), start + PROFILE_PAGE_SIZE));
+                String placeholders = String.join(",", java.util.Collections.nCopies(batch.size(), "?"));
+                jdbc.query(
+                        "SELECT artist_key FROM artist_profiles WHERE artist_key IN (" + placeholders
+                                + ") AND avatar_path IS NOT NULL AND trim(avatar_path) <> ''",
+                        rs -> {
+                            String key = rs.getString("artist_key");
+                            if (key != null && !key.isBlank()) cached.add(key);
+                        },
+                        batch.toArray());
+            }
+            return Optional.of(cached);
+        } catch (DataAccessException failure) {
+            return Optional.empty();
+        }
+    }
+
+    /** Batch-filters SongDto artistAvatarUrl to only artists that actually have a cached avatar. */
+    public List<SongDto> resolveSongAvatars(List<SongDto> songs) {
+        if (songs == null || songs.isEmpty()) return songs;
+        List<String> keys = songs.stream()
+                .filter(Objects::nonNull)
+                .filter(dto -> dto.artistAvatarUrl() != null && !dto.artistAvatarUrl().isBlank())
+                .map(dto -> ArtistAvatarUrl.primaryArtistKey(dto.artist()))
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (keys.isEmpty()) return songs;
+        Optional<java.util.Set<String>> cachedOpt = findCachedAvatarKeys(keys);
+        if (cachedOpt.isEmpty()) return songs;
+        java.util.Set<String> cached = cachedOpt.get();
+        return songs.stream()
+                .map(dto -> {
+                    if (dto == null || dto.artistAvatarUrl() == null || dto.artistAvatarUrl().isBlank()) return dto;
+                    String key = ArtistAvatarUrl.primaryArtistKey(dto.artist());
+                    if (key != null && cached.contains(key)) return dto;
+                    return dto.withArtistAvatarUrl(null);
+                })
+                .toList();
+    }
+
+    /** Filters one SongDetailDto artistAvatarUrl so uncached artists stay null instead of 404ing. */
+    public SongDetailDto resolveSongDetailAvatar(SongDetailDto detail) {
+        if (detail == null || detail.artistAvatarUrl() == null || detail.artistAvatarUrl().isBlank()) return detail;
+        String key = ArtistAvatarUrl.primaryArtistKey(detail.artist());
+        if (key == null) return detail.withArtistAvatarUrl(null);
+        Optional<java.util.Set<String>> cachedOpt = findCachedAvatarKeys(List.of(key));
+        if (cachedOpt.isEmpty()) return detail;
+        return cachedOpt.get().contains(key) ? detail : detail.withArtistAvatarUrl(null);
+    }
+
+    /** Batch-resolves verified artist avatar URLs keyed by artistKey for arbitrary song credits. */
+    public Map<String, String> resolveAvatarUrlsForCredits(Collection<String> credits) {
+        if (credits == null || credits.isEmpty()) return Map.of();
+        Map<String, String> keyByCredit = new LinkedHashMap<>();
+        List<String> keys = new java.util.ArrayList<>();
+        for (String credit : credits) {
+            if (credit == null || credit.isBlank() || keyByCredit.containsKey(credit)) continue;
+            String key = ArtistAvatarUrl.primaryArtistKey(credit);
+            if (key != null) {
+                keyByCredit.put(credit, key);
+                keys.add(key);
+            }
+        }
+        if (keys.isEmpty()) return Map.of();
+        Optional<java.util.Set<String>> cachedOpt = findCachedAvatarKeys(keys);
+        java.util.Set<String> cached = cachedOpt.orElse(null);
+        Map<String, String> out = new LinkedHashMap<>();
+        for (var entry : keyByCredit.entrySet()) {
+            String key = entry.getValue();
+            if (cached == null || cached.contains(key)) {
+                out.put(entry.getKey(), ArtistAvatarUrl.forKey(key));
+            }
+        }
+        return out;
     }
 
     private record ProfileSeed(String artistKey, String displayName, String artistKind,

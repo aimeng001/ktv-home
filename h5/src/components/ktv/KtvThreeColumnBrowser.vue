@@ -320,7 +320,7 @@
         <div v-else-if="activeTab === 'recent'" class="song-grid">
           <div v-if="!recentItems.length" class="stage-state">{{ recentMineOnly ? '你还没有唱过歌曲' : '今晚还没有演唱记录' }}</div>
           <article v-for="item in recentItems" :key="item.historyId" class="song-card">
-            <div class="card-thumb">
+            <div class="card-thumb" :style="!songThumbUrl(item.song) ? getArtistAvatarStyle(item.song?.artist || item.song?.title) : undefined">
               <img
                 v-if="songThumbUrl(item.song)"
                 :src="songThumbUrl(item.song)"
@@ -329,7 +329,7 @@
                 decoding="async"
                 @error="rememberSongThumbFailure(item.song)"
               />
-              <span v-else>{{ (item.song?.title || '歌').slice(0, 1) }}</span>
+              <span v-else>{{ songAvatarInitial(item.song) }}</span>
             </div>
             <div class="card-info">
               <strong class="card-title">{{ item.song?.title }}</strong>
@@ -360,7 +360,7 @@
             class="song-card"
             :class="{ ordered: orderedIds.has(song.id) }"
           >
-            <div class="card-thumb">
+            <div class="card-thumb" :style="!songThumbUrl(song) ? getArtistAvatarStyle(song.artist || song.title) : undefined">
               <img
                 v-if="songThumbUrl(song)"
                 :src="songThumbUrl(song)"
@@ -369,7 +369,7 @@
                 decoding="async"
                 @error="rememberSongThumbFailure(song)"
               />
-              <span v-else>{{ (song.artist || song.title || '音').slice(0, 1) }}</span>
+              <span v-else>{{ songAvatarInitial(song) }}</span>
             </div>
             <div class="card-info">
               <div class="card-title-row">
@@ -460,6 +460,11 @@ import { formatOrderToast } from '../../views/orderFeedbackState'
 import { unavailableReasonLabel } from './songAvailability'
 import { getArtistAvatarStyle } from '../../utils/avatarColor'
 import {
+  rememberFailedThumbUrl,
+  resolveSongThumbUrl,
+  songAvatarInitial,
+} from '../../utils/songThumbnail'
+import {
   HOT_NEW_MODES,
   SORT_OPTIONS,
   filterAndSortClientSongs as filterClientSongList,
@@ -544,6 +549,7 @@ const artistTotal = ref(0)
 const artistPage = ref(0)
 const artistInitials = ref([])
 const avatarFailures = ref(new Set())
+const failedThumbUrls = ref(new Set())
 
 const languages = ref([])
 const tags = ref([])
@@ -1270,26 +1276,20 @@ function rememberAvatar(artist) {
 }
 
 function songThumbUrl(song) {
-  if (!song) return ''
-  if (song.coverUrl) return song.coverUrl
-  if (activeTab.value === 'singer' && selectedArtist.value) {
-    return avatarUrlFor(selectedArtist.value, avatarFailures.value)
-  }
-  const artistName = (song.artist || '').trim()
-  if (artistName && !avatarFailures.value.has(artistName)) {
-    return `/api/artists/${encodeURIComponent(artistName)}/avatar`
-  }
-  return ''
+  return resolveSongThumbUrl(song, failedThumbUrls.value, {
+    selectedArtist: activeTab.value === 'singer' ? selectedArtist.value : null,
+    failedArtistKeys: avatarFailures.value,
+  })
 }
 
 function rememberSongThumbFailure(song) {
   if (!song) return
+  const failedUrl = songThumbUrl(song)
+  if (failedUrl) {
+    failedThumbUrls.value = rememberFailedThumbUrl(failedThumbUrls.value, failedUrl)
+  }
   if (activeTab.value === 'singer' && selectedArtist.value) {
     rememberAvatar(selectedArtist.value)
-  }
-  const artistName = (song.artist || '').trim()
-  if (artistName) {
-    avatarFailures.value = rememberAvatarFailure(avatarFailures.value, { name: artistName, artistKey: artistName })
   }
 }
 

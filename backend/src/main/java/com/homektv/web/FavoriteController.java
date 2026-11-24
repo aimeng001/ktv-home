@@ -3,6 +3,7 @@ import com.homektv.common.ApiException;
 
 import com.homektv.domain.Favorite;
 import com.homektv.domain.Song;
+import com.homektv.library.ArtistProfileService;
 import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.queue.UserService;
 import com.homektv.repo.FavoriteRepository;
@@ -33,6 +34,7 @@ public class FavoriteController {
     private final SongRepository songRepo;
     private final UserService userService;
     private SongAvailabilityPolicy availabilityPolicy;
+    private ArtistProfileService artistProfileService;
 
     public FavoriteController(FavoriteRepository favoriteRepo, SongRepository songRepo, UserService userService) {
         this.favoriteRepo = favoriteRepo;
@@ -43,6 +45,11 @@ public class FavoriteController {
     @Autowired(required = false)
     void setAvailabilityPolicy(SongAvailabilityPolicy availabilityPolicy) {
         this.availabilityPolicy = availabilityPolicy;
+    }
+
+    @Autowired(required = false)
+    void setArtistProfileService(ArtistProfileService artistProfileService) {
+        this.artistProfileService = artistProfileService;
     }
 
     /**
@@ -107,14 +114,17 @@ public class FavoriteController {
         Map<Long, Song> byId = new LinkedHashMap<>();
         if (found != null) found.forEach(song -> byId.put(song.getId(), song));
         List<Song> orderedSongs = orderedIds.stream().map(byId::get).filter(Objects::nonNull).toList();
+        List<SongDto> dtos;
         if (availabilityPolicy == null || orderedSongs.isEmpty()) {
-            return orderedSongs.stream().map(SongDto::from).toList();
+            dtos = orderedSongs.stream().map(SongDto::from).toList();
+        } else {
+            Set<Long> playableIds = availabilityPolicy.playableSongIds(orderedSongs);
+            dtos = orderedSongs.stream()
+                    .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
+                            playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY))
+                    .toList();
         }
-        Set<Long> playableIds = availabilityPolicy.playableSongIds(orderedSongs);
-        return orderedSongs.stream()
-                .map(song -> SongDto.from(song, playableIds.contains(song.getId()),
-                        playableIds.contains(song.getId()) ? null : SongAvailabilityPolicy.SONG_NOT_READY))
-                .toList();
+        return artistProfileService == null ? dtos : artistProfileService.resolveSongAvatars(dtos);
     }
 
     /**

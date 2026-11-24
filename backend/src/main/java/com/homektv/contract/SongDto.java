@@ -122,6 +122,15 @@ public record SongDto(
         );
     }
 
+    public SongDto withArtistAvatarUrl(String resolvedArtistAvatarUrl) {
+        return new SongDto(
+                id, catalogNumber, title, artist, artistGender, mediaType, hasVocalTrack,
+                durationMs, lyricType, coverUrl, playCount, resolvedArtistAvatarUrl,
+                playable, unavailableReason, titlePinyin, titleInitials,
+                artistPinyin, artistInitials, resolution, vocalForm
+        );
+    }
+
     private static String effectiveVocalForm(Song s) {
         String local = s.getVocalForm();
         if (local != null && !local.isBlank() && !"未知".equals(local.trim())) {

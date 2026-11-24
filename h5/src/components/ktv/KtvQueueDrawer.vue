@@ -36,7 +36,18 @@
         </section>
 
         <section v-if="player.nowPlaying" class="now-card">
-          <div>
+          <div class="q-avatar now" :style="!songThumbUrl(player.nowPlaying.song) ? getArtistAvatarStyle(player.nowPlaying.song?.artist || player.nowPlaying.song?.title) : undefined">
+            <img
+              v-if="songThumbUrl(player.nowPlaying.song)"
+              :src="songThumbUrl(player.nowPlaying.song)"
+              alt=""
+              loading="lazy"
+              decoding="async"
+              @error="markThumbFailed(songThumbUrl(player.nowPlaying.song))"
+            />
+            <span v-else>{{ songAvatarInitial(player.nowPlaying.song) }}</span>
+          </div>
+          <div class="now-meta">
             <small>正在演唱</small>
             <strong>{{ player.nowPlaying.song?.title }}</strong>
             <span>{{ player.nowPlaying.song?.artist }} · {{ player.nowPlaying.orderedByNick || '家人' }} 点</span>
@@ -51,6 +62,17 @@
         <div v-else class="queue-list">
           <article v-for="(item, idx) in player.queue" :key="item.queueId" class="q-item">
             <span class="q-index">{{ idx + 1 }}</span>
+            <div class="q-avatar" :style="!songThumbUrl(item.song) ? getArtistAvatarStyle(item.song?.artist || item.song?.title) : undefined">
+              <img
+                v-if="songThumbUrl(item.song)"
+                :src="songThumbUrl(item.song)"
+                alt=""
+                loading="lazy"
+                decoding="async"
+                @error="markThumbFailed(songThumbUrl(item.song))"
+              />
+              <span v-else>{{ songAvatarInitial(item.song) }}</span>
+            </div>
             <div class="q-meta">
               <strong>{{ item.song?.title }}</strong>
               <small>{{ item.song?.artist }} · {{ item.orderedByNick || '他人' }} 点</small>
@@ -78,6 +100,17 @@
         <div v-else-if="!history.length" class="empty-tip">暂无演唱记录</div>
         <div v-else class="queue-list">
           <article v-for="entry in history" :key="entry.historyId" class="q-item">
+            <div class="q-avatar" :style="!songThumbUrl(entry.song) ? getArtistAvatarStyle(entry.song?.artist || entry.song?.title) : undefined">
+              <img
+                v-if="songThumbUrl(entry.song)"
+                :src="songThumbUrl(entry.song)"
+                alt=""
+                loading="lazy"
+                decoding="async"
+                @error="markThumbFailed(songThumbUrl(entry.song))"
+              />
+              <span v-else>{{ songAvatarInitial(entry.song) }}</span>
+            </div>
             <div class="q-meta">
               <strong>{{ entry.song?.title }}</strong>
               <small>{{ entry.song?.artist }} · {{ entry.playedByNick }} · {{ formatTimeClock(entry.playedAt) }}</small>
@@ -101,6 +134,8 @@ import { useUserStore } from '../../stores/user'
 import { useToast } from '../../composables/useToast'
 import { confirmDialog } from '../../composables/useDialog'
 import { formatTimeClock } from './ktvCatalogPresets'
+import { getArtistAvatarStyle } from '../../utils/avatarColor'
+import { rememberFailedThumbUrl, resolveSongThumbUrl, songAvatarInitial } from '../../utils/songThumbnail'
 
 const props = defineProps({
   open: { type: Boolean, default: false }
@@ -123,6 +158,15 @@ let historyReqSeq = 0
 
 const host = ref({ claimed: false, isHost: false, hostNickname: null, revision: 0 })
 const hostStatus = ref('idle')
+const failedThumbUrls = ref(new Set())
+
+function songThumbUrl(song) {
+  return resolveSongThumbUrl(song, failedThumbUrls.value)
+}
+function markThumbFailed(url) {
+  if (!url) return
+  failedThumbUrls.value = rememberFailedThumbUrl(failedThumbUrls.value, url)
+}
 
 function mergeHost(value) {
   if (!value || typeof value !== 'object') return
@@ -360,10 +404,16 @@ async function repeatSong(entry) {
   background: linear-gradient(135deg, rgba(255, 198, 75, 0.14), rgba(20, 26, 40, 0.85));
   border: 1px solid rgba(255, 198, 75, 0.35);
 }
-.now-card > div { flex: 1; min-width: 0; }
+.now-card > .now-meta { flex: 1; min-width: 0; }
 .now-card small { color: var(--gold); font-size: 11px; font-weight: 700; display: block; }
-.now-card strong { display: block; font-size: 15px; margin: 2px 0; }
+.now-card strong { display: block; font-size: 15px; margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .now-card span { font-size: 12px; color: var(--dim); }
+.q-avatar {
+  width: 34px; height: 34px; border-radius: 50%; overflow: hidden; flex: none;
+  display: grid; place-items: center; font-size: 14px; font-weight: 800; color: #191304;
+}
+.q-avatar.now { width: 42px; height: 42px; font-size: 17px; }
+.q-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .now-actions {
   display: flex;
   gap: 6px;

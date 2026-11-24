@@ -7,14 +7,24 @@ import java.nio.charset.StandardCharsets;
 public final class ArtistAvatarUrl {
     private ArtistAvatarUrl() {}
 
-    public static String forCredit(String credit) {
+    public static String primaryArtistKey(String credit) {
         return ArtistCreditParser.parse(credit).stream()
                 .filter(name -> !ArtistKindClassifier.isPlaceholder(name))
                 .map(ArtistCreditParser::key)
                 .filter(key -> !key.isBlank())
                 .findFirst()
-                .map(key -> "/api/artists/avatar?key=" + URLEncoder.encode(key, StandardCharsets.UTF_8))
                 .orElse(null);
+    }
+
+    public static String forKey(String artistKey) {
+        if (artistKey == null || artistKey.isBlank()) {
+            return null;
+        }
+        return "/api/artists/avatar?key=" + URLEncoder.encode(artistKey, StandardCharsets.UTF_8);
+    }
+
+    public static String forCredit(String credit) {
+        return forKey(primaryArtistKey(credit));
     }
 
     /** Returns an avatar endpoint only when the profile has a cached file. */
@@ -22,6 +32,6 @@ public final class ArtistAvatarUrl {
         if (artistKey == null || artistKey.isBlank() || avatarPath == null || avatarPath.isBlank()) {
             return null;
         }
-        return "/api/artists/avatar?key=" + URLEncoder.encode(artistKey, StandardCharsets.UTF_8);
+        return forKey(artistKey);
     }
 }
