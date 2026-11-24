@@ -37,8 +37,8 @@ public class TranscodeAsyncWebConfig implements WebMvcConfigurer {
                 .addResourceLocations("classpath:/static/m/assets/")
                 .setCacheControl(CacheControl.maxAge(Duration.ofDays(365)).cachePublic().immutable());
         // Always revalidate the SPA entry HTML so new releases take effect immediately.
-        registry.addResourceHandler("/m/index.html")
-                .addResourceLocations("classpath:/static/m/index.html")
+        registry.addResourceHandler("/m/*.html")
+                .addResourceLocations("classpath:/static/m/")
                 .setCacheControl(CacheControl.noCache());
     }
 }
