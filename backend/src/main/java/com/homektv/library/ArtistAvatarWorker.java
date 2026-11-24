@@ -104,6 +104,10 @@ public class ArtistAvatarWorker {
         return profiles.resetSingleArtistForScrape(artistKey);
     }
 
+    public int requeueMissingCachedAvatars() {
+        return profiles.requeueMissingCachedAvatars(assets);
+    }
+
     public void trigger() {
         if (shuttingDown || !running.compareAndSet(false, true)) return;
         try {

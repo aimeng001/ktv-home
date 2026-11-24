@@ -344,6 +344,71 @@ public class ArtistProfileService {
     }
 
     /**
+     * Repairs stale READY artist profiles whose cached avatar files are missing on disk
+     * (e.g. after upgrading a container whose data directory was previously ephemeral).
+     */
+    public int requeueMissingCachedAvatars(AssetWriter assets) {
+        if (assets == null || !assets.isCacheStorageAvailable()) return 0;
+        final int pageSize = 1000;
+        int resetCount = 0;
+        String lastKey = "";
+        try {
+            while (true) {
+                List<MissingAvatarCandidate> candidates = jdbc.query("""
+                        SELECT artist_key, avatar_path
+                        FROM artist_profiles
+                        WHERE artist_kind IN ('PERSON', 'GROUP')
+                          AND avatar_status = 'READY'
+                          AND avatar_path IS NOT NULL
+                          AND trim(avatar_path) <> ''
+                          AND artist_key > ?
+                        ORDER BY artist_key
+                        LIMIT ?
+                        """, (rs, index) -> new MissingAvatarCandidate(
+                        rs.getString("artist_key"), rs.getString("avatar_path")), lastKey, pageSize);
+                if (candidates == null || candidates.isEmpty()) break;
+                String nextKey = candidates.getLast().artistKey();
+                List<String> missingKeys = candidates.stream()
+                        .filter(candidate -> !assets.isReadableCache(candidate.avatarPath()))
+                        .map(MissingAvatarCandidate::artistKey)
+                        .toList();
+                if (!missingKeys.isEmpty()) {
+                    jdbc.batchUpdate("""
+                            UPDATE artist_profiles
+                            SET avatar_path=NULL, avatar_status='PENDING', avatar_error=NULL, updated_at=now()
+                            WHERE artist_key=? AND avatar_status='READY'
+                            """, missingKeys, missingKeys.size(), (statement, key) -> statement.setString(1, key));
+                    try {
+                        jdbc.batchUpdate("""
+                                DELETE FROM artist_avatar_jobs
+                                WHERE artist_key=? AND status IN ('SKIPPED', 'FAILED', 'REVIEW')
+                                """, missingKeys, missingKeys.size(), (statement, key) -> statement.setString(1, key));
+                    } catch (DataAccessException ignored) {}
+                    try {
+                        jdbc.batchUpdate("""
+                                UPDATE artist_directory_stats
+                                SET avatar_path=NULL, updated_at=now()
+                                WHERE artist_key=?
+                                """, missingKeys, missingKeys.size(), (statement, key) -> statement.setString(1, key));
+                    } catch (DataAccessException ignored) {}
+                    resetCount += missingKeys.size();
+                }
+                if (nextKey == null || nextKey.equals(lastKey) || candidates.size() < pageSize) break;
+                lastKey = nextKey;
+            }
+            if (resetCount > 0) {
+                log.info("reset {} stale READY artist avatar(s) with missing cache files", resetCount);
+            }
+            return resetCount;
+        } catch (DataAccessException failure) {
+            log.debug("missing artist avatar verification skipped: {}", failure.getMessage());
+            return resetCount;
+        }
+    }
+
+    private record MissingAvatarCandidate(String artistKey, String avatarPath) {}
+
+    /**
      * Checks previously cached NetEase avatars and resets flat grey silhouette placeholders
      * so the repaired pipeline can re-scrape real artist portraits.
      */

@@ -828,6 +828,37 @@ describe('ArtistLibraryView', () => {
     expect(rows[1].textContent).toContain('待复核')
   })
 
+  it('头像 404 加载失败时自动回退为首字徽章，上传新头像后恢复展示', async () => {
+    artists = [
+      { ...person('谭咏麟'), artistKey: 'tanyonglin', avatarUrl: '/api/artists/avatar?key=tanyonglin', avatarStatus: 'READY', avatarProvider: 'LOCAL_PACK', songs: [] }
+    ]
+    apiMock.adminArtistPage.mockImplementation(async params => ({ items: artists, total: artists.length, page: params.page }))
+    apiMock.adminUploadArtistAvatar.mockResolvedValueOnce({})
+    await mount()
+
+    const rowImg = root.querySelector('tbody .artist-avatar img')
+    expect(rowImg).not.toBeNull()
+    rowImg.dispatchEvent(new Event('error'))
+    await flushUi()
+
+    expect(root.querySelector('tbody .artist-avatar img')).toBeNull()
+    expect(root.querySelector('tbody .artist-avatar span')?.textContent).toBe('谭')
+
+    root.querySelector('tbody .link').click()
+    await nextTick()
+    expect(root.querySelector('.review-avatar img')).toBeNull()
+    expect(root.querySelector('.review-avatar span')?.textContent).toBe('谭')
+
+    const input = root.querySelector('.upload-btn input')
+    const file = new File(['new-avatar'], 'avatar.png', { type: 'image/png' })
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] })
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    await flushUi()
+
+    expect(root.querySelector('.review-avatar img')?.getAttribute('src')).toContain('/api/artists/avatar?key=tanyonglin&t=')
+    expect(root.querySelector('tbody .artist-avatar img')?.getAttribute('src')).toContain('/api/artists/avatar?key=tanyonglin&t=')
+  })
+
   async function mount() {
     app?.unmount()
     root?.remove()

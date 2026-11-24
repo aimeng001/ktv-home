@@ -588,4 +588,19 @@ class LocalAvatarResolverTest {
         assertThat(matched).isEqualTo(distinctArtists + 1);
         verify(normalizer, times(distinctArtists + 1)).normalize(any(byte[].class));
     }
+
+    @Test
+    void resolveAllCandidatesRequeuesMissingCachedAvatarsBeforeFetchingUnresolvedProfiles(@TempDir Path tempDir) {
+        AppProperties props = new AppProperties();
+        props.setDataPath(tempDir.toString());
+        props.setAvatarLibraryPath(tempDir.resolve("empty-avatar-lib").toString());
+        props.setSourceLibraryPath(tempDir.resolve("empty-src").toString());
+
+        AssetWriter assetWriter = mock(AssetWriter.class);
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, assetWriter, profileService);
+        assertThat(resolver.resolveAllCandidates()).isZero();
+        verify(profileService).requeueMissingCachedAvatars(assetWriter);
+    }
 }

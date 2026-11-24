@@ -157,6 +157,17 @@ public class AssetWriter {
      * path as a valid avatar. The path is relative to app.data-path and is
      * never allowed to escape that directory or the external-library boundary.
      */
+    /** Returns true when the configured cache root directory itself is present and readable. */
+    public boolean isCacheStorageAvailable() {
+        try {
+            Path cacheRoot = dataRoot.toAbsolutePath().normalize();
+            return Files.isDirectory(cacheRoot) && Files.isReadable(cacheRoot);
+        } catch (RuntimeException failure) {
+            log.debug("缓存根目录不可用：{}", failure.getMessage());
+            return false;
+        }
+    }
+
     public boolean isReadableCache(String relativePath) {
         return readableCachePath(relativePath).isPresent();
     }

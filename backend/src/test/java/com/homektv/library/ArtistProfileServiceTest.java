@@ -420,6 +420,55 @@ class ArtistProfileServiceTest {
         assertThat(summary.get("queuedArtists")).isEqualTo(30454L);
     }
 
+    @Test
+    void requeueMissingCachedAvatarsSkipsWhenCacheStorageIsUnavailable() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        AssetWriter assets = mock(AssetWriter.class);
+        when(assets.isCacheStorageAvailable()).thenReturn(false);
+
+        int reset = new ArtistProfileService(jdbc).requeueMissingCachedAvatars(assets);
+
+        assertThat(reset).isZero();
+        verifyNoInteractions(jdbc);
+    }
+
+    @Test
+    void requeueMissingCachedAvatarsResetsOnlyMissingCacheEntriesAndProjection() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        AssetWriter assets = mock(AssetWriter.class);
+        when(assets.isCacheStorageAvailable()).thenReturn(true);
+        when(assets.isReadableCache("artist-covers/ok/exists.jpg")).thenReturn(true);
+        when(assets.isReadableCache("artist-covers/mi/missing.jpg")).thenReturn(false);
+
+        when(jdbc.query(
+                org.mockito.ArgumentMatchers.contains("avatar_status = 'READY'"),
+                org.mockito.ArgumentMatchers.<RowMapper<Object>>any(),
+                org.mockito.ArgumentMatchers.any(Object[].class)))
+                .thenAnswer(invocation -> {
+                    RowMapper<?> mapper = invocation.getArgument(1);
+                    ResultSet existingRow = mock(ResultSet.class);
+                    when(existingRow.getString("artist_key")).thenReturn("existing");
+                    when(existingRow.getString("avatar_path")).thenReturn("artist-covers/ok/exists.jpg");
+                    ResultSet missingRow = mock(ResultSet.class);
+                    when(missingRow.getString("artist_key")).thenReturn("tanyonglin");
+                    when(missingRow.getString("avatar_path")).thenReturn("artist-covers/mi/missing.jpg");
+                    return List.of(mapper.mapRow(existingRow, 0), mapper.mapRow(missingRow, 1));
+                });
+
+        int reset = new ArtistProfileService(jdbc).requeueMissingCachedAvatars(assets);
+
+        assertThat(reset).isEqualTo(1);
+        verify(jdbc).batchUpdate(
+                org.mockito.ArgumentMatchers.contains("SET avatar_path=NULL, avatar_status='PENDING'"),
+                eq(List.of("tanyonglin")), eq(1), any());
+        verify(jdbc).batchUpdate(
+                org.mockito.ArgumentMatchers.contains("DELETE FROM artist_avatar_jobs"),
+                eq(List.of("tanyonglin")), eq(1), any());
+        verify(jdbc).batchUpdate(
+                org.mockito.ArgumentMatchers.contains("UPDATE artist_directory_stats"),
+                eq(List.of("tanyonglin")), eq(1), any());
+    }
+
     private static ResultSet profileRow() throws Exception {
         ResultSet row = mock(ResultSet.class);
         when(row.getString("artist_key")).thenReturn("zhoujielun");

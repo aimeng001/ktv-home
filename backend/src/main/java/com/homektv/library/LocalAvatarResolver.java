@@ -65,6 +65,7 @@ public class LocalAvatarResolver {
             return 0;
         }
         try {
+            profileService.requeueMissingCachedAvatars(assetWriter);
             List<Path> candidateRoots = collectCandidateDirectories();
             if (candidateRoots.isEmpty()) return 0;
 

@@ -44,6 +44,7 @@ ENV KTV_RELEASE_VERSION=${KTV_RELEASE_VERSION} \
     KTV_RELEASE_VERSION_CODE=${KTV_RELEASE_VERSION_CODE} \
     KTV_BUILD_GIT_SHA=${KTV_GIT_SHA} \
     KTV_BUILD_TIME=${KTV_BUILD_TIME} \
+    KTV_DATA_PATH=/data \
     KTV_RELEASE_ARMEABI_V7A_APK=classpath:/static/tv-apk/home-ktv-tv-${KTV_RELEASE_VERSION}-armeabi-v7a.apk \
     KTV_RELEASE_ARM64_V8A_APK=classpath:/static/tv-apk/home-ktv-tv-${KTV_RELEASE_VERSION}-arm64-v8a.apk
 

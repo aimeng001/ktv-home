@@ -154,6 +154,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("target: /source-music", compose)
         self.assertIn("read_only: true", compose)
 
+    def test_docker_image_defaults_data_path_to_mounted_data_volume(self) -> None:
+        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+        self.assertIn("KTV_DATA_PATH=/data", dockerfile)
+
 
 if __name__ == "__main__":
     unittest.main()

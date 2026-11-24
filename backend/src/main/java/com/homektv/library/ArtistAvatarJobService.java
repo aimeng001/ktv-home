@@ -114,6 +114,7 @@ public class ArtistAvatarJobService {
 
     /** Explicit administrator retry for profiles that still have no usable avatar. */
     public Map<String, Object> resetAndEnqueueMissingProfiles() {
+        worker.requeueMissingCachedAvatars();
         List<String> keys = worker.unresolvedKeys();
         com.homektv.musicsource.MusicSourceConfig config = configService.getConfig();
         boolean fallbackEnabled = configService.isAvatarFallbackEnabled();
