@@ -65,12 +65,9 @@ Release APKs must keep the same signing certificate across upgrades. A debug APK
 - Android TV: JDK 17 and Android SDK.
 - H5: Node.js and npm.
 
-Useful local validation commands and the current architecture are documented in [REQUIREMENTS.md](REQUIREMENTS.md), [ARCHITECTURE.md](ARCHITECTURE.md), and the Chinese [README](README.md). The local project instructions are not a substitute for deployment-specific database backups or NAS permissions.
+Please see the Chinese [README](README.md) for full deployment, architecture, and local validation instructions.
 
 ## Documentation
 
 - [Chinese project README and full deployment guide](README.md)
-- [Requirements](REQUIREMENTS.md)
-- [Architecture](ARCHITECTURE.md)
-- [Local Docker and Android emulator test guide](docs/testing/local-docker-desktop-avd-guide.md)
 
