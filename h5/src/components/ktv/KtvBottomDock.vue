@@ -1,10 +1,11 @@
 <template>
   <footer class="ktv-bottom-dock" aria-label="底部播控栏">
-    <!-- 左侧 5 个圆形控制按钮 -->
+    <!-- 左侧 5 个 IKTV 原版白线图标按钮 -->
     <div class="dock-group dock-left">
-      <button type="button" class="dock-circle" :aria-label="player.isPlaying ? '暂停' : '播放'" @click="$emit('toggle-play')">
-        <Pause v-if="player.isPlaying" :size="20" />
-        <Play v-else :size="20" />
+      <button type="button" class="dock-circle dock-play-btn" :aria-label="player.isPlaying ? '暂停' : '播放'" @click="$emit('toggle-play')">
+        <span class="dock-icon-ring">
+          <img :src="player.isPlaying ? assets.playerPause : assets.playerPlay" alt="" class="dock-png" />
+        </span>
         <span>{{ player.isPlaying ? '暂停' : '播放' }}</span>
       </button>
 
@@ -20,27 +21,35 @@
           : '当前曲目无伴唱音轨'"
         @click="$emit('toggle-vocal')"
       >
-        <Mic2 :size="20" />
+        <span class="dock-icon-ring">
+          <img :src="assets.playerVocal" alt="" class="dock-png" />
+        </span>
         <span>{{ player.vocalMode === 'original' ? '原唱' : '伴唱' }}</span>
       </button>
 
       <button type="button" class="dock-circle" aria-label="重唱" @click="$emit('restart')">
-        <img :src="assets.iconReplay" alt="" class="dock-png" />
+        <span class="dock-icon-ring">
+          <img :src="assets.iconReplay" alt="" class="dock-png" />
+        </span>
         <span>重唱</span>
       </button>
 
       <button type="button" class="dock-circle" aria-label="切歌" @click="$emit('next')">
-        <img :src="assets.iconNext" alt="" class="dock-png" />
+        <span class="dock-icon-ring">
+          <img :src="assets.iconNext" alt="" class="dock-png" />
+        </span>
         <span>切歌</span>
       </button>
 
       <button type="button" class="dock-circle" aria-label="减小音量" @click="$emit('volume-delta', -VOLUME_STEP)">
-        <img :src="assets.iconVolDown" alt="" class="dock-png" />
-        <span>音量-</span>
+        <span class="dock-icon-ring">
+          <img :src="assets.iconVolDown" alt="" class="dock-png" />
+        </span>
+        <span>音量</span>
       </button>
     </div>
 
-    <!-- 中央 16:9 实时 MV 小窗与左右梯形羽化阴影 -->
+    <!-- 中央贴底 16:9 实时 MV 小窗与左右梯形羽化阴影 -->
     <div class="pip-stage-wrap">
       <img :src="assets.shadowLeft" alt="" class="pip-shadow left" />
       <div
@@ -51,6 +60,7 @@
         aria-label="展开全屏 MV 播放"
         @click="$emit('enter-fullscreen')"
         @keydown.enter.prevent="$emit('enter-fullscreen')"
+        @keydown.space.prevent="$emit('enter-fullscreen')"
       >
         <slot name="pip" />
         <div v-if="!player.nowPlaying" class="pip-idle">
@@ -62,40 +72,49 @@
           />
           <span>空闲待点歌</span>
         </div>
-        <div v-else class="pip-caption">
-          <strong>{{ player.nowPlaying.song?.title }}</strong>
-          <small>{{ player.isTvConsole ? 'TV 同步预览 · 点击全屏' : '点击全屏演唱' }}</small>
-        </div>
+        <div v-else class="pip-hover-tip">点击全屏</div>
+        <span class="pip-inner-shadow left" aria-hidden="true" />
+        <span class="pip-inner-shadow right" aria-hidden="true" />
       </div>
       <img :src="assets.shadowRight" alt="" class="pip-shadow right" />
     </div>
 
-    <!-- 右侧 5 个圆形控制按钮 -->
+    <!-- 右侧 5 个 IKTV 原版白线图标按钮 -->
     <div class="dock-group dock-right">
       <button type="button" class="dock-circle" aria-label="增加音量" @click="$emit('volume-delta', VOLUME_STEP)">
-        <img :src="assets.iconVolUp" alt="" class="dock-png" />
-        <span>音量+</span>
+        <span class="dock-icon-ring">
+          <img :src="assets.iconVolUp" alt="" class="dock-png" />
+        </span>
+        <span>音量</span>
       </button>
 
       <button type="button" class="dock-circle" aria-label="伴奏降调" @click="$emit('pitch-delta', -1)">
-        <img :src="assets.iconToneDown" alt="" class="dock-png" />
+        <span class="dock-icon-ring">
+          <img :src="assets.iconToneDown" alt="" class="dock-png" />
+        </span>
         <span>降调</span>
       </button>
 
       <button type="button" class="dock-circle" aria-label="伴奏升调" @click="$emit('pitch-delta', 1)">
-        <img :src="assets.iconToneUp" alt="" class="dock-png" />
+        <span class="dock-icon-ring">
+          <img :src="assets.iconToneUp" alt="" class="dock-png" />
+        </span>
         <span>升调</span>
       </button>
 
       <button type="button" class="dock-circle" aria-label="氛围音效与音轨说明" @click="$emit('open-mixer')">
-        <img :src="assets.iconDownload" alt="" class="dock-png" />
-        <span>音效/工具</span>
+        <span class="dock-icon-ring">
+          <img :src="assets.iconDownload" alt="" class="dock-png" />
+        </span>
+        <span>音效</span>
       </button>
 
       <button type="button" class="dock-circle queue-btn" aria-label="打开已点队列抽屉" @click="$emit('open-queue')">
-        <ListMusic :size="20" />
+        <span class="dock-icon-ring">
+          <img :src="assets.playerQueue" alt="" class="dock-png" />
+          <em class="queue-badge">{{ player.queueCount }}</em>
+        </span>
         <span>已点</span>
-        <em class="queue-badge">{{ player.queueCount }}</em>
       </button>
     </div>
   </footer>
@@ -103,7 +122,6 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { ListMusic, Mic2, Pause, Play } from 'lucide-vue-next'
 import { KTV_ASSETS } from './ktvCatalogPresets'
 import { VOLUME_STEP } from './ktvControlSteps'
 import { usePlayerStore } from '../../stores/player'
@@ -149,66 +167,92 @@ defineExpose({ pipSlotEl })
 
 <style scoped>
 .ktv-bottom-dock {
-  height: 118px;
-  padding: 6px 14px 10px;
+  height: 122px;
+  padding: 0 16px;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 8px;
-  background: linear-gradient(0deg, rgba(8, 11, 20, 0.94), rgba(10, 14, 24, 0.58) 70%, transparent);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 6px;
+  background: linear-gradient(0deg, rgba(6, 9, 18, 0.88), rgba(6, 9, 18, 0.42) 72%, transparent);
   flex: none;
   z-index: 20;
 }
 .dock-group {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-  height: 92px;
+  gap: 4px;
+  height: 100%;
+  align-items: center;
 }
 .dock-circle {
   position: relative;
-  border-radius: 50%;
-  max-width: 88px;
+  border-radius: 14px;
+  max-width: 96px;
   width: 100%;
-  height: 88px;
+  height: 98px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  background: radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.14), rgba(16, 22, 36, 0.85));
-  border: 1.5px solid rgba(255, 255, 255, 0.22);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
-  transition: var(--transition);
+  background: transparent;
+  border: none;
+  color: rgba(246, 248, 252, 0.96);
+  font-size: 13px;
+  font-weight: 500;
+  transition: transform 0.18s ease, opacity 0.18s ease;
 }
-.dock-circle:hover,
+.dock-icon-ring {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 2px solid transparent;
+  transition: background-color 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+.dock-circle:hover .dock-icon-ring,
+.dock-circle:focus-visible .dock-icon-ring {
+  background: var(--iktv-blue);
+  box-shadow: 0 0 18px var(--iktv-blue-glow);
+  transform: scale(1.06);
+}
 .dock-circle:focus-visible {
-  border-color: var(--gold);
-  box-shadow: 0 0 0 2px rgba(255, 198, 75, 0.28);
-  transform: translateY(-2px);
   outline: none;
 }
-.dock-circle.active {
-  border-color: rgba(255, 198, 75, 0.72);
-  color: var(--gold2);
+.dock-circle.active .dock-icon-ring {
+  border-color: rgba(49, 130, 251, 0.72);
+  background: rgba(49, 130, 251, 0.22);
 }
 .dock-circle:disabled {
-  opacity: 0.55;
+  opacity: 0.45;
   cursor: not-allowed;
 }
+.dock-circle:disabled:hover .dock-icon-ring {
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+.dock-play-btn .dock-icon-ring {
+  background: var(--iktv-blue);
+  box-shadow: 0 0 18px var(--iktv-blue-glow);
+}
+.ktv-bottom-dock:has(.dock-circle:hover) .dock-play-btn:not(:hover) .dock-icon-ring,
+.ktv-bottom-dock:has(.dock-circle:focus-visible) .dock-play-btn:not(:focus-visible):not(:hover) .dock-icon-ring {
+  background: transparent;
+  box-shadow: none;
+}
 .dock-png {
-  width: 24px;
-  height: 24px;
+  width: 34px;
+  height: 34px;
   object-fit: contain;
 }
 .queue-badge {
   position: absolute;
-  top: 8px;
-  right: 10px;
+  top: 2px;
+  right: 0;
   min-width: 20px;
   height: 20px;
   padding: 0 5px;
@@ -220,33 +264,51 @@ defineExpose({ pipSlotEl })
   font-weight: 800;
   display: grid;
   place-items: center;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
 }
 
 .pip-stage-wrap {
   display: flex;
-  align-items: center;
-  height: 104px;
+  align-items: stretch;
+  height: 100%;
 }
 .pip-shadow {
-  width: 26px;
+  width: 38px;
   height: 100%;
   object-fit: fill;
   pointer-events: none;
 }
 .video-container {
   position: relative;
-  width: 184px;
-  height: 104px;
-  border-radius: 10px;
+  width: 216px;
+  height: 122px;
+  border-radius: 2px;
   overflow: hidden;
-  background: #080b12;
-  border: 2px solid rgba(255, 198, 75, 0.45);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.65);
+  background: #04060b;
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.65);
   cursor: pointer;
+  transition: box-shadow 0.18s ease;
 }
-.video-container:hover {
-  border-color: var(--gold);
+.video-container:hover,
+.video-container:focus-visible {
+  box-shadow: 0 0 0 2px var(--iktv-blue), 0 0 24px var(--iktv-blue-glow);
+  outline: none;
+}
+.pip-inner-shadow {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  pointer-events: none;
+  z-index: 2;
+}
+.pip-inner-shadow.left {
+  left: 0;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.72), transparent);
+}
+.pip-inner-shadow.right {
+  right: 0;
+  background: linear-gradient(270deg, rgba(0, 0, 0, 0.72), transparent);
 }
 .pip-idle {
   position: relative;
@@ -261,45 +323,52 @@ defineExpose({ pipSlotEl })
   width: 100%;
   height: 100%;
   object-fit: cover;
-  opacity: 0.42;
+  opacity: 0.72;
 }
 .pip-idle span {
   position: relative;
-  font-size: 12px;
-  color: var(--dim);
-  background: rgba(8, 11, 18, 0.72);
-  padding: 3px 9px;
+  z-index: 3;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(6, 9, 16, 0.72);
+  padding: 3px 10px;
   border-radius: 999px;
 }
-.pip-caption {
+.pip-hover-tip {
   position: absolute;
-  inset: auto 0 0 0;
-  padding: 6px 8px 4px;
-  background: linear-gradient(180deg, transparent, rgba(5, 8, 14, 0.92));
-  display: flex;
-  flex-direction: column;
+  inset: auto 0 6px 0;
+  margin: 0 auto;
+  width: fit-content;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
   pointer-events: none;
   z-index: 3;
 }
-.pip-caption strong {
-  font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.pip-caption small {
-  font-size: 11px;
-  color: var(--gold2);
+.video-container:hover .pip-hover-tip {
+  opacity: 1;
 }
 
 @media (max-width: 1080px) {
   .dock-circle {
-    height: 76px;
-    font-size: 11px;
+    height: 88px;
+    font-size: 12px;
+  }
+  .dock-icon-ring {
+    width: 48px;
+    height: 48px;
+  }
+  .dock-png {
+    width: 28px;
+    height: 28px;
   }
   .video-container {
-    width: 152px;
-    height: 86px;
+    width: 176px;
+    height: 100px;
   }
   .pip-shadow { display: none; }
 }
@@ -314,24 +383,29 @@ defineExpose({ pipSlotEl })
   .pip-stage-wrap {
     order: -1;
     justify-content: center;
-    height: 72px;
+    height: 76px;
   }
   .video-container {
     width: 100%;
     max-width: 340px;
-    height: 72px;
+    height: 76px;
+    border-radius: 8px;
   }
   .dock-group {
-    height: 54px;
-    gap: 6px;
+    height: 58px;
+    gap: 4px;
   }
   .dock-circle {
-    height: 54px;
-    border-radius: 12px;
-    font-size: 10px;
+    height: 58px;
+    border-radius: 10px;
+    font-size: 11px;
     gap: 2px;
   }
-  .dock-png { width: 18px; height: 18px; }
-  .queue-badge { top: 2px; right: 4px; min-width: 17px; height: 17px; font-size: 10px; }
+  .dock-icon-ring {
+    width: 34px;
+    height: 34px;
+  }
+  .dock-png { width: 22px; height: 22px; }
+  .queue-badge { top: -2px; right: -4px; min-width: 17px; height: 17px; font-size: 10px; }
 }
 </style>

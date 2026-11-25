@@ -131,7 +131,7 @@ describe('KtvMediaSurface 纯音频伴奏全屏频谱跳动与写真动效', () 
     expect(cancelRafSpy).toHaveBeenCalled()
   })
 
-  it('无歌曲封面时纯音频背景兜底使用 artistAvatarUrl，并在全屏顶栏展示歌手头像', async () => {
+  it('无歌曲封面时纯音频背景与小窗封面兜底使用 artistAvatarUrl，并在极简顶栏展示在播歌名', async () => {
     player.nowPlaying = {
       song: {
         id: 89,
@@ -150,13 +150,19 @@ describe('KtvMediaSurface 纯音频伴奏全屏频谱跳动与写真动效', () 
 
     const kenBurnsBg = root.querySelector('.spectrum-bg-kenburns')
     expect(kenBurnsBg.style.backgroundImage).toContain('/api/artists/avatar?key=tanyonglin')
+    expect(root.querySelector('.fs-topbar .fs-now-text')?.textContent?.trim()).toBe('正在播放：一生中最爱')
 
-    const topbarAvatar = root.querySelector('.fs-artist-avatar img')
-    expect(topbarAvatar?.getAttribute('src')).toBe('/api/artists/avatar?key=tanyonglin')
-
-    topbarAvatar.dispatchEvent(new Event('error'))
+    app.unmount()
+    app = createApp(KtvMediaSurface, { fullscreen: false })
+    app.use(pinia)
+    app.mount(root)
     await nextTick()
-    expect(root.querySelector('.fs-artist-avatar img')).toBeNull()
-    expect(root.querySelector('.fs-artist-avatar').textContent.trim()).toBe('谭')
+
+    const posterImg = root.querySelector('.poster-fallback .poster-img')
+    expect(posterImg?.getAttribute('src')).toBe('/api/artists/avatar?key=tanyonglin')
+
+    posterImg.dispatchEvent(new Event('error'))
+    await nextTick()
+    expect(root.querySelector('.poster-fallback .poster-img')).toBeNull()
   })
 })

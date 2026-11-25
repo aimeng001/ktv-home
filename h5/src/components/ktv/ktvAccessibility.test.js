@@ -29,12 +29,12 @@ describe('KTV 控件可访问性契约', () => {
     }
   })
 
-  it('跑马灯是键盘可达的按钮', () => {
-    const box = headerBar.match(/<div\s+class="marquee-box"[\s\S]*?>/)?.[0] || ''
-    expect(box).toContain('role="button"')
-    expect(box).toContain('tabindex="0"')
-    expect(box).toMatch(/@keydown\.enter(\.prevent)?=/)
-    expect(box).toMatch(/@keydown\.space(\.prevent)?=/)
+  it('底部小窗触发全屏是键盘可达的按钮', () => {
+    const pip = bottomDock.match(/<div[\s\S]*?class="video-container"[\s\S]*?>/)?.[0] || ''
+    expect(pip).toContain('role="button"')
+    expect(pip).toContain('tabindex="0"')
+    expect(pip).toMatch(/@keydown\.enter(\.prevent)?=/)
+    expect(pip).toMatch(/@keydown\.space(\.prevent)?=/)
   })
 
   it('曲库列表的复选框都有可读名称', () => {

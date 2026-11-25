@@ -58,39 +58,16 @@
       </div>
     </div>
 
-    <!-- 小窗悬浮歌名栏（避免被固定 video 层遮挡） -->
+    <!-- 小窗悬浮轻提示（仅悬停显露，绝不常驻遮挡画面） -->
     <div v-if="!fullscreen && song" class="pip-overlay-caption">
-      <strong>{{ song.title }}</strong>
-      <small>{{ isSilentConsole ? '控制台镜像 · 点击全屏' : '点击全屏演唱' }}</small>
+      <span>点击全屏</span>
     </div>
 
-    <!-- 全屏覆盖层：顶部信息、实时歌词、底部控制面板（对标 view_ktv_fullscreen_playback_panel.xml） -->
+    <!-- 全屏覆盖层：极简顶部在播跑马灯、双行歌词、IKTV 底部两行大控台（对标 view_ktv_fullscreen_playback_panel.xml） -->
     <template v-if="fullscreen">
       <div class="fs-topbar" :class="{ hidden: !osdVisible }">
-        <button type="button" class="fs-back-btn" @click.stop="$emit('exit-fullscreen')">
-          <Minimize2 :size="16" /> 返回选歌
-        </button>
-        <div class="fs-now">
-          <div v-if="song" class="fs-artist-avatar" :style="!fsArtistAvatarUrl ? getArtistAvatarStyle(song.artist || song.title) : undefined">
-            <img
-              v-if="fsArtistAvatarUrl"
-              :src="fsArtistAvatarUrl"
-              alt=""
-              @error="markMediaUrlFailed(fsArtistAvatarUrl)"
-            />
-            <span v-else>{{ songAvatarInitial(song) }}</span>
-          </div>
-          <div class="fs-now-copy">
-            <strong>{{ song?.title || '暂无播放' }}</strong>
-            <small v-if="song">{{ song.artist }} · {{ player.nowPlaying?.orderedByNick || '' }} 点</small>
-            <small v-if="nextSong" class="next-hint">下一首：{{ nextSong.title }}</small>
-          </div>
-        </div>
-        <div class="fs-badges">
-          <span class="fs-mode-tag">{{ isSilentConsole ? '控制台镜像' : 'Web KTV 全屏' }}</span>
-          <button type="button" class="fs-chip" @click.stop="showLyrics = !showLyrics">
-            {{ showLyrics ? '隐藏歌词' : '显示歌词' }}
-          </button>
+        <div v-if="song" class="fs-now-marquee">
+          <span class="fs-now-text">正在播放：{{ song.title }}</span>
         </div>
       </div>
 
@@ -103,7 +80,7 @@
       </transition>
 
       <!-- 1:1 电视同款双行卡拉OK歌词 -->
-      <div v-if="showLyrics && song" class="fs-lyrics" :class="{ 'audio-center': isAudioOnly || mirrorStreamFailed }">
+      <div v-if="props.showLyrics && song" class="fs-lyrics" :class="{ 'audio-center': isAudioOnly || mirrorStreamFailed }">
         <div v-if="lyricError" class="lyric-empty">歌词加载失败 · <button type="button" @click.stop="retryLyric">重试</button></div>
         <KaraokeLyricSurface
           v-else
@@ -113,7 +90,7 @@
         />
       </div>
 
-      <!-- 全屏底部控台 -->
+      <!-- 全屏底部控台：第一行翡翠绿进度条 + 第二行 10 个大号白线图标 -->
       <div
         class="fs-bottom-panel"
         :class="{ hidden: !osdVisible }"
@@ -122,7 +99,11 @@
         @pointerdown="wakeOsd"
       >
         <div class="fs-progress-row">
-          <button type="button" class="fs-seek-btn" aria-label="快退 10 秒" @click="seekBy(-10000)">-10s</button>
+          <button type="button" class="fs-seek-btn" aria-label="快退 10 秒" @click="seekBy(-10000)">
+            <span class="fs-seek-ring">
+              <img :src="assets.playerRewind" alt="" class="fs-seek-png" />
+            </span>
+          </button>
           <span class="time-lbl">{{ formatDurationMs(displayPositionMs) }}</span>
           <input
             type="range"
@@ -131,42 +112,86 @@
             :max="durationMs || 1"
             :value="Math.min(displayPositionMs, durationMs || 1)"
             class="fs-slider"
+            :style="{ '--seek-pct': `${seekProgressPct}%` }"
             @input="onScrubInput"
             @change="onScrubCommit"
           />
           <span class="time-lbl">{{ formatDurationMs(durationMs) }}</span>
-          <button type="button" class="fs-seek-btn" aria-label="快进 10 秒" @click="seekBy(10000)">+10s</button>
-          <button type="button" class="fs-seek-btn" aria-label="伴奏降调" @click="$emit('pitch-delta', -1)">♭ 降调</button>
-          <button
-            type="button"
-            class="pitch-tag-btn"
-            :class="{ active: (player.pitchSemitones || 0) !== 0 }"
-            :title="player.pitchSemitones ? '点击恢复原调' : '当前原调'"
-            @click="$emit('pitch-delta', -(player.pitchSemitones || 0))"
-          >
-            {{ pitchLabel }}
+          <button type="button" class="fs-seek-btn" aria-label="快进 10 秒" @click="seekBy(10000)">
+            <span class="fs-seek-ring">
+              <img :src="assets.playerForward" alt="" class="fs-seek-png" />
+            </span>
           </button>
-          <button type="button" class="fs-seek-btn" aria-label="伴奏升调" @click="$emit('pitch-delta', 1)">♯ 升调</button>
         </div>
 
         <div class="fs-action-row">
-          <button type="button" class="fs-act" @click="$emit('restart')">重唱</button>
-          <button type="button" class="fs-act primary" @click="$emit('toggle-play')">
-            {{ player.isPlaying ? '暂停' : '播放' }}
+          <button type="button" class="fs-act fs-play-act" @click="$emit('toggle-play')">
+            <span class="fs-act-icon">
+              <img :src="player.isPlaying ? assets.playerPause : assets.playerPlay" alt="" class="fs-act-png" />
+            </span>
+            <span>{{ player.isPlaying ? '暂停' : '播放' }}</span>
           </button>
-          <button type="button" class="fs-act" @click="$emit('next')">切歌</button>
-          <button type="button" class="fs-act" :disabled="!canVocal" @click="$emit('toggle-vocal')">
-            {{ player.vocalMode === 'original' ? '原唱' : '伴唱' }}
+          <button
+            type="button"
+            class="fs-act"
+            :class="{ active: player.vocalMode === 'accompaniment' }"
+            :disabled="!canVocal"
+            @click="$emit('toggle-vocal')"
+          >
+            <span class="fs-act-icon">
+              <img :src="assets.playerVocal" alt="" class="fs-act-png" />
+            </span>
+            <span>{{ player.vocalMode === 'original' ? '原唱' : '伴唱' }}</span>
           </button>
-          <button type="button" class="fs-act" @click="$emit('toggle-mute')">
-            {{ player.muted ? '取消静音' : '静音' }}
+          <button type="button" class="fs-act" @click="$emit('restart')">
+            <span class="fs-act-icon">
+              <img :src="assets.playerRestart" alt="" class="fs-act-png" />
+            </span>
+            <span>重唱</span>
           </button>
-          <button type="button" class="fs-act" @click="$emit('volume-delta', -VOLUME_STEP)">音量-</button>
-          <button type="button" class="fs-act" @click="$emit('volume-delta', VOLUME_STEP)">音量+</button>
-          <button type="button" class="fs-act" @click="$emit('open-mixer')">音效</button>
-          <button type="button" class="fs-act" @click="$emit('open-queue')">已点 ({{ player.queueCount }})</button>
-          <button type="button" class="fs-act" @click="$emit('open-browser')">点歌台</button>
-          <button type="button" class="fs-act" @click="$emit('open-home')">首页</button>
+          <button type="button" class="fs-act" @click="$emit('next')">
+            <span class="fs-act-icon">
+              <img :src="assets.playerNext" alt="" class="fs-act-png" />
+            </span>
+            <span>切歌</span>
+          </button>
+          <button type="button" class="fs-act" @click="$emit('volume-delta', -VOLUME_STEP)">
+            <span class="fs-act-icon">
+              <img :src="assets.playerVolumeDown" alt="" class="fs-act-png" />
+            </span>
+            <span>音量减</span>
+          </button>
+          <button type="button" class="fs-act" @click="$emit('volume-delta', VOLUME_STEP)">
+            <span class="fs-act-icon">
+              <img :src="assets.playerVolumeUp" alt="" class="fs-act-png" />
+            </span>
+            <span>音量加</span>
+          </button>
+          <button type="button" class="fs-act" :class="{ active: player.muted }" @click="$emit('toggle-mute')">
+            <span class="fs-act-icon">
+              <img :src="player.muted ? assets.playerUnmute : assets.playerMute" alt="" class="fs-act-png" />
+            </span>
+            <span>{{ player.muted ? '取消静音' : '静音' }}</span>
+          </button>
+          <button type="button" class="fs-act" @click="$emit('open-browser')">
+            <span class="fs-act-icon">
+              <img :src="assets.playerKiosk" alt="" class="fs-act-png" />
+            </span>
+            <span>点歌台</span>
+          </button>
+          <button type="button" class="fs-act fs-queue-act" aria-label="已点歌单" @click="$emit('open-queue')">
+            <span class="fs-act-icon">
+              <img :src="assets.playerQueue" alt="" class="fs-act-png" />
+              <em v-if="player.queueCount > 0" class="fs-queue-badge">{{ player.queueCount }}</em>
+            </span>
+            <span>已点</span>
+          </button>
+          <button type="button" class="fs-act" @click="$emit('open-home')">
+            <span class="fs-act-icon">
+              <img :src="assets.playerHome" alt="" class="fs-act-png" />
+            </span>
+            <span>首页</span>
+          </button>
         </div>
       </div>
 
@@ -208,7 +233,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Minimize2, Volume2 } from 'lucide-vue-next'
+import { Volume2 } from 'lucide-vue-next'
 import KaraokeLyricSurface from './KaraokeLyricSurface.vue'
 import { usePlayerStore } from '../../stores/player'
 import { parseLrc } from '../../composables/lrc'
@@ -218,19 +243,18 @@ import { buildWebStreamSpec } from '../../player/streamSelection'
 import { VOLUME_STEP } from './ktvControlSteps'
 import { createWebAudioChannelRouter } from '../../player/webAudioChannelRouter'
 import { useToast } from '../../composables/useToast'
-import { formatDurationMs } from './ktvCatalogPresets'
-import { getArtistAvatarStyle } from '../../utils/avatarColor'
+import { formatDurationMs, KTV_ASSETS } from './ktvCatalogPresets'
 import {
   rememberFailedThumbUrl,
-  resolveSongArtistAvatarUrl,
   resolveSongThumbUrl,
-  songAvatarInitial,
 } from '../../utils/songThumbnail'
 
 const props = defineProps({
   fullscreen: { type: Boolean, default: false },
   pipRect: { type: Object, default: null },
+  showLyrics: { type: Boolean, default: true },
 })
+const assets = KTV_ASSETS
 const emit = defineEmits([
   'enter-fullscreen',
   'exit-fullscreen',
@@ -263,7 +287,6 @@ const streamReloadNonce = ref(0)
 const detectedDurationMs = ref(0)
 const scrubbingValue = ref(null)
 const osdVisible = ref(true)
-const showLyrics = ref(true)
 const effectBanner = ref('')
 const songBanner = ref('')
 let osdTimer = null
@@ -299,7 +322,6 @@ const nextSong = computed(() => player.queue?.[0]?.song || null)
 const failedMediaUrls = ref(new Set())
 const audioStageBackdropUrl = computed(() => resolveSongThumbUrl(song.value, failedMediaUrls.value))
 const audioPosterUrl = computed(() => resolveSongThumbUrl(song.value, failedMediaUrls.value))
-const fsArtistAvatarUrl = computed(() => resolveSongArtistAvatarUrl(song.value, failedMediaUrls.value))
 
 function markMediaUrlFailed(url) {
   if (!url) return
@@ -356,6 +378,11 @@ const effectiveMuted = computed(() => {
 })
 const durationMs = computed(() => song.value?.durationMs || detectedDurationMs.value || 0)
 const displayPositionMs = computed(() => scrubbingValue.value != null ? scrubbingValue.value : player.positionMs)
+const seekProgressPct = computed(() => (
+  durationMs.value > 0
+    ? Math.min(100, Math.max(0, (displayPositionMs.value / durationMs.value) * 100))
+    : 0
+))
 
 const activeLyricIdx = computed(() => currentLyricIndex(lyricLines.value, displayPositionMs.value))
 const lyricOffsetPx = computed(() => activeLyricIdx.value < 0 ? 0 : Math.max(0, activeLyricIdx.value - 2) * -36)
@@ -372,11 +399,6 @@ const stageStyle = computed(() => {
     width: `${r.width}px`,
     height: `${r.height}px`,
   }
-})
-
-const pitchLabel = computed(() => {
-  const p = player.pitchSemitones || 0
-  return p === 0 ? '原调' : (p > 0 ? '+' : '') + p
 })
 
 function wakeOsd() {
@@ -1022,7 +1044,7 @@ onBeforeUnmount(() => {
 .media-stage {
   position: fixed;
   z-index: 30;
-  border-radius: 10px;
+  border-radius: 2px;
   overflow: hidden;
   background: #060910;
   transition: border-radius 0.2s ease;
@@ -1039,29 +1061,29 @@ onBeforeUnmount(() => {
 .ktv-video {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   display: block;
+}
+.media-stage.fullscreen .ktv-video {
+  object-fit: contain;
 }
 .pip-overlay-caption {
   position: absolute;
-  inset: auto 0 0 0;
-  padding: 8px 8px 4px;
-  background: linear-gradient(180deg, transparent, rgba(5, 8, 14, 0.92));
-  display: flex;
-  flex-direction: column;
+  inset: auto 0 6px 0;
+  margin: 0 auto;
+  width: fit-content;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
   pointer-events: none;
   z-index: 2;
 }
-.pip-overlay-caption strong {
-  font-size: 11px;
-  color: #fff;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.pip-overlay-caption small {
-  font-size: 11px;
-  color: var(--gold2);
+.media-stage:not(.fullscreen):hover .pip-overlay-caption {
+  opacity: 1;
 }
 .effect-stage-toast {
   position: fixed;
@@ -1109,7 +1131,7 @@ onBeforeUnmount(() => {
 }
 .spectrum-canvas {
   position: absolute;
-  bottom: 120px;
+  bottom: 186px;
   left: 5%;
   width: 90%;
   height: 180px;
@@ -1161,16 +1183,16 @@ onBeforeUnmount(() => {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
-/* 全屏顶部和底部控制面板 */
+/* 全屏顶部和底部控制面板（1:1 对标 view_ktv_fullscreen_playback_panel.xml） */
 .fs-topbar {
   position: absolute;
   top: 0; left: 0; right: 0;
-  height: 76px;
-  padding: 12px 20px;
+  height: 88px;
+  padding: 0 24px;
   display: flex;
   align-items: center;
-  gap: 16px;
-  background: linear-gradient(180deg, rgba(6, 9, 16, 0.9), transparent);
+  justify-content: flex-end;
+  background: var(--iktv-panel-bg);
   transition: opacity 0.25s ease;
   z-index: 4;
 }
@@ -1179,67 +1201,28 @@ onBeforeUnmount(() => {
   opacity: 0;
   pointer-events: none;
 }
-.fs-back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  font-size: 13px;
-  font-weight: 700;
-}
-.fs-now {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.fs-artist-avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
+.fs-now-marquee {
+  max-width: 100%;
   overflow: hidden;
-  flex: none;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  display: grid;
-  place-items: center;
-  font-size: 15px;
-  font-weight: 800;
-  color: #191304;
+  text-align: right;
 }
-.fs-artist-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.fs-now-copy {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-.fs-now strong { font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fs-now small { color: var(--dim); font-size: 12px; }
-.fs-now .next-hint { color: var(--gold2); }
-.fs-badges { display: flex; align-items: center; gap: 8px; }
-.fs-mode-tag {
-  padding: 5px 10px; border-radius: 999px; font-size: 11px;
-  background: rgba(255, 198, 75, 0.18); border: 1px solid rgba(255, 198, 75, 0.45); color: var(--gold2);
-}
-.fs-chip {
-  padding: 5px 10px; border-radius: 999px; font-size: 12px;
-  background: rgba(255, 255, 255, 0.12);
+.fs-now-text {
+  display: inline-block;
+  font-size: clamp(22px, 2.3vw, 34px);
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 82vw;
+  letter-spacing: 0.5px;
 }
 
 .fs-lyrics {
   position: absolute;
-  left: 10%;
-  right: 10%;
-  bottom: 150px;
+  left: 8%;
+  right: 8%;
+  bottom: 190px;
   height: 150px;
   overflow: hidden;
   pointer-events: none;
@@ -1247,7 +1230,7 @@ onBeforeUnmount(() => {
   z-index: 3;
 }
 .fs-lyrics.audio-center {
-  bottom: 210px;
+  bottom: 230px;
   height: 220px;
 }
 .lyric-window { height: 100%; overflow: hidden; }
@@ -1269,83 +1252,202 @@ onBeforeUnmount(() => {
 }
 .lyric-line .sung { color: var(--gold2); }
 .lyric-empty { margin-top: 50px; font-size: 13px; color: var(--dim); pointer-events: auto; }
-.lyric-empty button { color: var(--gold); text-decoration: underline; }
+.lyric-empty button { color: var(--iktv-blue); text-decoration: underline; }
 
 .fs-bottom-panel {
   position: absolute;
   bottom: 0; left: 0; right: 0;
-  padding: 16px 24px calc(16px + var(--safe-bottom));
-  background: linear-gradient(0deg, rgba(6, 9, 16, 0.94) 65%, transparent);
+  padding: 12px 44px calc(12px + var(--safe-bottom));
+  background: var(--iktv-panel-bg);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   transition: opacity 0.25s ease;
   z-index: 4;
 }
 .fs-progress-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
+  height: 46px;
 }
 .fs-seek-btn {
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.12);
-  font-size: 12px;
-  font-weight: 700;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  flex: none;
 }
-.pitch-tag {
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: rgba(255, 198, 75, 0.22);
-  border: 1px solid rgba(255, 198, 75, 0.45);
-  color: var(--gold);
-  font-size: 11px;
-  font-weight: 800;
-  white-space: nowrap;
+.fs-seek-ring {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  transition: background-color 0.18s ease, box-shadow 0.18s ease;
 }
-.time-lbl { width: 46px; text-align: center; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
-.fs-slider { flex: 1; accent-color: var(--gold); }
+.fs-seek-btn:hover .fs-seek-ring,
+.fs-seek-btn:focus-visible .fs-seek-ring {
+  background: var(--iktv-blue);
+  box-shadow: 0 0 14px var(--iktv-blue-glow);
+}
+.fs-seek-btn:focus-visible { outline: none; }
+.fs-seek-png {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+.time-lbl {
+  width: 58px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.92);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.fs-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--iktv-green) 0%,
+    var(--iktv-green) var(--seek-pct, 0%),
+    var(--iktv-track) var(--seek-pct, 0%),
+    var(--iktv-track) 100%
+  );
+  cursor: pointer;
+}
+.fs-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--iktv-green);
+  border: 2px solid #86efac;
+  box-shadow: 0 0 12px rgba(49, 194, 124, 0.72);
+  cursor: pointer;
+}
+.fs-slider::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--iktv-green);
+  border: 2px solid #86efac;
+  box-shadow: 0 0 12px rgba(49, 194, 124, 0.72);
+  cursor: pointer;
+}
 .fs-action-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  max-width: 1280px;
+  width: 100%;
+  margin: 0 auto;
   gap: 8px;
+  align-items: start;
 }
 .fs-act {
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 4px 2px 6px;
+  background: transparent;
+  border: none;
+  color: #ffffff;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
-.fs-act.primary {
-  background: var(--gold);
-  color: #191304;
-  border-color: var(--gold);
-  font-weight: 800;
+.fs-act-icon {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 2px solid transparent;
+  transition: background-color 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
 }
-.fs-act:disabled { opacity: 0.45; }
-.pitch-tag-btn {
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--dim);
-  font-size: 12px;
-  font-weight: 700;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  cursor: pointer;
-  transition: all 0.2s;
+.fs-act-png {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
 }
-.pitch-tag-btn:hover {
-  background: rgba(255, 255, 255, 0.18);
+.fs-play-act .fs-act-icon {
+  background: var(--iktv-blue);
+  box-shadow: 0 0 18px var(--iktv-blue-glow);
+}
+.fs-action-row:has(.fs-act:hover) .fs-play-act:not(:hover) .fs-act-icon,
+.fs-action-row:has(.fs-act:focus-visible) .fs-play-act:not(:focus-visible):not(:hover) .fs-act-icon {
+  background: transparent;
+  box-shadow: none;
+}
+.fs-act:hover .fs-act-icon,
+.fs-act:focus-visible .fs-act-icon {
+  background: var(--iktv-blue);
+  box-shadow: 0 0 18px var(--iktv-blue-glow);
+  transform: scale(1.06);
+}
+.fs-act:focus-visible { outline: none; }
+.fs-act.active:not(.fs-play-act) .fs-act-icon {
+  border-color: rgba(49, 130, 251, 0.72);
+  background: rgba(49, 130, 251, 0.22);
+}
+.fs-act:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.fs-act:disabled:hover .fs-act-icon {
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+.fs-queue-badge {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef4444;
   color: #fff;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
 }
-.pitch-tag-btn.active {
-  background: rgba(255, 198, 75, 0.2);
-  color: var(--gold);
-  border-color: rgba(255, 198, 75, 0.5);
+@media (max-width: 759px) {
+  .fs-topbar {
+    height: 60px;
+    padding: 0 14px;
+  }
+  .fs-bottom-panel {
+    padding: 10px 12px calc(12px + var(--safe-bottom));
+    gap: 8px;
+  }
+  .fs-progress-row {
+    gap: 6px;
+    height: 38px;
+  }
+  .fs-seek-btn { width: 34px; height: 34px; }
+  .fs-seek-ring { width: 32px; height: 32px; }
+  .fs-seek-png { width: 22px; height: 22px; }
+  .time-lbl { width: 44px; font-size: 12px; }
+  .fs-action-row {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px 4px;
+  }
+  .fs-act { font-size: 11px; gap: 3px; }
+  .fs-act-icon { width: 42px; height: 42px; }
+  .fs-act-png { width: 26px; height: 26px; }
 }
 .fs-marquee-banner {
   position: absolute;

@@ -97,6 +97,22 @@
           </div>
         </div>
 
+        <div class="setting-block">
+          <small>全屏歌词显示</small>
+          <div class="toggle-row">
+            <span>全屏演唱时在画面下方显示双行卡拉 OK 歌词</span>
+            <button
+              type="button"
+              class="toggle-pill lyrics-toggle"
+              :class="{ on: showLyrics }"
+              :aria-pressed="String(showLyrics)"
+              @click="$emit('toggle-show-lyrics')"
+            >
+              {{ showLyrics ? '已开启' : '已关闭' }}
+            </button>
+          </div>
+        </div>
+
         <label class="field-label">
           媒体反馈 / 心愿点歌
           <div class="nick-row">
@@ -183,12 +199,14 @@ import { confirmDialog } from '../../composables/useDialog'
 
 const props = defineProps({
   activeModal: { type: String, default: '' },
-  autoFullscreen: { type: Boolean, default: false }
+  autoFullscreen: { type: Boolean, default: false },
+  showLyrics: { type: Boolean, default: true }
 })
 const emit = defineEmits([
   'close',
   'claim-web-host',
   'toggle-auto-fullscreen',
+  'toggle-show-lyrics',
   'set-volume',
   'toggle-mute',
   'set-vocal',
@@ -379,9 +397,14 @@ async function triggerScan() {
   width: min(480px, 100%);
   border-radius: 16px;
   background: linear-gradient(180deg, #1b2234, #111622);
-  border: 1px solid rgba(255, 198, 75, 0.28);
+  border: 1px solid rgba(49, 130, 251, 0.34);
   padding: 16px;
   box-shadow: var(--shadow);
+}
+.modal-card .btn:not(.ghost) {
+  background: linear-gradient(135deg, var(--iktv-blue), #2563eb);
+  color: #ffffff;
+  box-shadow: 0 4px 14px var(--iktv-blue-glow);
 }
 .modal-hd {
   display: flex;
@@ -389,7 +412,7 @@ async function triggerScan() {
   justify-content: space-between;
   margin-bottom: 14px;
 }
-.modal-hd h3 { font-size: 16px; color: var(--gold2); }
+.modal-hd h3 { font-size: 16px; color: #dbeafe; }
 .close-btn {
   width: 32px; height: 32px; border-radius: 50%;
   background: rgba(255, 255, 255, 0.08); display: grid; place-items: center;
@@ -419,16 +442,16 @@ async function triggerScan() {
   padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; flex: none;
   background: rgba(255, 255, 255, 0.1); color: var(--dim); border: 1px solid rgba(255, 255, 255, 0.14);
 }
-.toggle-pill.on { background: var(--gold); color: #191304; border-color: var(--gold); }
+.toggle-pill.on { background: var(--iktv-blue); color: #ffffff; border-color: var(--iktv-blue); }
 .mode-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .mode-choices button {
   padding: 8px 6px; border-radius: 8px; font-size: 12px;
   background: rgba(255, 255, 255, 0.08); color: var(--dim); border: 1px solid rgba(255, 255, 255, 0.1);
 }
-.mode-choices button.on { background: var(--gold); color: #191304; font-weight: 800; border-color: var(--gold); }
+.mode-choices button.on { background: var(--iktv-blue); color: #ffffff; font-weight: 700; border-color: var(--iktv-blue); }
 .mode-choices button:disabled { opacity: 0.4; cursor: not-allowed; }
 .mixer-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
-.mixer-row input[type="range"] { flex: 1; accent-color: var(--gold); }
+.mixer-row input[type="range"] { flex: 1; accent-color: var(--iktv-green); }
 .mini-mute-btn {
   padding: 5px 10px; border-radius: 8px; font-size: 12px; flex: none;
   background: rgba(255, 255, 255, 0.09); border: 1px solid rgba(255, 255, 255, 0.14);
@@ -439,7 +462,7 @@ async function triggerScan() {
   padding: 6px 12px; border-radius: 8px; font-size: 12px;
   background: rgba(255, 255, 255, 0.09); border: 1px solid rgba(255, 255, 255, 0.14);
 }
-.seg-btns button.on { background: var(--gold); color: #191304; font-weight: 800; }
+.seg-btns button.on { background: var(--iktv-blue); color: #ffffff; font-weight: 700; border-color: var(--iktv-blue); }
 .seg-btns button:disabled { opacity: 0.45; }
 .swap-row { display: flex; justify-content: flex-end; }
 .effects-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
@@ -448,7 +471,7 @@ async function triggerScan() {
   border: 1px solid rgba(255, 255, 255, 0.12); display: flex; flex-direction: column;
   align-items: center; gap: 4px; font-size: 12px;
 }
-.fx-btn:hover { border-color: var(--gold); color: var(--gold2); }
+.fx-btn:hover { border-color: var(--iktv-blue); color: #93c5fd; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 .btn.small { padding: 6px 12px; font-size: 12px; }
 </style>

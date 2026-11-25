@@ -176,19 +176,43 @@ describe('KtvMediaSurface 全屏播控 3 秒自隐藏与跑马灯', () => {
     expect(!leaving || leaving.classList.contains('marquee-slide-leave-active')).toBe(true)
   })
 
-  it('升降调控台支持点击恢复原调并正确触发 pitch-delta', async () => {
-    player.pitchSemitones = 2
-    await mountFullscreenSurface()
-
-    const pitchBtn = root.querySelector('.pitch-tag-btn')
-    expect(pitchBtn).not.toBeNull()
-    expect(pitchBtn.textContent).toContain('+2')
-    expect(pitchBtn.classList.contains('active')).toBe(true)
-
-    // 点击原调标签重置调门
-    pitchBtn.click()
+  it('全屏顶部展示极简右对齐正在播放提示，底部控台按 IKTV 顺序排列 10 个大图标并触发音量/点歌事件', async () => {
+    const emittedVolumes = []
+    let openedBrowser = false
+    let openedQueue = false
+    let openedHome = false
+    app = createApp(KtvMediaSurface, {
+      fullscreen: true,
+      onVolumeDelta: delta => emittedVolumes.push(delta),
+      onOpenBrowser: () => { openedBrowser = true },
+      onOpenQueue: () => { openedQueue = true },
+      onOpenHome: () => { openedHome = true }
+    })
+    app.use(pinia)
+    app.mount(root)
+    await nextTick()
     await nextTick()
 
-    expect(emittedPitchDelta).toEqual([-2])
+    const topBarText = root.querySelector('.fs-topbar .fs-now-text')?.textContent?.trim()
+    expect(topBarText).toBe('正在播放：海阔天空')
+    expect(root.querySelector('.fs-progress-row input[type="range"]')?.getAttribute('aria-label')).toBe('播放进度')
+
+    const labels = Array.from(root.querySelectorAll('.fs-action-row .fs-act')).map(el => el.textContent.replace(/\d+/g, '').trim())
+    expect(labels).toEqual(['暂停', '伴唱', '重唱', '切歌', '音量减', '音量加', '静音', '点歌台', '已点', '首页'])
+
+    const btns = root.querySelectorAll('.fs-action-row .fs-act')
+    btns[4].click()
+    btns[5].click()
+    btns[7].click()
+    btns[8].click()
+    btns[9].click()
+    await nextTick()
+
+    expect(emittedVolumes.length).toBe(2)
+    expect(emittedVolumes[0]).toBeLessThan(0)
+    expect(emittedVolumes[1]).toBeGreaterThan(0)
+    expect(openedBrowser).toBe(true)
+    expect(openedQueue).toBe(true)
+    expect(openedHome).toBe(true)
   })
 })

@@ -1,9 +1,9 @@
 <template>
   <header class="ktv-header">
-    <!-- 左侧 6 大核心操作入口（对标 activity_main.xml header_bar） -->
+    <!-- 左侧 6 大核心操作入口（对标 activity_main.xml header_bar 无框白线图标） -->
     <nav class="shortcut-group" aria-label="KTV 顶栏功能">
       <button type="button" class="hdr-btn" title="系统信息" aria-label="系统信息" @click="$emit('open-modal', 'system')">
-        <Info :size="18" />
+        <Info :size="20" />
       </button>
       <button type="button" class="hdr-btn" title="手机扫码点歌" aria-label="手机扫码点歌" @click="$emit('open-modal', 'qr')">
         <img :src="assets.iconMobileQr" alt="" class="hdr-img" />
@@ -18,43 +18,12 @@
         <img :src="assets.iconLibraryScan" alt="" class="hdr-img" />
       </button>
       <button type="button" class="hdr-btn" title="调音与现场音效" aria-label="调音与现场音效" @click="$emit('open-modal', 'mixer')">
-        <SlidersHorizontal :size="18" />
+        <SlidersHorizontal :size="20" />
       </button>
     </nav>
 
-    <!-- 中央在播跑马灯 -->
-    <div
-      class="marquee-box"
-      role="button"
-      tabindex="0"
-      aria-label="切换全屏"
-      @click="$emit('toggle-fullscreen')"
-      @keydown.enter.prevent="$emit('toggle-fullscreen')"
-      @keydown.space.prevent="$emit('toggle-fullscreen')"
-    >
-      <span v-if="player.nowPlaying?.song" class="marquee-text">
-        <b>正在演唱</b>
-        {{ player.nowPlaying.song.title }} - {{ player.nowPlaying.song.artist || '未知歌手' }}
-        <em v-if="player.nowPlaying.orderedByNick">· {{ player.nowPlaying.orderedByNick }} 点</em>
-      </span>
-      <span v-else class="marquee-text idle">
-        家庭KTV点歌系统 · {{ player.isTvConsole ? '电视在线，当前为 TV 控制台模式' : player.isWebHost ? '无 TV 在线，当前为网页完整 KTV 模式' : '正在同步房间播控状态' }}
-      </span>
-    </div>
-
-    <!-- 右侧 WS 连接状态、模式徽章与管理/身份入口 -->
+    <!-- 右侧低干扰模式切换、管理入口、Wi-Fi 状态与 IKTV 大号时钟/双行日期 -->
     <div class="right-group">
-      <span
-        class="ws-pill"
-        :class="{ ok: linkState.ok, offline: !linkState.ok }"
-        :title="linkState.title"
-        aria-live="polite"
-      >
-        <Wifi v-if="linkState.ok" :size="14" />
-        <WifiOff v-else :size="14" />
-        <span class="ws-text">{{ linkState.label }}</span>
-      </span>
-
       <button
         type="button"
         class="mode-pill"
@@ -66,15 +35,26 @@
         <span>{{ modeBadge.label }}</span>
       </button>
 
-      <button type="button" class="nick-pill" title="设置昵称与房主身份" @click="$emit('open-modal', 'settings')">
-        {{ user.nickname || '访客' }}
-      </button>
-
       <router-link to="/admin" class="admin-pill" title="打开管理后台">后台</router-link>
+
+      <span
+        class="ws-pill"
+        :class="{ ok: linkState.ok, offline: !linkState.ok }"
+        :title="linkState.title"
+        aria-live="polite"
+      >
+        <img v-if="linkState.ok" :src="assets.iconWifi" alt="" class="wifi-png" />
+        <WifiOff v-else :size="15" />
+        <span class="ws-text">{{ linkState.label }}</span>
+      </span>
 
       <div class="header-clock" aria-label="系统时间">
         <strong>{{ clockTime }}</strong>
-        <span>{{ clockDate }}</span>
+        <span class="clock-sep" aria-hidden="true" />
+        <div class="clock-date-col">
+          <span>{{ clockYearDate }}</span>
+          <span>{{ clockWeekday }}</span>
+        </div>
       </div>
     </div>
   </header>
@@ -82,30 +62,29 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Info, SlidersHorizontal, Wifi, WifiOff } from 'lucide-vue-next'
+import { Info, SlidersHorizontal, WifiOff } from 'lucide-vue-next'
 import { KTV_ASSETS } from './ktvCatalogPresets'
 import { usePlayerStore } from '../../stores/player'
 import { useNetStatusStore } from '../../stores/netStatus'
-import { useUserStore } from '../../stores/user'
 
 defineEmits(['open-modal', 'open-search', 'toggle-fullscreen', 'toggle-mode'])
 
 const player = usePlayerStore()
 const netStatus = useNetStatusStore()
-const user = useUserStore()
 const assets = KTV_ASSETS
 const nowRef = ref(new Date())
 let clockTimer = null
 
-const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
 const clockTime = computed(() => {
   const d = nowRef.value
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 })
-const clockDate = computed(() => {
+const clockYearDate = computed(() => {
   const d = nowRef.value
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${WEEKDAYS[d.getDay()]}`
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
 })
+const clockWeekday = computed(() => WEEKDAYS[nowRef.value.getDay()])
 
 onMounted(() => {
   clockTimer = setInterval(() => {
@@ -164,168 +143,163 @@ const modeBadge = computed(() => {
 
 <style scoped>
 .ktv-header {
-  height: 52px;
-  padding: 0 14px;
+  height: 54px;
+  padding: 0 18px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  background: linear-gradient(180deg, rgba(11, 14, 22, 0.88), rgba(11, 14, 22, 0.35));
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
   flex: none;
   z-index: 20;
 }
 .shortcut-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   flex: none;
 }
 .hdr-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: var(--text);
-  transition: var(--transition);
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.92);
+  transition: background-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
-.hdr-btn:hover {
-  border-color: rgba(255, 198, 75, 0.72);
-  background: rgba(255, 198, 75, 0.18);
-  transform: translateY(-1px);
+.hdr-btn:hover,
+.hdr-btn:focus-visible {
+  background: var(--iktv-blue);
+  box-shadow: 0 0 14px var(--iktv-blue-glow);
+  transform: scale(1.06);
+  outline: none;
 }
 .hdr-img {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
-}
-.marquee-box {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  cursor: pointer;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-.marquee-text {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 13px;
-  color: var(--text);
-}
-.marquee-text b {
-  color: var(--gold);
-  margin-right: 8px;
-}
-.marquee-text em {
-  font-style: normal;
-  color: var(--dim);
-  margin-left: 6px;
-}
-.marquee-text.idle {
-  color: var(--dim);
 }
 .right-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex: none;
-}
-.ws-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 30px;
-  padding: 0 9px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--dim);
-}
-.ws-pill.ok {
-  color: var(--mint);
-  border-color: rgba(110, 214, 168, 0.35);
-  background: rgba(110, 214, 168, 0.12);
-}
-.ws-pill.offline {
-  color: #fca5a5;
-  border-color: rgba(239, 68, 68, 0.45);
-  background: rgba(239, 68, 68, 0.16);
+  margin-left: auto;
 }
 .mode-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
-  padding: 0 11px;
+  height: 28px;
+  padding: 0 10px;
   border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(255, 255, 255, 0.07);
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.85);
+}
+.mode-pill:hover {
+  border-color: var(--iktv-blue);
+  background: rgba(49, 130, 251, 0.18);
 }
 .mode-pill .dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--cyan);
+  background: var(--iktv-blue);
 }
 .mode-pill.tv-console {
   color: var(--mint);
-  border-color: rgba(110, 214, 168, 0.45);
-  background: rgba(110, 214, 168, 0.14);
+  border-color: rgba(49, 194, 124, 0.35);
+  background: rgba(49, 194, 124, 0.12);
 }
 .mode-pill.tv-console .dot { background: var(--mint); }
 .mode-pill.web-host {
-  color: var(--gold);
-  border-color: rgba(255, 198, 75, 0.55);
-  background: rgba(255, 198, 75, 0.16);
+  color: #dbeafe;
+  border-color: rgba(49, 130, 251, 0.42);
+  background: rgba(49, 130, 251, 0.16);
 }
-.mode-pill.web-host .dot { background: var(--gold); }
+.mode-pill.web-host .dot { background: var(--iktv-blue); }
 .mode-pill.web-remote {
   color: var(--cyan);
-  border-color: rgba(84, 214, 226, 0.45);
-  background: rgba(84, 214, 226, 0.14);
+  border-color: rgba(84, 214, 226, 0.35);
+  background: rgba(84, 214, 226, 0.12);
 }
-.nick-pill, .admin-pill {
-  height: 32px;
+.admin-pill {
+  height: 28px;
   padding: 0 10px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  color: var(--dim);
+  color: rgba(255, 255, 255, 0.8);
 }
-.admin-pill:hover, .nick-pill:hover {
-  color: var(--text);
-  border-color: rgba(255, 198, 75, 0.55);
+.admin-pill:hover {
+  color: #fff;
+  border-color: var(--iktv-blue);
+  background: rgba(49, 130, 251, 0.18);
+}
+.ws-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.82);
+}
+.ws-pill.ok {
+  color: rgba(255, 255, 255, 0.86);
+}
+.ws-pill.offline {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.18);
+  padding: 0 9px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+.wifi-png {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+.ws-text {
+  font-size: 11px;
+}
+.ws-pill.ok .ws-text {
+  color: rgba(255, 255, 255, 0.65);
 }
 .header-clock {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-left: 8px;
-  border-left: 1px solid rgba(255, 255, 255, 0.25);
-  color: var(--text);
+  gap: 10px;
+  color: #ffffff;
 }
 .header-clock strong {
-  font-size: 16px;
-  font-weight: 500;
+  font-size: 26px;
+  font-weight: 300;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
-.header-clock span {
+.clock-sep {
+  width: 1px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.35);
+}
+.clock-date-col {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
   font-size: 11px;
-  color: var(--dim);
+  color: rgba(255, 255, 255, 0.88);
 }
 
 @media (max-width: 899px) {
@@ -342,20 +316,16 @@ const modeBadge = computed(() => {
     width: 32px;
     height: 32px;
   }
-  .marquee-box {
-    order: 3;
-    flex: 1 0 100%;
-  }
   .right-group {
     margin-left: auto;
+    gap: 6px;
   }
-  .nick-pill,
   .header-clock,
   .ws-text {
     display: none;
   }
   .ws-pill {
-    padding: 0 7px;
+    padding: 0 6px;
     height: 28px;
   }
 }

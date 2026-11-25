@@ -27,6 +27,7 @@ import iconMobileQr from '../../assets/ktv/ic_header_mobile_qr.png'
 import iconSettings from '../../assets/ktv/ic_header_settings.png'
 import iconSearch from '../../assets/ktv/ktv_ref_v50_settings_search.png'
 import iconLibraryScan from '../../assets/ktv/ic_header_library_scan.png'
+import iconWifi from '../../assets/ktv/ic_header_wifi.png'
 import iconNext from '../../assets/ktv/ic_player_next.png'
 import iconReplay from '../../assets/ktv/ic_player_replay.png'
 import iconVolDown from '../../assets/ktv/ic_volume_down.png'
@@ -34,6 +35,22 @@ import iconVolUp from '../../assets/ktv/ic_volume_up.png'
 import iconToneDown from '../../assets/ktv/ktv_ref_v50_dock_tone_down.png'
 import iconToneUp from '../../assets/ktv/ktv_ref_v50_dock_tone_up.png'
 import iconDownload from '../../assets/ktv/ktv_ref_v50_dock_download.png'
+import playerPlay from '../../assets/ktv/ktv_ref_v50_player_play.png'
+import playerPause from '../../assets/ktv/ktv_ref_v50_player_pause.png'
+import playerVocal from '../../assets/ktv/ktv_ref_v50_player_vocal.png'
+import playerRestart from '../../assets/ktv/ktv_ref_v50_player_restart.png'
+import playerNext from '../../assets/ktv/ktv_ref_v50_player_next.png'
+import playerVolumeDown from '../../assets/ktv/ktv_ref_v50_player_volume_down.png'
+import playerVolumeUp from '../../assets/ktv/ktv_ref_v50_player_volume_up.png'
+import playerMute from '../../assets/ktv/ktv_ref_v50_player_mute.png'
+import playerUnmute from '../../assets/ktv/ktv_ref_v50_player_unmute.png'
+import playerKiosk from '../../assets/ktv/ktv_ref_v50_player_kiosk.png'
+import playerQueue from '../../assets/ktv/ktv_ref_v50_player_queue.png'
+import playerHome from '../../assets/ktv/ktv_ref_v50_player_home.png'
+import playerRewind from '../../assets/ktv/ktv_ref_v50_player_rewind.png'
+import playerForward from '../../assets/ktv/ktv_ref_v50_player_forward.png'
+import playerSeekThumb from '../../assets/ktv/ktv_ref_v50_player_seek_thumb.png'
+import queueDrawerBg from '../../assets/ktv/ktv_ref_v50_queue_drawer_bg.png'
 import shadowLeft from '../../assets/ktv/bg_ktv_dock_shadow_left.png'
 import shadowRight from '../../assets/ktv/bg_ktv_dock_shadow_right.png'
 import standbyBanner from '../../assets/ktv/home_ktv_tv_banner.png'
@@ -44,6 +61,7 @@ export const KTV_ASSETS = {
   iconSettings,
   iconSearch,
   iconLibraryScan,
+  iconWifi,
   iconNext,
   iconReplay,
   iconVolDown,
@@ -51,13 +69,29 @@ export const KTV_ASSETS = {
   iconToneDown,
   iconToneUp,
   iconDownload,
+  playerPlay,
+  playerPause,
+  playerVocal,
+  playerRestart,
+  playerNext,
+  playerVolumeDown,
+  playerVolumeUp,
+  playerMute,
+  playerUnmute,
+  playerKiosk,
+  playerQueue,
+  playerHome,
+  playerRewind,
+  playerForward,
+  playerSeekThumb,
+  queueDrawerBg,
   shadowLeft,
   shadowRight,
   standbyBanner,
 }
 
-const SINGER_PHOTO_CAROUSEL = [tileSinger1, tileSinger2, tileSinger3]
-const SONG_PHOTO_CAROUSEL = [tileSong1, tileSong2, tileSong3]
+const SINGER_PHOTO_CAROUSEL = [tileSinger2, tileSinger3, tileSinger1]
+const SONG_PHOTO_CAROUSEL = [tileSong2, tileSong3, tileSong1]
 
 /**
  * 10 tiles matching Android TV `view_ktv_bento_dashboard.xml` and `KtvDashboardTile`.
@@ -65,8 +99,8 @@ const SONG_PHOTO_CAROUSEL = [tileSong1, tileSong2, tileSong3]
 export const BENTO_TILES = [
   { id: 'hot_ranking', title: '热歌新歌', tab: 'hot_new', artwork: tileHotNew, area: 'hot', align: 'center' },
   { id: 'tiktok', title: '抖音神曲', tab: 'tiktok', artwork: tileTiktok, area: 'tiktok', align: 'center' },
-  { id: 'singer', title: '歌手点歌', tab: 'singer', artwork: tileSinger1, carousel: SINGER_PHOTO_CAROUSEL, area: 'singer', align: 'start' },
-  { id: 'song_name', title: '歌名点歌', tab: 'song_name', artwork: tileSong1, carousel: SONG_PHOTO_CAROUSEL, area: 'songname', align: 'start' },
+  { id: 'singer', title: '歌手点歌', tab: 'singer', artwork: tileSinger2, carousel: SINGER_PHOTO_CAROUSEL, area: 'singer', align: 'start' },
+  { id: 'song_name', title: '歌名点歌', tab: 'song_name', artwork: tileSong2, carousel: SONG_PHOTO_CAROUSEL, area: 'songname', align: 'start' },
   { id: 'opera', title: '综艺点歌', tab: 'opera', artwork: tileVariety, area: 'opera', align: 'end' },
   { id: 'language', title: '语种点歌', tab: 'language', artwork: tileLanguage, area: 'language', align: 'end' },
   { id: 'theme', title: '主题点歌', tab: 'theme', artwork: tileTopic, area: 'theme', align: 'end' },

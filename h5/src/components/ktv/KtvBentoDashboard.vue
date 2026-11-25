@@ -83,9 +83,9 @@ onBeforeUnmount(() => {
 
 .bento-tile {
   position: relative;
-  border-radius: 14px;
+  border-radius: 10px;
   overflow: hidden;
-  border: 2px solid rgba(255, 255, 255, 0.14);
+  border: 2px solid transparent;
   background: rgba(20, 26, 40, 0.72);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
   transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
@@ -94,8 +94,8 @@ onBeforeUnmount(() => {
 .bento-tile:hover,
 .bento-tile:focus-visible {
   transform: scale(1.018);
-  border-color: var(--gold);
-  box-shadow: 0 0 0 2px rgba(255, 198, 75, 0.32), 0 16px 36px rgba(0, 0, 0, 0.55);
+  border-color: var(--iktv-blue);
+  box-shadow: 0 0 0 2px var(--iktv-blue-glow), 0 16px 36px rgba(0, 0, 0, 0.55);
   z-index: 2;
   outline: none;
 }
@@ -107,23 +107,30 @@ onBeforeUnmount(() => {
   object-fit: cover;
   pointer-events: none;
 }
+/* 双拼人物底图沿中缝精准对齐，避免宽屏裁剪截断人物 */
+.area-singer .tile-art {
+  object-position: center bottom;
+}
+.area-songname .tile-art {
+  object-position: center top;
+}
 .tile-gradient {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(10, 14, 24, 0.05) 35%, rgba(8, 11, 20, 0.82) 100%);
+  background: linear-gradient(180deg, transparent 72%, rgba(0, 0, 0, 0.24) 100%);
   pointer-events: none;
 }
 .tile-title {
   position: absolute;
   bottom: 12px;
-  left: 14px;
-  right: 14px;
-  font-size: 20px;
+  left: 16px;
+  right: 16px;
+  font-size: clamp(18px, 1.35vw, 24px);
   font-weight: 800;
   font-style: italic;
   letter-spacing: 0.5px;
   color: #fff;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
 }
 .tile-title.align-center { text-align: center; }
 .tile-title.align-start { text-align: left; }

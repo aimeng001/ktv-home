@@ -44,4 +44,25 @@ describe('KtvBottomDock 音量步长', () => {
     expect(deltas).toEqual([VOLUME_STEP, -VOLUME_STEP])
     expect(VOLUME_STEP).toBe(8)
   })
+
+  it('底部 10 个 IKTV 按钮渲染白线 PNG 图标且音效按钮触发 open-mixer', async () => {
+    let mixerOpened = false
+    root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp(KtvBottomDock, { onOpenMixer: () => { mixerOpened = true } })
+    app.use(pinia)
+    app.mount(root)
+    await nextTick()
+
+    const buttons = root.querySelectorAll('.dock-circle')
+    expect(buttons).toHaveLength(10)
+    expect(root.querySelectorAll('.dock-circle .dock-png')).toHaveLength(10)
+
+    const labels = Array.from(buttons).map(btn => btn.querySelector('span:last-child')?.textContent?.trim())
+    expect(labels).toEqual(['播放', '伴唱', '重唱', '切歌', '音量', '音量', '降调', '升调', '音效', '已点'])
+
+    buttons[8].click()
+    await nextTick()
+    expect(mixerOpened).toBe(true)
+  })
 })

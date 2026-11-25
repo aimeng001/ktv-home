@@ -1,6 +1,11 @@
 <template>
   <div v-if="open" class="drawer-backdrop" @click.self="$emit('close')">
-    <aside class="queue-drawer" role="dialog" aria-label="已点队列与历史记录">
+    <aside
+      class="queue-drawer"
+      role="dialog"
+      aria-label="已点队列与历史记录"
+      :style="{ backgroundImage: `linear-gradient(180deg, rgba(14, 18, 28, 0.9), rgba(8, 11, 20, 0.94)), url(${assets.queueDrawerBg})` }"
+    >
       <header class="drawer-hd">
         <div class="drawer-tabs">
           <button type="button" :class="{ on: activeTab === 'queue' }" @click="activeTab = 'queue'">
@@ -133,9 +138,11 @@ import { usePlayerStore } from '../../stores/player'
 import { useUserStore } from '../../stores/user'
 import { useToast } from '../../composables/useToast'
 import { confirmDialog } from '../../composables/useDialog'
-import { formatTimeClock } from './ktvCatalogPresets'
+import { formatTimeClock, KTV_ASSETS } from './ktvCatalogPresets'
 import { getArtistAvatarStyle } from '../../utils/avatarColor'
 import { rememberFailedThumbUrl, resolveSongThumbUrl, songAvatarInitial } from '../../utils/songThumbnail'
+
+const assets = KTV_ASSETS
 
 const props = defineProps({
   open: { type: Boolean, default: false }
@@ -321,8 +328,10 @@ async function repeatSong(entry) {
 .queue-drawer {
   width: min(440px, 94vw);
   height: 100%;
-  background: linear-gradient(180deg, rgba(20, 26, 40, 0.98), rgba(11, 15, 24, 0.98));
-  border-left: 1px solid rgba(255, 198, 75, 0.25);
+  background-color: rgba(12, 16, 26, 0.96);
+  background-position: center;
+  background-size: cover;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
   display: flex;
   flex-direction: column;
   padding: 14px;
@@ -333,22 +342,33 @@ async function repeatSong(entry) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 6px;
 }
 .drawer-tabs {
   display: flex;
-  gap: 8px;
+  gap: 14px;
 }
 .drawer-tabs button {
-  padding: 7px 14px;
-  border-radius: 999px;
-  font-size: 13px;
-  background: rgba(255, 255, 255, 0.07);
-  color: var(--dim);
+  position: relative;
+  padding: 8px 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.62);
 }
 .drawer-tabs button.on {
-  background: var(--gold);
-  color: #191304;
+  color: #ffffff;
   font-weight: 800;
+}
+.drawer-tabs button.on::after {
+  content: '';
+  position: absolute;
+  left: 16%;
+  right: 16%;
+  bottom: -7px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--iktv-rose);
 }
 .close-btn {
   width: 34px;
@@ -401,11 +421,11 @@ async function repeatSong(entry) {
   gap: 10px;
   padding: 12px;
   border-radius: 12px;
-  background: linear-gradient(135deg, rgba(255, 198, 75, 0.14), rgba(20, 26, 40, 0.85));
-  border: 1px solid rgba(255, 198, 75, 0.35);
+  background: linear-gradient(135deg, rgba(49, 130, 251, 0.18), rgba(16, 22, 36, 0.88));
+  border: 1px solid rgba(49, 130, 251, 0.42);
 }
 .now-card > .now-meta { flex: 1; min-width: 0; }
-.now-card small { color: var(--gold); font-size: 11px; font-weight: 700; display: block; }
+.now-card small { color: #93c5fd; font-size: 11px; font-weight: 700; display: block; }
 .now-card strong { display: block; font-size: 15px; margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .now-card span { font-size: 12px; color: var(--dim); }
 .q-avatar {
@@ -430,7 +450,7 @@ async function repeatSong(entry) {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
-.q-index { width: 22px; text-align: center; font-weight: 700; color: var(--gold); font-size: 13px; }
+.q-index { width: 22px; text-align: center; font-weight: 700; color: #7dd3fc; font-size: 13px; }
 .q-meta { flex: 1; min-width: 0; }
 .q-meta strong { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .q-meta small { font-size: 11px; color: var(--dim); }
@@ -444,11 +464,11 @@ async function repeatSong(entry) {
   background: rgba(255, 255, 255, 0.1);
   color: var(--text);
 }
-.mini-btn.gold { background: var(--gold); color: #191304; font-weight: 800; }
-.mini-btn.danger { background: rgba(255, 107, 97, 0.2); color: #ff9f96; border: 1px solid rgba(255, 107, 97, 0.45); }
+.mini-btn.gold { background: var(--iktv-blue); color: #ffffff; font-weight: 700; }
+.mini-btn.danger { background: rgba(233, 51, 89, 0.22); color: #fda4af; border: 1px solid rgba(233, 51, 89, 0.48); }
 .hist-filters { display: flex; gap: 8px; }
 .hist-filters button { padding: 5px 12px; border-radius: 999px; font-size: 12px; background: rgba(255, 255, 255, 0.07); color: var(--dim); }
-.hist-filters button.on { background: var(--gold); color: #191304; font-weight: 700; }
+.hist-filters button.on { background: var(--iktv-blue); color: #ffffff; font-weight: 700; }
 .empty-tip { padding: 30px 10px; text-align: center; color: var(--dim); font-size: 13px; }
 .empty-tip.err { color: var(--coral-soft); }
 </style>

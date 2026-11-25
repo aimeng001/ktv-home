@@ -10,6 +10,10 @@
   --gold: #ffc64b; --gold2: #ffe39a; --gold-glow: rgba(255,198,75,.12);
   --coral: #ff6b61; --coral-soft: #ff948d; --cyan: #54d6e2; --mint: #6ed6a8;
   --purple: #a78bfa; --purple-glow: rgba(167,139,250,.15);
+  --iktv-blue: #3182fb; --iktv-blue-glow: rgba(49,130,251,.42);
+  --iktv-indigo: #4936ff; --iktv-green: #31c27c;
+  --iktv-track: rgba(115,115,115,.45); --iktv-rose: #e93359;
+  --iktv-panel-bg: rgba(0,0,0,.82);
   --red: #f87171; --green: #34d399;
   --text: #f7f8fb; --dim: #aeb7c5; --dim2: #747f90;
   --tagktv: #f0c742; --tagmv: #38bdf8; --tagaudio: #94a3b8;

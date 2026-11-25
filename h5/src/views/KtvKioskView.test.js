@@ -481,6 +481,13 @@ describe('KtvKioskView', () => {
     expect(autoFsToggle.textContent).toContain('已开启')
     expect(localStorage.getItem('ktv_auto_fullscreen')).toBe('true')
 
+    const lyricsToggle = root.querySelector('.lyrics-toggle')
+    expect(lyricsToggle?.textContent).toContain('已开启')
+    lyricsToggle.click()
+    await nextTick()
+    expect(lyricsToggle.textContent).toContain('已关闭')
+    expect(localStorage.getItem('ktv_show_lyrics')).toBe('false')
+
     const wishInput = root.querySelector('input[placeholder="输入曲库缺少的歌名或歌手"]')
     wishInput.value = '夜曲'
     wishInput.dispatchEvent(new Event('input'))

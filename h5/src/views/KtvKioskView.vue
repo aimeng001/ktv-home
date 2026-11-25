@@ -50,6 +50,7 @@
     <KtvMediaSurface
       :fullscreen="fullscreen"
       :pip-rect="pipRect"
+      :show-lyrics="showLyrics"
       @enter-fullscreen="fullscreen = true"
       @exit-fullscreen="fullscreen = false"
       @open-browser="openBrowserFromFullscreen"
@@ -77,9 +78,11 @@
     <KtvModals
       :active-modal="activeModal"
       :auto-fullscreen="autoFullscreen"
+      :show-lyrics="showLyrics"
       @close="activeModal = ''"
       @claim-web-host="claimWebHost"
       @toggle-auto-fullscreen="toggleAutoFullscreen"
+      @toggle-show-lyrics="toggleShowLyrics"
       @set-volume="setVolume"
       @toggle-mute="toggleMute"
       @set-vocal="setVocalMode"
@@ -148,6 +151,9 @@ const identityRetrying = ref(false)
 const activeModal = ref('')
 const autoFullscreen = ref((() => {
   try { return localStorage.getItem('ktv_auto_fullscreen') === 'true' } catch { return false }
+})())
+const showLyrics = ref((() => {
+  try { return localStorage.getItem('ktv_show_lyrics') !== 'false' } catch { return true }
 })())
 const browserRef = ref(null)
 const dockRef = ref(null)
@@ -288,6 +294,11 @@ function toggleAutoFullscreen() {
   autoFullscreen.value = !autoFullscreen.value
   try { localStorage.setItem('ktv_auto_fullscreen', String(autoFullscreen.value)) } catch { /* ignore */ }
   resetIdleFullscreenTimer()
+}
+
+function toggleShowLyrics() {
+  showLyrics.value = !showLyrics.value
+  try { localStorage.setItem('ktv_show_lyrics', String(showLyrics.value)) } catch { /* ignore */ }
 }
 
 function resetIdleFullscreenTimer() {

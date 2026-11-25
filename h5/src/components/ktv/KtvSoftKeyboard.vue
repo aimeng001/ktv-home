@@ -257,7 +257,7 @@ defineExpose({ focusInput })
   align-items: center;
   gap: 6px;
   background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 198, 75, 0.35);
+  border: 1px solid rgba(49, 130, 251, 0.45);
   border-radius: 8px;
   padding: 0 8px;
   height: 38px;
@@ -295,14 +295,14 @@ defineExpose({ focusInput })
 }
 .word-count-chip:hover {
   color: #fff;
-  border-color: rgba(255, 198, 75, 0.4);
+  border-color: rgba(49, 130, 251, 0.55);
 }
 .word-count-chip.on {
-  color: #1a1505;
-  background: var(--gold, #ffc64b);
-  border-color: var(--gold, #ffc64b);
+  color: #ffffff;
+  background: var(--iktv-blue, #3182fb);
+  border-color: var(--iktv-blue, #3182fb);
   font-weight: 700;
-  box-shadow: 0 0 8px rgba(255, 198, 75, 0.4);
+  box-shadow: 0 0 8px var(--iktv-blue-glow, rgba(49, 130, 251, 0.42));
 }
 .kb-mode-tabs {
   display: grid;
@@ -318,9 +318,9 @@ defineExpose({ focusInput })
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 .kb-mode-tabs button.on {
-  color: #191304;
-  background: var(--gold);
-  border-color: var(--gold);
+  color: #ffffff;
+  background: var(--iktv-indigo, #4936ff);
+  border-color: var(--iktv-indigo, #4936ff);
   font-weight: 700;
 }
 .qwerty-wrap {
@@ -345,8 +345,8 @@ defineExpose({ focusInput })
   color: var(--text);
 }
 .kb-key:hover, .kb-key:active {
-  background: rgba(255, 198, 75, 0.25);
-  border-color: var(--gold);
+  background: rgba(49, 130, 251, 0.25);
+  border-color: var(--iktv-blue, #3182fb);
 }
 .qwerty-actions {
   display: grid;
@@ -363,10 +363,10 @@ defineExpose({ focusInput })
   font-weight: 600;
 }
 .kb-action.gold {
-  background: var(--gold);
-  color: #191304;
-  border-color: var(--gold);
-  font-weight: 800;
+  background: var(--iktv-blue, #3182fb);
+  color: #ffffff;
+  border-color: var(--iktv-blue, #3182fb);
+  font-weight: 700;
 }
 .t9-grid {
   display: grid;
@@ -386,7 +386,7 @@ defineExpose({ focusInput })
 }
 .t9-key strong { font-size: 15px; }
 .t9-key small { font-size: 11px; color: var(--dim); margin-top: 2px; }
-.t9-key.action { background: rgba(255, 198, 75, 0.14); border-color: rgba(255, 198, 75, 0.3); }
+.t9-key.action { background: rgba(49, 130, 251, 0.15); border-color: rgba(49, 130, 251, 0.36); }
 .t9-wrap { display: flex; flex-direction: column; gap: 6px; }
 .t9-hint { font-size: 10px; color: var(--dim); text-align: center; }
 
@@ -405,11 +405,11 @@ defineExpose({ focusInput })
   justify-content: center;
 }
 .number-key strong { font-size: 18px; font-weight: 800; color: #fff; }
-.number-key.action { background: rgba(255, 198, 75, 0.14); border-color: rgba(255, 198, 75, 0.3); }
-.number-key.action strong { font-size: 14px; font-weight: 700; color: var(--gold); }
+.number-key.action { background: rgba(49, 130, 251, 0.15); border-color: rgba(49, 130, 251, 0.36); }
+.number-key.action strong { font-size: 14px; font-weight: 700; color: #93c5fd; }
 .number-key:hover, .number-key:active {
-  background: rgba(255, 198, 75, 0.25);
-  border-color: var(--gold);
+  background: rgba(49, 130, 251, 0.25);
+  border-color: var(--iktv-blue, #3182fb);
 }
 .number-wrap { display: flex; flex-direction: column; gap: 6px; }
 .number-hint { font-size: 11px; color: var(--dim); text-align: center; }
