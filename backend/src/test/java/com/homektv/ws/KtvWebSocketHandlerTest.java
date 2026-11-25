@@ -838,4 +838,30 @@ class KtvWebSocketHandlerTest {
                 .findFirst().orElseThrow();
         assertThat(((Map<?, ?>) roleEvent.payload()).get("role")).isEqualTo("STANDBY");
     }
+
+    @Test
+    void activeTvConnectAndWebPlayerClaimTriggerAutoPlayWhenIdle() throws Exception {
+        WebSocketSession tv = mock(WebSocketSession.class);
+        when(tv.getId()).thenReturn("tv-autoplay");
+        when(tv.getAttributes()).thenReturn(Map.of("client_type", "tv"));
+        when(playbackService.startAutoPlayIfIdle()).thenReturn(true);
+
+        handler.afterConnectionEstablished(tv);
+
+        verify(playbackService).startAutoPlayIfIdle();
+        verify(snapshotService, org.mockito.Mockito.atLeastOnce()).snapshot();
+
+        clearInvocations(playbackService, broadcaster);
+        WebSocketSession h5 = mock(WebSocketSession.class);
+        when(h5.getId()).thenReturn("h5-autoplay");
+        when(h5.getAttributes()).thenReturn(Map.of("client_type", "h5", "client_token", "pc-autoplay"));
+        when(broadcaster.isTvOnline()).thenReturn(false);
+        when(playbackService.startAutoPlayIfIdle()).thenReturn(true);
+
+        handler.handleTextMessage(h5, new TextMessage("{\"type\":\"web_player_claim\",\"payload\":{\"force\":false}}"));
+
+        verify(playbackService).startAutoPlayIfIdle();
+        verify(broadcaster).broadcastPlayback(
+                org.mockito.ArgumentMatchers.argThat(e -> WsEvent.NOW_PLAYING.equals(e.type())));
+    }
 }

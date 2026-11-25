@@ -335,6 +335,37 @@ class SnapshotServiceTest {
         verifyNoInteractions(playbackResolution);
     }
 
+    @Test
+    void snapshotExposesAutoPlayFlagAndLabelWhenPlayingHistoryAutoPlayItem() {
+        PlayerStateRepository playerRepository = mock(PlayerStateRepository.class);
+        QueueItemRepository queueRepository = mock(QueueItemRepository.class);
+        SongRepository songRepository = mock(SongRepository.class);
+        AppUserRepository userRepository = mock(AppUserRepository.class);
+        WsBroadcaster broadcaster = mock(WsBroadcaster.class);
+
+        PlayerState player = new PlayerState();
+        player.setCurrentQueueId(88L);
+        player.setState("playing");
+        QueueItem autoItem = new QueueItem();
+        autoItem.setId(88L);
+        autoItem.setSongId(100L);
+        autoItem.setStatus(QueueService.PLAYING);
+        autoItem.setAutoPlay(true);
+
+        when(playerRepository.getSingleton()).thenReturn(player);
+        when(queueRepository.findByStatusOrderByOrderIndexAsc(QueueService.WAITING)).thenReturn(List.of());
+        when(queueRepository.findById(88L)).thenReturn(java.util.Optional.of(autoItem));
+        when(songRepository.findAllById(java.util.Set.of(100L))).thenReturn(List.of(song(100L, "又十年")));
+
+        var snapshot = new SnapshotService(playerRepository, queueRepository,
+                songRepository, userRepository, broadcaster).snapshot();
+
+        assertThat(snapshot.playing()).isNotNull();
+        assertThat(snapshot.playing().autoPlay()).isTrue();
+        assertThat(snapshot.playing().orderedByNick()).isEqualTo("随机公播");
+        assertThat(snapshot.list()).isEmpty();
+    }
+
     private static Stream<Arguments> readyAudioLayouts() {
         return Stream.of(
                 Arguments.of(

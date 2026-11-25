@@ -61,10 +61,6 @@ export function songAvatarInitial(song) {
   return (raw || '音').slice(0, 1)
 }
 
-export function rememberArtistAvatarForFallback(failedArtistKeys, artist) {
-  return rememberAvatarFailure(failedArtistKeys, artist)
-}
-
 function normalizeUrl(url) {
   return typeof url === 'string' ? url.trim() : ''
 }

@@ -167,4 +167,22 @@ class FullscreenPlaybackPanelPolicyTest {
         assertEquals(10, FullscreenPlaybackPanelPolicy.ACTION_COUNT)
         assertEquals(10, FullscreenPlaybackPanelPolicy.ACTION_ORDER.size)
     }
+
+    @Test
+    fun nowPlayingMarqueeFormatsNextSongAndAutoPlayPrefixAndBoundsDuration() {
+        assertEquals("", FullscreenPlaybackPanelPolicy.formatNowPlayingMarquee("   "))
+        assertEquals("正在播放：又十年", FullscreenPlaybackPanelPolicy.formatNowPlayingMarquee("又十年"))
+        assertEquals(
+            "正在播放：又十年\u3000\u3000|\u3000\u3000下一首：陈奕迅 - 十年",
+            FullscreenPlaybackPanelPolicy.formatNowPlayingMarquee("又十年", "十年", "陈奕迅", false),
+        )
+        assertEquals(
+            "随机公播：又十年",
+            FullscreenPlaybackPanelPolicy.formatNowPlayingMarquee("又十年", autoPlay = true),
+        )
+        val shortDuration = FullscreenPlaybackPanelPolicy.marqueeDurationMs(1920, 180f, 1.0f)
+        val longDuration = FullscreenPlaybackPanelPolicy.marqueeDurationMs(1920, 8000f, 1.0f)
+        assertTrue(shortDuration in 8_000L..28_000L)
+        assertEquals(28_000L, longDuration)
+    }
 }

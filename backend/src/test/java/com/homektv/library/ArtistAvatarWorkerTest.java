@@ -496,4 +496,27 @@ class ArtistAvatarWorkerTest {
         verify(jdbc, org.mockito.Mockito.atLeastOnce()).update(sql.capture(), arguments.capture());
         assertThat(sql.getAllValues()).anyMatch(s -> s.contains("status=?") && s.contains("claim_token=?::uuid"));
     }
+
+    @Test
+    void startupRecoveryReleasesOrphanedProcessingLeasesAndTriggersWorker() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        when(jdbc.update(anyString())).thenReturn(3);
+        when(jdbc.query(anyString(), org.mockito.ArgumentMatchers.<RowMapper<Object>>any(), any(Object[].class)))
+                .thenReturn(List.of());
+
+        ArtistAvatarWorker worker = new ArtistAvatarWorker(
+                jdbc, profiles, mock(MusicSourceConfigService.class),
+                mock(ExternalCoverService.class), mock(AssetWriter.class), List.of(), Runnable::run);
+
+        worker.recoverInterruptedJobsOnStartup();
+
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc).update(sql.capture());
+        assertThat(sql.getValue())
+                .contains("UPDATE artist_avatar_jobs")
+                .contains("SET status='PENDING'")
+                .contains("WHERE status='PROCESSING'");
+        verify(jdbc).query(anyString(), org.mockito.ArgumentMatchers.<RowMapper<Object>>any(), any(Object[].class));
+    }
 }

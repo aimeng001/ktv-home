@@ -1702,10 +1702,10 @@ defineExpose({ switchTab, focusSearchKeyboard })
     position: fixed;
     left: 10px;
     right: 10px;
-    bottom: 126px;
+    bottom: calc(var(--ktv-dock-height, 136px) + 8px);
     /* dvh 在旧 WebView 上无效，先给 vh 回退再覆盖。 */
-    max-height: calc(100vh - 196px);
-    max-height: calc(100dvh - 196px);
+    max-height: calc(100vh - var(--ktv-dock-height, 136px) - 76px);
+    max-height: calc(100dvh - var(--ktv-dock-height, 136px) - 76px);
     overflow-y: auto;
     z-index: 45;
   }
@@ -1713,9 +1713,9 @@ defineExpose({ switchTab, focusSearchKeyboard })
 
 @media (max-width: 759px) {
   .right-keyboard.mobile-open {
-    bottom: calc(206px + var(--safe-bottom));
-    max-height: calc(100vh - 280px - var(--safe-bottom));
-    max-height: calc(100dvh - 280px - var(--safe-bottom));
+    bottom: calc(244px + var(--safe-bottom));
+    max-height: calc(100vh - 308px - var(--safe-bottom));
+    max-height: calc(100dvh - 308px - var(--safe-bottom));
   }
 }
 </style>

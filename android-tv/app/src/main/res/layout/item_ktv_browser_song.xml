@@ -43,14 +43,6 @@
             tools:text="孙" />
     </FrameLayout>
 
-    <!-- 兼容隐藏项：保留历史 ID 防御潜在反射 -->
-    <TextView
-        android:id="@+id/badgeLocal"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:visibility="gone"
-        tools:ignore="MissingDefaultResource" />
-
     <!-- 歌曲信息区：独占主空间，歌名与歌手单行不折行 -->
     <LinearLayout
         android:layout_width="0dp"

@@ -598,6 +598,91 @@ class PlaybackServiceTest {
         assertThat(sought.getPositionMs()).isEqualTo(119_000L);
     }
 
+    @Test
+    void nextAndFinishedTriggerHistoryAutoPlayWithoutWritingHistoryAndAvoidImmediateRepeat() {
+        when(historyRepository.findDistinctRecentSongIds(300)).thenReturn(List.of(2L, 3L));
+        Song s2 = song(2L);
+        Song s3 = song(3L);
+        when(songRepository.findAllById(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(s2, s3));
+        when(fileRepository.findSongIdsWithReadyFile(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(java.util.Set.of(2L, 3L));
+        when(queueRepository.save(any(QueueItem.class))).thenAnswer(invocation -> {
+            QueueItem saved = invocation.getArgument(0);
+            if (saved.getId() == null) saved.setId(501L);
+            return saved;
+        });
+
+        PlayerState next = playbackService.next();
+
+        assertThat(next.getState()).isEqualTo("playing");
+        assertThat(next.getCurrentQueueId()).isEqualTo(501L);
+        org.mockito.ArgumentCaptor<QueueItem> savedCaptor = org.mockito.ArgumentCaptor.forClass(QueueItem.class);
+        verify(queueRepository, times(2)).save(savedCaptor.capture());
+        QueueItem autoItem = savedCaptor.getAllValues().getLast();
+        assertThat(autoItem.isAutoPlay()).isTrue();
+        assertThat(autoItem.getSongId()).isEqualTo(3L); // excluded previous songId=2L
+        assertThat(autoItem.getStatus()).isEqualTo(QueueService.PLAYING);
+
+        // Now finish the auto-play track: it must NOT record PlayHistory or increment playCount
+        autoItem.setStatus(QueueService.PLAYING);
+        when(queueRepository.findById(501L)).thenReturn(Optional.of(autoItem));
+        int countBefore = s3.getPlayCount();
+        org.mockito.Mockito.clearInvocations(historyRepository);
+
+        FinishResult finishedAuto = playbackService.onFinished(501L);
+        assertThat(finishedAuto.status()).isEqualTo(FinishResult.Status.APPLIED);
+        assertThat(s3.getPlayCount()).isEqualTo(countBefore);
+        verify(historyRepository, never()).save(any(PlayHistory.class));
+    }
+
+    @Test
+    void startIfIdlePreemptsActiveAutoPlayImmediatelyWhenUserOrdersASong() {
+        QueueItem autoPlaying = queueItem(400L, QueueService.PLAYING);
+        autoPlaying.setSongId(10L);
+        autoPlaying.setAutoPlay(true);
+        playerState.setCurrentQueueId(400L);
+        playerState.setState("playing");
+        when(queueRepository.findById(400L)).thenReturn(Optional.of(autoPlaying));
+
+        QueueItem userOrdered = queueItem(401L, QueueService.WAITING);
+        userOrdered.setSongId(20L);
+        Song s20 = song(20L);
+        when(queueRepository.findByStatusOrderByOrderIndexAsc(QueueService.WAITING)).thenReturn(List.of(userOrdered));
+        when(songRepository.findAllById(java.util.Set.of(20L))).thenReturn(List.of(s20));
+        when(fileRepository.findSongIdsWithReadyFile(java.util.Set.of(20L))).thenReturn(java.util.Set.of(20L));
+
+        assertThat(playbackService.startIfIdle()).isTrue();
+        assertThat(autoPlaying.getStatus()).isEqualTo(QueueService.SKIPPED);
+        assertThat(userOrdered.getStatus()).isEqualTo(QueueService.PLAYING);
+        assertThat(playerState.getCurrentQueueId()).isEqualTo(401L);
+        verify(historyRepository, never()).save(any(PlayHistory.class));
+    }
+
+    @Test
+    void startAutoPlayIfIdleRespectsPlayerIdleAndHistoryAvailability() {
+        playerState.setCurrentQueueId(null);
+        playerState.setState("idle");
+        when(historyRepository.findDistinctRecentSongIds(300)).thenReturn(List.of());
+        assertThat(playbackService.startAutoPlayIfIdle()).isFalse();
+        assertThat(playerState.getState()).isEqualTo("idle");
+
+        when(historyRepository.findDistinctRecentSongIds(300)).thenReturn(List.of(9L));
+        when(songRepository.findAllById(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(song(9L)));
+        when(fileRepository.findSongIdsWithReadyFile(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(java.util.Set.of(9L));
+        when(queueRepository.save(any(QueueItem.class))).thenAnswer(invocation -> {
+            QueueItem saved = invocation.getArgument(0);
+            if (saved.getId() == null) saved.setId(601L);
+            return saved;
+        });
+
+        assertThat(playbackService.startAutoPlayIfIdle()).isTrue();
+        assertThat(playerState.getState()).isEqualTo("playing");
+        assertThat(playerState.getCurrentQueueId()).isEqualTo(601L);
+
+        assertThat(playbackService.startAutoPlayIfIdle()).isFalse();
+    }
+
     private static SongFile file(long id, long songId) {
         SongFile file = new SongFile();
         file.setId(id);

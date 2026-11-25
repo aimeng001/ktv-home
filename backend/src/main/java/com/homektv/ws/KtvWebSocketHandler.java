@@ -106,6 +106,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
                 if (!tvWasOnline) broadcastObserverSnapshot();
                 return;
             }
+            playbackService.startAutoPlayIfIdle();
         }
         // 连接/重连即推全量快照（详设§4.1）
         var snapshot = snapshotService.snapshot();
@@ -357,6 +358,10 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         broadcaster.sendTo(session, WsEvent.of(WsEvent.WEB_PLAYER_STATE, outcome.status()));
         if (outcome.stateChanged()) {
             broadcaster.broadcastObservers(WsEvent.of(WsEvent.WEB_PLAYER_STATE, outcome.status()));
+        }
+        if (outcome.assignment().role() == ActivePlayerRegistry.Role.ACTIVE
+                && playbackService.startAutoPlayIfIdle()) {
+            broadcaster.broadcastPlayback(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
         }
     }
 

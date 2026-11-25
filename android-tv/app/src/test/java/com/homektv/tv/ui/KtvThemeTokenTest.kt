@@ -60,11 +60,6 @@ class KtvThemeTokenTest {
         assertTrue(focusedElements.any { it.getAttribute("android:width") == "@dimen/ktv_theme_focus_stroke_width" })
         assertTrue(focusedElements.any { it.getAttribute("android:radius") == "@dimen/ktv_theme_card_corner_radius" })
 
-        val styles = parse(locate("src/main/res/values/styles.xml"))
-        val cardStyle = styleItems(styles, "Widget.HomeKtv.CommercialCard")
-        assertEquals("@drawable/bg_ktv_card_focused", cardStyle["android:background"])
-        assertEquals("@animator/ktv_card_focus_scale", cardStyle["android:stateListAnimator"])
-
         val animator = locate("src/main/res/animator/ktv_card_focus_scale.xml").readText()
         assertTrue(animator.contains("android:state_focused=\"true\""))
         assertTrue(animator.contains("android:valueTo=\"1.05\""))
@@ -81,16 +76,6 @@ class KtvThemeTokenTest {
         assertTrue(videoFrame.contains("@android:color/black"))
         assertTrue(videoFrame.contains("@color/ktv_focus_blue"))
     }
-
-    private fun styleItems(document: org.w3c.dom.Document, styleName: String): Map<String, String> =
-        (0 until document.getElementsByTagName("style").length)
-            .map { document.getElementsByTagName("style").item(it) as Element }
-            .single { it.getAttribute("name") == styleName }
-            .let { style ->
-                (0 until style.getElementsByTagName("item").length)
-                    .map { style.getElementsByTagName("item").item(it) as Element }
-                    .associate { it.getAttribute("name") to it.textContent.trim() }
-            }
 
     private fun parse(file: File) = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file)
 

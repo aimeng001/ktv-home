@@ -66,18 +66,14 @@
     <!-- 全屏覆盖层：极简顶部在播跑马灯、双行歌词、IKTV 底部两行大控台（对标 view_ktv_fullscreen_playback_panel.xml） -->
     <template v-if="fullscreen">
       <div class="fs-topbar" :class="{ hidden: !osdVisible }">
-        <div v-if="song" class="fs-now-marquee">
-          <span class="fs-now-text">正在播放：{{ song.title }}</span>
+        <div v-if="marqueeText" class="fs-now-marquee" role="status" aria-live="polite">
+          <span
+            :key="marqueeRunKey"
+            class="fs-now-text"
+            :style="{ '--marquee-duration': `${marqueeDurationSec}s` }"
+          >{{ marqueeText }}</span>
         </div>
       </div>
-
-      <!-- 切歌与下一首顶部跑马灯横幅 -->
-      <transition name="marquee-slide">
-        <div v-if="songBanner" class="fs-marquee-banner" role="status" aria-live="polite">
-          <span class="marquee-icon">🎵</span>
-          <span class="marquee-text">{{ songBanner }}</span>
-        </div>
-      </transition>
 
       <!-- 1:1 电视同款双行卡拉OK歌词 -->
       <div v-if="props.showLyrics && song" class="fs-lyrics" :class="{ 'audio-center': isAudioOnly || mirrorStreamFailed }">
@@ -238,7 +234,6 @@ import KaraokeLyricSurface from './KaraokeLyricSurface.vue'
 import { usePlayerStore } from '../../stores/player'
 import { parseLrc } from '../../composables/lrc'
 import { createLyricLoader } from '../../views/lyricLoader'
-import { currentLyricIndex } from '../../views/lyricState'
 import { buildWebStreamSpec } from '../../player/streamSelection'
 import { VOLUME_STEP } from './ktvControlSteps'
 import { createWebAudioChannelRouter } from '../../player/webAudioChannelRouter'
@@ -257,17 +252,13 @@ const props = defineProps({
 const assets = KTV_ASSETS
 const emit = defineEmits([
   'enter-fullscreen',
-  'exit-fullscreen',
   'toggle-play',
   'toggle-vocal',
-  'swap-vocal',
   'toggle-mute',
   'restart',
   'next',
   'seek',
   'volume-delta',
-  'pitch-delta',
-  'open-mixer',
   'open-queue',
   'open-browser',
   'open-home',
@@ -288,19 +279,9 @@ const detectedDurationMs = ref(0)
 const scrubbingValue = ref(null)
 const osdVisible = ref(true)
 const effectBanner = ref('')
-const songBanner = ref('')
+const marqueeRunKey = ref(0)
 let osdTimer = null
 let effectTimer = null
-let songBannerTimer = null
-
-function showSongMarquee(text) {
-  if (!text) return
-  songBanner.value = text
-  clearTimeout(songBannerTimer)
-  songBannerTimer = setTimeout(() => {
-    songBanner.value = ''
-  }, 3000)
-}
 let lastProgressSentAt = 0
 let lastAppliedSeq = -1
 let lastStreamKey = ''
@@ -319,6 +300,20 @@ const lyricLoader = createLyricLoader({
 
 const song = computed(() => player.nowPlaying?.song || null)
 const nextSong = computed(() => player.queue?.[0]?.song || null)
+const marqueeText = computed(() => {
+  if (!song.value?.title) return ''
+  const prefix = player.nowPlaying?.autoPlay ? '随机公播' : '正在播放'
+  const base = `${prefix}：${song.value.title}`
+  if (!nextSong.value?.title) return base
+  const nextPart = nextSong.value.artist
+    ? `${nextSong.value.artist} - ${nextSong.value.title}`
+    : nextSong.value.title
+  return `${base}\u3000\u3000|\u3000\u3000下一首：${nextPart}`
+})
+const marqueeDurationSec = computed(() => {
+  const len = marqueeText.value.length
+  return Math.min(26, Math.max(12, Math.round(10 + len * 0.28)))
+})
 const failedMediaUrls = ref(new Set())
 const audioStageBackdropUrl = computed(() => resolveSongThumbUrl(song.value, failedMediaUrls.value))
 const audioPosterUrl = computed(() => resolveSongThumbUrl(song.value, failedMediaUrls.value))
@@ -384,9 +379,6 @@ const seekProgressPct = computed(() => (
     : 0
 ))
 
-const activeLyricIdx = computed(() => currentLyricIndex(lyricLines.value, displayPositionMs.value))
-const lyricOffsetPx = computed(() => activeLyricIdx.value < 0 ? 0 : Math.max(0, activeLyricIdx.value - 2) * -36)
-
 const stageStyle = computed(() => {
   if (props.fullscreen) return {}
   const r = props.pipRect
@@ -403,6 +395,9 @@ const stageStyle = computed(() => {
 
 function wakeOsd() {
   if (!props.fullscreen) return
+  if (!osdVisible.value) {
+    marqueeRunKey.value += 1
+  }
   osdVisible.value = true
   clearTimeout(osdTimer)
   osdTimer = setTimeout(() => { osdVisible.value = false }, 3000)
@@ -456,16 +451,6 @@ function syncAudioRouter() {
     channelRouter?.suspend?.()
     el.muted = true
   }
-}
-
-function currentPlaybackSeconds() {
-  const el = videoEl.value
-  if (el && !awaitingMediaReload) {
-    const baseSec = streamSpec.value.liveTranscode ? liveStartSec.value : 0
-    const elSec = Number.isFinite(el.currentTime) ? el.currentTime : 0
-    if (baseSec + elSec > 0) return Math.max(0, baseSec + elSec)
-  }
-  return Math.max(0, (player.positionMs || 0) / 1000)
 }
 
 async function applyMediaSource() {
@@ -681,16 +666,22 @@ watch(() => player.nowPlaying?.queueId, (newId, oldId) => {
     else lyricLoader.dispose()
 
     if (newId && song.value) {
-      const curText = `正在播放：${song.value.artist ? song.value.artist + ' - ' : ''}${song.value.title}`
-      const nxtText = nextSong.value ? `  |  下一首：${nextSong.value.artist ? nextSong.value.artist + ' - ' : ''}${nextSong.value.title}` : ''
-      showSongMarquee(`${curText}${nxtText}`)
+      marqueeRunKey.value += 1
+      wakeOsd()
     }
   }
 }, { immediate: true })
 
 watch(() => nextSong.value?.id, (newNextId, oldNextId) => {
-  if (newNextId && newNextId !== oldNextId && song.value && !songBanner.value) {
-    showSongMarquee(`下一首：${nextSong.value.artist ? nextSong.value.artist + ' - ' : ''}${nextSong.value.title}`)
+  if (newNextId && newNextId !== oldNextId && song.value) {
+    marqueeRunKey.value += 1
+    wakeOsd()
+  }
+})
+
+watch(() => props.fullscreen, (isFull) => {
+  if (isFull) {
+    marqueeRunKey.value += 1
   }
 })
 
@@ -1008,7 +999,6 @@ onBeforeUnmount(() => {
   resetSpectrumCache()
   clearTimeout(osdTimer)
   clearTimeout(effectTimer)
-  clearTimeout(songBannerTimer)
   lyricLoader.dispose()
   channelRouter.dispose()
 })
@@ -1188,10 +1178,10 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 88px;
-  padding: 0 24px;
+  padding: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  overflow: hidden;
   background: var(--iktv-panel-bg);
   transition: opacity 0.25s ease;
   z-index: 4;
@@ -1202,9 +1192,9 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 .fs-now-marquee {
-  max-width: 100%;
+  width: 100%;
   overflow: hidden;
-  text-align: right;
+  white-space: nowrap;
 }
 .fs-now-text {
   display: inline-block;
@@ -1212,10 +1202,32 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: #ffffff;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 82vw;
   letter-spacing: 0.5px;
+  will-change: transform;
+  animation: fs-marquee-scroll var(--marquee-duration, 14s) linear infinite;
+}
+.fs-topbar.hidden .fs-now-text {
+  animation-play-state: paused;
+}
+@keyframes fs-marquee-scroll {
+  0% {
+    transform: translate3d(100vw, 0, 0);
+  }
+  100% {
+    transform: translate3d(-100%, 0, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fs-now-marquee {
+    padding: 0 24px;
+    text-align: right;
+  }
+  .fs-now-text {
+    animation: none;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 .fs-lyrics {
@@ -1233,24 +1245,6 @@ onBeforeUnmount(() => {
   bottom: 230px;
   height: 220px;
 }
-.lyric-window { height: 100%; overflow: hidden; }
-.lyric-track { transition: transform 0.25s ease; padding-top: 42px; }
-.lyric-line {
-  height: 36px;
-  line-height: 36px;
-  font-size: 16px;
-  color: rgba(255, 255, 255, 0.62);
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.lyric-line.cur {
-  color: var(--gold);
-  font-size: 20px;
-  font-weight: 800;
-}
-.lyric-line .sung { color: var(--gold2); }
 .lyric-empty { margin-top: 50px; font-size: 13px; color: var(--dim); pointer-events: auto; }
 .lyric-empty button { color: var(--iktv-blue); text-decoration: underline; }
 
@@ -1427,7 +1421,7 @@ onBeforeUnmount(() => {
 @media (max-width: 759px) {
   .fs-topbar {
     height: 60px;
-    padding: 0 14px;
+    padding: 0;
   }
   .fs-bottom-panel {
     padding: 10px 12px calc(12px + var(--safe-bottom));
@@ -1448,43 +1442,6 @@ onBeforeUnmount(() => {
   .fs-act { font-size: 11px; gap: 3px; }
   .fs-act-icon { width: 42px; height: 42px; }
   .fs-act-png { width: 26px; height: 26px; }
-}
-.fs-marquee-banner {
-  position: absolute;
-  top: 86px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 24px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(20, 26, 44, 0.95), rgba(30, 40, 68, 0.95));
-  border: 1px solid rgba(255, 198, 75, 0.45);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 16px rgba(255, 198, 75, 0.2);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  z-index: 10;
-  pointer-events: none;
-  white-space: nowrap;
-  max-width: 90vw;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.marquee-icon { font-size: 16px; }
-.marquee-text { overflow: hidden; text-overflow: ellipsis; }
-.marquee-slide-enter-active,
-.marquee-slide-leave-active {
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.marquee-slide-enter-from {
-  opacity: 0;
-  transform: translate(-50%, -16px);
-}
-.marquee-slide-leave-to {
-  opacity: 0;
-  transform: translate(-50%, -10px);
 }
 
 .fs-autoplay-banner {

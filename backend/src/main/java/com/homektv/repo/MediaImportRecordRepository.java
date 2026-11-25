@@ -24,7 +24,6 @@ public interface MediaImportRecordRepository extends JpaRepository<MediaImportRe
     boolean existsBySourceMd5AndSourcePathNot(String sourceMd5, String sourcePath);
     boolean existsByOutputMd5(String outputMd5);
     boolean existsByOutputMd5AndSourcePathNot(String outputMd5, String sourcePath);
-    Page<MediaImportRecord> findByActionOrderByCreatedAtDesc(String action, Pageable pageable);
     Page<MediaImportRecord> findAllByOrderByCreatedAtDesc(Pageable pageable);
     Page<MediaImportRecord> findByIdGreaterThanOrderByIdAsc(Long id, Pageable pageable);
     @Query("""
@@ -69,5 +68,4 @@ public interface MediaImportRecordRepository extends JpaRepository<MediaImportRe
     List<MediaImportRecord> findAllByOrderByCreatedAtDesc();
     List<MediaImportRecord> findByIdIn(Collection<Long> ids);
     List<MediaImportRecord> findBySongId(Long songId);
-    List<MediaImportRecord> findBySongFileId(Long songFileId);
 }

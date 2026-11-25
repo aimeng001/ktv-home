@@ -1,11 +1,14 @@
 package com.homektv.tv.ui
 
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.graphics.Typeface
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -23,7 +26,7 @@ internal class KtvFullscreenPlaybackPanel(
     private val requestExitFullscreen: () -> Unit,
 ) {
     private val overlay = root.findViewById<FrameLayout>(R.id.fullscreenPlaybackOverlayRoot)
-    private val nowPlayingBar = root.findViewById<LinearLayout>(R.id.fullscreenNowPlayingBar)
+    private val nowPlayingBar = root.findViewById<FrameLayout>(R.id.fullscreenNowPlayingBar)
     private val nowPlayingText = root.findViewById<TextView>(R.id.txtFullscreenNowPlaying)
     private val controls = root.findViewById<LinearLayout>(R.id.fullscreenControlsPanel)
     private val progressRow = root.findViewById<LinearLayout>(R.id.fullscreenProgressRow)
@@ -43,6 +46,12 @@ internal class KtvFullscreenPlaybackPanel(
     private var positionMs = 0L
     private var durationMs = 0L
     private var songTitle = ""
+    private var nextTitle = ""
+    private var nextArtist = ""
+    private var autoPlay = false
+    private var lastRenderedMarqueeText = ""
+    private var lastMarqueeBarWidthPx = 0
+    private var marqueeAnimator: ObjectAnimator? = null
     private var playing = false
     private var vocalMode = "accompaniment"
     private var muted = false
@@ -95,6 +104,8 @@ internal class KtvFullscreenPlaybackPanel(
             scheduleAutoHide()
         } else {
             suspended = false
+            stopMarqueeAnimation()
+            nowPlayingBar.visibility = View.GONE
         }
     }
 
@@ -106,8 +117,14 @@ internal class KtvFullscreenPlaybackPanel(
         currentVocalMode: String,
         isMuted: Boolean,
         canSeek: Boolean,
+        nextTitle: String? = null,
+        nextArtist: String? = null,
+        autoPlay: Boolean = false,
     ) {
         songTitle = title.orEmpty()
+        this.nextTitle = nextTitle.orEmpty()
+        this.nextArtist = nextArtist.orEmpty()
+        this.autoPlay = autoPlay
         positionMs = position.coerceAtLeast(0L)
         durationMs = duration.coerceAtLeast(0L)
         playing = isPlaying
@@ -167,14 +184,19 @@ internal class KtvFullscreenPlaybackPanel(
 
     fun onStop() {
         handler.removeCallbacks(autoHide)
+        stopMarqueeAnimation()
     }
 
     fun onStart() {
-        if (fullscreen && controlsVisible) resetAutoHide()
+        if (fullscreen && controlsVisible) {
+            updateNowPlayingMarquee(forceRestart = true)
+            resetAutoHide()
+        }
     }
 
     fun destroy() {
         handler.removeCallbacks(autoHide)
+        stopMarqueeAnimation()
         actionButtons.forEach { it.root.setOnClickListener(null) }
         rewindButton.setOnClickListener(null)
         forwardButton.setOnClickListener(null)
@@ -278,7 +300,10 @@ internal class KtvFullscreenPlaybackPanel(
             height = metrics.progressRowHeightPx + px(46)
         }
         nowPlayingText.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, px(35).toFloat())
-        nowPlayingText.setPadding(px(12), 0, px(10), 0)
+        nowPlayingText.setPadding(0, 0, 0, 0)
+        if (fullscreen && controlsVisible && widthPx != lastMarqueeBarWidthPx) {
+            updateNowPlayingMarquee(forceRestart = true)
+        }
         controls.layoutParams = (controls.layoutParams as FrameLayout.LayoutParams).apply {
             height = metrics.panelHeightPx
         }
@@ -329,9 +354,7 @@ internal class KtvFullscreenPlaybackPanel(
     }
 
     private fun render() {
-        nowPlayingBar.visibility = if (songTitle.isBlank()) View.GONE else View.VISIBLE
-        nowPlayingText.text = if (songTitle.isBlank()) "" else "正在播放：$songTitle"
-        nowPlayingText.isSelected = true
+        updateNowPlayingMarquee(forceRestart = false)
         currentTime.text = FullscreenPlaybackPanelPolicy.formatTime(positionMs)
         durationText.text = if (durationMs > 0) FullscreenPlaybackPanelPolicy.formatTime(durationMs) else "--:--"
         progressBar.progress = FullscreenPlaybackPanelPolicy.progressPermille(positionMs, durationMs)
@@ -348,6 +371,58 @@ internal class KtvFullscreenPlaybackPanel(
         mute.root.contentDescription = mute.label.text
     }
 
+    private fun updateNowPlayingMarquee(forceRestart: Boolean) {
+        val formatted = FullscreenPlaybackPanelPolicy.formatNowPlayingMarquee(
+            songTitle, nextTitle, nextArtist, autoPlay,
+        )
+        val shouldShow = fullscreen && controlsVisible && formatted.isNotBlank()
+        if (!shouldShow) {
+            stopMarqueeAnimation()
+            nowPlayingBar.visibility = View.GONE
+            return
+        }
+        val wasVisible = nowPlayingBar.visibility == View.VISIBLE
+        nowPlayingBar.visibility = View.VISIBLE
+        val textChanged = formatted != lastRenderedMarqueeText
+        if (textChanged) {
+            lastRenderedMarqueeText = formatted
+            nowPlayingText.text = formatted
+        }
+        if (!wasVisible || textChanged || forceRestart || marqueeAnimator == null) {
+            startMarqueeAnimation(formatted)
+        }
+    }
+
+    private fun startMarqueeAnimation(text: String) {
+        stopMarqueeAnimation()
+        nowPlayingBar.post {
+            if (!fullscreen || !controlsVisible || nowPlayingBar.visibility != View.VISIBLE) return@post
+            if (lastRenderedMarqueeText != text) return@post
+            val containerWidth = nowPlayingBar.width.takeIf { it > 0 }
+                ?: activity.resources.displayMetrics.widthPixels.coerceAtLeast(1)
+            val textWidth = nowPlayingText.paint.measureText(text).coerceAtLeast(1f)
+            lastMarqueeBarWidthPx = containerWidth
+            nowPlayingText.translationX = containerWidth.toFloat()
+            marqueeAnimator = ObjectAnimator.ofFloat(
+                nowPlayingText,
+                View.TRANSLATION_X,
+                containerWidth.toFloat(),
+                -textWidth,
+            ).apply {
+                duration = FullscreenPlaybackPanelPolicy.marqueeDurationMs(containerWidth, textWidth, metrics.scale)
+                interpolator = LinearInterpolator()
+                repeatCount = ValueAnimator.INFINITE
+                repeatMode = ValueAnimator.RESTART
+                start()
+            }
+        }
+    }
+
+    private fun stopMarqueeAnimation() {
+        marqueeAnimator?.cancel()
+        marqueeAnimator = null
+    }
+
     private fun showControls(target: FullscreenPanelFocusTarget) {
         controlsVisible = true
         controls.visibility = View.VISIBLE
@@ -360,6 +435,8 @@ internal class KtvFullscreenPlaybackPanel(
         handler.removeCallbacks(autoHide)
         keyRouter.reset()
         controlsVisible = false
+        stopMarqueeAnimation()
+        nowPlayingBar.visibility = View.GONE
         controls.visibility = View.GONE
         onFocusReturn()
     }

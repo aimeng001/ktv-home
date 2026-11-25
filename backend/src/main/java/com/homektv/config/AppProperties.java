@@ -206,8 +206,6 @@ public class AppProperties {
         private int reasoningConcurrency = 1;
         /** 自动采纳置信度阈值。Auto-apply confidence threshold. */
         private double autoApplyConfidence = 0.90;
-        /** 连接超时秒数。Connect timeout in seconds. */
-        private int connectTimeoutSeconds = 10;
         /** 读取超时秒数。Read timeout in seconds. */
         private int readTimeoutSeconds = 60;
         /** 是否明确允许访问本机/内网 AI 服务。Whether private-network AI endpoints are explicitly allowed. */
@@ -233,8 +231,6 @@ public class AppProperties {
         public void setReasoningConcurrency(int reasoningConcurrency) { this.reasoningConcurrency = reasoningConcurrency; }
         public double getAutoApplyConfidence() { return autoApplyConfidence; }
         public void setAutoApplyConfidence(double autoApplyConfidence) { this.autoApplyConfidence = autoApplyConfidence; }
-        public int getConnectTimeoutSeconds() { return connectTimeoutSeconds; }
-        public void setConnectTimeoutSeconds(int connectTimeoutSeconds) { this.connectTimeoutSeconds = connectTimeoutSeconds; }
         public int getReadTimeoutSeconds() { return readTimeoutSeconds; }
         public void setReadTimeoutSeconds(int readTimeoutSeconds) { this.readTimeoutSeconds = readTimeoutSeconds; }
         public boolean isAllowPrivateNetwork() { return allowPrivateNetwork; }

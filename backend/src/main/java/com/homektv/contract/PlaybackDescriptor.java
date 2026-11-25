@@ -41,23 +41,6 @@ public record PlaybackDescriptor(
                 audioLayout, errorCode, errorMessage, null, null, null);
     }
 
-    /** Source-compatible constructor for callers predating codec propagation. */
-    public PlaybackDescriptor(
-            String kind,
-            String status,
-            Long sourceFileId,
-            Long variantId,
-            String streamUrl,
-            int audioTracks,
-            Integer vocalTrackIndex,
-            AudioLayoutDto audioLayout,
-            String errorCode,
-            String errorMessage,
-            String format) {
-        this(kind, status, sourceFileId, variantId, streamUrl, audioTracks, vocalTrackIndex,
-                audioLayout, errorCode, errorMessage, format, null, null);
-    }
-
     public static PlaybackDescriptor idle() {
         return new PlaybackDescriptor("NONE", "IDLE", null, null, null, 0, null,
                 AudioLayoutDto.normalStereo(), null, null, null, null, null);

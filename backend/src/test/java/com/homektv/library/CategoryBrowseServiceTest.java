@@ -29,22 +29,6 @@ import static org.mockito.Mockito.when;
 class CategoryBrowseServiceTest {
 
     @Test
-    void dominantArtistGenderUsesKnownMajority() {
-        assertThat(CategoryBrowseService.dominantArtistGender(List.of(
-                song("男歌手"), song("男歌手"), song("女歌手"), song("未知"))))
-                .isEqualTo("男歌手");
-    }
-
-    @Test
-    void dominantArtistGenderFallsBackToUnknown() {
-        assertThat(CategoryBrowseService.dominantArtistGender(List.of(song("未知"), song(null))))
-                .isEqualTo("未知");
-        assertThat(CategoryBrowseService.dominantArtistGender(List.of(song(" "), song(""))))
-                .isEqualTo("未知");
-        assertThat(CategoryBrowseService.dominantArtistGender(List.of())).isEqualTo("未知");
-    }
-
-    @Test
     void languages_delegatesToRepositoryAggregationWithoutIteration() {
         SongRepository repository = mock(SongRepository.class);
         SongRepository.LanguageCountProjection p1 = mock(SongRepository.LanguageCountProjection.class);

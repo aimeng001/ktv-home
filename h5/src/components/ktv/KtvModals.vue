@@ -210,7 +210,6 @@ const emit = defineEmits([
   'set-volume',
   'toggle-mute',
   'set-vocal',
-  'swap-vocal',
   'pitch-delta',
   'pitch-reset',
   'effect'
@@ -464,7 +463,6 @@ async function triggerScan() {
 }
 .seg-btns button.on { background: var(--iktv-blue); color: #ffffff; font-weight: 700; border-color: var(--iktv-blue); }
 .seg-btns button:disabled { opacity: 0.45; }
-.swap-row { display: flex; justify-content: flex-end; }
 .effects-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .fx-btn {
   padding: 10px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.08);

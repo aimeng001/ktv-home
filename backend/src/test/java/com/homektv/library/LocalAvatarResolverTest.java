@@ -603,4 +603,37 @@ class LocalAvatarResolverTest {
         assertThat(resolver.resolveAllCandidates()).isZero();
         verify(profileService).requeueMissingCachedAvatars(assetWriter);
     }
+
+    @Test
+    void resolveAllCandidatesReclaimsExistingValidCachedAvatarsWithoutRewriting(@TempDir Path tempDir) throws Exception {
+        Path dataDir = Files.createDirectories(tempDir.resolve("data"));
+        AppProperties props = new AppProperties();
+        props.setDataPath(dataDir.toString());
+        props.setAvatarLibraryPath(tempDir.resolve("empty-avatar-lib").toString());
+        props.setSourceLibraryPath(tempDir.resolve("empty-src").toString());
+
+        AssetWriter realWriter = new AssetWriter(props);
+        var image = new java.awt.image.BufferedImage(128, 128, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < 128; y++) {
+            for (int x = 0; x < 128; x++) {
+                image.setRGB(x, y, ((x * 2) << 16) | ((y * 2) << 8) | ((x + y) & 0xff));
+            }
+        }
+        var baos = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "jpg", baos);
+        image.flush();
+        String expectedRel = realWriter.writeArtistCover("zhoujielun", baos.toByteArray(), "jpg");
+
+        ArtistProfileService profileService = mock(ArtistProfileService.class);
+        when(profileService.unresolvedProfiles(50_000)).thenReturn(List.of(
+                new ArtistProfileService.Profile("zhoujielun", "周杰伦", "PERSON", null, null, null, "PENDING")
+        ));
+        when(profileService.setAvatarReady("zhoujielun", "CACHED_RECOVERY", expectedRel)).thenReturn(true);
+
+        LocalAvatarResolver resolver = new LocalAvatarResolver(props, realWriter, profileService);
+        int matched = resolver.resolveAllCandidates();
+
+        assertThat(matched).isEqualTo(1);
+        verify(profileService).setAvatarReady("zhoujielun", "CACHED_RECOVERY", expectedRel);
+    }
 }

@@ -50,6 +50,8 @@ public class ArtistAvatarWorker {
     private final Map<MusicProvider, ArtistMetadataProvider> providers = new EnumMap<>(MusicProvider.class);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile boolean shuttingDown = false;
+    private volatile Long activeJobId;
+    private volatile String activeClaimToken;
     private ArtistAvatarFallbackChain fallbackChain;
     private volatile PlaybackPressureMonitor playbackPressureMonitor;
 
@@ -61,6 +63,39 @@ public class ArtistAvatarWorker {
     @jakarta.annotation.PreDestroy
     void shutdown() {
         shuttingDown = true;
+        Long jobId = activeJobId;
+        String claimToken = activeClaimToken;
+        if (jobId != null && claimToken != null) {
+            try {
+                jdbc.update("""
+                        UPDATE artist_avatar_jobs
+                        SET status='PENDING', lease_until=NULL, claim_token=NULL, updated_at=now()
+                        WHERE id=? AND status='PROCESSING' AND claim_token=?::uuid
+                        """, jobId, claimToken);
+            } catch (DataAccessException ignored) {}
+        }
+    }
+
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void recoverInterruptedJobsOnStartup() {
+        if (shuttingDown) return;
+        try {
+            int released = jdbc.update("""
+                    UPDATE artist_avatar_jobs
+                    SET status='PENDING',
+                        next_run_at=LEAST(next_run_at, now()),
+                        lease_until=NULL,
+                        claim_token=NULL,
+                        updated_at=now()
+                    WHERE status='PROCESSING'
+                    """);
+            if (released > 0) {
+                log.info("容器启动恢复：已立即释放 {} 条中断的歌手头像刮削租约并续跑", released);
+            }
+            trigger();
+        } catch (DataAccessException failure) {
+            log.debug("artist avatar startup lease recovery skipped: {}", failure.getMessage());
+        }
     }
 
     public ArtistAvatarWorker(JdbcTemplate jdbc, ArtistProfileService profiles,
@@ -127,7 +162,14 @@ public class ArtistAvatarWorker {
             while (processed < batchLimit && !shuttingDown && !Thread.currentThread().isInterrupted()) {
                 Job job = claimNext();
                 if (job == null) return;
-                process(job);
+                activeJobId = job.id();
+                activeClaimToken = job.claimToken();
+                try {
+                    process(job);
+                } finally {
+                    activeJobId = null;
+                    activeClaimToken = null;
+                }
                 processed++;
             }
             fullBatch = !shuttingDown && !busy && processed >= MAX_BATCH;

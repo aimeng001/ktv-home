@@ -4,23 +4,19 @@
 
 :root {
   --bg: #101319;
-  --panel: #181d25;
   --panel2: #202630;
-  --line: rgba(255,255,255,.1);
-  --gold: #ffc64b; --gold2: #ffe39a; --gold-glow: rgba(255,198,75,.12);
-  --coral: #ff6b61; --coral-soft: #ff948d; --cyan: #54d6e2; --mint: #6ed6a8;
+  --gold: #ffc64b; --gold2: #ffe39a;
+  --coral-soft: #ff948d; --cyan: #54d6e2; --mint: #6ed6a8;
   --purple: #a78bfa; --purple-glow: rgba(167,139,250,.15);
   --iktv-blue: #3182fb; --iktv-blue-glow: rgba(49,130,251,.42);
   --iktv-indigo: #4936ff; --iktv-green: #31c27c;
   --iktv-track: rgba(115,115,115,.45); --iktv-rose: #e93359;
   --iktv-panel-bg: rgba(0,0,0,.82);
-  --red: #f87171; --green: #34d399;
   --text: #f7f8fb; --dim: #aeb7c5; --dim2: #747f90;
   --tagktv: #f0c742; --tagmv: #38bdf8; --tagaudio: #94a3b8;
-  --glass: rgba(15,17,24,.7); --glass-border: rgba(255,255,255,.08);
-  --radius: 8px; --radius-sm: 6px; --radius-xs: 4px;
+  --glass-border: rgba(255,255,255,.08);
+  --radius-sm: 6px;
   --shadow: 0 20px 60px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.3);
-  --shadow-card: 0 8px 32px rgba(0,0,0,.4);
   --transition: all .2s cubic-bezier(.4,0,.2,1);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
@@ -47,7 +43,6 @@ input { font-family: inherit; }
 /* ---- 通用工具类 ---- */
 .row { display: flex; align-items: center; }
 .col { display: flex; flex-direction: column; }
-.grow { flex: 1; }
 
 /* ---- 版本徽标（KTV金 / MV蓝 / 音频灰） ---- */
 .tag { font-size: 10px; padding: 2px 8px; border-radius: 5px; font-weight: 600; letter-spacing: .3px; flex: none; }

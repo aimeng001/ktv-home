@@ -470,6 +470,37 @@ class ArtistProfileServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void requeueMissingCachedAvatarsTripsCircuitBreakerOnMassiveMissingMountGlitch() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        AssetWriter assets = mock(AssetWriter.class);
+        when(assets.isCacheStorageAvailable()).thenReturn(true);
+        when(assets.isReadableCache(anyString())).thenReturn(false);
+        when(assets.dataRootForCleanup()).thenReturn(java.nio.file.Path.of("/data"));
+
+        when(jdbc.query(
+                org.mockito.ArgumentMatchers.contains("avatar_status = 'READY'"),
+                org.mockito.ArgumentMatchers.<RowMapper<Object>>any(),
+                org.mockito.ArgumentMatchers.any(Object[].class)))
+                .thenAnswer(invocation -> {
+                    RowMapper<Object> mapper = invocation.getArgument(1);
+                    List<Object> rows = new java.util.ArrayList<>();
+                    for (int i = 0; i < 20; i++) {
+                        ResultSet row = mock(ResultSet.class);
+                        when(row.getString("artist_key")).thenReturn("artist-" + i);
+                        when(row.getString("avatar_path")).thenReturn("artist-covers/00/artist-" + i + ".jpg");
+                        rows.add(mapper.mapRow(row, i));
+                    }
+                    return rows;
+                });
+
+        int reset = new ArtistProfileService(jdbc).requeueMissingCachedAvatars(assets);
+
+        assertThat(reset).isZero();
+        verify(jdbc, org.mockito.Mockito.never()).batchUpdate(anyString(), anyCollection(), anyInt(), any());
+    }
+
+    @Test
     void resolveSongAvatarsClearsUrlsForUncachedArtistsWhileKeepingCachedOnes() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         org.mockito.Mockito.doAnswer(invocation -> {

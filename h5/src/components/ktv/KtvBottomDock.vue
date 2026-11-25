@@ -62,7 +62,6 @@
         @keydown.enter.prevent="$emit('enter-fullscreen')"
         @keydown.space.prevent="$emit('enter-fullscreen')"
       >
-        <slot name="pip" />
         <div v-if="!player.nowPlaying" class="pip-idle">
           <img
             :src="effectiveStandbyLogo"
@@ -167,46 +166,47 @@ defineExpose({ pipSlotEl })
 
 <style scoped>
 .ktv-bottom-dock {
-  height: 122px;
-  padding: 0 16px;
+  --dock-h: var(--ktv-dock-height, clamp(136px, 18vh, 200px));
+  height: var(--dock-h);
+  padding: 0 clamp(14px, 1.4vw, 26px);
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 6px;
-  background: linear-gradient(0deg, rgba(6, 9, 18, 0.88), rgba(6, 9, 18, 0.42) 72%, transparent);
+  gap: clamp(6px, 0.7vw, 14px);
+  background: linear-gradient(0deg, rgba(6, 9, 18, 0.9), rgba(6, 9, 18, 0.48) 72%, transparent);
   flex: none;
   z-index: 20;
 }
 .dock-group {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 4px;
+  gap: clamp(2px, 0.45vw, 8px);
   height: 100%;
   align-items: center;
 }
 .dock-circle {
   position: relative;
   border-radius: 14px;
-  max-width: 96px;
+  max-width: clamp(84px, 6.2vw, 118px);
   width: 100%;
-  height: 98px;
+  height: clamp(94px, 12.5vh, 134px);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: clamp(4px, 0.55vh, 8px);
   background: transparent;
   border: none;
   color: rgba(246, 248, 252, 0.96);
-  font-size: 13px;
+  font-size: clamp(13px, 0.85vw, 16px);
   font-weight: 500;
   transition: transform 0.18s ease, opacity 0.18s ease;
 }
 .dock-icon-ring {
   position: relative;
-  width: 56px;
-  height: 56px;
+  width: clamp(54px, 4.2vw, 76px);
+  height: clamp(54px, 4.2vw, 76px);
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -245,21 +245,21 @@ defineExpose({ pipSlotEl })
   box-shadow: none;
 }
 .dock-png {
-  width: 34px;
-  height: 34px;
+  width: clamp(32px, 2.5vw, 46px);
+  height: clamp(32px, 2.5vw, 46px);
   object-fit: contain;
 }
 .queue-badge {
   position: absolute;
   top: 2px;
   right: 0;
-  min-width: 20px;
-  height: 20px;
+  min-width: clamp(20px, 1.3vw, 24px);
+  height: clamp(20px, 1.3vw, 24px);
   padding: 0 5px;
   border-radius: 999px;
   background: #ef4444;
   color: #fff;
-  font-size: 11px;
+  font-size: clamp(11px, 0.7vw, 13px);
   font-style: normal;
   font-weight: 800;
   display: grid;
@@ -269,23 +269,24 @@ defineExpose({ pipSlotEl })
 
 .pip-stage-wrap {
   display: flex;
-  align-items: stretch;
+  align-items: flex-end;
   height: 100%;
 }
 .pip-shadow {
-  width: 38px;
-  height: 100%;
+  width: clamp(34px, 3vw, 56px);
+  height: min(var(--dock-h), calc(26vw * 9 / 16));
   object-fit: fill;
   pointer-events: none;
 }
 .video-container {
   position: relative;
-  width: 216px;
-  height: 122px;
+  width: min(calc(var(--dock-h) * 16 / 9), 26vw, 356px);
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
   border-radius: 2px;
   overflow: hidden;
   background: #04060b;
-  box-shadow: 0 0 24px rgba(0, 0, 0, 0.65);
+  box-shadow: 0 0 28px rgba(0, 0, 0, 0.72);
   cursor: pointer;
   transition: box-shadow 0.18s ease;
 }
@@ -298,7 +299,7 @@ defineExpose({ pipSlotEl })
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 18px;
+  width: clamp(16px, 1.4vw, 26px);
   pointer-events: none;
   z-index: 2;
 }
@@ -353,23 +354,32 @@ defineExpose({ pipSlotEl })
   opacity: 1;
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 1180px) {
+  .ktv-bottom-dock {
+    --dock-h: var(--ktv-dock-height, clamp(116px, 15vh, 144px));
+  }
   .dock-circle {
-    height: 88px;
+    height: clamp(82px, 11vh, 102px);
     font-size: 12px;
   }
   .dock-icon-ring {
-    width: 48px;
-    height: 48px;
+    width: clamp(44px, 4.4vw, 56px);
+    height: clamp(44px, 4.4vw, 56px);
   }
   .dock-png {
-    width: 28px;
-    height: 28px;
+    width: clamp(26px, 2.6vw, 34px);
+    height: clamp(26px, 2.6vw, 34px);
   }
   .video-container {
-    width: 176px;
-    height: 100px;
+    width: min(calc(var(--dock-h) * 16 / 9), 23vw);
   }
+  .pip-shadow {
+    width: 26px;
+    height: min(var(--dock-h), calc(23vw * 9 / 16));
+  }
+}
+
+@media (max-width: 960px) {
   .pip-shadow { display: none; }
 }
 
@@ -383,12 +393,15 @@ defineExpose({ pipSlotEl })
   .pip-stage-wrap {
     order: -1;
     justify-content: center;
-    height: 76px;
+    align-items: center;
+    height: 108px;
   }
   .video-container {
-    width: 100%;
-    max-width: 340px;
-    height: 76px;
+    width: min(192px, 56vw);
+    max-width: 204px;
+    height: auto;
+    max-height: 108px;
+    aspect-ratio: 16 / 9;
     border-radius: 8px;
   }
   .dock-group {

@@ -124,6 +124,17 @@ public class ArtistProfileBootstrap {
             if (directoryProjection != null) directoryProjection.refresh();
             log.info("artist profile backfill completed: {} source names, {} database classifications, {} local avatars resolved",
                     count, classified, matched);
+            if (assetWriter != null) {
+                var summary = profiles.avatarProgressSummary();
+                log.info("[Persistence] dataRoot={}, artistCoversDirReady={}, artistsTotal={}, avatarsReady={}, avatarsPending={}, avatarJobsQueued={}, reclaimedLocalOrCached={}",
+                        assetWriter.dataRootForCleanup(),
+                        assetWriter.isArtistCoverDirectoryPresentAndNonEmpty(),
+                        summary.getOrDefault("totalArtists", 0L),
+                        summary.getOrDefault("readyCount", 0L),
+                        summary.getOrDefault("pendingCount", 0L),
+                        summary.getOrDefault("queuedJobs", 0L),
+                        matched);
+            }
         } catch (RuntimeException failure) {
             refreshRequested.set(true);
             log.warn("artist profile backfill did not complete: {}", failure.getMessage());

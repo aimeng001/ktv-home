@@ -203,4 +203,26 @@ object FullscreenPlaybackPanelPolicy {
             "%02d:%02d".format(totalSeconds / 60, seconds)
         }
     }
+
+    fun formatNowPlayingMarquee(
+        title: String?,
+        nextTitle: String? = null,
+        nextArtist: String? = null,
+        autoPlay: Boolean = false,
+    ): String {
+        val cleanTitle = title?.trim().orEmpty()
+        if (cleanTitle.isEmpty()) return ""
+        val prefix = if (autoPlay) "随机公播：$cleanTitle" else "正在播放：$cleanTitle"
+        val cleanNext = nextTitle?.trim().orEmpty()
+        if (cleanNext.isEmpty()) return prefix
+        val cleanNextArtist = nextArtist?.trim().orEmpty()
+        val nextSegment = if (cleanNextArtist.isEmpty()) cleanNext else "$cleanNextArtist - $cleanNext"
+        return "$prefix\u3000\u3000|\u3000\u3000下一首：$nextSegment"
+    }
+
+    fun marqueeDurationMs(containerWidthPx: Int, textWidthPx: Float, scale: Float): Long {
+        val distancePx = containerWidthPx.coerceAtLeast(1).toFloat() + textWidthPx.coerceAtLeast(0f)
+        val speedPxPerSec = 160f * scale.coerceAtLeast(0.5f)
+        return ((distancePx / speedPxPerSec) * 1_000f).toLong().coerceIn(8_000L, 28_000L)
+    }
 }

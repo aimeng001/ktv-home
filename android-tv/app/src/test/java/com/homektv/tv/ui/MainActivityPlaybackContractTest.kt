@@ -198,9 +198,6 @@ class MainActivityPlaybackContractTest {
 
         assertFalse("checkModeMigration 已随多模式切换移除", mainSource.contains("checkModeMigration"))
 
-        val confirmBlock = mainSource.substringAfter("private fun confirmControl").substringBefore("private fun sendControl")
-        assertTrue("confirmControl 必须使用暗色 TV 弹窗主题", confirmBlock.contains("Theme_HomeKtvTv_UpdateDialog"))
-
         val imeBlock = overlaySource.substringAfter("private fun openSystemImeSearchDialog").substringBefore("private fun onRemoteMenuPressed")
         assertTrue("系统输入法搜索弹窗必须使用暗色 TV 弹窗主题", imeBlock.contains("Theme_HomeKtvTv_UpdateDialog"))
         assertTrue("系统输入法输入框应设置白色前景以适配暗色弹窗", imeBlock.contains("Color.WHITE"))

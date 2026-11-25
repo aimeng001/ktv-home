@@ -49,6 +49,15 @@ public interface PlayHistoryRepository extends JpaRepository<PlayHistory, Long> 
     List<PlayHistory> findTop50ByPlayedByAndPlayedAtGreaterThanEqualOrderByPlayedAtDesc(
             Long playedBy, OffsetDateTime since);
 
+    @Query(value = """
+            SELECT song_id
+            FROM play_history
+            GROUP BY song_id
+            ORDER BY MAX(played_at) DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Long> findDistinctRecentSongIds(@Param("limit") int limit);
+
     boolean existsByQueueId(Long queueId);
 
     void deleteBySongId(Long songId);

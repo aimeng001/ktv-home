@@ -34,28 +34,6 @@ public record AdminSongDto(
         String coverUrl,
         String artistAvatarUrl
 ) {
-    /** Source-compatible constructor for callers omitting vocalForm and avatar URL. */
-    public AdminSongDto(Long id, String title, String artist, String album, String releaseDate,
-                        String[] aliases, String coverPath, String[] metadataLocks, String language,
-                        String artistGender, String[] tags, String mediaType, String lyricType,
-                        int durationMs, int playCount, String filePath, String importSource,
-                        Long fileId, int audioTracks, AudioLayoutDto audioLayout) {
-        this(id, title, artist, album, releaseDate, aliases, coverPath, metadataLocks, language,
-                "未知", artistGender, tags, mediaType, lyricType, durationMs, playCount,
-                filePath, importSource, fileId, audioTracks, audioLayout, null, null);
-    }
-
-    /** Source-compatible constructor for callers omitting coverUrl and artistAvatarUrl. */
-    public AdminSongDto(Long id, String title, String artist, String album, String releaseDate,
-                        String[] aliases, String coverPath, String[] metadataLocks, String language,
-                        String vocalForm, String artistGender, String[] tags, String mediaType,
-                        String lyricType, int durationMs, int playCount, String filePath,
-                        String importSource, Long fileId, int audioTracks, AudioLayoutDto audioLayout) {
-        this(id, title, artist, album, releaseDate, aliases, coverPath, metadataLocks, language,
-                vocalForm, artistGender, tags, mediaType, lyricType, durationMs, playCount,
-                filePath, importSource, fileId, audioTracks, audioLayout, null, null);
-    }
-
     /**
      * 根据歌曲实体和文件实体构建管理后台歌曲 DTO，自动判断导入来源。
      *

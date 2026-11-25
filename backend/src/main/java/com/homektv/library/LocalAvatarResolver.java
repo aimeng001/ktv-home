@@ -66,14 +66,15 @@ public class LocalAvatarResolver {
         }
         try {
             profileService.requeueMissingCachedAvatars(assetWriter);
+            int reclaimed = reclaimExistingCachedAvatars();
             List<Path> candidateRoots = collectCandidateDirectories();
-            if (candidateRoots.isEmpty()) return 0;
+            if (candidateRoots.isEmpty()) return reclaimed;
 
             Map<String, Path> imageIndex = new HashMap<>();
             for (Path root : candidateRoots) {
                 indexDirectory(root, imageIndex);
             }
-            if (imageIndex.isEmpty()) return 0;
+            if (imageIndex.isEmpty()) return reclaimed;
 
             List<ArtistProfileService.Profile> unresolved = profileService.unresolvedProfiles(50_000);
             int matched = 0;
@@ -134,10 +135,40 @@ public class LocalAvatarResolver {
             if (matched > 0) {
                 log.info("本地头像匹配完成：共扫描 {} 个有效本地头像，成功匹配并导入 {} 位歌手", imageIndex.size(), matched);
             }
-            return matched;
+            return reclaimed + matched;
         } finally {
             resolving.set(false);
         }
+    }
+
+    /**
+     * Reclaims existing hashed avatar cache files already present under /data/artist-covers
+     * when artist profiles are PENDING/RETRY/AUTO_INITIAL (e.g. after DB rebuild or container upgrade).
+     */
+    private int reclaimExistingCachedAvatars() {
+        if (assetWriter == null || !assetWriter.isCacheStorageAvailable()) return 0;
+        List<ArtistProfileService.Profile> unresolved = profileService.unresolvedProfiles(50_000);
+        if (unresolved == null || unresolved.isEmpty()) return 0;
+        int reclaimed = 0;
+        for (var profile : unresolved) {
+            if (profile == null || profile.artistKey() == null || profile.artistKey().isBlank()) continue;
+            if (ArtistKindClassifier.isPlaceholder(profile.displayName())) continue;
+            var relOpt = assetWriter.findExistingArtistCover(profile.artistKey());
+            if (relOpt.isEmpty()) continue;
+            String relPath = relOpt.get();
+            Path realPath = assetWriter.readableCachePath(relPath).orElse(null);
+            if (realPath == null
+                    || !com.homektv.musicsource.AvatarImageQualityValidator.isUsableCachedAvatarFile(realPath)) {
+                continue;
+            }
+            if (profileService.setAvatarReady(profile.artistKey(), "CACHED_RECOVERY", relPath)) {
+                reclaimed++;
+            }
+        }
+        if (reclaimed > 0) {
+            log.info("从 /data/artist-covers 既有缓存反向复用恢复 {} 位歌手头像", reclaimed);
+        }
+        return reclaimed;
     }
 
     /** Resolves a single artist portrait from local candidate directories without scanning the whole library DB. */

@@ -178,7 +178,6 @@ internal class FallbackPlaybackIntent {
 }
 
 class FfmpegFallbackPlayer(
-    private val context: Context,
     private val onStateChanged: (isPlaying: Boolean) -> Unit = {},
     private val onProgress: (positionMs: Long, durationMs: Long) -> Unit = { _, _ -> },
     private val onFinished: () -> Unit = {},
@@ -191,8 +190,6 @@ class FfmpegFallbackPlayer(
 
     private var activeSurface: Surface? = null
     private var mediaPlayer: MediaPlayer? = null
-    private var currentFileId: Long? = null
-    private var currentStreamUrl: String? = null
     private var currentVolume: Float = 1.0f
     private var isMuted: Boolean = false
     private var channelModeOverride: String? = null
@@ -234,8 +231,6 @@ class FfmpegFallbackPlayer(
         playWhenReady: Boolean,
     ) {
         stop()
-        currentFileId = fileId
-        currentStreamUrl = streamUrl
         requestedPositionMs = initialPositionMs.coerceAtLeast(0L)
         val attempt = playbackIntent.begin(playWhenReady)
         vocalSelection.beginPreparation()
@@ -353,8 +348,6 @@ class FfmpegFallbackPlayer(
             }
         }
         mediaPlayer = null
-        currentFileId = null
-        currentStreamUrl = null
         onStateChanged(false)
     }
 

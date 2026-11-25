@@ -1684,17 +1684,6 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         return true
     }
 
-    private fun confirmControl(title: String, message: String, action: String, params: String = "{}") {
-        if (!AndroidUpdatePolicy.isHostActivityAlive(isFinishing, isDestroyed)) return
-        val dialog = AlertDialog.Builder(this, R.style.Theme_HomeKtvTv_UpdateDialog)
-            .setTitle(title)
-            .setMessage(message)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确定") { _, _ -> sendControl(action, params) }
-            .create()
-        showTrackedAlertDialog(dialog)
-    }
-
     private fun sendControl(action: String, params: String = "{}") {
         if (bottomDockController.isFullscreen) fullscreenPlaybackPanel.resumeAutoHide()
         else showPlaybackProgress()
@@ -1797,8 +1786,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         val nowPlayingLabel = song?.let { current ->
             listOfNotNull(current.title, current.artist?.takeIf(String::isNotBlank)).joinToString(" · ")
         } ?: "等待点歌"
+        val nowPlayingPrefix = if (snapshot.playing?.autoPlay == true) "随机公播" else "正在播放"
         baselineMarqueeText = when {
-            song != null -> "正在播放：$nowPlayingLabel"
+            song != null -> "$nowPlayingPrefix：$nowPlayingLabel"
             queueCount > 0 -> "待播歌曲 $queueCount 首 · 手机扫码或使用遥控器点歌"
             else -> "手机扫码点歌 · 欢迎使用 Home KTV"
         }
@@ -2456,6 +2446,7 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
         val duration = (engine?.durationMs?.takeIf { loadedCurrent && it > 0L })
             ?: song?.durationMs?.toLong()?.takeIf { it > 0L }
             ?: 0L
+        val nextSong = snapshot?.list?.firstOrNull()?.song
         fullscreenPlaybackPanel.updatePlayback(
             title = song?.title,
             position = position,
@@ -2464,6 +2455,9 @@ class MainActivity : AppCompatActivity(), KtvSocket.Listener {
             currentVocalMode = currentVocalMode,
             isMuted = currentMuted,
             canSeek = loadedCurrent && currentFileId != null,
+            nextTitle = nextSong?.title,
+            nextArtist = nextSong?.artist,
+            autoPlay = snapshot?.playing?.autoPlay == true,
         )
     }
 

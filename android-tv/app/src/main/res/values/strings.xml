@@ -3,51 +3,20 @@
     <string name="app_name">家享K歌</string>
 
     <!-- 动态列表与状态文案：由当前服务端返回的数据填充，不写入演示歌曲内容。 -->
-    <string name="unknown_artist">未知歌手</string>
     <string name="unknown_song">未知歌曲</string>
     <string name="anonymous_user">匿名</string>
     <string name="playback_none">暂无播放</string>
-    <string name="please_order_song">请先点歌</string>
-    <string name="play_action">播放</string>
-    <string name="pause_action">暂停</string>
-    <string name="vocal_original">原唱</string>
-    <string name="vocal_backing">伴唱</string>
-    <string name="queue_badge_count">已点 %1$d 首</string>
-    <string name="kiosk_queue_action">已点歌曲</string>
-    <string name="kiosk_vocal_action">原伴唱</string>
-    <string name="playback_progress_accessibility">当前歌曲播放进度</string>
     <string name="song_count_only">%1$d 首</string>
-    <string name="song_artist_line">%1$s · %2$s</string>
-    <string name="artist_count_gender_line">%1$s · %2$d 首 · %3$s</string>
-    <string name="named_count_line">%1$s · %2$d 首</string>
-    <string name="named_count_songs">%1$d 首歌曲</string>
-    <string name="view_artist_songs_description">查看歌手 %1$s 的歌曲</string>
-    <string name="view_named_songs_description">查看%1$s歌曲</string>
-    <string name="playlist_count_line">%1$s · %2$d 首</string>
-    <string name="order_playlist_description">整单点歌 %1$s</string>
-    <string name="history_song_line">%1$s · %2$s · %3$s</string>
-    <string name="repeat_song_description">再次点歌 %1$s</string>
-    <string name="queue_row_line">%1$02d  %2$s · %3$s  %4$s</string>
     <string name="queue_row_index">%1$d</string>
     <string name="queue_row_subtitle">%1$s · 点歌人：%2$s</string>
     <string name="queue_drawer_title_count">已点歌曲 (%1$d)</string>
-    <string name="queue_now_playing_empty">当前演唱：暂无</string>
     <string name="queue_now_playing">正在演唱  %1$s · %2$s</string>
-    <string name="unnamed_playlist">未命名歌单</string>
-    <string name="controller_artist_title">歌手 · %1$s</string>
-    <string name="controller_language_title">语种 · %1$s</string>
-    <string name="controller_tag_title">标签 · %1$s</string>
     <string name="qr_lan_address">局域网访问地址：%1$s</string>
-    <string name="home_waiting_count">排队中 %1$d 首</string>
-    <string name="home_library_count">曲库 %1$d 首</string>
     <string name="audio_preview_empty_title">暂无歌曲播放</string>
     <string name="time_zero">00:00</string>
-    <string name="common_try_again_later">请稍后重试</string>
-    <string name="main_queue_row">%1$02d    %2$s · %3$s    %4$s</string>
 
     <!-- Home、连接页、点歌与播控布局文案。 -->
     <string name="brand_home_ktv">Home KTV</string>
-    <string name="brand_tagline">FAMILY KARAOKE</string>
     <string name="setup_tagline">SET UP YOUR ROOM</string>
     <string name="setup_hero_title">回到熟悉的\n客厅 KTV</string>
     <string name="setup_hero_description">优先连接最近使用的服务端。也可以扫描附近设备，或手动输入新的地址。</string>
@@ -60,12 +29,7 @@
     <string name="setup_credential_hint">启用密钥时请使用 HTTPS 地址（https://主机:端口）</string>
     <string name="setup_credential_requires_https">电视连接密钥仅通过 HTTPS/WSS 发送，请将地址改为 https://主机:端口</string>
     <string name="artist_filter_group">组合</string>
-    <string name="home_mode_badge">家庭欢唱模式</string>
-    <string name="home_welcome">今晚开唱</string>
     <string name="home_subtitle">手机点歌，电视欢唱\n一家人的客厅 KTV</string>
-    <string name="home_library_label">曲库</string>
-    <string name="home_waiting_label">排队中</string>
-    <string name="recommendation_heading">曲库推荐</string>
     <string name="accessibility_artist_avatar">歌手头像</string>
     <string name="accessibility_song_cover">歌曲封面</string>
     <string name="playback_controls_heading">播放控制</string>
@@ -80,11 +44,7 @@
     <string name="kiosk_label">点歌台</string>
     <string name="microphone_off">麦克风：关</string>
     <string name="server_mode_label">服务器设置</string>
-    <string name="singing_mode_label">演唱模式</string>
-    <string name="return_to_video">返回全屏 MV</string>
     <string name="common_close">关闭</string>
-    <string name="common_back">返回</string>
-    <string name="controller_status_connecting">连接中…</string>
     <string name="qr_dialog_phone_title">📱 手机扫码点歌</string>
     <string name="qr_dialog_phone_help">支持微信、系统相机或手机浏览器直接扫码</string>
     <string name="qr_dialog_image_description">点歌二维码</string>
@@ -105,40 +65,9 @@
     <string name="queue_shuffle_action">🔀 智能打散</string>
     <string name="queue_ordered_list_label">已点歌曲列表</string>
     <string name="queue_empty_hint">暂无排队歌曲，快去点歌吧~</string>
-    <string name="controller_content_description">点歌内容</string>
-    <string name="controller_service_hint">无需浏览器：本机直接连接 Home KTV 服务端</string>
-    <string name="controller_search_hint">搜索歌名、歌手、拼音或首字母</string>
-    <string name="controller_catalog_singers">歌手</string>
-    <string name="controller_catalog_languages">语种</string>
-    <string name="controller_catalog_categories">分类</string>
-    <string name="controller_my_connection_title">点歌服务连接</string>
-    <string name="controller_connecting">连接中…</string>
-    <string name="controller_server_setup">设置服务器</string>
-    <string name="controller_remote_no_song">暂无歌曲</string>
-    <string name="controller_hot_songs_label">热歌</string>
-    <string name="scrollable_list_description">可滚动列表</string>
-    <string name="search_results_heading">搜索结果</string>
-    <string name="favorites_heading">收藏</string>
-    <string name="current_queue_heading">当前队列</string>
-    <string name="controller_now_playing_empty">正在演唱：暂无</string>
-    <string name="remote_control_heading">遥控电视</string>
-    <string name="volume_label">音量</string>
-    <string name="tv_volume_description">电视音量</string>
-    <string name="playback_progress_description">播放进度</string>
-    <string name="clear_message_description">提示，点击清除</string>
-    <string name="mini_player_empty">暂无歌曲播放</string>
-    <string name="queue_short_label">队列</string>
     <string name="server_device_tv">TV</string>
-    <string name="vocal_tracks_short">原/伴</string>
-    <string name="order_song_action">点歌</string>
-    <string name="priority_song_action">优先</string>
     <string name="queue_pin_action">置顶</string>
     <string name="queue_remove_action">删除</string>
-    <string name="now_playing_label">正在播放</string>
-    <string name="cheer_applause_action">👏 鼓掌</string>
-    <string name="cheer_action">🎉 喝彩</string>
-    <string name="qr_short_action">📱 扫码</string>
-    <string name="queue_badge_initial">已点 0 首</string>
     <string name="keyboard_search_help">请输入首字母搜索</string>
     <string name="common_retry">重试</string>
     <string name="artist_filter_all">全部</string>
@@ -177,7 +106,6 @@
 
     <!-- 待机/状态 -->
     <string name="standby_scan_title">扫码点歌</string>
-    <string name="standby_scan_sub">微信扫一扫，即刻加入这场欢唱</string>
     <string name="status_connecting">服务连接中…</string>
     <string name="status_connected">服务端在线</string>
     <string name="status_standby">已连接 · 备用播放机</string>
@@ -187,7 +115,5 @@
     <string name="play_error">当前歌曲无法播放，已跳过</string>
     <string name="play_waiting_network">点歌服务暂时不可用，正在重试</string>
     <!-- 二维码 -->
-    <string name="qr_loading">二维码加载中…</string>
-    <string name="qr_desc">扫码点歌二维码</string>
     <string name="qr_wechat_order">微信扫码点歌</string>
 </resources>

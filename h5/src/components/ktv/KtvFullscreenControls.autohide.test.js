@@ -39,7 +39,6 @@ describe('KtvMediaSurface 全屏播控 3 秒自隐藏与跑马灯', () => {
   let root
   let player
   let pinia
-  let emittedPitchDelta = []
 
   beforeAll(() => {
     Object.defineProperty(window.HTMLMediaElement.prototype, 'play', {
@@ -61,7 +60,6 @@ describe('KtvMediaSurface 全屏播控 3 秒自隐藏与跑马灯', () => {
 
   beforeEach(() => {
     vi.useFakeTimers()
-    emittedPitchDelta = []
     pinia = createPinia()
     setActivePinia(pinia)
     player = usePlayerStore()
@@ -88,8 +86,7 @@ describe('KtvMediaSurface 全屏播控 3 秒自隐藏与跑马灯', () => {
 
   async function mountFullscreenSurface() {
     app = createApp(KtvMediaSurface, {
-      fullscreen: true,
-      onPitchDelta: (delta) => emittedPitchDelta.push(delta)
+      fullscreen: true
     })
     app.use(pinia)
     app.mount(root)
@@ -157,30 +154,41 @@ describe('KtvMediaSurface 全屏播控 3 秒自隐藏与跑马灯', () => {
     expect(bottomPanel.classList.contains('hidden')).toBe(true)
   })
 
-  it('全屏切歌时顶部滑入跑马灯横幅并在 3 秒后淡出', async () => {
+  it('全屏切歌或变更下一首时通过顶栏走马灯展示并唤醒 3 秒，不再渲染重叠悬浮横幅', async () => {
     await mountFullscreenSurface()
+    const topBar = root.querySelector('.fs-topbar')
+    const stage = root.querySelector('.media-stage')
 
-    // 切换歌曲
+    // 先等待 OSD 自动隐藏
+    stage.dispatchEvent(new MouseEvent('mousemove'))
+    vi.advanceTimersByTime(3100)
+    await nextTick()
+    expect(topBar.classList.contains('hidden')).toBe(true)
+
+    // 切换歌曲时自动唤醒顶栏，文案融合当前与下一首，且无独立 .fs-marquee-banner
     player.nowPlaying = { queueId: 20, song: { id: 3, title: '吻别', artist: '张学友' } }
     await nextTick()
     await nextTick()
 
-    const marquee = root.querySelector('.fs-marquee-banner')
-    expect(marquee).not.toBeNull()
-    expect(marquee.textContent).toContain('正在播放：张学友 - 吻别')
+    expect(root.querySelector('.fs-marquee-banner')).toBeNull()
+    expect(topBar.classList.contains('hidden')).toBe(false)
+    const marqueeText = root.querySelector('.fs-topbar .fs-now-text')?.textContent?.trim()
+    expect(marqueeText).toContain('正在播放：吻别')
+    expect(marqueeText).toContain('下一首：Beyond - 光辉岁月')
 
-    // 3 秒后横幅离开（Vue 进入 leave-active 状态）
-    vi.advanceTimersByTime(3500)
+    // 3 秒后随控件一起平滑隐藏
+    vi.advanceTimersByTime(3100)
     await nextTick()
-    const leaving = root.querySelector('.fs-marquee-banner')
-    expect(!leaving || leaving.classList.contains('marquee-slide-leave-active')).toBe(true)
+    expect(topBar.classList.contains('hidden')).toBe(true)
   })
 
-  it('全屏顶部展示极简右对齐正在播放提示，底部控台按 IKTV 顺序排列 10 个大图标并触发音量/点歌事件', async () => {
+  it('公播模式下顶部走马灯显示随机公播前缀，底部控台按 IKTV 顺序排列 10 个大图标并触发音量/点歌事件', async () => {
     const emittedVolumes = []
     let openedBrowser = false
     let openedQueue = false
     let openedHome = false
+    player.queue = []
+    player.nowPlaying = { queueId: 30, autoPlay: true, song: { id: 9, title: '又十年', artist: '陈奕迅' } }
     app = createApp(KtvMediaSurface, {
       fullscreen: true,
       onVolumeDelta: delta => emittedVolumes.push(delta),
@@ -194,7 +202,7 @@ describe('KtvMediaSurface 全屏播控 3 秒自隐藏与跑马灯', () => {
     await nextTick()
 
     const topBarText = root.querySelector('.fs-topbar .fs-now-text')?.textContent?.trim()
-    expect(topBarText).toBe('正在播放：海阔天空')
+    expect(topBarText).toBe('随机公播：又十年')
     expect(root.querySelector('.fs-progress-row input[type="range"]')?.getAttribute('aria-label')).toBe('播放进度')
 
     const labels = Array.from(root.querySelectorAll('.fs-action-row .fs-act')).map(el => el.textContent.replace(/\d+/g, '').trim())

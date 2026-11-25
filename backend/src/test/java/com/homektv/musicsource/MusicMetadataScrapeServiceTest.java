@@ -655,7 +655,7 @@ class MusicMetadataScrapeServiceTest {
     }
 
     @Test
-    void recoveryReclaimsNullLeasesAndPausesOnlyInterruptedRunningBatches() {
+    void recoveryReclaimsProcessingLeasesAndAutoResumesRunningBatchesWhenEnabled() {
         jdbc.batchUpdate("""
                 INSERT INTO music_metadata_scrape_batches(id,mode,status,auto_apply_threshold)
                 VALUES (?, 'SELECTED', ?, 0.95)
@@ -665,7 +665,7 @@ class MusicMetadataScrapeServiceTest {
                 INSERT INTO music_metadata_scrape_items
                     (batch_id,song_id,original_title,original_artist,status,lease_owner,lease_until)
                 VALUES ('interrupted-running',101,'无租约','歌手','PROCESSING','lost-worker',NULL),
-                       ('interrupted-running',102,'未过期','歌手','PROCESSING','active-worker',CURRENT_TIMESTAMP + INTERVAL '1' HOUR),
+                       ('interrupted-running',102,'未过期','歌手','PROCESSING','old-container',CURRENT_TIMESTAMP + INTERVAL '1' HOUR),
                        ('interrupted-running',103,'待处理','歌手','PENDING',NULL,NULL)
                 """);
 
@@ -673,7 +673,7 @@ class MusicMetadataScrapeServiceTest {
 
         assertThat(jdbc.queryForObject(
                 "SELECT status FROM music_metadata_scrape_batches WHERE id='interrupted-running'", String.class))
-                .isEqualTo("PAUSED");
+                .isEqualTo("RUNNING");
         assertThat(jdbc.queryForObject(
                 "SELECT status FROM music_metadata_scrape_batches WHERE id='already-paused'", String.class))
                 .isEqualTo("PAUSED");
@@ -682,10 +682,36 @@ class MusicMetadataScrapeServiceTest {
                 .isEqualTo("PENDING");
         assertThat(jdbc.queryForObject(
                 "SELECT status FROM music_metadata_scrape_items WHERE song_id=102", String.class))
-                .isEqualTo("PROCESSING");
+                .isEqualTo("PENDING");
         assertThat(jdbc.queryForObject(
                 "SELECT status FROM music_metadata_scrape_items WHERE song_id=103", String.class))
                 .isEqualTo("PENDING");
+        verify(worker).process("interrupted-running");
+    }
+
+    @Test
+    void recoveryPausesRunningBatchesWhenMetadataProvidersAreDisabled() {
+        when(configService.getConfig()).thenReturn(new MusicSourceConfig(
+                false, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95));
+        jdbc.update("""
+                INSERT INTO music_metadata_scrape_batches(id,mode,status,auto_apply_threshold)
+                VALUES ('disabled-running', 'SELECTED', 'RUNNING', 0.95)
+                """);
+        jdbc.update("""
+                INSERT INTO music_metadata_scrape_items
+                    (batch_id,song_id,original_title,original_artist,status,lease_owner,lease_until)
+                VALUES ('disabled-running',101,'进行中','歌手','PROCESSING','old-worker',CURRENT_TIMESTAMP + INTERVAL '1' HOUR)
+                """);
+
+        service.recoverInterruptedBatches();
+
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM music_metadata_scrape_batches WHERE id='disabled-running'", String.class))
+                .isEqualTo("PAUSED");
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM music_metadata_scrape_items WHERE song_id=101", String.class))
+                .isEqualTo("PENDING");
+        verifyNoInteractions(worker);
     }
 
     @Test

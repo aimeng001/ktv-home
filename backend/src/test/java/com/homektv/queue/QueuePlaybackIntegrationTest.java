@@ -168,10 +168,13 @@ class QueuePlaybackIntegrationTest {
         assertThat(skipped.getStatus()).isEqualTo(QueueService.SKIPPED);
         assertThat(ps.getCurrentQueueId()).isNotEqualTo(firstQueueId);
 
-        // 再切 → 队列空 → idle
+        // 再切 → 队列空 → 自动进入历史随机公播，不占 waiting 队列
         ps = playbackService.next();
-        assertThat(ps.getState()).isEqualTo("idle");
-        assertThat(ps.getCurrentQueueId()).isNull();
+        assertThat(ps.getState()).isEqualTo("playing");
+        assertThat(ps.getCurrentQueueId()).isNotNull();
+        QueueItem autoItem = queueRepo.findById(ps.getCurrentQueueId()).orElseThrow();
+        assertThat(autoItem.isAutoPlay()).isTrue();
+        assertThat(queueService.waitingList()).isEmpty();
     }
 
     @Test
@@ -370,5 +373,42 @@ class QueuePlaybackIntegrationTest {
         QueueItem q1 = queueService.order(song1, user1, false);
         queueService.cancel(q1.getId());
         assertThat(queueService.waitingList()).isEmpty();
+    }
+
+    @Test
+    void autoPlayFromHistoryDoesNotPolluteHistoryOrPlayCountAndPreemptsOnNewOrder() {
+        // 历史为空时，空闲触发公播应保持 idle
+        assertThat(playbackService.startAutoPlayIfIdle()).isFalse();
+        assertThat(playerRepo.getSingleton().getState()).isEqualTo("idle");
+
+        // 正常点播并完成 song1，使其进入 play_history
+        queueService.order(song1, user1, false);
+        playbackService.play();
+        Long firstQueueId = playerRepo.getSingleton().getCurrentQueueId();
+        playbackService.onFinished(firstQueueId);
+
+        // 等待队列为空，自动公播已开启且为 song1
+        PlayerState autoState = playerRepo.getSingleton();
+        assertThat(autoState.getState()).isEqualTo("playing");
+        QueueItem autoItem = queueRepo.findById(autoState.getCurrentQueueId()).orElseThrow();
+        assertThat(autoItem.isAutoPlay()).isTrue();
+        assertThat(autoItem.getSongId()).isEqualTo(song1);
+        assertThat(queueService.waitingList()).isEmpty();
+        assertThat(historyRepo.count()).isEqualTo(1);
+        assertThat(songRepo.findById(song1).orElseThrow().getPlayCount()).isEqualTo(1);
+
+        // 播完公播曲目也不增加播放历史和播放次数
+        playbackService.onFinished(autoItem.getId());
+        assertThat(historyRepo.count()).isEqualTo(1);
+        assertThat(songRepo.findById(song1).orElseThrow().getPlayCount()).isEqualTo(1);
+
+        // 此时用户点播 song2，必须立即切入用户点的歌
+        queueService.order(song2, user1, false);
+        assertThat(playbackService.startIfIdle()).isTrue();
+        PlayerState preempted = playerRepo.getSingleton();
+        QueueItem nowUserSong = queueRepo.findById(preempted.getCurrentQueueId()).orElseThrow();
+        assertThat(nowUserSong.isAutoPlay()).isFalse();
+        assertThat(nowUserSong.getSongId()).isEqualTo(song2);
+        assertThat(historyRepo.count()).isEqualTo(1);
     }
 }

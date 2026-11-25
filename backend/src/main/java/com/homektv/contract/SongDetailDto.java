@@ -28,23 +28,6 @@ public record SongDetailDto(
         List<FileSourceDto> files,
         String catalogNumber
 ) {
-    /** Source-compatible constructor for callers using the original detail fields. */
-    public SongDetailDto(Long id, String title, String artist, String language, String[] tags,
-                         String mediaType, boolean hasVocalTrack, int durationMs, String lyricType,
-                         String coverUrl, String lyricUrl, int playCount, List<FileSourceDto> files) {
-        this(id, title, artist, language, tags, mediaType, hasVocalTrack, durationMs, lyricType,
-                coverUrl, ArtistAvatarUrl.forCredit(artist), lyricUrl, playCount, files, "");
-    }
-
-    /** Source-compatible constructor for callers that also supplied an avatar URL. */
-    public SongDetailDto(Long id, String title, String artist, String language, String[] tags,
-                         String mediaType, boolean hasVocalTrack, int durationMs, String lyricType,
-                         String coverUrl, String artistAvatarUrl, String lyricUrl, int playCount,
-                         List<FileSourceDto> files) {
-        this(id, title, artist, language, tags, mediaType, hasVocalTrack, durationMs, lyricType,
-                coverUrl, artistAvatarUrl, lyricUrl, playCount, files, "");
-    }
-
     public SongDetailDto withArtistAvatarUrl(String resolvedArtistAvatarUrl) {
         return new SongDetailDto(
                 id, title, artist, language, tags, mediaType, hasVocalTrack, durationMs,
@@ -59,21 +42,6 @@ public record SongDetailDto(
     public record FileSourceDto(Long id, String format, int audioTracks, Integer vocalTrackIndex,
                                 String vocalConfidence, String resolution, int priority,
                                 AudioLayoutDto audioLayout, boolean ready) {
-        /** Source-compatible constructor for callers that only know the legacy fields. */
-        public FileSourceDto(Long id, String format, int audioTracks, Integer vocalTrackIndex,
-                             String vocalConfidence, String resolution, int priority) {
-            this(id, format, audioTracks, vocalTrackIndex, vocalConfidence, resolution, priority,
-                    AudioLayoutDto.normalStereo(), true);
-        }
-
-        /** Source-compatible constructor for callers that also know the audio layout. */
-        public FileSourceDto(Long id, String format, int audioTracks, Integer vocalTrackIndex,
-                             String vocalConfidence, String resolution, int priority,
-                             AudioLayoutDto audioLayout) {
-            this(id, format, audioTracks, vocalTrackIndex, vocalConfidence, resolution, priority,
-                    audioLayout, true);
-        }
-
         /**
          * 从 SongFile 实体创建 FileSourceDto。
          *

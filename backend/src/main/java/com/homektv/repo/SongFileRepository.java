@@ -65,14 +65,6 @@ public interface SongFileRepository extends JpaRepository<SongFile, Long> {
     List<SongFile> findByFileRoleAndRelativePathIn(String fileRole, Collection<String> relativePaths);
     Slice<SongFile> findByFileRoleAndFilePathGreaterThanOrderByFilePath(
             String fileRole, String filePath, Pageable pageable);
-    @Query("""
-            SELECT file.id AS id, file.filePath AS filePath, file.probePending AS probePending
-            FROM SongFile file
-            WHERE file.fileRole = :fileRole AND file.filePath > :filePath
-            ORDER BY file.filePath
-            """)
-    Slice<SongFileScanSnapshot> findScanSnapshotsByFileRoleAndFilePathGreaterThanOrderByFilePath(
-            @Param("fileRole") String fileRole, @Param("filePath") String filePath, Pageable pageable);
     @Query(value = """
             SELECT file.*
             FROM song_files file

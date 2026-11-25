@@ -1828,36 +1828,6 @@ class KtvKioskOverlayController(
         }
     }
 
-    private fun renderSingerInitialRail(state: ControllerUiState) {
-        val rail = browserBinding.browserInitialOptions
-        val availableInitials = state.artistInitials
-            .map { it.trim().uppercase() }
-            .filter { it.length == 1 && it[0] in 'A'..'Z' }
-            .distinct()
-        val initials = if (availableInitials.isEmpty() && state.artistRegion.isNotBlank()) {
-            emptyList()
-        } else {
-            availableInitials.ifEmpty { ('A'..'Z').map(Char::toString) }
-        }
-        val specs = initials.map { initial ->
-            BrowserRailOptionSpec(
-                label = initial,
-                selected = state.artistInitial.equals(initial, ignoreCase = true),
-            ) {
-                presentationState.clearArtistSelection()
-                selectedArtistKey = null
-                catalogActions.loadArtists(
-                    gender = controllerState.artistGender,
-                    initial = initial,
-                    restorePage = 0,
-                    region = controllerState.artistRegion,
-                )
-                syncBackState()
-            }
-        }
-        syncBrowserOptionRail(rail, specs, INITIAL_RAIL_STYLE)
-    }
-
     private fun addBrowserFilterOption(
         label: String,
         selected: Boolean,
@@ -2882,13 +2852,6 @@ class KtvKioskOverlayController(
         const val SONG_GRID_PAGE_SIZE = 15
         const val SINGER_GRID_PAGE_SIZE = 16
         const val MAX_VISIBLE_CATALOG_ITEMS = 2000
-        private val INITIAL_RAIL_STYLE = RailButtonStyle(
-            heightDp = 38,
-            bottomMarginDp = 3,
-            zeroPadding = true,
-            textSizeSp = null,
-            unselectedDrawableRes = R.drawable.btn_keyboard_key,
-        )
         private val FILTER_RAIL_STYLE = RailButtonStyle(
             heightDp = 48,
             bottomMarginDp = 6,

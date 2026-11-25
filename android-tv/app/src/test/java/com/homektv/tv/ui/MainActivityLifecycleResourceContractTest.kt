@@ -47,8 +47,6 @@ class MainActivityLifecycleResourceContractTest {
             .substringBefore("private fun untrackModalDialog")
         val destroyMethod = source.substringAfter("override fun onDestroy()")
             .substringBefore("/** 顶层 BACK")
-        val confirmMethod = source.substringAfter("private fun confirmControl(")
-            .substringBefore("private fun sendControl(")
         val trackedAlertHelper = source.substringAfter("private fun showTrackedAlertDialog(")
             .substringBefore("private fun dismissActiveModalDialogs()")
 
@@ -64,11 +62,6 @@ class MainActivityLifecycleResourceContractTest {
         assertTrue(
             "onDestroy must dismiss all active modal dialogs to prevent WindowLeaked",
             destroyMethod.contains("dismissActiveModalDialogs()"),
-        )
-        assertTrue(
-            "confirmControl must track its AlertDialog for BACK/idle/destroy handling",
-            (confirmMethod.contains("trackModalDialog(") && confirmMethod.contains("untrackModalDialog(")) ||
-                confirmMethod.contains("showTrackedAlertDialog("),
         )
     }
 

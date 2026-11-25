@@ -31,17 +31,6 @@ public record SongDto(
         String resolution,
         @JsonInclude(JsonInclude.Include.NON_NULL) String vocalForm
 ) {
-    /** Source-compatible constructor for callers omitting vocalForm. */
-    public SongDto(Long id, String catalogNumber, String title, String artist, String artistGender,
-                   String mediaType, boolean hasVocalTrack, int durationMs, String lyricType,
-                   String coverUrl, int playCount, String artistAvatarUrl, boolean playable,
-                   String unavailableReason, String titlePinyin, String titleInitials,
-                   String artistPinyin, String artistInitials, String resolution) {
-        this(id, catalogNumber, title, artist, artistGender, mediaType, hasVocalTrack, durationMs,
-                lyricType, coverUrl, playCount, artistAvatarUrl, playable, unavailableReason,
-                titlePinyin, titleInitials, artistPinyin, artistInitials, resolution, "未知");
-    }
-
     /** Source-compatible constructor for the previous catalog DTO shape. */
     public SongDto(Long id, String catalogNumber, String title, String artist, String artistGender,
                    String mediaType, boolean hasVocalTrack, int durationMs, String lyricType,
@@ -50,25 +39,6 @@ public record SongDto(
         this(id, catalogNumber, title, artist, artistGender, mediaType, hasVocalTrack, durationMs,
                 lyricType, coverUrl, playCount, artistAvatarUrl, playable, unavailableReason,
                 "", "", "", "", null, "未知");
-    }
-
-    /** Source-compatible constructor for callers that already supply pinyin metadata. */
-    public SongDto(Long id, String catalogNumber, String title, String artist, String artistGender,
-                   String mediaType, boolean hasVocalTrack, int durationMs, String lyricType,
-                   String coverUrl, int playCount, String artistAvatarUrl, boolean playable,
-                   String unavailableReason, String titlePinyin, String titleInitials,
-                   String artistPinyin, String artistInitials) {
-        this(id, catalogNumber, title, artist, artistGender, mediaType, hasVocalTrack, durationMs,
-                lyricType, coverUrl, playCount, artistAvatarUrl, playable, unavailableReason,
-                titlePinyin, titleInitials, artistPinyin, artistInitials, null, "未知");
-    }
-
-    /** Source-compatible constructor for callers using the original protocol fields. */
-    public SongDto(Long id, String title, String artist, String artistGender, String mediaType,
-                   boolean hasVocalTrack, int durationMs, String lyricType, String coverUrl,
-                   int playCount) {
-        this(id, "", title, artist, artistGender, mediaType, hasVocalTrack, durationMs, lyricType,
-                coverUrl, playCount, ArtistAvatarUrl.forCredit(artist), true, null);
     }
 
     /** Source-compatible constructor for callers that also supplied an avatar URL. */

@@ -279,9 +279,15 @@ public class SnapshotService {
         QueueSnapshot.NowPlaying nowPlaying = null;
         if (current != null) {
             Song song = songs.get(current.getSongId());
-            nowPlaying = new QueueSnapshot.NowPlaying(current.getId(),
+            String orderedByNick = nicks.get(current.getOrderedBy());
+            if (current.isAutoPlay() && (orderedByNick == null || orderedByNick.isBlank())) {
+                orderedByNick = "随机公播";
+            }
+            nowPlaying = new QueueSnapshot.NowPlaying(
+                    current.getId(),
                     toSnapshotSongDto(song, avatarUrls),
-                    nicks.get(current.getOrderedBy()));
+                    orderedByNick,
+                    current.isAutoPlay());
         }
 
         List<QueueSnapshot.QueueEntry> list = waiting.stream()

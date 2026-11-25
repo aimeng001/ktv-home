@@ -615,4 +615,35 @@ describe('KtvKioskView', () => {
     expect(player.socket.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'play_error' }))
     delete window.AudioContext
   })
+
+  it('skips directly without confirmation modal and deduplicates rapid double clicks', async () => {
+    let resolveNext
+    controlsMock.next.mockImplementationOnce(() => new Promise(resolve => { resolveNext = resolve }))
+    player.handleEvent('sync_full', {
+      state: 'playing', volume: 65, muted: false, vocalMode: 'accompaniment',
+      tvOnline: false, stateRevision: 50,
+      playing: { queueId: 33, autoPlay: true, orderedByNick: '随机公播', song: { id: 101, title: '又十年', artist: '陈奕迅' } },
+      list: [],
+      playback: { kind: 'NATIVE', status: 'READY', sourceFileId: 55 }
+    })
+    await nextTick()
+
+    const dockNextBtn = root.querySelector('.ktv-bottom-dock button[aria-label="切歌"]')
+    expect(dockNextBtn).not.toBeNull()
+    dockNextBtn.click()
+    dockNextBtn.click()
+    await nextTick()
+
+    expect(controlsMock.next).toHaveBeenCalledTimes(1)
+    expect(root.querySelector('.dialog-overlay')).toBeNull()
+
+    resolveNext({ stateRevision: 51 })
+    await Promise.resolve()
+    await nextTick()
+
+    controlsMock.next.mockResolvedValueOnce({ stateRevision: 52 })
+    dockNextBtn.click()
+    await Promise.resolve()
+    expect(controlsMock.next).toHaveBeenCalledTimes(2)
+  })
 })

@@ -283,7 +283,6 @@ export const api = {
   // ADM-04 AI 曲库与主题歌单
   // ADM-04 AI song library and themed playlists
   adminAiTasks: () => read('/admin/ai/tasks'),
-  adminAiCreateTask: (songId) => request('/admin/ai/tasks', { method: 'POST', body: JSON.stringify({ songId }) }),
   adminAiCreateTasks: (songIds) => request('/admin/ai/tasks/batch', { method: 'POST', body: JSON.stringify({ songIds }) }),
   adminAiCreateUnclassified: (limit = 50) => request('/admin/ai/tasks/unclassified', { method: 'POST', body: JSON.stringify({ limit }) }),
   adminAiRetryTask: (id) => request(`/admin/ai/tasks/${id}/retry`, { method: 'POST' }),

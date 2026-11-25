@@ -1,25 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Widget.HomeKtv.CommercialCard" parent="@android:style/Widget.TextView">
-        <item name="android:background">@drawable/bg_ktv_card_focused</item>
-        <item name="android:stateListAnimator">@animator/ktv_card_focus_scale</item>
-    </style>
-
-    <style name="TextAppearance.HomeKtv.PageTitle" parent="@android:style/TextAppearance">
-        <item name="android:fontFamily">sans-serif</item>
-        <item name="android:textColor">@color/text</item>
-        <item name="android:textSize">@dimen/ktv_text_page_title</item>
-        <item name="android:textStyle">bold</item>
-    </style>
-    <style name="TextAppearance.HomeKtv.BrandTitle" parent="@android:style/TextAppearance">
-        <item name="android:fontFamily">sans-serif</item>
-        <item name="android:textColor">@color/gold</item>
-        <item name="android:textSize">@dimen/ktv_text_brand_title</item>
-        <item name="android:textStyle">bold</item>
-    </style>
-    <style name="TextAppearance.HomeKtv.BrandHero" parent="TextAppearance.HomeKtv.BrandTitle">
-        <item name="android:textSize">@dimen/ktv_text_brand_hero</item>
-    </style>
     <style name="TextAppearance.HomeKtv.SectionTitle" parent="@android:style/TextAppearance">
         <item name="android:fontFamily">sans-serif</item>
         <item name="android:textColor">@color/text</item>
@@ -31,15 +11,9 @@
         <item name="android:textColor">@color/text</item>
         <item name="android:textSize">@dimen/ktv_text_body</item>
     </style>
-    <style name="TextAppearance.HomeKtv.Secondary" parent="@android:style/TextAppearance">
-        <item name="android:fontFamily">sans-serif</item>
-        <item name="android:textColor">@color/dim</item>
-        <item name="android:textSize">@dimen/ktv_text_secondary</item>
-    </style>
     <style name="TextAppearance.HomeKtv.TileTitle" parent="TextAppearance.HomeKtv.SectionTitle">
         <item name="android:textSize">@dimen/ktv_text_tile_title</item>
     </style>
-    <style name="TextAppearance.HomeKtv.TileSubtitle" parent="TextAppearance.HomeKtv.Secondary" />
     <style name="KtvDashboardTileCaption" parent="TextAppearance.HomeKtv.TileTitle">
         <item name="android:textColor">#FFFFFF</item>
         <item name="android:textSize">15sp</item>

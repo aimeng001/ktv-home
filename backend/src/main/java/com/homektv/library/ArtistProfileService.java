@@ -347,14 +347,19 @@ public class ArtistProfileService {
         return updated > 0;
     }
 
+    static final int MISSING_AVATAR_GUARD_MIN_READY = 20;
+    static final double MISSING_AVATAR_GUARD_MAX_RATIO = 0.50d;
+
     /**
      * Repairs stale READY artist profiles whose cached avatar files are missing on disk
-     * (e.g. after upgrading a container whose data directory was previously ephemeral).
+     * (e.g. after upgrading a container whose data directory was previously ephemeral),
+     * guarded by a mount-glitch circuit breaker to avoid wiping progress when /data is mis-mounted.
      */
     public int requeueMissingCachedAvatars(AssetWriter assets) {
         if (assets == null || !assets.isCacheStorageAvailable()) return 0;
         final int pageSize = 1000;
-        int resetCount = 0;
+        int totalReady = 0;
+        List<String> allMissingKeys = new java.util.ArrayList<>();
         String lastKey = "";
         try {
             while (true) {
@@ -371,34 +376,47 @@ public class ArtistProfileService {
                         """, (rs, index) -> new MissingAvatarCandidate(
                         rs.getString("artist_key"), rs.getString("avatar_path")), lastKey, pageSize);
                 if (candidates == null || candidates.isEmpty()) break;
+                totalReady += candidates.size();
                 String nextKey = candidates.getLast().artistKey();
-                List<String> missingKeys = candidates.stream()
+                candidates.stream()
                         .filter(candidate -> !assets.isReadableCache(candidate.avatarPath()))
                         .map(MissingAvatarCandidate::artistKey)
-                        .toList();
-                if (!missingKeys.isEmpty()) {
-                    jdbc.batchUpdate("""
-                            UPDATE artist_profiles
-                            SET avatar_path=NULL, avatar_status='PENDING', avatar_error=NULL, updated_at=now()
-                            WHERE artist_key=? AND avatar_status='READY'
-                            """, missingKeys, missingKeys.size(), (statement, key) -> statement.setString(1, key));
-                    try {
-                        jdbc.batchUpdate("""
-                                DELETE FROM artist_avatar_jobs
-                                WHERE artist_key=? AND status IN ('SKIPPED', 'FAILED', 'REVIEW')
-                                """, missingKeys, missingKeys.size(), (statement, key) -> statement.setString(1, key));
-                    } catch (DataAccessException ignored) {}
-                    try {
-                        jdbc.batchUpdate("""
-                                UPDATE artist_directory_stats
-                                SET avatar_path=NULL, updated_at=now()
-                                WHERE artist_key=?
-                                """, missingKeys, missingKeys.size(), (statement, key) -> statement.setString(1, key));
-                    } catch (DataAccessException ignored) {}
-                    resetCount += missingKeys.size();
-                }
+                        .forEach(allMissingKeys::add);
                 if (nextKey == null || nextKey.equals(lastKey) || candidates.size() < pageSize) break;
                 lastKey = nextKey;
+            }
+            if (allMissingKeys.isEmpty()) return 0;
+
+            double missingRatio = totalReady > 0 ? (double) allMissingKeys.size() / totalReady : 0d;
+            if (totalReady >= MISSING_AVATAR_GUARD_MIN_READY && missingRatio >= MISSING_AVATAR_GUARD_MAX_RATIO) {
+                log.warn("检测到歌手头像缺图异常熔断（READY 共 {} 位，缺失 {}/{} = {}%），疑似 /data 卷挂载错位或权限异常，已跳过重置以保留既有刮削进度，请检查 KTV_DATA_PATH={}",
+                        totalReady, allMissingKeys.size(), totalReady, Math.round(missingRatio * 100),
+                        assets.dataRootForCleanup());
+                return 0;
+            }
+
+            int resetCount = 0;
+            for (int start = 0; start < allMissingKeys.size(); start += pageSize) {
+                List<String> batch = allMissingKeys.subList(start, Math.min(allMissingKeys.size(), start + pageSize));
+                jdbc.batchUpdate("""
+                        UPDATE artist_profiles
+                        SET avatar_path=NULL, avatar_status='PENDING', avatar_error=NULL, updated_at=now()
+                        WHERE artist_key=? AND avatar_status='READY'
+                        """, batch, batch.size(), (statement, key) -> statement.setString(1, key));
+                try {
+                    jdbc.batchUpdate("""
+                            DELETE FROM artist_avatar_jobs
+                            WHERE artist_key=? AND status IN ('SKIPPED', 'FAILED', 'REVIEW')
+                            """, batch, batch.size(), (statement, key) -> statement.setString(1, key));
+                } catch (DataAccessException ignored) {}
+                try {
+                    jdbc.batchUpdate("""
+                            UPDATE artist_directory_stats
+                            SET avatar_path=NULL, updated_at=now()
+                            WHERE artist_key=?
+                            """, batch, batch.size(), (statement, key) -> statement.setString(1, key));
+                } catch (DataAccessException ignored) {}
+                resetCount += batch.size();
             }
             if (resetCount > 0) {
                 log.info("reset {} stale READY artist avatar(s) with missing cache files", resetCount);
@@ -406,7 +424,7 @@ public class ArtistProfileService {
             return resetCount;
         } catch (DataAccessException failure) {
             log.debug("missing artist avatar verification skipped: {}", failure.getMessage());
-            return resetCount;
+            return 0;
         }
     }
 
@@ -417,7 +435,7 @@ public class ArtistProfileService {
      * so the repaired pipeline can re-scrape real artist portraits.
      */
     public int requeueSuspectNeteasePlaceholders(AssetWriter assets, int limit) {
-        if (assets == null) return 0;
+        if (assets == null || !assets.isCacheStorageAvailable()) return 0;
         int safeLimit = Math.max(1, Math.min(limit, 1000));
         try {
             List<Profile> candidates = jdbc.query("""
@@ -438,7 +456,8 @@ public class ArtistProfileService {
             int resetCount = 0;
             for (Profile profile : candidates) {
                 var path = assets.readableCachePath(profile.avatarPath()).orElse(null);
-                if (path == null || !com.homektv.musicsource.AvatarImageQualityValidator.isUsableCachedAvatarFile(path)) {
+                // Missing cache files are governed by requeueMissingCachedAvatars + circuit breaker, not wiped here.
+                if (path != null && !com.homektv.musicsource.AvatarImageQualityValidator.isUsableCachedAvatarFile(path)) {
                     if (resetSingleArtistForScrape(profile.artistKey())) {
                         assets.deleteReadableCache(profile.avatarPath());
                         jdbc.update("DELETE FROM artist_avatar_jobs WHERE artist_key=?", profile.artistKey());

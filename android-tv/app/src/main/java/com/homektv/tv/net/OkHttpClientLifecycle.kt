@@ -72,8 +72,6 @@ internal object SharedHttpClients {
         }
     }
 
-    internal fun installedDiskCache(): Cache? = sharedDiskCache
-
     val baseClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))

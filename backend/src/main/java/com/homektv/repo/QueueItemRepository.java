@@ -33,13 +33,6 @@ public interface QueueItemRepository extends JpaRepository<QueueItem, Long> {
     List<QueueItem> findByStatusOrderByOrderIndexAsc(String status);
 
     /**
-     * 按多个状态查询队列条目，按排队序号升序排列。
-     *
-     * Query queue items by any of the given statuses, ordered by order index ascending.
-     */
-    List<QueueItem> findByStatusInOrderByOrderIndexAsc(List<String> statuses);
-
-    /**
      * 查询指定歌曲在指定状态下的首个队列条目（用于判断歌曲是否已在等待队列中）。
      *
      * Find the first queue item by song ID and status (to check if a song

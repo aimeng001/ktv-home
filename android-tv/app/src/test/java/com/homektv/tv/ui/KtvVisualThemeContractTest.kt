@@ -63,18 +63,6 @@ class KtvVisualThemeContractTest {
         assertEquals("#20252E", colorValue(ktvThemeColors, "ktv_card_surface").uppercase())
         assertEquals("#F0C742", colorValue(colors, "gold").uppercase())
 
-        val dashboardCard = locate("src/main/res/drawable/bg_dashboard_tile.xml").readText()
-        assertTrue(dashboardCard.contains("@color/ktv_dashboard_card_surface"))
-        assertTrue("reference dashboard tiles use a vertical graphite gradient", dashboardCard.contains("<gradient"))
-        assertEquals("#31353B", colorValue(colors, "ktv_dashboard_card_surface").uppercase())
-        assertEquals("#1A1F23", colorValue(colors, "ktv_dashboard_card_surface_bottom").uppercase())
-        assertTrue(dashboardCard.contains("@dimen/ktv_dashboard_card_radius"))
-        val dashboardFocus = locate("src/main/res/drawable/bg_dashboard_tile_focused.xml").readText()
-        assertTrue(dashboardFocus.contains("@color/ktv_dashboard_gold"))
-        assertTrue("focused tile surface must follow the reference warm fade", dashboardFocus.contains("<gradient"))
-        assertEquals("#4B453D", colorValue(colors, "ktv_dashboard_card_focused").uppercase())
-        assertEquals("#2B2723", colorValue(colors, "ktv_dashboard_card_focused_bottom").uppercase())
-
         val singerCard = locate("src/main/res/drawable/bg_singer_card.xml").readText()
         assertTrue(singerCard.contains("@color/ktv_card_surface"))
         assertTrue(singerCard.contains("@dimen/ktv_radius_card"))
@@ -124,12 +112,6 @@ class KtvVisualThemeContractTest {
             "@color/ktv_surface_tint",
             "@color/ktv_border",
             "@dimen/ktv_radius_control",
-        )
-        assertDrawableUses(
-            "vinyl_disc",
-            "@color/ktv_card_surface",
-            "@color/ktv_border",
-            null,
         )
 
         val mutedUpdate = locate("src/main/res/drawable/bg_update_button_muted.xml").readText()

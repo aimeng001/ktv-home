@@ -18,8 +18,10 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * 歌词/封面缓存落盘（P1.4）。写入 data 目录的 lyrics/ 与 covers/ 子目录，
@@ -32,6 +34,7 @@ public class AssetWriter {
     static final int MAX_IMAGE_BYTES = 10 * 1024 * 1024;
     static final int MAX_LYRIC_BYTES = 1 * 1024 * 1024;
     static final long MAX_ARTIST_COVER_CACHE_BYTES = 1L * 1024 * 1024 * 1024;
+    private static final List<String> ARTIST_COVER_EXTENSIONS = List.of("jpg", "jpeg", "png", "webp");
 
     private final Path dataRoot;
     private final AppProperties props;
@@ -170,6 +173,44 @@ public class AssetWriter {
 
     public boolean isReadableCache(String relativePath) {
         return readableCachePath(relativePath).isPresent();
+    }
+
+    /**
+     * Probes whether a cached avatar file already exists under /data/artist-covers
+     * for the given artist key (e.g. after DB rebuild or container upgrade).
+     */
+    public Optional<String> findExistingArtistCover(String artistKey) {
+        if (artistKey == null || artistKey.isBlank()) return Optional.empty();
+        String hash = digest(artistKey);
+        String prefix = hash.substring(0, 2);
+        for (String ext : ARTIST_COVER_EXTENSIONS) {
+            String rel = "artist-covers/" + prefix + "/" + hash + "." + ext;
+            if (isReadableCache(rel)) {
+                return Optional.of(rel);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Returns true when dataRoot/artist-covers exists as a real non-empty directory. */
+    public boolean isArtistCoverDirectoryPresentAndNonEmpty() {
+        try {
+            Path cacheRoot = dataRoot.toAbsolutePath().normalize();
+            Path coverRoot = cacheRoot.resolve("artist-covers").normalize();
+            if (!coverRoot.startsWith(cacheRoot) || Files.isSymbolicLink(coverRoot)
+                    || !Files.isDirectory(coverRoot, LinkOption.NOFOLLOW_LINKS)) {
+                return false;
+            }
+            Path realCacheRoot = cacheRoot.toRealPath();
+            Path realCoverRoot = coverRoot.toRealPath();
+            if (!realCoverRoot.startsWith(realCacheRoot)) return false;
+            try (Stream<Path> stream = Files.list(realCoverRoot)) {
+                return stream.findAny().isPresent();
+            }
+        } catch (IOException | RuntimeException failure) {
+            log.debug("歌手头像缓存目录检查失败：{}", failure.getMessage());
+            return false;
+        }
     }
 
     /** Returns a verified real cache path for serving, or empty when unsafe/missing. */

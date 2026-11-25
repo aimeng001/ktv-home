@@ -3,7 +3,6 @@
     <KtvHeaderBar
       @open-modal="openModal"
       @open-search="openGlobalSearch"
-      @toggle-fullscreen="toggleFullscreen"
       @toggle-mode="toggleQuickMode"
     />
 
@@ -39,7 +38,7 @@
       @toggle-play="togglePlay"
       @toggle-vocal="toggleVocal"
       @restart="restartSong"
-      @next="confirmNext"
+      @next="skipToNext"
       @volume-delta="adjustVolume"
       @pitch-delta="adjustPitch"
       @open-mixer="openModal('mixer')"
@@ -52,26 +51,22 @@
       :pip-rect="pipRect"
       :show-lyrics="showLyrics"
       @enter-fullscreen="fullscreen = true"
-      @exit-fullscreen="fullscreen = false"
       @open-browser="openBrowserFromFullscreen"
       @open-home="openHomeFromFullscreen"
       @toggle-play="togglePlay"
       @toggle-vocal="toggleVocal"
-      @swap-vocal="swapVocalTracks"
       @toggle-mute="toggleMute"
       @restart="restartSong"
-      @next="confirmNext"
+      @next="skipToNext"
       @seek="seekTo"
       @volume-delta="adjustVolume"
-      @pitch-delta="adjustPitch"
-      @open-mixer="openModal('mixer')"
       @open-queue="drawerOpen = true"
     />
 
     <KtvQueueDrawer
       :open="drawerOpen"
       @close="drawerOpen = false"
-      @next="confirmNext"
+      @next="skipToNext"
       @restart="restartSong"
     />
 
@@ -86,7 +81,6 @@
       @set-volume="setVolume"
       @toggle-mute="toggleMute"
       @set-vocal="setVocalMode"
-      @swap-vocal="swapVocalTracks"
       @pitch-delta="adjustPitch"
       @pitch-reset="resetPitch"
       @effect="sendEffect"
@@ -113,7 +107,6 @@ import { useUserStore } from '../stores/user'
 import { useToast } from '../composables/useToast'
 import { useGlobalTypingCapture } from '../composables/useGlobalTypingCapture'
 import { useStandbyState } from '../composables/useStandbyState'
-import { confirmDialog } from '../composables/useDialog'
 import { KTV_ASSETS } from '../components/ktv/ktvCatalogPresets'
 import KtvHeaderBar from '../components/ktv/KtvHeaderBar.vue'
 import KtvBentoDashboard from '../components/ktv/KtvBentoDashboard.vue'
@@ -161,6 +154,7 @@ const effectOverlayRef = ref(null)
 const pipRect = ref(null)
 
 let pipObserver = null
+let pipRafId = null
 let idleFullscreenTimer = null
 let awaitingHostClaimToast = false
 let dashboardTypingCapture = null
@@ -343,10 +337,6 @@ async function retryIdentity() {
   }
 }
 
-function toggleFullscreen() {
-  fullscreen.value = !fullscreen.value
-}
-
 function toggleQuickMode() {
   if (player.tvOnline === true) {
     toast('当前检测到 TV 端在线，已锁定为 TV 控制台模式')
@@ -397,15 +387,6 @@ async function setVocalMode(mode) {
   } catch (e) { toast(e.message || '切换失败') }
 }
 
-async function swapVocalTracks() {
-  const songTitle = player.nowPlaying?.song?.title || ''
-  if (!await confirmDialog(`将永久更正《${songTitle}》的原唱和伴唱标记。`, { title: '纠正音轨标记' })) return
-  try {
-    await controls.swapVocalTracks()
-    toast('已纠正并记住该歌曲的音轨映射')
-  } catch (e) { toast(e.message || '纠正失败') }
-}
-
 async function restartSong() {
   try {
     await controls.restart()
@@ -413,13 +394,19 @@ async function restartSong() {
   } catch (e) { toast(e.message || '重唱失败') }
 }
 
-async function confirmNext() {
-  const title = player.nowPlaying?.song?.title || '当前歌曲'
-  if (!await confirmDialog(`确认切掉《${title}》并播放下一首？`, { title: '确认切歌', tone: 'warning' })) return
+let skippingNext = false
+
+async function skipToNext() {
+  if (skippingNext) return
+  skippingNext = true
   try {
     await controls.next()
     toast('已切到下一首')
-  } catch (e) { toast(e.message || '切歌失败') }
+  } catch (e) {
+    toast(e.message || '切歌失败')
+  } finally {
+    skippingNext = false
+  }
 }
 
 async function seekTo(positionMs) {
@@ -518,7 +505,11 @@ watch(
 onMounted(async () => {
   await nextTick()
   updatePipRect()
+  if (typeof requestAnimationFrame === 'function') {
+    pipRafId = requestAnimationFrame(updatePipRect)
+  }
   window.addEventListener('resize', updatePipRect)
+  window.visualViewport?.addEventListener('resize', updatePipRect)
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('pointerdown', resetIdleFullscreenTimer, { passive: true })
   window.addEventListener('keydown', resetIdleFullscreenTimer, { passive: true })
@@ -552,8 +543,13 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   clearTimeout(idleFullscreenTimer)
+  if (pipRafId != null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(pipRafId)
+    pipRafId = null
+  }
   dashboardTypingCapture?.dispose()
   window.removeEventListener('resize', updatePipRect)
+  window.visualViewport?.removeEventListener('resize', updatePipRect)
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('pointerdown', resetIdleFullscreenTimer)
   window.removeEventListener('keydown', resetIdleFullscreenTimer)
@@ -564,6 +560,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ktv-kiosk-shell {
+  --ktv-dock-height: clamp(136px, 18vh, 200px);
   height: 100vh;
   width: 100vw;
   box-sizing: border-box;
@@ -611,6 +608,12 @@ onBeforeUnmount(() => {
   cursor: progress;
 }
 
+@media (max-width: 1180px) {
+  .ktv-kiosk-shell {
+    --ktv-dock-height: clamp(116px, 15vh, 144px);
+  }
+}
+
 @media (max-width: 899px) {
   .ktv-kiosk-shell {
     min-height: 100vh;
@@ -618,6 +621,12 @@ onBeforeUnmount(() => {
   }
   .kiosk-stage {
     overflow-y: auto;
+  }
+}
+
+@media (max-width: 759px) {
+  .ktv-kiosk-shell {
+    --ktv-dock-height: 244px;
   }
 }
 </style>

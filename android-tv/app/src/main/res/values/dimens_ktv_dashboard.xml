@@ -7,7 +7,6 @@
     <dimen name="ktv_theme_focus_stroke_width">2.5dp</dimen>
     <dimen name="ktv_dock_video_frame_corner_radius">0dp</dimen>
     <dimen name="ktv_dock_video_frame_stroke_width">2dp</dimen>
-    <dimen name="ktv_bento_minimum_row_height">92dp</dimen>
     <dimen name="ktv_browser_center_col_width">240dp</dimen>
     <dimen name="ktv_browser_capsule_height">28dp</dimen>
     <dimen name="ktv_browser_tab_height">28dp</dimen>

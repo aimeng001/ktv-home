@@ -17,7 +17,6 @@ import java.util.List;
 public interface FavoriteRepository extends JpaRepository<Favorite, Long> {
     List<Favorite> findByUserIdOrderByCreatedAtDesc(Long userId);
     Page<Favorite> findByUserIdOrderByCreatedAtDesc(Long userId, Pageable pageable);
-    boolean existsByUserIdAndSongId(Long userId, Long songId);
     @Modifying
     @Query(value = "INSERT INTO favorites (user_id, song_id) VALUES (:userId, :songId) " +
             "ON CONFLICT (user_id, song_id) DO NOTHING", nativeQuery = true)

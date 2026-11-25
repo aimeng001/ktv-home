@@ -80,7 +80,6 @@ class KtvBottomDockController(
 
     private var videoVisible = false
     val isVideoVisible: Boolean get() = videoVisible
-    private var cachedQrBitmap: Bitmap? = null
     private val iconCachePolicy = BottomDockIconCachePolicy()
     private val frameRenderCache = BottomDockFrameRenderCache()
 
@@ -176,7 +175,6 @@ class KtvBottomDockController(
     }
 
     fun setQrBitmap(bitmap: Bitmap?) {
-        cachedQrBitmap = bitmap
         imgQr?.setImageBitmap(bitmap)
         imgQr?.visibility = View.GONE
         updateContainerVisibility()

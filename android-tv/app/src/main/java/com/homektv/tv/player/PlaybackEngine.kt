@@ -352,7 +352,6 @@ class PlaybackEngine(
         },
         { requestToken, failure -> handleFallbackError(requestToken, failure) },
     ) ?: FfmpegFallbackPlayer(
-        context = appContext,
         onStateChanged = { isPlaying ->
             if (activeEngineType == PlaybackEngineType.FALLBACK_FFMPEG) {
                 videoWatchdog.onPlayingChanged(isPlaying, SystemClock.elapsedRealtime())

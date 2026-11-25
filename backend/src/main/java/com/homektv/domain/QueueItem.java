@@ -48,6 +48,10 @@ public class QueueItem {
     @Column(name = "played_at")
     private OffsetDateTime playedAt;
 
+    /** 是否为无已点歌时的历史随机公播曲目（不占已点队列、不写入播放历史）。 */
+    @Column(name = "auto_play", nullable = false)
+    private boolean autoPlay = false;
+
     // ---- getters / setters ----
 
     public Long getId() { return id; }
@@ -63,4 +67,6 @@ public class QueueItem {
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getPlayedAt() { return playedAt; }
     public void setPlayedAt(OffsetDateTime playedAt) { this.playedAt = playedAt; }
+    public boolean isAutoPlay() { return autoPlay; }
+    public void setAutoPlay(boolean autoPlay) { this.autoPlay = autoPlay; }
 }

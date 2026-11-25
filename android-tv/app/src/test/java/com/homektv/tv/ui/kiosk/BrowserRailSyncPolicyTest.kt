@@ -39,16 +39,10 @@ class BrowserRailSyncPolicyTest {
         val source = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
         val renderMethod = source.substringAfter("private fun renderThreeColumnBrowser")
             .substringBefore("private fun isThreeColumnTab")
-        val initialMethod = source.substringAfter("private fun renderSingerInitialRail")
-            .substringBefore("private fun addBrowserFilterOption")
 
         assertFalse(
             "renderThreeColumnBrowser must incrementally sync filter options instead of unconditional removeAllViews()",
             renderMethod.contains("browser.browserFilterOptions.removeAllViews()"),
-        )
-        assertFalse(
-            "renderSingerInitialRail must incrementally sync A-Z buttons instead of unconditional rail.removeAllViews()",
-            initialMethod.contains("rail.removeAllViews()"),
         )
     }
 

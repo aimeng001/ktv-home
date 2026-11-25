@@ -61,12 +61,6 @@ public final class IktvSongMatchWorker {
     private volatile int idleTicksToSkip = 0;
     private volatile int idleBackoffLevel = 0;
 
-    /** Resets idle backoff when new scan/reference work arrives. */
-    public void wakeUp() {
-        idleTicksToSkip = 0;
-        idleBackoffLevel = 0;
-    }
-
     @Scheduled(fixedDelayString = "${app.iktv-reference.match-delay-ms:1000}",
             initialDelayString = "${app.iktv-reference.match-initial-delay-ms:45000}")
     public void processScheduledWork() {

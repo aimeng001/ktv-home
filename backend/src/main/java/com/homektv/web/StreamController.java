@@ -401,12 +401,6 @@ public class StreamController {
         return false;
     }
 
-    private static boolean isBrowserCopySafeMp4(SongFile sf) {
-        String format = sf.getFormat() == null ? "" : sf.getFormat().trim().toLowerCase(java.util.Locale.ROOT);
-        String path = sf.getFilePath() == null ? "" : sf.getFilePath().trim().toLowerCase(java.util.Locale.ROOT);
-        return format.contains("mp4") || path.endsWith(".mp4") || path.endsWith(".m4v");
-    }
-
     private ResponseEntity<StreamingResponseBody> serveOnTheFlyTranscodeStream(
             Long fileId, File file, SongFile sf, Double startSeconds, Integer audioTrack,
             boolean copyVideo, boolean copyAudio, boolean mergeTracks, HttpServletRequest request) {

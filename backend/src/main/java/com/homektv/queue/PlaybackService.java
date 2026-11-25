@@ -31,11 +31,13 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * 播放控制状态机（P1.10/P1.11，详设§4.4/§9.2/§9.4）。
@@ -47,6 +49,7 @@ public class PlaybackService {
     private static final Duration CONSECUTIVE_ERROR_WINDOW = Duration.ofSeconds(15);
     private static final int CONSECUTIVE_ERROR_THRESHOLD = 3;
     private static final long DEFAULT_POSITION_PERSIST_INTERVAL_MS = 15_000L;
+    private static final int AUTO_PLAY_HISTORY_POOL_LIMIT = 300;
 
     private record LivePositionState(
             long queueId,
@@ -106,14 +109,14 @@ public class PlaybackService {
         this.availabilityPolicy = availabilityPolicy;
     }
 
-    /** 开始/恢复播放。若当前无曲目，尝试从队列取第一首。 */
+    /** 开始/恢复播放。若当前无曲目，尝试从队列取第一首或随机公播历史歌曲。 */
     @Transactional
     public PlayerState play() {
         queueRepo.lockQueueMutation();
         resetConsecutiveErrors();
         PlayerState ps = playerRepo.getSingletonForUpdate();
         if (ps.getCurrentQueueId() == null) {
-            advanceToNext(ps);
+            advanceToNext(ps, true, null);
         } else {
             syncLivePositionBeforeSave(ps);
             ps.setState("playing");
@@ -124,15 +127,30 @@ public class PlaybackService {
         return saved;
     }
 
-    /** 点歌后仅在播放器空闲时自动开始，不打断正在暂停的歌曲。 */
+    /** 点歌后在播放器空闲或正在随机公播时立即切入用户点播的歌曲，不打断正在暂停或点播的歌曲。 */
     @Transactional
     public boolean startIfIdle() {
         queueRepo.lockQueueMutation();
         PlayerState ps = playerRepo.getSingletonForUpdate();
-        if (ps.getCurrentQueueId() != null || !"idle".equals(ps.getState())) {
+        if (ps.getCurrentQueueId() != null) {
+            QueueItem current = queueRepo.findById(ps.getCurrentQueueId()).orElse(null);
+            if (current == null || !current.isAutoPlay()) {
+                return false;
+            }
+            Long previousSongId = markCurrent(ps, QueueService.SKIPPED, false);
+            advanceToNext(ps, false, previousSongId);
+            PlayerState saved = playerRepo.save(ps);
+            scheduleLivePositionSync(saved, true);
+            if (saved.getCurrentQueueId() != null) {
+                publishPlaybackStateChanged();
+                return true;
+            }
             return false;
         }
-        advanceToNext(ps);
+        if (!"idle".equals(ps.getState())) {
+            return false;
+        }
+        advanceToNext(ps, false, null);
         PlayerState saved = playerRepo.save(ps);
         scheduleLivePositionSync(saved, true);
         if (ps.getCurrentQueueId() != null) {
@@ -140,6 +158,24 @@ public class PlaybackService {
             return true;
         }
         return false;
+    }
+
+    /** 当有活跃播放端上线或接管且当前房间完全空闲时，自动开始历史点播随机公播。 */
+    @Transactional
+    public boolean startAutoPlayIfIdle() {
+        queueRepo.lockQueueMutation();
+        PlayerState ps = playerRepo.getSingletonForUpdate();
+        if (ps.getCurrentQueueId() != null || !"idle".equals(ps.getState())) {
+            return false;
+        }
+        advanceToNext(ps, true, null);
+        if (ps.getCurrentQueueId() == null) {
+            return false;
+        }
+        PlayerState saved = playerRepo.save(ps);
+        scheduleLivePositionSync(saved, true);
+        publishPlaybackStateChanged();
+        return true;
     }
 
     @Transactional
@@ -308,14 +344,14 @@ public class PlaybackService {
         }
     }
 
-    /** 切歌：当前行标记 skipped，推进到下一首（详设§9.2）。 */
+    /** 切歌：当前行标记 skipped，推进到下一首（队列空时自动公播历史随机曲目）。 */
     @Transactional
     public PlayerState next() {
         queueRepo.lockQueueMutation();
         resetConsecutiveErrors();
         PlayerState ps = playerRepo.getSingletonForUpdate();
-        markCurrent(ps, QueueService.SKIPPED, true);
-        advanceToNext(ps);
+        Long previousSongId = markCurrent(ps, QueueService.SKIPPED, true);
+        advanceToNext(ps, true, previousSongId);
         PlayerState saved = playerRepo.save(ps);
         scheduleLivePositionSync(saved, true);
         publishPlaybackStateChanged();
@@ -343,11 +379,12 @@ public class PlaybackService {
                     : FinishResult.stale(ps, expectedQueueId);
         }
 
+        Long finishedSongId = item.getSongId();
         item.setStatus(QueueService.DONE);
         item.setPlayedAt(OffsetDateTime.now());
         queueRepo.save(item);
         recordHistory(item);
-        advanceToNext(ps);
+        advanceToNext(ps, true, finishedSongId);
         PlayerState saved = playerRepo.save(ps);
         scheduleLivePositionSync(saved, true);
         publishPlaybackStateChanged();
@@ -379,8 +416,8 @@ public class PlaybackService {
         // fileId is retained for wire compatibility, but a client playback
         // error does not prove that the source file is invalid. Server-side
         // scanning remains responsible for marking disappeared files.
-        markCurrent(ps, QueueService.SKIPPED, false);
-        advanceToNext(ps);
+        Long failedSongId = markCurrent(ps, QueueService.SKIPPED, false);
+        advanceToNext(ps, true, failedSongId);
         PlayerState saved = playerRepo.save(ps);
         scheduleLivePositionSync(saved, true);
         publishPlaybackStateChanged();
@@ -434,7 +471,7 @@ public class PlaybackService {
         if (current == null) {
             ps.setCurrentQueueId(null);
             ps.setState("idle");
-            advanceToNext(ps);
+            advanceToNext(ps, false, null);
             PlayerState saved = playerRepo.save(ps);
             scheduleLivePositionSync(saved, true);
             publishPlaybackStateChanged();
@@ -659,23 +696,26 @@ public class PlaybackService {
 
     // ---- 内部 ----
 
-    /** 标记当前播放行为指定终态，并写历史。 */
-    private void markCurrent(PlayerState ps, String endStatus, boolean recordHistory) {
+    /** 标记当前播放行为指定终态，并写历史；返回当前歌曲 ID 以便防连重筛选。 */
+    private Long markCurrent(PlayerState ps, String endStatus, boolean recordHistory) {
         Long cur = ps.getCurrentQueueId();
-        if (cur == null) return;
-        queueRepo.findById(cur).ifPresent(item -> {
-            if (QueueService.PLAYING.equals(item.getStatus())) {
-                item.setStatus(endStatus);
-                item.setPlayedAt(OffsetDateTime.now());
-                queueRepo.save(item);
-                if (recordHistory) {
-                    recordHistory(item);
-                }
+        if (cur == null) return null;
+        QueueItem item = queueRepo.findById(cur).orElse(null);
+        if (item == null) return null;
+        Long songId = item.getSongId();
+        if (QueueService.PLAYING.equals(item.getStatus())) {
+            item.setStatus(endStatus);
+            item.setPlayedAt(OffsetDateTime.now());
+            queueRepo.save(item);
+            if (recordHistory) {
+                recordHistory(item);
             }
-        });
+        }
+        return songId;
     }
 
     private void recordHistory(QueueItem item) {
+        if (item == null || item.isAutoPlay()) return;
         if (historyRepo.existsByQueueId(item.getId())) return;
         PlayHistory h = new PlayHistory();
         h.setQueueId(item.getId());
@@ -688,43 +728,79 @@ public class PlaybackService {
         });
     }
 
-    /** 推进到下一首等待歌曲；无则进入 idle（待机）。 */
-    private void advanceToNext(PlayerState ps) {
+    /** 推进到下一首等待歌曲；队列为空且允许公播时从已点历史随机选取可播放曲目，否则进入 idle（待机）。 */
+    private void advanceToNext(PlayerState ps, boolean allowAutoPlay, Long excludeSongId) {
         List<QueueItem> waiting = queueRepo.findByStatusOrderByOrderIndexAsc(QueueService.WAITING);
-        if (waiting.isEmpty()) {
-            ps.setCurrentQueueId(null);
-            ps.setState("idle");
-            ps.setPositionMs(0);
-            return;
-        }
+        if (!waiting.isEmpty()) {
+            Set<Long> songIds = waiting.stream()
+                    .map(QueueItem::getSongId)
+                    .filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+            Map<Long, Song> songs = new HashMap<>();
+            songRepo.findAllById(songIds).forEach(song -> {
+                if (song != null && song.getId() != null) songs.put(song.getId(), song);
+            });
+            Set<Long> playableSongIds = availabilityPolicy.playableSongIds(songs.values());
 
-        Set<Long> songIds = waiting.stream()
-                .map(QueueItem::getSongId)
-                .filter(java.util.Objects::nonNull)
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-        Map<Long, Song> songs = new HashMap<>();
-        songRepo.findAllById(songIds).forEach(song -> {
-            if (song != null && song.getId() != null) songs.put(song.getId(), song);
-        });
-        Set<Long> playableSongIds = availabilityPolicy.playableSongIds(songs.values());
-
-        for (QueueItem nextItem : waiting) {
-            Long songId = nextItem.getSongId();
-            if (songId == null || !playableSongIds.contains(songId)) {
-                nextItem.setStatus(QueueService.SKIPPED);
-                nextItem.setPlayedAt(OffsetDateTime.now());
+            for (QueueItem nextItem : waiting) {
+                Long songId = nextItem.getSongId();
+                if (songId == null || !playableSongIds.contains(songId)) {
+                    nextItem.setStatus(QueueService.SKIPPED);
+                    nextItem.setPlayedAt(OffsetDateTime.now());
+                    queueRepo.save(nextItem);
+                    continue;
+                }
+                nextItem.setStatus(QueueService.PLAYING);
                 queueRepo.save(nextItem);
-                continue;
+                ps.setCurrentQueueId(nextItem.getId());
+                ps.setState("playing");
+                ps.setPositionMs(0);
+                return;
             }
-            nextItem.setStatus(QueueService.PLAYING);
-            queueRepo.save(nextItem);
-            ps.setCurrentQueueId(nextItem.getId());
-            ps.setState("playing");
-            ps.setPositionMs(0);
-            return;
         }
+
+        if (allowAutoPlay) {
+            Long autoSongId = pickRandomHistorySongId(excludeSongId);
+            if (autoSongId != null) {
+                QueueItem autoItem = new QueueItem();
+                autoItem.setSongId(autoSongId);
+                autoItem.setOrderedBy(null);
+                autoItem.setOrderIndex(0.0);
+                autoItem.setStatus(QueueService.PLAYING);
+                autoItem.setAutoPlay(true);
+                QueueItem savedAuto = queueRepo.save(autoItem);
+                ps.setCurrentQueueId(savedAuto.getId());
+                ps.setState("playing");
+                ps.setPositionMs(0);
+                return;
+            }
+        }
+
         ps.setCurrentQueueId(null);
         ps.setState("idle");
         ps.setPositionMs(0);
+    }
+
+    private Long pickRandomHistorySongId(Long excludeSongId) {
+        List<Long> historySongIds = historyRepo.findDistinctRecentSongIds(AUTO_PLAY_HISTORY_POOL_LIMIT);
+        if (historySongIds == null || historySongIds.isEmpty()) {
+            return null;
+        }
+        List<Song> loadedSongs = new ArrayList<>();
+        songRepo.findAllById(new LinkedHashSet<>(historySongIds)).forEach(song -> {
+            if (song != null && song.getId() != null) loadedSongs.add(song);
+        });
+        if (loadedSongs.isEmpty()) {
+            return null;
+        }
+        Set<Long> playable = availabilityPolicy.playableSongIds(loadedSongs);
+        if (playable.isEmpty()) {
+            return null;
+        }
+        List<Long> candidates = new ArrayList<>(playable);
+        if (excludeSongId != null && candidates.size() > 1) {
+            candidates.remove(excludeSongId);
+        }
+        return candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
     }
 }

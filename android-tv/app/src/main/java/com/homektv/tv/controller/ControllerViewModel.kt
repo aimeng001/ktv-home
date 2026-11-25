@@ -1556,7 +1556,6 @@ class ControllerViewModel(
 
     companion object {
         private const val MAX_QUERY_LENGTH = 128
-        private const val MAX_WISH_LENGTH = 100
         private const val MAX_FILTER_LENGTH = 32
         private const val MAX_CATALOG_ITEMS = 2000
         private const val MAX_RESTORE_PAGES = 64
@@ -1564,7 +1563,6 @@ class ControllerViewModel(
         private const val MAX_ARTIST_INITIALS = 128
         private const val ARTIST_GRID_PAGE_SIZE = 32
         private const val SONG_CATALOG_PAGE_SIZE = 15
-        private const val HOT_INITIAL = "热门"
     }
 }
 

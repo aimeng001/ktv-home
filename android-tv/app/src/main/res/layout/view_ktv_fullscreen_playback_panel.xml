@@ -7,29 +7,30 @@
     android:focusable="false"
     android:visibility="gone">
 
-    <LinearLayout
+    <FrameLayout
         android:id="@+id/fullscreenNowPlayingBar"
         android:layout_width="match_parent"
         android:layout_height="116dp"
         android:layout_gravity="top"
         android:background="@color/ktv_fullscreen_panel_bg"
-        android:gravity="center_vertical">
+        android:clipChildren="true"
+        android:clipToPadding="true"
+        android:visibility="gone">
 
         <TextView
             android:id="@+id/txtFullscreenNowPlaying"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:ellipsize="marquee"
+            android:layout_gravity="center_vertical|start"
             android:focusable="false"
-            android:gravity="center_vertical|end"
+            android:gravity="center_vertical"
             android:includeFontPadding="false"
-            android:marqueeRepeatLimit="marquee_forever"
-            android:paddingStart="12dp"
-            android:paddingEnd="10dp"
+            android:maxLines="1"
+            android:scrollHorizontally="true"
             android:singleLine="true"
             android:textColor="@android:color/white"
             android:textStyle="bold" />
-    </LinearLayout>
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/fullscreenControlsPanel"

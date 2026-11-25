@@ -34,17 +34,4 @@ class IktvReferenceClassificationPolicyTest {
 
         assertThat(IktvReferenceClassificationPolicy.categories(reference)).isEmpty();
     }
-
-    @Test
-    void classificationRelationIdentityIncludesReferenceSongId() {
-        var oldReference = new IktvReferenceClassificationPolicy.CategoryAssignment(10, "抖音神曲");
-        var newReference = new IktvReferenceClassificationPolicy.CategoryAssignment(11, "抖音神曲");
-
-        assertThat(IktvReferenceClassificationPolicy.sameAssignments(
-                List.of(oldReference), List.of(newReference))).isFalse();
-        assertThat(IktvReferenceClassificationPolicy.sameAssignments(
-                List.of(oldReference), List.of(oldReference))).isTrue();
-        assertThat(IktvReferenceClassificationPolicy.sameAssignments(
-                List.of(oldReference, newReference), List.of(newReference, oldReference))).isTrue();
-    }
 }

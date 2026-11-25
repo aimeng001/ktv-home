@@ -296,10 +296,6 @@ public class CategorySongBrowseRepository {
         }
     }
 
-    void clearCountCache() {
-        countCache.clear();
-    }
-
     private static String orderByClause(String sort) {
         if ("title".equalsIgnoreCase(sort)) {
             return "ORDER BY s.title ASC, s.id ASC";

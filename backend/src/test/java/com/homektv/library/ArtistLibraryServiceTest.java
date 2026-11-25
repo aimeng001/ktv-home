@@ -173,9 +173,6 @@ class ArtistLibraryServiceTest {
 
     @Test
     void neverSendsPlaceholderArtistToAiAnalysis() {
-        Song placeholder = song(1L, "佚名", "歌曲", "未知", false, 1);
-        when(songs.findByArtistIgnoreCaseAndStatus("佚名", "ok")).thenReturn(List.of(placeholder));
-
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.analyze("佚名"))
                 .isInstanceOf(com.homektv.common.ApiException.class)
                 .hasMessageContaining("占位歌手");

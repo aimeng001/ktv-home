@@ -1,8 +1,6 @@
 package com.homektv.library;
 
 import java.util.LinkedHashSet;
-import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,12 +31,6 @@ public final class IktvReferenceClassificationPolicy {
         }
         return categories.stream().map(category -> new CategoryAssignment(
                 reference.referenceSongId(), category)).toList();
-    }
-
-    static boolean sameAssignments(Collection<CategoryAssignment> existing,
-                                   Collection<CategoryAssignment> desired) {
-        return existing.size() == desired.size()
-                && new HashSet<>(existing).equals(new HashSet<>(desired));
     }
 
     public record CategoryAssignment(long referenceSongId, String category) {}

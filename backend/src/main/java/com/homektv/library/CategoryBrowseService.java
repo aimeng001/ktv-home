@@ -402,13 +402,6 @@ public class CategoryBrowseService {
         return storedKind == null || storedKind.isBlank() ? classified.name() : storedKind;
     }
 
-    static String dominantArtistGender(List<Song> songs) {
-        return songs.stream().map(Song::getArtistGender)
-                .filter(value -> value != null && !value.isBlank() && !"未知".equals(value))
-                .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()))
-                .entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse("未知");
-    }
-
     private static final class ArtistStats {
         private final String name;
         private final String artistKey;

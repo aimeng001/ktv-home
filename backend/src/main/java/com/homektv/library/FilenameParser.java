@@ -345,45 +345,6 @@ public final class FilenameParser {
         return "";
     }
 
-    public static String inferLanguage(String title, String artist) {
-        String text = (title == null ? "" : title) + " " + (artist == null ? "" : artist);
-        // 1. 日语假名检测：平假名 \u3040-\u309F，片假名 \u30A0-\u30FF
-        if (text.chars().anyMatch(c -> (c >= 0x3040 && c <= 0x30FF))) {
-            return "日语";
-        }
-        // 2. 韩文音节检测：\uAC00-\uD7AF, 字母 \u1100-\u11FF
-        if (text.chars().anyMatch(c -> (c >= 0xAC00 && c <= 0xD7AF) || (c >= 0x1100 && c <= 0x11FF))) {
-            return "韩语";
-        }
-        // 3. 中文字符检测：\u4E00-\u9FA5
-        if (text.chars().anyMatch(c -> c >= 0x4E00 && c <= 0x9FA5)) {
-            return "国语";
-        }
-        // 4. 若有英文字母且全为 ASCII/拉丁字符，推导为英语
-        if (text.chars().anyMatch(Character::isLetter) && text.chars().allMatch(c -> c < 128 || Character.isWhitespace(c))) {
-            return "英语";
-        }
-        return "国语";
-    }
-
-    public static String inferCategory(String title, String artist) {
-        String text = (title == null ? "" : title) + " " + (artist == null ? "" : artist);
-        if (text.contains("儿歌") || text.contains("少儿") || text.contains("童谣")) {
-            return "儿歌";
-        }
-        if (text.contains("戏曲") || text.contains("京剧") || text.contains("豫剧") ||
-            text.contains("越剧") || text.contains("黄梅戏") || text.contains("评剧")) {
-            return "戏曲";
-        }
-        if (text.contains("军旅") || text.contains("红歌") || text.contains("革命")) {
-            return "红歌";
-        }
-        if (text.contains("抖音") || text.contains("神曲")) {
-            return "抖音";
-        }
-        return "";
-    }
-
     private record MetadataSuffix(int languageIndex, String language, String category) {}
 
     private record ArtistMatch(String name, int partCount) {}

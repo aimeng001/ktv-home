@@ -67,7 +67,7 @@ import { KTV_ASSETS } from './ktvCatalogPresets'
 import { usePlayerStore } from '../../stores/player'
 import { useNetStatusStore } from '../../stores/netStatus'
 
-defineEmits(['open-modal', 'open-search', 'toggle-fullscreen', 'toggle-mode'])
+defineEmits(['open-modal', 'open-search', 'toggle-mode'])
 
 const player = usePlayerStore()
 const netStatus = useNetStatusStore()
@@ -143,8 +143,8 @@ const modeBadge = computed(() => {
 
 <style scoped>
 .ktv-header {
-  height: 54px;
-  padding: 0 18px;
+  height: clamp(54px, 6.4vh, 68px);
+  padding: 0 clamp(16px, 1.5vw, 26px);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -156,12 +156,12 @@ const modeBadge = computed(() => {
 .shortcut-group {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: clamp(10px, 1vw, 16px);
   flex: none;
 }
 .hdr-btn {
-  width: 38px;
-  height: 38px;
+  width: clamp(38px, 2.6vw, 46px);
+  height: clamp(38px, 2.6vw, 46px);
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -178,8 +178,8 @@ const modeBadge = computed(() => {
   outline: none;
 }
 .hdr-img {
-  width: 24px;
-  height: 24px;
+  width: clamp(24px, 1.6vw, 30px);
+  height: clamp(24px, 1.6vw, 30px);
   object-fit: contain;
 }
 .right-group {
@@ -284,21 +284,21 @@ const modeBadge = computed(() => {
   color: #ffffff;
 }
 .header-clock strong {
-  font-size: 26px;
+  font-size: clamp(26px, 2.1vw, 34px);
   font-weight: 300;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 .clock-sep {
   width: 1px;
-  height: 20px;
+  height: clamp(20px, 1.6vw, 26px);
   background: rgba(255, 255, 255, 0.35);
 }
 .clock-date-col {
   display: flex;
   flex-direction: column;
   line-height: 1.2;
-  font-size: 11px;
+  font-size: clamp(11px, 0.78vw, 13px);
   color: rgba(255, 255, 255, 0.88);
 }
 

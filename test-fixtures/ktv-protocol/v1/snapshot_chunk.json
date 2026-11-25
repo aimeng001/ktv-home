@@ -30,7 +30,8 @@
           "artistInitials": "",
           "resolution": null
         },
-        "orderedByNick": "点歌用户"
+        "orderedByNick": "点歌用户",
+        "autoPlay": false
       },
       "state": "playing",
       "volume": 73,

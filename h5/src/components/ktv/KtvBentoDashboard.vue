@@ -8,7 +8,16 @@
       :class="`area-${tile.area}`"
       @click="$emit('select-tile', tile)"
     >
+      <Transition v-if="Array.isArray(tile.carousel) && tile.carousel.length" name="tile-photo-push">
+        <img
+          :key="carouselIndex % tile.carousel.length"
+          class="tile-art"
+          :src="tileArtwork(tile)"
+          :alt="tile.title"
+        />
+      </Transition>
       <img
+        v-else
         class="tile-art"
         :src="tileArtwork(tile)"
         :alt="tile.title"
@@ -37,10 +46,19 @@ function tileArtwork(tile) {
 }
 
 onMounted(() => {
+  if (typeof Image !== 'undefined') {
+    for (const tile of tiles) {
+      if (!Array.isArray(tile.carousel)) continue
+      for (const src of tile.carousel) {
+        const img = new Image()
+        img.src = src
+      }
+    }
+  }
   carouselTimer = setInterval(() => {
     if (typeof document !== 'undefined' && document.hidden) return
     carouselIndex.value = (carouselIndex.value + 1) % 3
-  }, 10000)
+  }, 3500)
 })
 
 onBeforeUnmount(() => {
@@ -56,7 +74,7 @@ onBeforeUnmount(() => {
 .bento-dashboard {
   width: 100%;
   height: 100%;
-  padding: 6px 14px;
+  padding: clamp(6px, 0.8vh, 10px) clamp(14px, 1.4vw, 24px) clamp(8px, 1vh, 12px);
   display: grid;
   grid-template-columns: 18.9fr 31.1fr 18.8fr 15.6fr 15.6fr;
   grid-template-rows: repeat(6, 1fr);
@@ -67,7 +85,7 @@ onBeforeUnmount(() => {
     "tiktok songname language featured featured"
     "tiktok songname theme favorites local"
     "tiktok songname theme favorites local";
-  gap: 8px;
+  gap: clamp(8px, 0.7vw, 12px);
 }
 
 .area-hot { grid-area: hot; }
@@ -113,6 +131,27 @@ onBeforeUnmount(() => {
 }
 .area-songname .tile-art {
   object-position: center top;
+}
+.tile-photo-push-enter-active,
+.tile-photo-push-leave-active {
+  transition: transform 1s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  will-change: transform;
+}
+.tile-photo-push-enter-from {
+  transform: translate3d(0, 100%, 0);
+}
+.tile-photo-push-enter-to,
+.tile-photo-push-leave-from {
+  transform: translate3d(0, 0, 0);
+}
+.tile-photo-push-leave-to {
+  transform: translate3d(0, -100%, 0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile-photo-push-enter-active,
+  .tile-photo-push-leave-active {
+    transition: none;
+  }
 }
 .tile-gradient {
   position: absolute;

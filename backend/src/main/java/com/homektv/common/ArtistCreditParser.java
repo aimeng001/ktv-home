@@ -136,30 +136,6 @@ public final class ArtistCreditParser {
         return new PreindexedKnownArtists(knownArtists);
     }
 
-    private static Collection<String> atomicKnownArtists(Collection<String> knownArtists) {
-        if (knownArtists == null || knownArtists.isEmpty()) return List.of();
-        List<String> filtered = new ArrayList<>(knownArtists.size());
-        for (String artist : knownArtists) {
-            if (artist == null || artist.isBlank()) continue;
-            if (!hasExplicitSeparator(artist)) {
-                filtered.add(artist);
-            }
-        }
-        return filtered;
-    }
-
-    private static String exactKnownArtist(String artistCredit,
-                                           Collection<String> knownArtists) {
-        if (knownArtists == null) return null;
-        String key = key(artistCredit);
-        for (String artist : knownArtists) {
-            if (artist != null && !artist.isBlank() && key(artist).equals(key)) {
-                return artist.trim();
-            }
-        }
-        return null;
-    }
-
     /**
      * A plus sign is only a collaboration separator when every resulting
      * token is a known artist. This preserves names such as C++ and routes

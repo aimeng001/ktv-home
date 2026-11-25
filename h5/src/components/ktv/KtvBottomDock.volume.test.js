@@ -7,6 +7,7 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: {} }))
 vi.mock('../../api/client', () => ({ default: apiMock }))
 
 import KtvBottomDock from './KtvBottomDock.vue'
+import bottomDockSource from './KtvBottomDock.vue?raw'
 import { usePlayerStore } from '../../stores/player'
 import { VOLUME_STEP } from './ktvControlSteps'
 
@@ -64,5 +65,12 @@ describe('KtvBottomDock 音量步长', () => {
     buttons[8].click()
     await nextTick()
     expect(mixerOpened).toBe(true)
+  })
+
+  it('底部小屏按 Android TV 比例随视口等比放大且严格维持 16:9 约束', () => {
+    expect(bottomDockSource).toContain('--ktv-dock-height, clamp(136px, 18vh, 200px)')
+    expect(bottomDockSource).toContain('aspect-ratio: 16 / 9')
+    expect(bottomDockSource).toContain('min(calc(var(--dock-h) * 16 / 9), 26vw, 356px)')
+    expect(bottomDockSource).toContain('width: min(192px, 56vw)')
   })
 })

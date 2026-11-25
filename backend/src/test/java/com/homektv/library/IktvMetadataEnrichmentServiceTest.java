@@ -14,8 +14,10 @@ class IktvMetadataEnrichmentServiceTest {
                 1, "12345678", "歌曲", "歌手", "MV", "国语", "流行", "热歌",
                 List.of("抖音神曲", "未审计标签"), false);
 
-        assertThat(service.getCategoriesForMatchedReference(matched)).containsExactly("抖音神曲");
-        assertThat(service.getCategoriesForMatchedReference(null)).isEmpty();
+        assertThat(service.getCategoryAssignmentsForMatchedReference(matched))
+                .extracting(IktvReferenceClassificationPolicy.CategoryAssignment::category)
+                .containsExactly("抖音神曲");
+        assertThat(service.getCategoryAssignmentsForMatchedReference(null)).isEmpty();
     }
 
     @Test
@@ -25,6 +27,6 @@ class IktvMetadataEnrichmentServiceTest {
                 2, "12345679", "歌曲", "歌手", "MV", "国语", "流行", "热歌",
                 List.of("精选专区"), true);
 
-        assertThat(service.getCategoriesForMatchedReference(conflicted)).isEmpty();
+        assertThat(service.getCategoryAssignmentsForMatchedReference(conflicted)).isEmpty();
     }
 }

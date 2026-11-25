@@ -53,9 +53,9 @@
             <span v-else>{{ songAvatarInitial(player.nowPlaying.song) }}</span>
           </div>
           <div class="now-meta">
-            <small>正在演唱</small>
+            <small>{{ player.nowPlaying.autoPlay ? '随机公播中 · 点歌后立即切入' : '正在演唱' }}</small>
             <strong>{{ player.nowPlaying.song?.title }}</strong>
-            <span>{{ player.nowPlaying.song?.artist }} · {{ player.nowPlaying.orderedByNick || '家人' }} 点</span>
+            <span>{{ player.nowPlaying.song?.artist }} · {{ player.nowPlaying.autoPlay ? '随机公播' : `${player.nowPlaying.orderedByNick || '家人'} 点` }}</span>
           </div>
           <div class="now-actions">
             <button type="button" class="mini-btn" @click="$emit('restart')">重唱</button>
@@ -63,7 +63,7 @@
           </div>
         </section>
 
-        <div v-if="!player.queue.length" class="empty-tip">还没有待播歌曲，快去点几首歌吧</div>
+        <div v-if="!player.queue.length" class="empty-tip">{{ player.nowPlaying?.autoPlay ? '还没有待播歌曲，当前为历史随机公播，点歌后将立即切入' : '还没有待播歌曲，快去点几首歌吧' }}</div>
         <div v-else class="queue-list">
           <article v-for="(item, idx) in player.queue" :key="item.queueId" class="q-item">
             <span class="q-index">{{ idx + 1 }}</span>

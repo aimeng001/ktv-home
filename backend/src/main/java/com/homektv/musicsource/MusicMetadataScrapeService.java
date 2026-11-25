@@ -375,7 +375,35 @@ public class MusicMetadataScrapeService {
     @EventListener(ApplicationReadyEvent.class)
     public void recoverInterruptedBatches() {
         reclaimExpiredItems();
-        jdbc.update("UPDATE music_metadata_scrape_batches SET status='PAUSED',updated_at=now() WHERE status='RUNNING'");
+        int reclaimedRunning = jdbc.update("""
+                UPDATE music_metadata_scrape_items item
+                SET status='PENDING', lease_owner=NULL, lease_until=NULL, claim_token=NULL, updated_at=now()
+                WHERE item.status='PROCESSING'
+                  AND EXISTS (
+                      SELECT 1 FROM music_metadata_scrape_batches batch
+                      WHERE batch.id = item.batch_id AND batch.status = 'RUNNING'
+                  )
+                """);
+        List<String> runningBatchIds = jdbc.queryForList(
+                "SELECT id FROM music_metadata_scrape_batches WHERE status='RUNNING' ORDER BY created_at ASC",
+                String.class);
+        if (runningBatchIds.isEmpty()) return;
+
+        MusicSourceConfig config = null;
+        try {
+            config = configService.getConfig();
+        } catch (RuntimeException ignored) {}
+
+        if (config == null || !config.enabled() || config.providers() == null || config.providers().isEmpty()) {
+            jdbc.update("UPDATE music_metadata_scrape_batches SET status='PAUSED',updated_at=now() WHERE status='RUNNING'");
+            return;
+        }
+        for (String batchId : runningBatchIds) {
+            org.slf4j.LoggerFactory.getLogger(MusicMetadataScrapeService.class)
+                    .info("容器启动恢复：自动续跑中断的歌曲元数据刮削批次 {}（释放 {} 条进行中租约）",
+                            batchId, reclaimedRunning);
+            worker.process(batchId);
+        }
     }
 
     private Map<String, Object> requireItem(String batchId, long itemId) {

@@ -4,7 +4,7 @@ import { createApp, h, nextTick } from 'vue'
 
 const { apiMock, alertMock, confirmMock } = vi.hoisted(() => ({
   apiMock: {
-    adminAiTasks: vi.fn(), adminAiConfig: vi.fn(), adminAiCreateTask: vi.fn(), adminAiCreateTasks: vi.fn(),
+    adminAiTasks: vi.fn(), adminAiConfig: vi.fn(), adminAiCreateTasks: vi.fn(),
     adminAiCreateUnclassified: vi.fn(), adminAiRepair: vi.fn(), adminAiLatestRepair: vi.fn(), adminAiRepairProgress: vi.fn(),
     adminAiPauseRepair: vi.fn(), adminAiResumeRepair: vi.fn(), adminAiRetryFailedRepair: vi.fn(),
     adminAiRetryTask: vi.fn(), adminAiApplyTask: vi.fn(), adminMergeSong: vi.fn()
@@ -29,7 +29,6 @@ describe('AiTaskPanel', () => {
     appliedEvents = 0
     apiMock.adminAiTasks.mockImplementation(async () => tasks)
     apiMock.adminAiConfig.mockResolvedValue({ enabled: true, baseUrl: 'http://ai.local', bulkModel: 'mock-model' })
-    apiMock.adminAiCreateTask.mockResolvedValue({ id: 1 })
     apiMock.adminAiCreateTasks.mockResolvedValue({ created: 2, skipped: 0, dispatchRejected: 0 })
     apiMock.adminAiApplyTask.mockResolvedValue({})
     apiMock.adminAiRetryTask.mockResolvedValue({})

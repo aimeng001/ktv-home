@@ -43,22 +43,16 @@ public record QueueSnapshot(
                 tvOnline, connectedPhones, positionMs, seekSequence, 0, PlaybackDescriptor.idle());
     }
 
-    /** Source-compatible constructor retaining the previous full shape. */
-    public QueueSnapshot(NowPlaying playing, List<QueueEntry> list, String state, int volume,
-                         boolean muted, String vocalMode, AudioLayoutDto audioLayout,
-                         boolean tvOnline, long connectedPhones, long positionMs,
-                         long seekSequence, long stateRevision) {
-        this(playing, list, state, volume, muted, vocalMode, audioLayout,
-                tvOnline, connectedPhones, positionMs, seekSequence, stateRevision,
-                PlaybackDescriptor.idle());
-    }
-
     public QueueSnapshot {
         audioLayout = audioLayout == null ? AudioLayoutDto.normalStereo() : audioLayout;
         playback = playback == null ? PlaybackDescriptor.idle() : playback;
     }
 
-    public record NowPlaying(Long queueId, SongDto song, String orderedByNick) {}
+    public record NowPlaying(Long queueId, SongDto song, String orderedByNick, boolean autoPlay) {
+        public NowPlaying(Long queueId, SongDto song, String orderedByNick) {
+            this(queueId, song, orderedByNick, false);
+        }
+    }
 
     public record QueueEntry(Long queueId, SongDto song, Long orderedBy, String orderedByNick, String status) {}
 }

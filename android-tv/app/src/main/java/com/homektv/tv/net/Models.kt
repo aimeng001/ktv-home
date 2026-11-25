@@ -114,6 +114,7 @@ data class NowPlaying(
     val queueId: Long? = null,
     val song: SongDto? = null,
     val orderedByNick: String? = null,
+    val autoPlay: Boolean = false,
 )
 
 @Serializable

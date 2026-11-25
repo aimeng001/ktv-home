@@ -979,41 +979,6 @@ public interface SongRepository extends JpaRepository<Song, Long> {
             """, nativeQuery = true)
     List<String> findDistinctArtistByStatus(@Param("status") String status);
 
-    /**
-     * Returns songs credited to one canonical artist key using an indexed song_artists
-     * lookup first and falling back to unindexed legacy rows only when none match.
-     */
-    @Query(value = """
-            SELECT DISTINCT s.*
-            FROM songs s
-            JOIN song_artists sa ON sa.song_id = s.id
-            WHERE s.status = :status
-              AND sa.artist_key = :artistKey
-            ORDER BY s.id
-            """, nativeQuery = true)
-    List<Song> findIndexedByArtistKeyAndStatus(@Param("artistKey") String artistKey,
-                                               @Param("status") String status);
-
-    @Query(value = """
-            SELECT s.*
-            FROM songs s
-            WHERE s.status = :status
-              AND NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
-              AND lower(regexp_replace(trim(coalesce(s.artist, '')), '[[:space:]]+', '', 'g')) = :artistKey
-            ORDER BY s.id
-            """, nativeQuery = true)
-    List<Song> findLegacyByArtistKeyAndStatus(@Param("artistKey") String artistKey,
-                                              @Param("status") String status);
-
-    default List<Song> findByArtistKeyAndStatus(String artistKey, String status) {
-        List<Song> indexed = findIndexedByArtistKeyAndStatus(artistKey, status);
-        if (indexed != null && !indexed.isEmpty()) {
-            return indexed;
-        }
-        List<Song> legacy = findLegacyByArtistKeyAndStatus(artistKey, status);
-        return legacy == null ? List.of() : legacy;
-    }
-
     @Query(value = """
             SELECT s.*
             FROM songs s
@@ -1096,10 +1061,6 @@ public interface SongRepository extends JpaRepository<Song, Long> {
         List<Song> legacy = findLegacyRepresentativeSongsByArtistKeyAndStatus(artistKey, status, pageable);
         return legacy == null ? List.of() : legacy;
     }
-
-    List<Song> findByArtistIgnoreCaseAndStatus(String artist, String status);
-
-    List<Song> findByArtistInAndStatus(List<String> artists, String status);
 
     Optional<Song> findByFingerprint(String fingerprint);
 

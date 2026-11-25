@@ -123,7 +123,6 @@ app:
     reasoning-concurrency: ${KTV_AI_REASONING_CONCURRENCY:1}
     auto-apply-confidence: ${KTV_AI_AUTO_APPLY_CONFIDENCE:0.90}
     allow-private-network: ${KTV_AI_ALLOW_PRIVATE_NETWORK:false}
-    connect-timeout-seconds: 10
     read-timeout-seconds: 60
 
 logging:

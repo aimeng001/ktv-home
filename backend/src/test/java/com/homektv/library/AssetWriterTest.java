@@ -194,6 +194,19 @@ class AssetWriterTest {
         assertThat(writer.hasArtistCoverCapacity(AssetWriter.MAX_ARTIST_COVER_CACHE_BYTES)).isTrue();
     }
 
+    @Test
+    void findExistingArtistCoverAndDirectoryPresenceWorkAcrossRestarts() throws Exception {
+        assertThat(writer.findExistingArtistCover("周杰伦")).isEmpty();
+        assertThat(writer.isArtistCoverDirectoryPresentAndNonEmpty()).isFalse();
+
+        String rel = writer.writeArtistCover("周杰伦", new byte[]{1, 2, 3}, "png");
+
+        assertThat(writer.isArtistCoverDirectoryPresentAndNonEmpty()).isTrue();
+        assertThat(writer.findExistingArtistCover("周杰伦")).contains(rel);
+        assertThat(writer.findExistingArtistCover("不存在")).isEmpty();
+        assertThat(writer.findExistingArtistCover(" ")).isEmpty();
+    }
+
     private static void assertApiCode(String code, Runnable action) {
         assertThatThrownBy(action::run)
                 .isInstanceOf(ApiException.class)

@@ -42,7 +42,7 @@ class KtvKioskCatalogErrorLayoutContractTest {
         assertTrue(renderMethod.contains("browser.txtPageNumber.visibility = if (hasSingerRows) View.VISIBLE else View.GONE"))
 
         val retryMethod = source.substringAfter("private fun showBrowserRetry(")
-            .substringBefore("private fun renderSingerInitialRail(")
+            .substringBefore("private fun addBrowserFilterOption(")
         assertTrue(
             "showBrowserRetry must support non-overlapping filter rail retry when songs are already visible",
             retryMethod.contains("hasVisibleResults: Boolean") && retryMethod.contains("shouldShowKeyboard && !hasVisibleResults"),

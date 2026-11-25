@@ -12,7 +12,6 @@ import com.homektv.media.MediaProbe;
 import com.homektv.media.MediaProbeException;
 import com.homektv.musicsource.CoverImageNormalizer;
 import com.homektv.repo.SongFileRepository;
-import com.homektv.repo.SongFileScanSnapshot;
 import com.homektv.repo.SongRepository;
 import com.homektv.resource.ResourceBudget;
 import com.homektv.common.ApiException;
@@ -196,25 +195,6 @@ class IncrementalLibraryScanTest {
                     return filesByPath.values().stream()
                             .filter(file -> role.equals(file.getFileRole()) && relativePaths.contains(file.getRelativePath()))
                             .toList();
-                });
-        lenient().when(songFileRepository.findScanSnapshotsByFileRoleAndFilePathGreaterThanOrderByFilePath(
-                anyString(), anyString(), org.mockito.ArgumentMatchers.any(Pageable.class)))
-                .thenAnswer(invocation -> {
-                    String role = invocation.getArgument(0);
-                    String after = invocation.getArgument(1);
-                    Pageable page = invocation.getArgument(2);
-                    List<SongFileScanSnapshot> snapshots = filesByPath.values().stream()
-                            .filter(file -> role.equals(file.getFileRole()))
-                            .filter(file -> file.getFilePath() != null && file.getFilePath().compareTo(after) > 0)
-                            .sorted(java.util.Comparator.comparing(SongFile::getFilePath))
-                            .<SongFileScanSnapshot>map(file -> new SongFileScanSnapshot() {
-                                public Long getId() { return file.getId(); }
-                                public String getFilePath() { return file.getFilePath(); }
-                                public Boolean getProbePending() { return file.isProbePending(); }
-                            }).toList();
-                    int from = Math.min((int) page.getOffset(), snapshots.size());
-                    int to = Math.min(from + page.getPageSize(), snapshots.size());
-                    return new PageImpl<>(snapshots.subList(from, to), page, snapshots.size());
                 });
         lenient().when(songFileRepository.findByFileRoleAndFilePathGreaterThanOrderByFilePath(
                 anyString(), anyString(), org.mockito.ArgumentMatchers.any(Pageable.class)))

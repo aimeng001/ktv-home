@@ -20,9 +20,6 @@ public class SongMetadataWritePolicy {
 
     private final AppProperties appProperties;
     private SettingService settingService;
-    private ArtistCreditService artistCreditService;
-    private ArtistDirectoryProjectionService artistDirectoryProjectionService;
-    private CatalogRevisionService catalogRevisionService;
 
     public SongMetadataWritePolicy() {
         this(null);
@@ -36,21 +33,6 @@ public class SongMetadataWritePolicy {
     @Autowired(required = false)
     void setSettingService(SettingService settingService) {
         this.settingService = settingService;
-    }
-
-    @Autowired(required = false)
-    void setArtistCreditService(ArtistCreditService artistCreditService) {
-        this.artistCreditService = artistCreditService;
-    }
-
-    @Autowired(required = false)
-    void setArtistDirectoryProjectionService(ArtistDirectoryProjectionService artistDirectoryProjectionService) {
-        this.artistDirectoryProjectionService = artistDirectoryProjectionService;
-    }
-
-    @Autowired(required = false)
-    void setCatalogRevisionService(CatalogRevisionService catalogRevisionService) {
-        this.catalogRevisionService = catalogRevisionService;
     }
 
     public boolean isFilenameMetadataPreferred() {
@@ -120,18 +102,5 @@ public class SongMetadataWritePolicy {
         if (!validIdentity) return false;
         song.setStatus("ok");
         return true;
-    }
-
-    public void notifyAfterMetadataMutation(Song saved, boolean artistChanged, boolean artistGenderChanged,
-                                            boolean promotedToOk, boolean catalogChanged) {
-        if (saved != null && artistChanged && artistCreditService != null) {
-            artistCreditService.replace(saved.getId(), saved.getArtist());
-        }
-        if ((artistChanged || artistGenderChanged || promotedToOk) && artistDirectoryProjectionService != null) {
-            artistDirectoryProjectionService.requestRefreshAfterCommit();
-        }
-        if (catalogChanged && catalogRevisionService != null) {
-            catalogRevisionService.bumpIfChanged(true);
-        }
     }
 }
