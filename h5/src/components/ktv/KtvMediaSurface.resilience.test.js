@@ -158,4 +158,47 @@ describe('KtvMediaSurface live transcode resilience & reconnect guard', () => {
     await nextTick()
     expect(video.getAttribute('src')).toContain('start=112.000')
   })
+
+  it('prebuffers live transcode video until 1.2s buffered or 1.8s fallback before calling play', async () => {
+    const playSpy = vi.spyOn(video, 'play')
+    playSpy.mockClear()
+
+    // Switch to another live transcode song; while buffered is empty, play() waits for prebuffer
+    player.nowPlaying = { queueId: 11, song: { id: 89, title: '命运', artist: 'RAIN', durationMs: 255000 } }
+    player.playback = { sourceFileId: 89, kind: 'LIVE_TRANSCODE', status: 'READY', streamUrl: '/api/stream/89?transcode=true' }
+    await nextTick()
+    await nextTick()
+
+    expect(video.getAttribute('src')).toContain('/api/stream/89?transcode=true')
+    expect(playSpy).not.toHaveBeenCalled()
+
+    // Provide >= 1.2s buffered range and fire progress -> starts immediately
+    Object.defineProperty(video, 'buffered', {
+      configurable: true,
+      get: () => ({
+        length: 1,
+        start: () => 0,
+        end: () => 1.5,
+      }),
+    })
+    video.dispatchEvent(new Event('progress'))
+    await nextTick()
+    expect(playSpy).toHaveBeenCalledTimes(1)
+
+    // Subsequent song with no progress event still starts via 1.8s prebuffer timeout
+    playSpy.mockClear()
+    Object.defineProperty(video, 'buffered', {
+      configurable: true,
+      get: () => ({ length: 0, start: () => 0, end: () => 0 }),
+    })
+    player.nowPlaying = { queueId: 12, song: { id: 90, title: 'TIMEOUT TEST', artist: 'RAIN', durationMs: 200000 } }
+    player.playback = { sourceFileId: 90, kind: 'LIVE_TRANSCODE', status: 'READY', streamUrl: '/api/stream/90?transcode=true' }
+    await nextTick()
+    await nextTick()
+    expect(playSpy).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1800)
+    await nextTick()
+    expect(playSpy).toHaveBeenCalledTimes(1)
+  })
 })

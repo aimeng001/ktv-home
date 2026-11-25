@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Owns one live FFmpeg process and its admission permit from reservation to confirmed exit. */
 final class LiveTranscodeSession implements AutoCloseable {
-    private static final int BUFFER_SIZE = 32 * 1024;
+    private static final int BUFFER_SIZE = 64 * 1024;
     private static final long PROCESS_EXIT_TIMEOUT_SECONDS = 5;
     private static final long STDERR_DRAIN_TIMEOUT_SECONDS = 5;
     private static final Logger log = LoggerFactory.getLogger(LiveTranscodeSession.class);
@@ -228,13 +228,19 @@ final class LiveTranscodeSession implements AutoCloseable {
             AtomicBoolean bytesWritten)
             throws IOException {
         byte[] buffer = new byte[BUFFER_SIZE];
+        int pendingFlushBytes = 0;
         int read;
         while ((read = processOutput.read(buffer)) != -1) {
             if (read == 0) continue;
             try {
+                boolean firstWrite = !bytesWritten.get();
                 responseOutput.write(buffer, 0, read);
                 bytesWritten.set(true);
-                responseOutput.flush();
+                pendingFlushBytes += read;
+                if (firstWrite || pendingFlushBytes >= BUFFER_SIZE || processOutput.available() == 0) {
+                    responseOutput.flush();
+                    pendingFlushBytes = 0;
+                }
             } catch (IOException clientDisconnected) {
                 throw new ClientDisconnectedException(clientDisconnected);
             }

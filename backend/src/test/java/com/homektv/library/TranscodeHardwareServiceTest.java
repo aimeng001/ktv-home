@@ -34,6 +34,27 @@ class TranscodeHardwareServiceTest {
     }
 
     @Test
+    void vaapiSmokeTestUsesHuCFreeCqpMode() throws Exception {
+        Path dri = Files.createDirectories(temp.resolve("dri-cqp"));
+        Path sys = Files.createDirectories(temp.resolve("sys-cqp/renderD128/device"));
+        Files.createFile(dri.resolve("renderD128"));
+        Files.writeString(sys.resolve("vendor"), "0x8086\n");
+        java.util.List<List<String>> captured = new java.util.ArrayList<>();
+        TranscodeHardwareService service = new TranscodeHardwareService(
+                dri.toString(), temp.resolve("sys-cqp").toString(), temp.resolve("mpp-cqp").toString(), "ffmpeg") {
+            @Override
+            boolean run(List<String> command) {
+                captured.add(command);
+                return command.contains("CQP");
+            }
+        };
+
+        TranscodeHardwareService.HardwareStatus status = service.detect();
+        assertThat(status.available()).isTrue();
+        assertThat(captured).anyMatch(cmd -> cmd.contains("h264_vaapi") && cmd.contains("-rc_mode") && cmd.contains("CQP"));
+    }
+
+    @Test
     void detectsAmdAndRejectsUnavailableCodec() throws Exception {
         Path dri = Files.createDirectories(temp.resolve("dri"));
         Path sys = Files.createDirectories(temp.resolve("sys/renderD129/device"));

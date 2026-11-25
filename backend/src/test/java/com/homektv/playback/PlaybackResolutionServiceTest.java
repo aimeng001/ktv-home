@@ -96,6 +96,38 @@ class PlaybackResolutionServiceTest {
                 .hasMessageContaining("歌曲文件不存在");
     }
 
+    @Test
+    void backfillsMissingLegacyVideoCodecFromLibraryFileAndRoutesToLiveTranscode(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws Exception {
+        java.nio.file.Path library = java.nio.file.Files.createDirectories(tempDir.resolve("source-lib")).toRealPath();
+        java.nio.file.Path media = java.nio.file.Files.write(library.resolve("rain.mkv"), new byte[]{0x1a, 0x45}).toRealPath();
+
+        SongFile legacyMkv = source(55L, "matroska,webm", "MV");
+        legacyMkv.setFilePath(media.toString());
+        legacyMkv.setVideoCodec(null);
+        legacyMkv.setAudioCodec(null);
+
+        SongFileRepository files = mock(SongFileRepository.class);
+        com.homektv.config.AppProperties props = new com.homektv.config.AppProperties();
+        props.setLibraryMode(com.homektv.common.LibraryMode.EXTERNAL_READ_ONLY);
+        props.setSourceLibraryPath(library.toString());
+        com.homektv.media.FFprobeService ffprobe = mock(com.homektv.media.FFprobeService.class);
+        when(ffprobe.probe(media)).thenReturn(new com.homektv.media.MediaProbe(
+                255_786L, 2, 0, true, "720x480", java.util.List.of(), "rv40", "aac"));
+
+        PlaybackCodecBackfillService backfill = new PlaybackCodecBackfillService(
+                files, props, ffprobe, new com.homektv.resource.ResourceBudget(2, 1, 2, () -> false), null);
+        PlaybackResolutionService service = new PlaybackResolutionService(files, backfill);
+
+        PlaybackDescriptor descriptor = service.resolveReady(legacyMkv, false);
+
+        assertThat(descriptor.kind()).isEqualTo("LIVE_TRANSCODE");
+        assertThat(descriptor.videoCodec()).isEqualTo("rv40");
+        assertThat(legacyMkv.getVideoCodec()).isEqualTo("rv40");
+        // Second call uses in-memory/cached codec without hitting ffprobe again
+        assertThat(service.resolveReady(legacyMkv, false).kind()).isEqualTo("LIVE_TRANSCODE");
+        org.mockito.Mockito.verify(ffprobe, org.mockito.Mockito.times(1)).probe(media);
+    }
+
     private static SongFile source(Long id, String format, String mediaType) {
         return source(id, format, mediaType, false);
     }

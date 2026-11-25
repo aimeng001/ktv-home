@@ -16,6 +16,9 @@
       :muted="effectiveMuted"
       @timeupdate="onTimeUpdate"
       @loadedmetadata="onLoadedMetadata"
+      @progress="onVideoProgress"
+      @canplay="onVideoCanPlay"
+      @canplaythrough="onVideoCanPlayThrough"
       @ended="onVideoEnded"
       @error="onVideoError"
       @playing="onVideoPlaying"
@@ -282,11 +285,14 @@ const scrubbingValue = ref(null)
 const osdVisible = ref(true)
 const effectBanner = ref('')
 const marqueeRunKey = ref(0)
+const streamSessionId = `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 let osdTimer = null
 let effectTimer = null
 let liveStallTimer = null
 let liveStallBaselineTime = -1
 let liveRecoveryAttempts = 0
+let livePrebufferTimer = null
+let awaitingLivePrebuffer = false
 let lastProgressSentAt = 0
 let lastAppliedSeq = -1
 let lastStreamKey = ''
@@ -294,6 +300,8 @@ let awaitingMediaReload = false
 
 const MAX_LIVE_RECOVERY_ATTEMPTS = 2
 const LIVE_STALL_TIMEOUT_MS = 10000
+const LIVE_PREBUFFER_MIN_SEC = 1.2
+const LIVE_PREBUFFER_TIMEOUT_MS = 1800
 
 const lyricLines = ref([])
 const lyricError = ref('')
@@ -358,6 +366,7 @@ const streamSpec = computed(() => buildWebStreamSpec({
   forceTranscode: forceTranscodeFallback.value,
   softVideo: forceSoftVideoFallback.value,
   song: song.value,
+  sid: streamSessionId,
 }))
 
 const isReconnectingWebHost = computed(() => Boolean(
@@ -481,6 +490,7 @@ async function applyMediaSource() {
   lastStreamKey = key
 
   if (!nextUrl) {
+    clearLivePrebuffer()
     awaitingMediaReload = false
     isSeekingTranscode.value = false
     if (el.getAttribute('src')) {
@@ -493,13 +503,21 @@ async function applyMediaSource() {
 
   awaitingMediaReload = true
   mirrorStreamFailed.value = false
+  clearLivePrebuffer()
+  const needsPrebuffer = streamSpec.value.liveTranscode && !isAudioOnly.value
+  awaitingLivePrebuffer = needsPrebuffer
+  if (needsPrebuffer) {
+    livePrebufferTimer = setTimeout(() => {
+      releaseLivePrebufferAndPlay()
+    }, LIVE_PREBUFFER_TIMEOUT_MS)
+  }
   if (el.getAttribute('src') === nextUrl) {
     if (typeof el.load === 'function') el.load()
   } else {
     el.src = nextUrl
   }
   syncAudioRouter()
-  if (player.isPlaying) {
+  if (player.isPlaying && !awaitingLivePrebuffer) {
     await attemptPlay()
   }
 }
@@ -532,6 +550,7 @@ async function attemptPlay() {
 async function unlockAudio() {
   const el = videoEl.value
   if (!el || isSilentConsole.value) return
+  clearLivePrebuffer()
   const webAudioActive = needsWebAudioRouting.value || Boolean(channelRouter?.isActive?.())
   player.audioBlockedByAutoplay = false
   player.audioUnlockFailed = false
@@ -557,6 +576,61 @@ async function unlockAudio() {
     toast(e?.name === 'NotAllowedError'
       ? '浏览器仍拦截自动播放，请再点一次开启声音'
       : '声音开启失败，请检查设备输出后重试')
+  }
+}
+
+function clearLivePrebuffer() {
+  if (livePrebufferTimer) {
+    clearTimeout(livePrebufferTimer)
+    livePrebufferTimer = null
+  }
+  awaitingLivePrebuffer = false
+}
+
+function getBufferedAheadSeconds(el) {
+  if (!el || !el.buffered || el.buffered.length === 0) return 0
+  const cur = Number.isFinite(el.currentTime) ? el.currentTime : 0
+  let maxEnd = cur
+  for (let i = 0; i < el.buffered.length; i += 1) {
+    const start = el.buffered.start(i)
+    const end = el.buffered.end(i)
+    if (cur + 0.25 >= start && end > maxEnd) {
+      maxEnd = end
+    }
+  }
+  return Math.max(0, maxEnd - cur)
+}
+
+function releaseLivePrebufferAndPlay() {
+  const wasWaiting = awaitingLivePrebuffer
+  clearLivePrebuffer()
+  if (!wasWaiting) return
+  isSeekingTranscode.value = false
+  if (player.isPlaying && shouldLoadVideoMedia.value) {
+    attemptPlay()
+  }
+}
+
+function maybeReleaseLivePrebuffer() {
+  if (!awaitingLivePrebuffer) return
+  const el = videoEl.value
+  if (!el) return
+  if (el.readyState >= 4 || getBufferedAheadSeconds(el) >= LIVE_PREBUFFER_MIN_SEC) {
+    releaseLivePrebufferAndPlay()
+  }
+}
+
+function onVideoProgress() {
+  maybeReleaseLivePrebuffer()
+}
+
+function onVideoCanPlay() {
+  maybeReleaseLivePrebuffer()
+}
+
+function onVideoCanPlayThrough() {
+  if (awaitingLivePrebuffer) {
+    releaseLivePrebufferAndPlay()
   }
 }
 
@@ -607,7 +681,9 @@ function scheduleLiveStallWatchdog() {
 
 function onLoadedMetadata() {
   awaitingMediaReload = false
-  isSeekingTranscode.value = false
+  if (!awaitingLivePrebuffer) {
+    isSeekingTranscode.value = false
+  }
   const el = videoEl.value
   if (!el) return
   if (Number.isFinite(el.duration) && el.duration > 0 && el.duration < 86400) {
@@ -618,11 +694,13 @@ function onLoadedMetadata() {
   if (!streamSpec.value.liveTranscode && targetSec > 1 && Number.isFinite(el.duration) && targetSec < el.duration) {
     try { el.currentTime = targetSec } catch { /* ignore */ }
   }
-  if (player.isPlaying && el.paused) attemptPlay()
+  maybeReleaseLivePrebuffer()
+  if (player.isPlaying && el.paused && !awaitingLivePrebuffer) attemptPlay()
 }
 
 function onVideoPlaying() {
   awaitingMediaReload = false
+  clearLivePrebuffer()
   isSeekingTranscode.value = false
   clearLiveStallWatchdog()
   if (player.audioBlockedByAutoplay && player.isWebHost && !player.muted) {
@@ -686,6 +764,7 @@ function onVideoError() {
       forceTranscode: true,
       softVideo: true,
       song: song.value,
+      sid: streamSessionId,
     })
     if (fallbackSpec.url && fallbackSpec.url !== streamSpec.value.url) {
       liveStartSec.value = startSec
@@ -738,6 +817,7 @@ function resolveInitialLiveStartSec() {
     startSeconds: 0,
     forceTranscode: forceTranscodeFallback.value,
     song: song.value,
+    sid: streamSessionId,
   })
   return baseSpec.liveTranscode ? posSec : 0
 }
@@ -749,6 +829,7 @@ watch(() => player.nowPlaying?.queueId, (newId, oldId) => {
     forceSoftVideoFallback.value = false
     mirrorStreamFailed.value = false
     liveRecoveryAttempts = 0
+    clearLivePrebuffer()
     clearLiveStallWatchdog()
     liveStartSec.value = newId ? resolveInitialLiveStartSec() : 0
     detectedDurationMs.value = 0
@@ -802,9 +883,12 @@ watch([() => streamSpec.value.url, () => player.nowPlaying?.queueId, streamReloa
 watch(() => player.state, (state) => {
   const el = videoEl.value
   if (!el || !streamSpec.value.url) return
-  if (state === 'playing') attemptPlay()
-  else {
+  if (state === 'playing') {
+    if (!awaitingLivePrebuffer) attemptPlay()
+  } else {
+    clearLivePrebuffer()
     clearLiveStallWatchdog()
+    isSeekingTranscode.value = false
     el.pause()
     channelRouter?.suspend?.()
   }
@@ -825,7 +909,7 @@ watch(() => player.isWebHost, (isHost) => {
       try { el.currentTime = posSec } catch { /* ignore */ }
     }
     syncAudioRouter()
-    if (player.isPlaying) attemptPlay()
+    if (player.isPlaying && !awaitingLivePrebuffer) attemptPlay()
   } else {
     syncAudioRouter()
   }
@@ -1093,6 +1177,7 @@ onBeforeUnmount(() => {
   resetSpectrumCache()
   clearTimeout(osdTimer)
   clearTimeout(effectTimer)
+  clearLivePrebuffer()
   clearLiveStallWatchdog()
   lyricLoader.dispose()
   channelRouter.dispose()

@@ -69,4 +69,10 @@ class SpaStaticResourceWebMvcTest {
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("max-age=31536000")))
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("immutable")));
     }
+
+    @Test
+    void faviconPngUnderMIsServedByStaticHandler() throws Exception {
+        mvc.perform(get("/m/favicon-32x32.png"))
+                .andExpect(status().isOk());
+    }
 }

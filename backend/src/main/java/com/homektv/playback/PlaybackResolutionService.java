@@ -5,6 +5,7 @@ import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.common.ApiException;
 import com.homektv.contract.PlaybackDescriptor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,9 +14,17 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class PlaybackResolutionService {
     private final SongFileRepository files;
+    private final PlaybackCodecBackfillService codecBackfillService;
 
     public PlaybackResolutionService(SongFileRepository files) {
+        this(files, null);
+    }
+
+    @Autowired
+    public PlaybackResolutionService(SongFileRepository files,
+                                     @Autowired(required = false) PlaybackCodecBackfillService codecBackfillService) {
         this.files = files;
+        this.codecBackfillService = codecBackfillService;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -32,6 +41,9 @@ public class PlaybackResolutionService {
         }
         if (forceTranscode && !PlaybackTransportPolicy.isVideo(source)) {
             throw new ApiException("LIVE_TRANSCODE_VIDEO_REQUIRED", "仅视频媒体支持实时转码回退");
+        }
+        if (codecBackfillService != null) {
+            codecBackfillService.backfillMissingVideoCodec(source);
         }
         return PlaybackTransportPolicy.requiresLiveTranscode(source, forceTranscode)
                 ? PlaybackDescriptor.liveTranscode(source)

@@ -5,6 +5,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -116,4 +117,19 @@ public interface SongFileRepository extends JpaRepository<SongFile, Long> {
      * flag uncertain ones for verification).
      */
     Page<SongFile> findByVocalConfidence(String vocalConfidence, Pageable pageable);
+
+    @Modifying
+    @Query("""
+            UPDATE SongFile file
+            SET file.videoCodec = COALESCE(:videoCodec, file.videoCodec),
+                file.audioCodec = COALESCE(:audioCodec, file.audioCodec)
+            WHERE file.id = :id
+              AND (
+                    (:videoCodec IS NOT NULL AND (file.videoCodec IS NULL OR TRIM(file.videoCodec) = '' OR LOWER(TRIM(file.videoCodec)) = 'unknown'))
+                 OR (:audioCodec IS NOT NULL AND (file.audioCodec IS NULL OR TRIM(file.audioCodec) = '' OR LOWER(TRIM(file.audioCodec)) = 'unknown'))
+              )
+            """)
+    int backfillProbedCodecs(@Param("id") Long id,
+                             @Param("videoCodec") String videoCodec,
+                             @Param("audioCodec") String audioCodec);
 }

@@ -122,6 +122,12 @@ public class TranscodeHardwareService {
     }
 
     private boolean smokeTest(Path device, String encoder) {
+        if ("h264_vaapi".equals(encoder) || "hevc_vaapi".equals(encoder)) {
+            return run(List.of(ffmpegPath, "-hide_banner", "-loglevel", "error",
+                    "-vaapi_device", device.toString(), "-f", "lavfi", "-i", "color=size=128x128:rate=1",
+                    "-vf", "format=nv12,hwupload", "-frames:v", "1",
+                    "-c:v", encoder, "-rc_mode", "CQP", "-qp", "24", "-f", "null", "-"));
+        }
         return run(List.of(ffmpegPath, "-hide_banner", "-loglevel", "error",
                 "-vaapi_device", device.toString(), "-f", "lavfi", "-i", "color=size=128x128:rate=1",
                 "-vf", "format=nv12,hwupload", "-frames:v", "1", "-c:v", encoder, "-f", "null", "-"));

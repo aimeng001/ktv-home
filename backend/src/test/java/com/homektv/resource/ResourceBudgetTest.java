@@ -325,6 +325,33 @@ class ResourceBudgetTest {
         assertThat(interrupted.maxWaitNanos()).isPositive();
     }
 
+    @Test
+    void backgroundProbeYieldsCompletelyWhileLiveTranscodeIsActive() throws Exception {
+        ResourceBudget budget = new ResourceBudget(2, 1, 2, () -> false);
+        ResourceBudget.Permit transcode = budget.tryAcquireLiveTranscode().orElseThrow();
+        ExecutorService workers = Executors.newSingleThreadExecutor();
+        try {
+            Future<ResourceBudget.Permit> bgProbe = workers.submit(budget::acquireBackgroundProbe);
+            assertThatThrownBy(() -> bgProbe.get(150, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(TimeoutException.class);
+            assertThat(budget.activeProbeCount()).isZero();
+
+            // On-demand playback probe still works without self-deadlocking
+            try (ResourceBudget.Permit interactiveProbe = budget.tryAcquireProbe(java.time.Duration.ofMillis(100)).orElseThrow()) {
+                assertThat(budget.activeProbeCount()).isEqualTo(1);
+            }
+
+            transcode.close();
+            ResourceBudget.Permit resumed = bgProbe.get(1, TimeUnit.SECONDS);
+            assertThat(budget.activeProbeCount()).isEqualTo(1);
+            resumed.close();
+        } finally {
+            transcode.close();
+            workers.shutdownNow();
+        }
+        assertThat(budget.activeProbeCount()).isZero();
+    }
+
     private static ResourceBudget.WaitSnapshot awaitWaiting(ResourceBudget budget, boolean managed)
             throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);

@@ -31,7 +31,7 @@ public final class MediaProbeStage {
 
     /** Runs a required probe and preserves media failures for worker callers. */
     public MediaProbe probeRequired(Path file) {
-        try (ResourceBudget.Permit ignored = resourceBudget.acquireProbe()) {
+        try (ResourceBudget.Permit ignored = resourceBudget.acquireBackgroundProbe()) {
             return ffprobe.probe(file);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();

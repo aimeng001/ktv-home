@@ -77,11 +77,23 @@ public final class ResourceBudget {
 
     /** Waits outside database transactions until one probe slot is available. */
     public Permit acquireProbe() throws InterruptedException {
+        return acquireProbeInternal(false);
+    }
+
+    /**
+     * Waits until probe capacity is available and no real-time live transcode is active,
+     * keeping NAS HDD I/O and low-power CPUs dedicated to active KTV playback.
+     */
+    public Permit acquireBackgroundProbe() throws InterruptedException {
+        return acquireProbeInternal(true);
+    }
+
+    private Permit acquireProbeInternal(boolean yieldToLiveTranscode) throws InterruptedException {
         lock.lockInterruptibly();
         boolean registeredWaiter = false;
         long waitStartedNanos = 0;
         try {
-            while (activeProbes >= currentProbeLimit()) {
+            while ((yieldToLiveTranscode && activeLiveTranscodes > 0) || activeProbes >= currentProbeLimit()) {
                 if (!registeredWaiter) {
                     waitingProbes++;
                     waitStartedNanos = System.nanoTime();

@@ -5,6 +5,7 @@ import com.homektv.config.AppProperties;
 import com.homektv.domain.SongFile;
 import com.homektv.library.LibraryModePolicy;
 import com.homektv.library.SongAvailabilityPolicy;
+import com.homektv.playback.PlaybackCodecBackfillService;
 import com.homektv.playback.PlaybackTransportPolicy;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.resource.ResourceBudget;
@@ -34,7 +35,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import com.homektv.media.FFprobeService;
-import com.homektv.media.MediaProbe;
 import com.homektv.library.TranscodeHardwareService;
 
 /**
@@ -91,25 +91,9 @@ public class StreamController {
     private final LiveTranscodeCommandBuilder transcodeCommandBuilder;
     private final ProcessLauncher processLauncher;
     private final ResourceBudget resourceBudget;
-    private final FFprobeService ffprobeService;
     private final TranscodeHardwareService transcodeHardwareService;
+    private final PlaybackCodecBackfillService codecBackfillService;
     private final boolean liveHardwareAccelerationEnabled;
-    private static final int MAX_AUDIO_CODEC_CACHE_ENTRIES = 2000;
-    private static final String MULTICHANNEL_SENTINEL = "multichannel";
-    private final Map<Long, String> audioCodecCache = Collections.synchronizedMap(
-            new LinkedHashMap<>(128, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(Map.Entry<Long, String> eldest) {
-                    return size() > MAX_AUDIO_CODEC_CACHE_ENTRIES;
-                }
-            });
-    private final Map<Long, String> videoCodecCache = Collections.synchronizedMap(
-            new LinkedHashMap<>(128, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(Map.Entry<Long, String> eldest) {
-                    return size() > MAX_AUDIO_CODEC_CACHE_ENTRIES;
-                }
-            });
     private record ActiveClientTranscode(LiveTranscodeSession session, MediaStreamLease lease) {
         void closePreempted() {
             session.close();
@@ -172,7 +156,20 @@ public class StreamController {
                             FFprobeService ffprobeService) {
         this(fileRepo, props, availabilityPolicy, ffmpegPath,
                 LiveTranscodeCommandBuilder.DEFAULT_LIVE_TRANSCODE_THREADS,
-                processLauncher, resourceBudget, ffprobeService, null, false);
+                processLauncher, resourceBudget, ffprobeService, null, null, false);
+    }
+
+    public StreamController(SongFileRepository fileRepo, AppProperties props,
+                            SongAvailabilityPolicy availabilityPolicy,
+                            String ffmpegPath,
+                            int liveTranscodeThreads,
+                            ProcessLauncher processLauncher,
+                            ResourceBudget resourceBudget,
+                            FFprobeService ffprobeService,
+                            TranscodeHardwareService transcodeHardwareService,
+                            boolean liveHardwareAccelerationEnabled) {
+        this(fileRepo, props, availabilityPolicy, ffmpegPath, liveTranscodeThreads,
+                processLauncher, resourceBudget, ffprobeService, transcodeHardwareService, null, liveHardwareAccelerationEnabled);
     }
 
     @Autowired
@@ -184,6 +181,7 @@ public class StreamController {
                             ResourceBudget resourceBudget,
                             @Autowired(required = false) FFprobeService ffprobeService,
                             @Autowired(required = false) TranscodeHardwareService transcodeHardwareService,
+                            @Autowired(required = false) PlaybackCodecBackfillService codecBackfillService,
                             @Value("${app.transcode.live-hardware-acceleration:true}") boolean liveHardwareAccelerationEnabled) {
         this.fileRepo = fileRepo;
         this.props = props;
@@ -192,8 +190,12 @@ public class StreamController {
         this.transcodeCommandBuilder = new LiveTranscodeCommandBuilder(executable, liveTranscodeThreads);
         this.processLauncher = processLauncher != null ? processLauncher : ProcessBuilder::start;
         this.resourceBudget = resourceBudget;
-        this.ffprobeService = ffprobeService;
         this.transcodeHardwareService = transcodeHardwareService;
+        this.codecBackfillService = codecBackfillService != null
+                ? codecBackfillService
+                : (ffprobeService != null
+                        ? new PlaybackCodecBackfillService(fileRepo, props, ffprobeService, resourceBudget, null)
+                        : null);
         this.liveHardwareAccelerationEnabled = liveHardwareAccelerationEnabled;
     }
 
@@ -377,18 +379,14 @@ public class StreamController {
     boolean shouldCopyVideo(SongFile sf, File file, boolean forceTranscode, boolean effectiveMerge, Integer audioTrack, boolean softVideo) {
         if (softVideo) return false;
         if (PlaybackTransportPolicy.requiresLiveTranscode(sf, false)) return false;
-        if (sf != null && sf.getVideoCodec() != null && !sf.getVideoCodec().isBlank()
-                && !"unknown".equalsIgnoreCase(sf.getVideoCodec().trim())) {
+        if (sf != null && !PlaybackCodecBackfillService.isMissingCodec(sf.getVideoCodec())) {
             String vc = sf.getVideoCodec().trim().toLowerCase(java.util.Locale.ROOT);
             return vc.equals("h264") || vc.equals("avc1") || vc.equals("h.264");
         }
-        if (sf != null && sf.getId() != null && file != null && ffprobeService != null) {
-            String probed = videoCodecCache.get(sf.getId());
-            if (probed == null) {
-                probed = probeAndCacheMediaCodecs(sf.getId(), file, true);
-            }
-            if (probed != null) {
-                String vc = probed.trim().toLowerCase(java.util.Locale.ROOT);
+        if (sf != null && sf.getId() != null && file != null && codecBackfillService != null) {
+            PlaybackCodecBackfillService.ProbedCodecs probed = codecBackfillService.probeAndCache(sf, file);
+            if (probed != null && probed.videoCodec() != null) {
+                String vc = probed.videoCodec().trim().toLowerCase(java.util.Locale.ROOT);
                 return vc.equals("h264") || vc.equals("avc1") || vc.equals("h.264");
             }
             return false;
@@ -397,16 +395,16 @@ public class StreamController {
     }
 
     boolean shouldCopyAudio(SongFile sf, File file, boolean copyVideo, boolean mergeTracks, Integer audioTrack) {
-        if (!copyVideo) return false;
         if (mergeTracks) return false;
         if (audioTrack != null && audioTrack > 0) return false;
         if (sf.getAudioTracks() > 1) return false;
 
         String codec = sf.getAudioCodec();
-        if (codec == null && file != null && sf.getId() != null) {
-            codec = audioCodecCache.get(sf.getId());
-            if (codec == null && ffprobeService != null) {
-                codec = probeAndCacheMediaCodecs(sf.getId(), file, false);
+        if (PlaybackCodecBackfillService.isMissingCodec(codec) && file != null && sf.getId() != null) {
+            PlaybackCodecBackfillService.ProbedCodecs probed = codecBackfillService != null
+                    ? codecBackfillService.probeAndCache(sf, file) : null;
+            if (probed != null) {
+                codec = probed.audioCodec();
             }
         }
         if (codec == null && file != null) {
@@ -420,31 +418,6 @@ public class StreamController {
             return c.equals("aac") || c.equals("mp4a") || c.equals("mp3");
         }
         return false;
-    }
-
-    private String probeAndCacheMediaCodecs(Long songFileId, File file, boolean returnVideoCodec) {
-        try (ResourceBudget.Permit probePermit = resourceBudget != null
-                ? resourceBudget.tryAcquireProbe(Duration.ofMillis(100)).orElse(null)
-                : null) {
-            if (resourceBudget == null || probePermit != null) {
-                MediaProbe probe = ffprobeService.probe(file.toPath());
-                if (probe != null) {
-                    if (probe.videoCodec() != null) {
-                        videoCodecCache.put(songFileId, probe.videoCodec());
-                    }
-                    boolean multiChannel = probe.audioStreams() != null && probe.audioStreams().stream()
-                            .anyMatch(s -> s != null && s.channels() > 2);
-                    if (multiChannel) {
-                        audioCodecCache.put(songFileId, MULTICHANNEL_SENTINEL);
-                    } else if (probe.audioCodec() != null) {
-                        audioCodecCache.put(songFileId, probe.audioCodec());
-                    }
-                    return returnVideoCodec ? videoCodecCache.get(songFileId) : audioCodecCache.get(songFileId);
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return null;
     }
 
     private ResponseEntity<StreamingResponseBody> serveOnTheFlyTranscodeStream(
@@ -535,6 +508,10 @@ public class StreamController {
         String playbackSession = request.getHeader("X-Playback-Session");
         if (playbackSession != null && !playbackSession.isBlank()) {
             return "session:" + playbackSession.trim();
+        }
+        String sid = request.getParameter("sid");
+        if (sid != null && !sid.isBlank()) {
+            return "sid:" + sid.trim();
         }
         String remoteAddr = request.getRemoteAddr();
         if (remoteAddr == null || remoteAddr.isBlank()) {

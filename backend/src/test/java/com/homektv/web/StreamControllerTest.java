@@ -1696,11 +1696,9 @@ class StreamControllerTest {
         aacSong.setAudioCodec("aac");
         File aacFile = new File("test.mkv");
 
-        // 1. 单音轨 AAC 允许 copyAudio
+        // 1. 单音轨 AAC 允许 copyAudio（无论视频是否直拷）
         assertThat(controller.shouldCopyAudio(aacSong, aacFile, true, false, null)).isTrue();
-
-        // 2. copyVideo=false 时禁止 copyAudio
-        assertThat(controller.shouldCopyAudio(aacSong, aacFile, false, false, null)).isFalse();
+        assertThat(controller.shouldCopyAudio(aacSong, aacFile, false, false, null)).isTrue();
 
         // 3. mergeTracks=true 时禁止 copyAudio
         assertThat(controller.shouldCopyAudio(aacSong, aacFile, true, true, null)).isFalse();
@@ -1829,6 +1827,57 @@ class StreamControllerTest {
         second.getBody().writeTo(new ByteArrayOutputStream());
         assertThat(budget.activeLiveTranscodeCount()).isZero();
         assertThat(budget.activeMediaStreamCount()).isZero();
+    }
+
+    @Test
+    void distinctSidParametersIsolateConcurrentTranscodesFromSameIpAndUserAgent() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("sid-isolation-lib"));
+        Path media = Files.createFile(library.resolve("song.mkv"));
+        SongFile songFile = new SongFile();
+        songFile.setFilePath(media.toString());
+        songFile.setFormat("matroska");
+        songFile.setMediaType("MV");
+        SongFileRepository repository = mock(SongFileRepository.class);
+        when(repository.findById(504L)).thenReturn(Optional.of(songFile));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        ResourceBudget budget = new ResourceBudget(2, 1, 2, 1, 2, () -> false);
+        StreamController controller = new StreamController(repository, props,
+                new SongAvailabilityPolicy(repository), "ffmpeg", builder -> {
+                    Process proc = mock(Process.class);
+                    when(proc.getInputStream()).thenReturn(new ByteArrayInputStream(new byte[]{0x01, 0x02}));
+                    when(proc.isAlive()).thenReturn(false);
+                    try {
+                        when(proc.waitFor(5, TimeUnit.SECONDS)).thenReturn(true);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                    when(proc.exitValue()).thenReturn(0);
+                    return proc;
+                }, budget);
+
+        org.springframework.mock.web.MockHttpServletRequest tab1 = new org.springframework.mock.web.MockHttpServletRequest();
+        tab1.setMethod("GET");
+        tab1.setRemoteAddr("192.168.1.50");
+        tab1.addHeader("User-Agent", "Mozilla/5.0");
+        tab1.setParameter("sid", "web-tab-1");
+
+        org.springframework.mock.web.MockHttpServletRequest tab2 = new org.springframework.mock.web.MockHttpServletRequest();
+        tab2.setMethod("GET");
+        tab2.setRemoteAddr("192.168.1.50");
+        tab2.addHeader("User-Agent", "Mozilla/5.0");
+        tab2.setParameter("sid", "web-tab-2");
+
+        var first = controller.streamInternal(504L, null, 0.0, true, null, false, false, tab1);
+        var second = controller.streamInternal(504L, null, 0.0, true, null, false, false, tab2);
+
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(budget.activeLiveTranscodeCount()).isEqualTo(2);
+
+        first.getBody().writeTo(new ByteArrayOutputStream());
+        second.getBody().writeTo(new ByteArrayOutputStream());
+        assertThat(budget.activeLiveTranscodeCount()).isZero();
     }
 
     @Test

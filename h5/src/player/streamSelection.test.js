@@ -151,5 +151,12 @@ describe('streamSelection', () => {
       videoCodec: 'hevc', audioCodec: 'aac'
     }
     expect(buildWebStreamSpec({ playback: mp4Hevc, song: { format: 'mp4' } }).liveTranscode).toBe(true)
+
+    const withSid = buildWebStreamSpec({
+      playback: mp4Hevc,
+      song: { format: 'mp4' },
+      sid: 'tab-alpha-1',
+    })
+    expect(withSid.url).toBe('/api/stream/92?transcode=true&sid=tab-alpha-1')
   })
 })

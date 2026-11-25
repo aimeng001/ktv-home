@@ -58,6 +58,7 @@ export function buildWebStreamSpec({
   forceTranscode = false,
   softVideo = false,
   song = null,
+  sid = '',
 } = {}) {
   if (!playback || playback.status !== 'READY' || !playback.sourceFileId) {
     return { url: '', liveTranscode: false, trackSwitchedByServer: false, isAudioOnly: false }
@@ -88,6 +89,10 @@ export function buildWebStreamSpec({
   }
   if (softVideo) {
     params.set('softVideo', 'true')
+  }
+  const normalizedSid = String(sid || '').trim()
+  if (normalizedSid) {
+    params.set('sid', normalizedSid)
   }
   const clampedStart = Number.isFinite(startSeconds) && startSeconds > 0.5 ? startSeconds : 0
   if (clampedStart > 0) params.set('start', clampedStart.toFixed(3))

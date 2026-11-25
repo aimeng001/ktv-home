@@ -139,21 +139,24 @@ final class LiveTranscodeCommandBuilder {
             }
             command.add("-c:v");
             command.add("h264_vaapi");
+            // Intel Jasper Lake (如 N5105) 在未加载 HuC 固件时 VBR 易失败，CQP 可稳定启用核显硬编。
+            command.add("-rc_mode");
+            command.add("CQP");
+            command.add("-qp");
+            command.add("24");
             command.add("-g");
-            command.add("60");
-            command.add("-b:v");
-            command.add("3000k");
-            command.add("-maxrate");
-            command.add("4500k");
-            command.add("-bufsize");
-            command.add("9000k");
+            command.add("30");
+            command.add("-bf");
+            command.add("0");
         } else if (useRkmpp) {
             command.add("-pix_fmt");
             command.add("nv12");
             command.add("-c:v");
             command.add("h264_rkmpp");
             command.add("-g");
-            command.add("60");
+            command.add("30");
+            command.add("-bf");
+            command.add("0");
             command.add("-b:v");
             command.add("3000k");
             command.add("-maxrate");
@@ -167,20 +170,20 @@ final class LiveTranscodeCommandBuilder {
             command.add(String.valueOf(liveTranscodeThreads));
             command.add("-preset");
             command.add("superfast");
-            command.add("-tune");
-            command.add("zerolatency");
+            command.add("-bf");
+            command.add("0");
             command.add("-g");
-            command.add("60");
+            command.add("30");
             command.add("-keyint_min");
-            command.add("60");
+            command.add("30");
             command.add("-sc_threshold");
             command.add("0");
             command.add("-crf");
             command.add("23");
             command.add("-maxrate");
-            command.add("4500k");
+            command.add("4000k");
             command.add("-bufsize");
-            command.add("9000k");
+            command.add("8000k");
             command.add("-pix_fmt");
             command.add("yuv420p");
         }
@@ -207,10 +210,6 @@ final class LiveTranscodeCommandBuilder {
         command.add("mp4");
         command.add("-movflags");
         command.add("frag_keyframe+empty_moov+default_base_moof");
-        command.add("-frag_duration");
-        command.add("2000000");
-        command.add("-flush_packets");
-        command.add("1");
         command.add("pipe:1");
         return List.copyOf(command);
     }
