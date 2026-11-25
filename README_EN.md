@@ -45,11 +45,11 @@ The NAS configuration keeps `/source-music` mounted read-only. Do not use the ma
 
 Library metadata does not make a media file playable by itself. Home KTV retains its own song IDs, availability rules, and playback APIs.
 
-## Recent Updates & Android TV
+## Core Capabilities & Android TV
 
-- **H5 Dual-Mode Player & Stability Hardening (v1.0.42–v1.0.43):** Rebuilt H5 into a dual-mode TV remote console + standalone Web KTV player and retired the legacy Windows client. Added `PlaybackDescriptor.format` with token-based native container detection, fixed category browsing `vocalForm` fallback (`'未知'` vs `ai_vocal_form`) with Flyway `V67` expression index, bounded AI repair/bulk task dispatch with background drain for 200k-song libraries, fixed H5 Web Audio attenuation / mirror transcode fallback / track-swap position preservation, enabled admin lyric clearing and `vocalForm` editing, and updated Android TV PiP player observer lifecycle.
-- **Search & Playback Readiness (v1.0.34):** Fast B-Tree prefix index path for single-letter searches (`a`–`z`), on-demand FFprobe probing via `SongProbeService` (`POST /api/admin/songs/{id}/probe` and pre-order probe), zero-disk-cache `pipe:1` live fMP4 transcoding for legacy formats/decoder fallback, and read-only external artist avatar matching via `/avatar-library` (`KTV_AVATAR_LIBRARY_DIR`).
-- **Android TV KTV UI (v1.0.34):** 10-tile Bento home dashboard + unified three-column 3×5 song browser with 5-mode soft keyboard, circular artist avatar/surname initial badges with display-title cleanup (`SongDisplayFormatter`), and purged legacy single-panel UI shells across clients.
+- **Dual-Mode Web KTV & Admin Console:** Vue 3 H5 acts as a TV remote console (`TV_CONSOLE`) when an Android TV is online, or as a standalone Web KTV player (`WEB_HOST`) with Range streaming, `pipe:1` live fMP4 transcode fallback, Web Audio channel routing/pitch shifting, 16:9 PiP preview, and fullscreen lyrics.
+- **Zero-Disk-Cache Streaming & Fast Search:** Mainstream formats stream via HTTP Range; legacy containers (e.g., RM/RMVB) or decoder fallbacks transcode in-memory via FFmpeg `pipe:1` without disk caching. Supports on-demand FFprobe probing (`SongProbeService`), single-letter B-Tree prefix index fast paths, and read-only external artist avatars (`/avatar-library`).
+- **Android TV KTV UI (IKTV 50.0.4 Parity):** Landscape-locked TV client featuring a 10-tile Bento home dashboard, three-column 3×5 song browser, 5-mode D-pad soft keyboard, 11-control bottom dock with 16:9 PiP preview, and hardware-accelerated Media3 playback.
 
 ## Android TV updates
 
