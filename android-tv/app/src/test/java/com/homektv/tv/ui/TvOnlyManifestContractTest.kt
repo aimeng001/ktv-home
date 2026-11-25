@@ -41,4 +41,34 @@ class TvOnlyManifestContractTest {
             activities.getValue(".ui.SetupActivity").getAttribute("android:screenOrientation"),
         )
     }
+
+    @Test
+    fun manifestProvidesAdaptiveAndRasterLauncherIconsAndDirectTvBanner() {
+        val manifestFile = listOf(
+            File("src/main/AndroidManifest.xml"),
+            File("android-tv/app/src/main/AndroidManifest.xml"),
+            File("app/src/main/AndroidManifest.xml"),
+        ).firstOrNull { it.isFile } ?: File("src/main/AndroidManifest.xml")
+
+        val resDir = File(manifestFile.parentFile, "res")
+        val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(manifestFile)
+        val application = document.getElementsByTagName("application").item(0) as Element
+
+        assertEquals("@mipmap/ic_launcher", application.getAttribute("android:icon"))
+        assertEquals("@mipmap/ic_launcher_round", application.getAttribute("android:roundIcon"))
+        assertEquals("@drawable/tv_banner", application.getAttribute("android:banner"))
+
+        assertFalse(
+            "mipmap-anydpi without -v26 overrides density PNGs as -v21 and hides raster fallback icons",
+            File(resDir, "mipmap-anydpi/ic_launcher.xml").exists(),
+        )
+        assertTrue(File(resDir, "mipmap-anydpi-v26/ic_launcher.xml").isFile)
+        assertTrue(File(resDir, "mipmap-anydpi-v26/ic_launcher_round.xml").isFile)
+
+        listOf("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi").forEach { density ->
+            assertTrue("Missing mipmap-$density/ic_launcher.png", File(resDir, "mipmap-$density/ic_launcher.png").isFile)
+            assertTrue("Missing mipmap-$density/ic_launcher_round.png", File(resDir, "mipmap-$density/ic_launcher_round.png").isFile)
+        }
+        assertTrue(File(resDir, "drawable-xhdpi/tv_banner.png").isFile)
+    }
 }

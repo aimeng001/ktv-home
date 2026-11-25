@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Leanback 启动器横幅（320×180，16:9） -->
-<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
-    android:gravity="fill"
-    android:src="@drawable/home_ktv_tv_banner" />

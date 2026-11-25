@@ -38,6 +38,36 @@ class KioskFeedbackRoutingContractTest {
         ).forEach { assertTrue("Missing inline feedback route: $it", source.contains(it)) }
     }
 
+    @Test
+    fun earlyDashboardAndDrawerPathsGuardLazyBrowserBindingBeforeAccess() {
+        val source = locate("src/main/java/com/homektv/tv/ui/KtvKioskOverlayController.kt").readText()
+
+        assertTrue(source.contains("private fun initializedBrowserBindingOrNull()"))
+        listOf(
+            "private fun inlineFeedbackForCurrentPage" to "private fun renderCatalogState",
+            "private fun isSearchKeyboardShowing" to "private fun applyKeyboardVisibility",
+            "private fun applyKeyboardVisibility" to "private fun showBrowserRetry",
+            "private fun scrollResultsPage" to "private fun currentSongsHasMore",
+            "private fun captureCurrentNavigationEntry" to "private fun pushNavigationSnapshot",
+        ).forEach { (startMarker, endMarker) ->
+            val block = source.substringAfter(startMarker).substringBefore(endMarker)
+            assertFalse(
+                "Method $startMarker must not access raw browserBinding before checking initialization",
+                block.contains("browserBinding."),
+            )
+            assertTrue(
+                "Method $startMarker should guard lazy browserBinding via initializedBrowserBindingOrNull()",
+                block.contains("initializedBrowserBindingOrNull()"),
+            )
+        }
+
+        val renderBrowserBlock = source.substringAfter("private fun renderThreeColumnBrowser")
+            .substringBefore("private fun showVarietyPanel")
+        val earlyReturnIdx = renderBrowserBlock.indexOf("if (!isThreeColumnTab(tab)) return")
+        val ensureIdx = renderBrowserBlock.indexOf("ensureBrowserBinding()")
+        assertTrue(earlyReturnIdx >= 0 && ensureIdx > earlyReturnIdx)
+    }
+
     private fun locate(relativePath: String): File {
         val workingDirectory = File(System.getProperty("user.dir").orEmpty())
         return sequenceOf(

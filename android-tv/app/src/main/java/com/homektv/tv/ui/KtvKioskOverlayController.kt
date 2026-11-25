@@ -305,6 +305,9 @@ class KtvKioskOverlayController(
         }
     }
 
+    private fun initializedBrowserBindingOrNull(): ViewKtvThreeColumnBrowserBinding? =
+        if (::browserBinding.isInitialized) browserBinding else null
+
     private fun ensureBrowserBinding(): ViewKtvThreeColumnBrowserBinding {
         if (::browserBinding.isInitialized) return browserBinding
         val overlay = binding.kioskOverlay
@@ -579,7 +582,9 @@ class KtvKioskOverlayController(
     private fun inlineFeedbackForCurrentPage(state: ControllerUiState): Pair<String, Boolean>? {
         val overlay = binding.kioskOverlay
         val tab = presentationState.currentTab.value
-        val emptyStateVisible = browserBinding.txtBrowserEmptyState.visibility == View.VISIBLE
+        val emptyStateVisible = initializedBrowserBindingOrNull()
+            ?.txtBrowserEmptyState
+            ?.visibility == View.VISIBLE
         val domain = when (tab) {
             KioskTab.CATEGORIES -> if (!categoryDetail && categoryMode != KioskCategoryMode.NEW && emptyStateVisible) {
                 com.homektv.tv.controller.UiDomain.CATALOG
@@ -781,10 +786,10 @@ class KtvKioskOverlayController(
     private fun renderThreeColumnBrowser(state: ControllerUiState) {
         val tab = presentationState.currentTab.value
         if (!isThreeColumnTab(tab)) return
-        val browserHadFocusBeforeRender = browserBinding.root.hasFocus()
+        val browser = ensureBrowserBinding()
+        val browserHadFocusBeforeRender = browser.root.hasFocus()
         resolvePendingCommercialTagRoute(state)
 
-        val browser = browserBinding
         val selectedArtist = presentationState.selectedArtist.value
         val navButtons = listOf(
             browser.browserNavSingers to (tab == KioskTab.SINGERS || selectedArtist != null),
@@ -1358,6 +1363,7 @@ class KtvKioskOverlayController(
     }
 
     private fun scrollResultsPage(delta: Int) {
+        val browser = initializedBrowserBindingOrNull() ?: return
         val state = controllerState
         if (presentationState.currentTab.value == KioskTab.SINGERS &&
             presentationState.selectedArtist.value == null
@@ -1374,7 +1380,7 @@ class KtvKioskOverlayController(
                     currentSingerPageIndex = action.targetPageIndex
                     pendingSingerPageTarget = null
                     renderCatalogState(state)
-                    browserBinding.browserSingerRecyclerView.scrollToPosition(0)
+                    browser.browserSingerRecyclerView.scrollToPosition(0)
                     if (delta > 0 && state.catalogHasMore && !state.catalogLoading && !state.catalogLoadingMore &&
                         (action.targetPageIndex + 2) * SINGER_GRID_PAGE_SIZE > state.artists.size
                     ) {
@@ -1420,10 +1426,11 @@ class KtvKioskOverlayController(
     }
 
     private fun focusPaginationBarFromSongGrid(): Boolean {
+        val browser = initializedBrowserBindingOrNull() ?: return false
         val target = listOf(
-            browserBinding.btnPageNext,
-            browserBinding.btnPagePrev,
-            browserBinding.btnBrowserBack,
+            browser.btnPageNext,
+            browser.btnPagePrev,
+            browser.btnBrowserBack,
         ).firstOrNull { it.isShown && it.isFocusable } ?: return false
         return target.requestFocus()
     }
@@ -1789,16 +1796,23 @@ class KtvKioskOverlayController(
     }
 
     private fun isSearchKeyboardShowing(): Boolean {
+        val isVariety = initializedBrowserBindingOrNull()
+            ?.panelVarietyShows
+            ?.visibility == View.VISIBLE
         return KtvGlobalSearchPolicy.shouldShowKeyboard(
             tab = presentationState.currentTab.value,
-            isVariety = browserBinding.panelVarietyShows.visibility == View.VISIBLE,
+            isVariety = isVariety,
             enabled = globalSearchEnabled(),
         )
     }
 
     private fun applyKeyboardVisibility(shouldShowKeyboard: Boolean) {
-        val container = browserBinding.browserKeyboardContainer
         val keyboard = binding.kioskOverlay.kioskKeyboard
+        val container = initializedBrowserBindingOrNull()?.browserKeyboardContainer
+        if (container == null) {
+            keyboard.visibility = View.GONE
+            return
+        }
         when (KtvGlobalSearchPolicy.resolveKeyboardVisibility(shouldShowKeyboard, queueDrawerVisible)) {
             KtvGlobalSearchPolicy.KeyboardVisibilityMode.GONE -> {
                 container.visibility = View.GONE
@@ -3049,7 +3063,7 @@ class KtvKioskOverlayController(
             categoryValue = categoryVal,
             playlistDetail = playlistDetail,
             playlistId = controllerState.playlistDetail?.id,
-            varietyPanelVisible = browserBinding.panelVarietyShows.visibility == View.VISIBLE,
+            varietyPanelVisible = initializedBrowserBindingOrNull()?.panelVarietyShows?.visibility == View.VISIBLE,
             varietyProgram = activeVarietyProgram,
             browsingAllSongs = browsingAllSongs,
             pageIndex = currentPage,
