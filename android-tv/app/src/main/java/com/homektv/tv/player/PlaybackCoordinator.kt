@@ -240,6 +240,7 @@ internal class PlaybackCoordinator(
             vocalTrackIndex = descriptor.vocalTrackIndex ?: descriptor.audioLayout.accompanimentTrackIndex,
             ready = true,
             audioLayout = descriptor.audioLayout,
+            videoCodec = descriptor.videoCodec,
         )
         return PlaybackResolution.Ready(fileSource, normalizedDescriptor)
     }
@@ -253,6 +254,7 @@ internal class PlaybackCoordinator(
                 vocalTrackIndex = descriptor.vocalTrackIndex,
                 audioLayout = descriptor.audioLayout,
                 ready = true,
+                videoCodec = "h264",
             )
         }
         if (!descriptor.kind.equals("TRANSCODE", ignoreCase = true) || descriptor.variantId == null) {
@@ -265,6 +267,7 @@ internal class PlaybackCoordinator(
             vocalTrackIndex = descriptor.vocalTrackIndex,
             audioLayout = descriptor.audioLayout,
             ready = true,
+            videoCodec = descriptor.videoCodec ?: source.videoCodec,
         )
     }
 

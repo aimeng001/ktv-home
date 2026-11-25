@@ -18,7 +18,7 @@ describe('KaraokeLyricSurface 双行卡拉OK平滑扫字歌词', () => {
     if (root?.parentNode) root.parentNode.removeChild(root)
   })
 
-  it('空歌词时展示提示文字', async () => {
+  it('空歌词时在起播阶段不展示冗余提示文案', async () => {
     app = createApp(KaraokeLyricSurface, {
       lyricLines: [],
       positionMs: 0,
@@ -27,10 +27,11 @@ describe('KaraokeLyricSurface 双行卡拉OK平滑扫字歌词', () => {
     app.mount(root)
     await nextTick()
 
-    expect(root.textContent).toContain('暂无歌词，享受现场伴奏')
+    expect(root.querySelector('.karaoke-empty')).toBeNull()
+    expect(root.textContent.trim()).toBe('')
   })
 
-  it('空歌词时在播放超过 3.5 秒后自动隐藏提示文字，释放字幕安全区', async () => {
+  it('空歌词时在播放阶段同样保持干净画面，不展示空态提示', async () => {
     app = createApp(KaraokeLyricSurface, {
       lyricLines: [],
       positionMs: 4000,
@@ -39,7 +40,8 @@ describe('KaraokeLyricSurface 双行卡拉OK平滑扫字歌词', () => {
     app.mount(root)
     await nextTick()
 
-    expect(root.textContent).not.toContain('暂无歌词，享受现场伴奏')
+    expect(root.querySelector('.karaoke-empty')).toBeNull()
+    expect(root.textContent.trim()).toBe('')
   })
 
   it('双行交替渲染：当前行与下一预备行同时可见', async () => {

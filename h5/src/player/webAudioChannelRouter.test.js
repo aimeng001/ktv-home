@@ -54,9 +54,17 @@ describe('webAudioChannelRouter', () => {
     expect(splitter.connect).toHaveBeenNthCalledWith(2, merger, 1, 1)
 
     splitter.connect.mockClear()
+    splitter.disconnect.mockClear()
     router.setRouting({ layout: 'NORMAL_STEREO' }, 'original')
     expect(splitter.connect).toHaveBeenNthCalledWith(1, merger, 0, 0)
     expect(splitter.connect).toHaveBeenNthCalledWith(2, merger, 1, 1)
+
+    // Identical target route must be a no-op without disconnecting active audio graph
+    splitter.connect.mockClear()
+    splitter.disconnect.mockClear()
+    router.setRouting({ layout: 'NORMAL_STEREO' }, 'accompaniment')
+    expect(splitter.disconnect).not.toHaveBeenCalled()
+    expect(splitter.connect).not.toHaveBeenCalled()
 
     router.setGain(45, false)
     expect(gainNode.gain.value).toBeCloseTo(0.45)

@@ -58,6 +58,8 @@ export const usePlayerStore = defineStore('player', {
     isSilentConsole: (s) => {
       if (s.tvOnline === true && s.modeOverride !== 'host') return true
       if (s.modeOverride === 'console') return true
+      // Keep the browser unmuted while reconnecting until the server assigns a new role.
+      if (s.wasWebHostBeforeDisconnect) return false
       if (s.webPlayerActive && s.webPlayerRole !== 'ACTIVE') return true
       return false
     },

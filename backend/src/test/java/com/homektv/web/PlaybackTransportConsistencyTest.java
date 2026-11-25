@@ -90,4 +90,39 @@ class PlaybackTransportConsistencyTest {
                 Arguments.of("ts", "mpeg-ts", "KTV_VIDEO", "NATIVE", 0),
                 Arguments.of("rmvb", "rmvb", "AUDIO", "NATIVE", 0));
     }
+
+    @Test
+    void legacyVideoCodecsInsideMkvOrAviRouteDirectlyToLiveTranscodeWhileHardwareCodecsStayNative() {
+        SongFile rv40Mkv = new SongFile();
+        rv40Mkv.setId(88L);
+        rv40Mkv.setFormat("matroska,webm");
+        rv40Mkv.setVideoCodec("rv40");
+        rv40Mkv.setMediaType("MV");
+
+        SongFile wmvAvi = new SongFile();
+        wmvAvi.setId(89L);
+        wmvAvi.setFormat("avi");
+        wmvAvi.setVideoCodec("wmv3");
+        wmvAvi.setMediaType("KTV_VIDEO");
+
+        SongFile h264Mkv = new SongFile();
+        h264Mkv.setId(90L);
+        h264Mkv.setFormat("matroska,webm");
+        h264Mkv.setVideoCodec("h264");
+        h264Mkv.setMediaType("MV");
+
+        SongFile mpeg2Mpg = new SongFile();
+        mpeg2Mpg.setId(91L);
+        mpeg2Mpg.setFormat("mpeg");
+        mpeg2Mpg.setVideoCodec("mpeg2video");
+        mpeg2Mpg.setMediaType("KTV_VIDEO");
+
+        SongFileRepository repository = mock(SongFileRepository.class);
+        PlaybackResolutionService resolutionService = new PlaybackResolutionService(repository);
+
+        assertThat(resolutionService.resolveReady(rv40Mkv, false).kind()).isEqualTo("LIVE_TRANSCODE");
+        assertThat(resolutionService.resolveReady(wmvAvi, false).kind()).isEqualTo("LIVE_TRANSCODE");
+        assertThat(resolutionService.resolveReady(h264Mkv, false).kind()).isEqualTo("NATIVE");
+        assertThat(resolutionService.resolveReady(mpeg2Mpg, false).kind()).isEqualTo("NATIVE");
+    }
 }

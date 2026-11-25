@@ -98,7 +98,8 @@ class LiveTranscodeCommandBuilderTest {
         List<String> command = builder.build(source, song, null, null, false, true);
 
         assertThat(command).contains("-filter_complex");
-        assertThat(command).anyMatch(arg -> arg.contains("amerge=inputs=2"));
+        assertThat(command).anyMatch(arg -> arg.contains("aresample=async=1:first_pts=0")
+                && arg.contains("join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR"));
         assertThat(command).containsSubsequence("-map", "0:V:0?", "-map", "[aout]");
         assertThat(command).doesNotContain("-map 0:a:0", "-map 0:a:1");
 
@@ -180,5 +181,30 @@ class LiveTranscodeCommandBuilderTest {
 
         LiveTranscodeCommandBuilder clampedLow = new LiveTranscodeCommandBuilder("ffmpeg-test", 0);
         assertThat(clampedLow.build(source, song, null)).containsSubsequence("-c:v", "libx264", "-threads", "1");
+        assertThat(defaultCmd).containsSubsequence("-preset", "superfast", "-tune", "zerolatency", "-g", "60",
+                "-keyint_min", "60", "-sc_threshold", "0", "-crf", "23", "-maxrate", "4500k", "-bufsize", "9000k");
+        assertThat(defaultCmd).containsSubsequence("-frag_duration", "2000000", "-flush_packets", "1", "pipe:1");
+    }
+
+    @Test
+    void buildsVaapiAndRkmppCommandsWithoutLibx264FlagsAndMergesVideoFilterIntoFilterComplex() {
+        File source = temp.resolve("legacy-rv40.mkv").toFile();
+        SongFile song = new SongFile();
+        song.setAudioTracks(2);
+
+        var vaapi = new com.homektv.library.TranscodeHardwareService.HardwareStatus(
+                true, "Intel VAAPI", "/dev/dri/renderD128", List.of("h264"), "vaapi", null);
+        List<String> vaapiMerged = builder.build(source, song, null, null, false, false, true, vaapi);
+        assertThat(vaapiMerged).containsSubsequence("-vaapi_device", "/dev/dri/renderD128", "-i", source.getAbsolutePath());
+        assertThat(vaapiMerged).anyMatch(arg -> arg.contains("[0:V:0]format=nv12,hwupload[vout]")
+                && arg.contains("join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR"));
+        assertThat(vaapiMerged).containsSubsequence("-map", "[vout]", "-map", "[aout]", "-c:v", "h264_vaapi");
+        assertThat(vaapiMerged).doesNotContain("-vf", "libx264", "-preset", "-tune", "-crf", "-threads");
+
+        var rkmpp = new com.homektv.library.TranscodeHardwareService.HardwareStatus(
+                true, "Rockchip RK MPP", "/dev/mpp_service", List.of("h264"), "rkmpp", null);
+        List<String> rkmppCmd = builder.build(source, song, null, null, false, false, false, rkmpp);
+        assertThat(rkmppCmd).containsSubsequence("-pix_fmt", "nv12", "-c:v", "h264_rkmpp", "-g", "60");
+        assertThat(rkmppCmd).doesNotContain("-vaapi_device", "libx264", "-preset", "-crf");
     }
 }

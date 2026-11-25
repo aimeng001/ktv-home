@@ -1,10 +1,5 @@
 <template>
   <div class="karaoke-surface" role="region" aria-label="双行卡拉OK歌词">
-    <transition name="fade">
-      <div v-if="showEmptyNotice" class="karaoke-empty">
-        <span>暂无歌词，享受现场伴奏</span>
-      </div>
-    </transition>
     <div v-if="lyricLines && lyricLines.length" class="karaoke-duo-stage">
       <!-- 当前在唱行（左对齐，逐字平滑扫光） -->
       <div class="lyric-line active" :class="{ empty: !currentLine }">
@@ -42,11 +37,6 @@ const props = defineProps({
   lyricLines: { type: Array, default: () => [] },
   positionMs: { type: Number, default: 0 },
   isPlaying: { type: Boolean, default: false }
-})
-
-const showEmptyNotice = computed(() => {
-  if (props.lyricLines && props.lyricLines.length > 0) return false
-  return props.positionMs < 3500
 })
 
 function lineStartMs(line) {
@@ -190,23 +180,6 @@ const countdownProgress = computed(() => {
   width: 100%;
   pointer-events: none;
   user-select: none;
-}
-
-.karaoke-empty {
-  text-align: center;
-  font-size: 20px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.45);
-  letter-spacing: 1px;
-}
-
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.5s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
 }
 
 .karaoke-duo-stage {

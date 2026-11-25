@@ -19,6 +19,8 @@
       @ended="onVideoEnded"
       @error="onVideoError"
       @playing="onVideoPlaying"
+      @waiting="onVideoWaiting"
+      @stalled="onVideoStalled"
     />
 
     <!-- 转码流 Seek 平滑加载过渡层：保持当前画面并展示轻量加载指示，杜绝纯黑屏 -->
@@ -282,10 +284,16 @@ const effectBanner = ref('')
 const marqueeRunKey = ref(0)
 let osdTimer = null
 let effectTimer = null
+let liveStallTimer = null
+let liveStallBaselineTime = -1
+let liveRecoveryAttempts = 0
 let lastProgressSentAt = 0
 let lastAppliedSeq = -1
 let lastStreamKey = ''
 let awaitingMediaReload = false
+
+const MAX_LIVE_RECOVERY_ATTEMPTS = 2
+const LIVE_STALL_TIMEOUT_MS = 10000
 
 const lyricLines = ref([])
 const lyricError = ref('')
@@ -352,10 +360,20 @@ const streamSpec = computed(() => buildWebStreamSpec({
   song: song.value,
 }))
 
+const isReconnectingWebHost = computed(() => Boolean(
+  player.wasWebHostBeforeDisconnect
+  && player.tvOnline !== true
+  && player.modeOverride !== 'console'
+))
+
 const shouldLoadVideoMedia = computed(() => {
   // 扫码遥控端（WEB_REMOTE）或处于手动控制台模式时：
   // 1) 实时转码流（liveTranscode）一律不拉取，100% 保护服务端 4 并发 FFmpeg 槽位；
   // 2) 非全屏小窗默认走省流封面+实时歌词预览，避免多个手机大厅连接占用带宽与媒体槽位。
+  // WS 瞬断重连过渡期内若本端断线前就是 WEB_HOST，则继续保活视频流避免无谓中断。
+  if (isReconnectingWebHost.value) {
+    return Boolean(streamSpec.value.url)
+  }
   const isWebRemoteOnly = player.effectiveMode === 'WEB_REMOTE' || player.modeOverride === 'console'
   if (isWebRemoteOnly && (streamSpec.value.liveTranscode || !props.fullscreen)) {
     return false
@@ -542,6 +560,51 @@ async function unlockAudio() {
   }
 }
 
+function clearLiveStallWatchdog() {
+  if (liveStallTimer) {
+    clearTimeout(liveStallTimer)
+    liveStallTimer = null
+  }
+  liveStallBaselineTime = -1
+}
+
+function recoverLiveTranscodeStream() {
+  if (!streamSpec.value.liveTranscode || isAudioOnly.value || !shouldLoadVideoMedia.value) return false
+  if (!player.isWebHost || !player.isPlaying) return false
+  if (liveRecoveryAttempts >= MAX_LIVE_RECOVERY_ATTEMPTS) return false
+
+  liveRecoveryAttempts += 1
+  clearLiveStallWatchdog()
+  const el = videoEl.value
+  const elPosSec = Number.isFinite(el?.currentTime) ? el.currentTime : 0
+  const resumeSec = Math.max(0, liveStartSec.value + elPosSec, (player.positionMs || 0) / 1000)
+  awaitingMediaReload = true
+  isSeekingTranscode.value = true
+  liveStartSec.value = resumeSec
+  streamReloadNonce.value += 1
+  return true
+}
+
+function scheduleLiveStallWatchdog() {
+  if (liveStallTimer) return
+  if (!streamSpec.value.liveTranscode || isAudioOnly.value || !shouldLoadVideoMedia.value) return
+  if (!player.isWebHost || !player.isPlaying || isSilentConsole.value) return
+  if (liveRecoveryAttempts >= MAX_LIVE_RECOVERY_ATTEMPTS) return
+
+  const el = videoEl.value
+  liveStallBaselineTime = Number.isFinite(el?.currentTime) ? el.currentTime : 0
+  liveStallTimer = setTimeout(() => {
+    const baseline = liveStallBaselineTime
+    liveStallTimer = null
+    const currentEl = videoEl.value
+    if (!currentEl || !player.isPlaying || !player.isWebHost || !streamSpec.value.liveTranscode) return
+    const nowTime = Number.isFinite(currentEl.currentTime) ? currentEl.currentTime : 0
+    if (Math.abs(nowTime - baseline) < 0.25) {
+      recoverLiveTranscodeStream()
+    }
+  }, LIVE_STALL_TIMEOUT_MS)
+}
+
 function onLoadedMetadata() {
   awaitingMediaReload = false
   isSeekingTranscode.value = false
@@ -555,19 +618,31 @@ function onLoadedMetadata() {
   if (!streamSpec.value.liveTranscode && targetSec > 1 && Number.isFinite(el.duration) && targetSec < el.duration) {
     try { el.currentTime = targetSec } catch { /* ignore */ }
   }
-  if (player.isPlaying) attemptPlay()
+  if (player.isPlaying && el.paused) attemptPlay()
 }
 
 function onVideoPlaying() {
   awaitingMediaReload = false
   isSeekingTranscode.value = false
+  clearLiveStallWatchdog()
   if (player.audioBlockedByAutoplay && player.isWebHost && !player.muted) {
     // Wait for explicit user gesture if blocked
   }
 }
 
+function onVideoWaiting() {
+  scheduleLiveStallWatchdog()
+}
+
+function onVideoStalled() {
+  scheduleLiveStallWatchdog()
+}
+
 function onTimeUpdate() {
   const el = videoEl.value
+  if (el && liveStallTimer && Number.isFinite(el.currentTime) && Math.abs(el.currentTime - liveStallBaselineTime) >= 0.25) {
+    clearLiveStallWatchdog()
+  }
   if (awaitingMediaReload || !el || !player.isWebHost || !player.nowPlaying?.queueId) return
   const baseMs = streamSpec.value.liveTranscode ? Math.round(liveStartSec.value * 1000) : 0
   const curMs = baseMs + Math.round((el.currentTime || 0) * 1000)
@@ -579,6 +654,22 @@ function onTimeUpdate() {
 }
 
 function onVideoEnded() {
+  clearLiveStallWatchdog()
+  const el = videoEl.value
+  const baseMs = streamSpec.value.liveTranscode ? Math.round(liveStartSec.value * 1000) : 0
+  const curMs = baseMs + Math.round(((Number.isFinite(el?.currentTime) ? el.currentTime : 0)) * 1000)
+  const totalMs = durationMs.value || 0
+  if (
+    streamSpec.value.liveTranscode
+    && !isAudioOnly.value
+    && player.isWebHost
+    && player.isPlaying
+    && totalMs > 15000
+    && curMs < totalMs - 8000
+    && recoverLiveTranscodeStream()
+  ) {
+    return
+  }
   if (!player.isWebHost || !player.nowPlaying?.queueId) return
   player.reportFinished(player.nowPlaying.queueId)
 }
@@ -657,6 +748,8 @@ watch(() => player.nowPlaying?.queueId, (newId, oldId) => {
     forceTranscodeFallback.value = false
     forceSoftVideoFallback.value = false
     mirrorStreamFailed.value = false
+    liveRecoveryAttempts = 0
+    clearLiveStallWatchdog()
     liveStartSec.value = newId ? resolveInitialLiveStartSec() : 0
     detectedDurationMs.value = 0
     isSeekingTranscode.value = false
@@ -711,6 +804,7 @@ watch(() => player.state, (state) => {
   if (!el || !streamSpec.value.url) return
   if (state === 'playing') attemptPlay()
   else {
+    clearLiveStallWatchdog()
     el.pause()
     channelRouter?.suspend?.()
   }
@@ -999,6 +1093,7 @@ onBeforeUnmount(() => {
   resetSpectrumCache()
   clearTimeout(osdTimer)
   clearTimeout(effectTimer)
+  clearLiveStallWatchdog()
   lyricLoader.dispose()
   channelRouter.dispose()
 })

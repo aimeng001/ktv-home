@@ -393,6 +393,58 @@ class LiveTranscodeSessionTest {
         assertThat(budget.activeLiveTranscodeCount()).isZero();
     }
 
+    @Test
+    void hardwareFailureBeforeFirstByteFallsBackToCpuWithoutLeakingPermit() throws Exception {
+        ResourceBudget budget = budget(1);
+        FakeProcess failedHw = new FakeProcess(new byte[0], 1);
+        byte[] cpuBytes = {0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p'};
+        FakeProcess okCpu = new FakeProcess(cpuBytes, 0);
+        java.util.List<List<String>> executed = new java.util.ArrayList<>();
+
+        LiveTranscodeSession session = LiveTranscodeSession.tryReserve(
+                budget,
+                builder -> {
+                    executed.add(List.copyOf(builder.command()));
+                    return executed.size() == 1 ? failedHw : okCpu;
+                },
+                List.of("ffmpeg-hw"),
+                List.of("ffmpeg-cpu"),
+                9L,
+                null).orElseThrow();
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        session.streamTo(out);
+
+        assertThat(executed).containsExactly(List.of("ffmpeg-hw"), List.of("ffmpeg-cpu"));
+        assertThat(out.toByteArray()).containsExactly(cpuBytes);
+        assertThat(budget.activeLiveTranscodeCount()).isZero();
+    }
+
+    @Test
+    void hardwareFailureAfterWritingFirstByteDoesNotConcatenateFallbackStream() {
+        ResourceBudget budget = budget(1);
+        FakeProcess partialHw = new FakeProcess(new byte[]{1, 2, 3}, 1);
+        AtomicInteger launches = new AtomicInteger();
+
+        LiveTranscodeSession session = LiveTranscodeSession.tryReserve(
+                budget,
+                builder -> {
+                    launches.incrementAndGet();
+                    return partialHw;
+                },
+                List.of("ffmpeg-hw"),
+                List.of("ffmpeg-cpu"),
+                9L,
+                null).orElseThrow();
+
+        assertThatThrownBy(() -> session.streamTo(new ByteArrayOutputStream()))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Live transcode failed for fileId=9");
+
+        assertThat(launches).hasValue(1);
+        assertThat(budget.activeLiveTranscodeCount()).isZero();
+    }
+
     private static ResourceBudget budget(int limit) {
         return new ResourceBudget(1, 1, limit, () -> false);
     }

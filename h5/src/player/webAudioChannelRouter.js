@@ -47,6 +47,7 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
   let lastMode = 'accompaniment'
   let lastVolume = 1
   let lastMuted = false
+  let connectedRouteKey = null
 
   function resolveCtor() {
     if (AudioContextCtor) return AudioContextCtor
@@ -62,6 +63,7 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     }
     const cached = elementSourceCache?.get(mediaElement)
     dispose()
+    connectedRouteKey = null
     try {
       if (cached && cached.ctx && cached.ctx.state !== 'closed' && cached.source) {
         ctx = cached.ctx
@@ -100,12 +102,14 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     lastLayout = audioLayout || null
     lastMode = vocalMode || 'accompaniment'
     if (!splitter || !merger) return false
+    const monoIndex = resolveActiveChannelIndex(audioLayout, vocalMode)
+    const nextRouteKey = (monoIndex === 0 || monoIndex === 1) ? `mono:${monoIndex}` : 'stereo'
+    if (connectedRouteKey === nextRouteKey) return true
     try {
       splitter.disconnect()
     } catch {
       // already disconnected
     }
-    const monoIndex = resolveActiveChannelIndex(audioLayout, vocalMode)
     if (monoIndex === 0 || monoIndex === 1) {
       splitter.connect(merger, monoIndex, 0)
       splitter.connect(merger, monoIndex, 1)
@@ -113,6 +117,7 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
       splitter.connect(merger, 0, 0)
       splitter.connect(merger, 1, 1)
     }
+    connectedRouteKey = nextRouteKey
     return true
   }
 
@@ -182,6 +187,7 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     analyserNode = null
     frequencyDataArray = null
     attachedElement = null
+    connectedRouteKey = null
   }
 
   return {

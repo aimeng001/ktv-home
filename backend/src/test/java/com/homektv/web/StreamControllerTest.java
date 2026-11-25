@@ -536,7 +536,8 @@ class StreamControllerTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getHeaders().getContentType().toString()).isEqualTo("video/mp4");
-        assertThat(response.getHeaders().getFirst("Accept-Ranges")).isNull();
+        assertThat(response.getHeaders().getFirst("Accept-Ranges")).isEqualTo("none");
+        assertThat(response.getHeaders().getFirst("X-Accel-Buffering")).isEqualTo("no");
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         response.getBody().writeTo(out);
@@ -1667,9 +1668,10 @@ class StreamControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         response.getBody().writeTo(new ByteArrayOutputStream());
 
-        // 验证 MKV 双音轨合并默认走 copyVideo
+        // 验证 MKV 双音轨合并默认走 copyVideo，音频走 async 重采样 + join 立体声合并
         assertThat(capturedCommand.get()).containsSubsequence("-c:v", "copy");
-        assertThat(capturedCommand.get()).anyMatch(arg -> arg.contains("amerge=inputs=2"));
+        assertThat(capturedCommand.get()).anyMatch(arg -> arg.contains("aresample=async=1:first_pts=0")
+                && arg.contains("join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR"));
         assertThat(capturedCommand.get()).doesNotContain("libx264");
 
         // 验证传入 softVideo=true 时降级为 libx264 软编码
@@ -1775,6 +1777,8 @@ class StreamControllerTest {
         assertThat(mp4Head.getContentAsByteArray()).isEmpty();
         assertThat(rmvbHead.getStatus()).isEqualTo(HttpStatus.OK.value());
         assertThat(rmvbHead.getContentType()).contains("video/mp4");
+        assertThat(rmvbHead.getHeader("Accept-Ranges")).isEqualTo("none");
+        assertThat(rmvbHead.getHeader("X-Accel-Buffering")).isEqualTo("no");
         assertThat(launcherCalled).isFalse();
         assertThat(budget.activeMediaStreamCount()).isZero();
         assertThat(budget.activeLiveTranscodeCount()).isZero();
@@ -1825,6 +1829,29 @@ class StreamControllerTest {
         second.getBody().writeTo(new ByteArrayOutputStream());
         assertThat(budget.activeLiveTranscodeCount()).isZero();
         assertThat(budget.activeMediaStreamCount()).isZero();
+    }
+
+    @Test
+    void shouldCopyVideoRejectsUnknownCodecWhenFfprobeReportsLegacyOrNonH264() {
+        SongFileRepository repo = mock(SongFileRepository.class);
+        AppProperties props = new AppProperties();
+        com.homektv.media.FFprobeService ffprobe = mock(com.homektv.media.FFprobeService.class);
+        StreamController controller = new StreamController(repo, props, new SongAvailabilityPolicy(repo),
+                "ffmpeg", ProcessBuilder::start, new ResourceBudget(4, 4, 4, () -> false), ffprobe);
+
+        SongFile unknownMkv = new SongFile();
+        unknownMkv.setId(701L);
+        unknownMkv.setFormat("matroska");
+        unknownMkv.setMediaType("MV");
+        File mkvFile = new File("rising-sun.mkv");
+
+        when(ffprobe.probe(mkvFile.toPath())).thenReturn(new com.homektv.media.MediaProbe(
+                319_000L, 2, 0, true, "720x480", List.of(), "rv40", "aac", null, null, null));
+
+        assertThat(controller.shouldCopyVideo(unknownMkv, mkvFile, false, true, null, false)).isFalse();
+        // Cache hit avoids redundant probe calls
+        assertThat(controller.shouldCopyVideo(unknownMkv, mkvFile, false, true, null, false)).isFalse();
+        verify(ffprobe, org.mockito.Mockito.times(1)).probe(mkvFile.toPath());
     }
 
     private static void diesWhenDestroyed(Process process) {

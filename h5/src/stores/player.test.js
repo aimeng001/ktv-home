@@ -551,4 +551,29 @@ describe('usePlayerStore', () => {
     expect(socket.inFlightReports).toHaveLength(0)
     expect(socket.pendingReportCount).toBe(0)
   })
+
+  it('keeps WEB_HOST unmuted during transient WebSocket reconnect until server assigns STANDBY or TV online', () => {
+    vi.stubGlobal('WebSocket', SocketStub)
+    const p = usePlayerStore()
+    p.connect()
+    const socket = p.socket
+    socket.onStatus(true)
+    p.tvOnline = false
+    p.webPlayerActive = true
+    p.handleEvent('player_role', { role: 'ACTIVE', generation: 2 })
+    expect(p.isSilentConsole).toBe(false)
+
+    // Brief WS drop sets webPlayerRole=STANDBY temporarily, but keeps isSilentConsole=false
+    socket.onStatus(false)
+    expect(p.wasWebHostBeforeDisconnect).toBe(true)
+    expect(p.isSilentConsole).toBe(false)
+
+    // Reconnect before role response still preserves audio; demotion to STANDBY mutes immediately
+    socket.onStatus(true)
+    expect(p.isSilentConsole).toBe(false)
+
+    p.handleEvent('player_role', { role: 'STANDBY', generation: 0 })
+    expect(p.wasWebHostBeforeDisconnect).toBe(false)
+    expect(p.isSilentConsole).toBe(true)
+  })
 })

@@ -6,7 +6,6 @@ import com.homektv.resource.ResourceBudget;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -23,7 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Owns one live FFmpeg process and its admission permit from reservation to confirmed exit. */
 final class LiveTranscodeSession implements AutoCloseable {
-    private static final int BUFFER_SIZE = 64 * 1024;
+    private static final int BUFFER_SIZE = 32 * 1024;
     private static final long PROCESS_EXIT_TIMEOUT_SECONDS = 5;
     private static final long STDERR_DRAIN_TIMEOUT_SECONDS = 5;
     private static final Logger log = LoggerFactory.getLogger(LiveTranscodeSession.class);
@@ -31,6 +30,7 @@ final class LiveTranscodeSession implements AutoCloseable {
     private final ResourceBudget.Permit permit;
     private final StreamController.ProcessLauncher processLauncher;
     private final List<String> command;
+    private final List<String> fallbackCommand;
     private final Long fileId;
     private final Double startSeconds;
     private final Object lifecycleLock = new Object();
@@ -46,13 +46,23 @@ final class LiveTranscodeSession implements AutoCloseable {
             List<String> command,
             Long fileId,
             Double startSeconds) {
+        return tryReserve(resourceBudget, processLauncher, command, null, fileId, startSeconds);
+    }
+
+    static Optional<LiveTranscodeSession> tryReserve(
+            ResourceBudget resourceBudget,
+            StreamController.ProcessLauncher processLauncher,
+            List<String> command,
+            List<String> fallbackCommand,
+            Long fileId,
+            Double startSeconds) {
         ResourceBudget.Permit permit = resourceBudget
                 .tryAcquireLiveTranscode(Duration.ofMillis(250))
                 .orElse(null);
         if (permit == null) return Optional.empty();
         try {
             return Optional.of(new LiveTranscodeSession(
-                    permit, processLauncher, command, fileId, startSeconds));
+                    permit, processLauncher, command, fallbackCommand, fileId, startSeconds));
         } catch (RuntimeException | Error failure) {
             permit.close();
             throw failure;
@@ -63,25 +73,55 @@ final class LiveTranscodeSession implements AutoCloseable {
             ResourceBudget.Permit permit,
             StreamController.ProcessLauncher processLauncher,
             List<String> command,
+            List<String> fallbackCommand,
             Long fileId,
             Double startSeconds) {
         this.permit = permit;
         this.processLauncher = processLauncher;
         this.command = List.copyOf(command);
+        this.fallbackCommand = fallbackCommand == null ? null : List.copyOf(fallbackCommand);
         this.fileId = fileId;
         this.startSeconds = startSeconds;
     }
 
     void streamTo(OutputStream responseOutput) throws IOException {
         if (!beginLaunch()) return;
+        try {
+            AtomicBoolean bytesWritten = new AtomicBoolean(false);
+            try {
+                streamCommand(command, responseOutput, bytesWritten);
+            } catch (IOException primaryFailure) {
+                if (bytesWritten.get()
+                        || fallbackCommand == null
+                        || fallbackCommand.isEmpty()
+                        || closeRequested.get()
+                        || !prepareFallbackAttempt()) {
+                    throw primaryFailure;
+                }
+                log.warn("Hardware live transcode failed before first byte; falling back to CPU libx264: fileId={}, startSeconds={}, cause={}",
+                        fileId, startSeconds, primaryFailure.getMessage());
+                streamCommand(fallbackCommand, responseOutput, bytesWritten);
+            }
+        } catch (ClientDisconnectedException disconnected) {
+            close();
+            log.debug("Live transcode client disconnected: fileId={}", fileId);
+        } finally {
+            close();
+        }
+    }
+
+    private void streamCommand(
+            List<String> activeCommand,
+            OutputStream responseOutput,
+            AtomicBoolean bytesWritten) throws IOException {
         Process current = null;
         FutureTask<String> stderrDrain = null;
         try {
-            current = launchProcess();
+            current = launchProcess(activeCommand);
             if (current == null) return;
             stderrDrain = startStderrDrain(current);
             try (InputStream input = current.getInputStream()) {
-                copyToResponse(input, responseOutput);
+                copyToResponse(input, responseOutput, bytesWritten);
             }
             if (!current.waitFor(PROCESS_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 throw new IOException("FFmpeg did not exit before the stream completion timeout");
@@ -90,17 +130,14 @@ final class LiveTranscodeSession implements AutoCloseable {
             int exitCode = current.exitValue();
             if (exitCode != 0) throw new TranscodeProcessExitException(exitCode);
         } catch (ClientDisconnectedException disconnected) {
-            close();
-            log.debug("Live transcode client disconnected: fileId={}", fileId);
+            throw disconnected;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-            close();
             String stderrTail = safeDiagnosticTail(readStderrTail(stderrDrain));
             log.warn("Live transcode interrupted: fileId={}, startSeconds={}, stderrTail={}",
                     fileId, startSeconds, stderrTail);
             throw new IOException("Live transcode interrupted for fileId=" + fileId);
         } catch (IOException failure) {
-            close();
             Integer exitCode = failure instanceof TranscodeProcessExitException exitFailure
                     ? exitFailure.exitCode
                     : null;
@@ -108,9 +145,44 @@ final class LiveTranscodeSession implements AutoCloseable {
             log.error("Live transcode failed: fileId={}, startSeconds={}, failureType={}, exitCode={}, stderrTail={}",
                     fileId, startSeconds, failure.getClass().getSimpleName(), exitCode, stderrTail);
             throw new IOException("Live transcode failed for fileId=" + fileId);
-        } finally {
-            close();
         }
+    }
+
+    private boolean prepareFallbackAttempt() {
+        Process current;
+        synchronized (lifecycleLock) {
+            if (closeRequested.get()) return false;
+            current = process;
+        }
+        if (!confirmFailedAttemptExited(current)) {
+            return false;
+        }
+        synchronized (lifecycleLock) {
+            if (closeRequested.get()) return false;
+            if (process != null && process.isAlive()) return false;
+            process = null;
+            launchInProgress = true;
+            return true;
+        }
+    }
+
+    private boolean confirmFailedAttemptExited(Process current) {
+        if (current == null) return true;
+        try {
+            if (current.isAlive()) current.destroyForcibly();
+            if (!current.isAlive()
+                    || current.waitFor(PROCESS_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    || !current.isAlive()) {
+                synchronized (lifecycleLock) {
+                    if (process == current) process = null;
+                }
+                return true;
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException ignored) {
+        }
+        return false;
     }
 
     private boolean beginLaunch() {
@@ -122,10 +194,10 @@ final class LiveTranscodeSession implements AutoCloseable {
         }
     }
 
-    private Process launchProcess() throws IOException {
+    private Process launchProcess(List<String> activeCommand) throws IOException {
         Process launched;
         try {
-            ProcessBuilder builder = new ProcessBuilder(command);
+            ProcessBuilder builder = new ProcessBuilder(activeCommand);
             builder.redirectError(ProcessBuilder.Redirect.PIPE);
             builder.redirectErrorStream(false);
             launched = processLauncher.start(builder);
@@ -150,14 +222,19 @@ final class LiveTranscodeSession implements AutoCloseable {
         return launched;
     }
 
-    private static void copyToResponse(InputStream processOutput, OutputStream responseOutput)
+    private static void copyToResponse(
+            InputStream processOutput,
+            OutputStream responseOutput,
+            AtomicBoolean bytesWritten)
             throws IOException {
-        InputStream input = new BufferedInputStream(processOutput, BUFFER_SIZE);
         byte[] buffer = new byte[BUFFER_SIZE];
         int read;
-        while ((read = input.read(buffer)) != -1) {
+        while ((read = processOutput.read(buffer)) != -1) {
+            if (read == 0) continue;
             try {
                 responseOutput.write(buffer, 0, read);
+                bytesWritten.set(true);
+                responseOutput.flush();
             } catch (IOException clientDisconnected) {
                 throw new ClientDisconnectedException(clientDisconnected);
             }

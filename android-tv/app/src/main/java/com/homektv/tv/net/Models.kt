@@ -264,6 +264,7 @@ data class FileSource(
     /** 服务端派生：该文件是否已完成媒体探测；null 表示旧服务端未下发该字段。 */
     val ready: Boolean? = null,
     val audioLayout: AudioLayout = AudioLayout(),
+    val videoCodec: String? = null,
 )
 
 @Serializable

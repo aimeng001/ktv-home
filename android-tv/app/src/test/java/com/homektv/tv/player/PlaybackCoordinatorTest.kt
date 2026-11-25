@@ -974,6 +974,69 @@ class PlaybackCoordinatorTest {    @Test
         scope.cancel()
     }
 
+    @Test
+    fun snapshotFastPathForwardsVideoCodecAndLiveTranscodeMarksOutputAsH264() = runBlocking {
+        val desired = DesiredPlaybackState().also {
+            it.update(
+                QueueSnapshot(
+                    playing = NowPlaying(
+                        queueId = 93L,
+                        song = com.homektv.tv.net.SongDto(id = 406L, title = "MkvH264", artist = "歌手", mediaType = "MV"),
+                    ),
+                    state = "playing",
+                    playback = PlaybackDescriptor(
+                        kind = "NATIVE",
+                        status = "READY",
+                        sourceFileId = 890L,
+                        streamUrl = "/api/stream/890",
+                        format = "matroska,webm",
+                        videoCodec = "h264",
+                    ),
+                ),
+            )
+        }
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        var capturedFile: FileSource? = null
+        val coordinator = PlaybackCoordinator(
+            source = object : PlaybackSource {
+                override suspend fun resolveFileSource(songId: Long): FileSourceResolution =
+                    error("snapshot fast path should be used")
+
+                override fun streamUrl(fileId: Long): String = "http://nas:54001/api/stream/$fileId"
+            },
+            desiredState = desired,
+            scope = scope,
+            onBeginReplacement = {},
+            onFileReady = { _, file, _, _ -> capturedFile = file },
+            onMissingSource = { error("unexpected missing source") },
+        )
+
+        coordinator.replace(PlaybackReplacementRequest(queueId = 93L, songId = 406L)).job.join()
+        assertEquals("h264", capturedFile?.videoCodec)
+
+        desired.update(
+            QueueSnapshot(
+                playing = NowPlaying(
+                    queueId = 94L,
+                    song = com.homektv.tv.net.SongDto(id = 407L, title = "MkvRv40", artist = "歌手", mediaType = "MV"),
+                ),
+                state = "playing",
+                playback = PlaybackDescriptor(
+                    kind = "LIVE_TRANSCODE",
+                    status = "READY",
+                    sourceFileId = 891L,
+                    streamUrl = "/api/stream/891?transcode=true",
+                    format = "matroska,webm",
+                    videoCodec = "rv40",
+                ),
+            ),
+        )
+        coordinator.replace(PlaybackReplacementRequest(queueId = 94L, songId = 407L)).job.join()
+        assertEquals("mp4", capturedFile?.format)
+        assertEquals("h264", capturedFile?.videoCodec)
+        scope.cancel()
+    }
+
     private fun readyPlaybackSource(file: FileSource, descriptor: PlaybackDescriptor) = object : PlaybackSource {
         override suspend fun resolveFileSource(songId: Long): FileSourceResolution =
             FileSourceResolution.Ready(file)

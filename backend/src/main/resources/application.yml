@@ -93,6 +93,7 @@ app:
   transcode:
     ffmpeg-path: ${KTV_FFMPEG_PATH:ffmpeg}
     live-threads: ${KTV_LIVE_TRANSCODE_THREADS:2}
+    live-hardware-acceleration: ${KTV_LIVE_TRANSCODE_HWACCEL:true}
     timeout-seconds: ${KTV_TRANSCODE_TIMEOUT_SECONDS:1800}
     dri-path: ${KTV_DRI_PATH:/dev/dri}
     drm-sys-path: ${KTV_DRM_SYS_PATH:/sys/class/drm}
