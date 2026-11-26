@@ -140,6 +140,14 @@ class PlaybackCoordinatorTest {    @Test
         )
         assertEquals(12_000L, LiveTranscodeStreamUrl.startPositionMs("http://nas/stream?transcode=true&start=12.000"))
         assertTrue(LiveTranscodeStreamUrl.isLiveTranscode("http://nas/stream?transcode=true"))
+        assertEquals(
+            "http://nas/api/stream/31?transcode=true&reencodeVideo=true",
+            LiveTranscodeStreamUrl.withReencodeVideo("http://nas/api/stream/31?transcode=true"),
+        )
+        assertEquals(
+            "http://nas/api/stream/31?transcode=true&reencodeVideo=true&start=12.000",
+            LiveTranscodeStreamUrl.withReencodeVideo("http://nas/api/stream/31?transcode=true&reencodeVideo=true&start=12.000"),
+        )
     }
 
     @Test
@@ -464,7 +472,7 @@ class PlaybackCoordinatorTest {    @Test
         assertEquals("paused", snapshot.state)
         assertEquals(37, snapshot.volume)
         assertEquals("accompaniment", snapshot.vocalMode)
-        assertEquals("http://nas/api/stream/31?transcode=true&start=65.250", url)
+        assertEquals("http://nas/api/stream/31?transcode=true&reencodeVideo=true&start=65.250", url)
         scope.cancel()
     }
 
@@ -522,7 +530,7 @@ class PlaybackCoordinatorTest {    @Test
         val (snapshot, url, file) = requireNotNull(received)
         assertEquals(91_125L, snapshot.positionMs)
         assertEquals("paused", snapshot.state)
-        assertEquals("http://nas/api/stream/32?transcode=true&start=91.125", url)
+        assertEquals("http://nas/api/stream/32?transcode=true&reencodeVideo=true&start=91.125", url)
         assertEquals(32L, file.id)
         scope.cancel()
     }
@@ -594,7 +602,7 @@ class PlaybackCoordinatorTest {    @Test
         val (snapshot, url) = requireNotNull(received)
         assertEquals(91_125L, snapshot.positionMs)
         assertEquals("paused", snapshot.state)
-        assertEquals("http://nas/api/stream/82?transcode=true&start=91.125", url)
+        assertEquals("http://nas/api/stream/82?transcode=true&reencodeVideo=true&start=91.125", url)
         scope.cancel()
     }
 
@@ -636,7 +644,7 @@ class PlaybackCoordinatorTest {    @Test
         val (snapshot, url) = requireNotNull(received)
         assertEquals(12_000L, snapshot.positionMs)
         assertEquals("paused", snapshot.state)
-        assertEquals("http://nas/api/stream/83?transcode=true&start=12.000", url)
+        assertEquals("http://nas/api/stream/83?transcode=true&reencodeVideo=true&start=12.000", url)
         scope.cancel()
     }
 
@@ -970,7 +978,7 @@ class PlaybackCoordinatorTest {    @Test
         ticket.job.join()
 
         assertEquals(1, restCalls)
-        assertEquals("http://nas:54001/api/stream/889?transcode=true", readyUrl)
+        assertEquals("http://nas:54001/api/stream/889?transcode=true&reencodeVideo=true", readyUrl)
         scope.cancel()
     }
 

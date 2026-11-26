@@ -184,7 +184,7 @@ class PlaybackCoordinatorBranchCoverageTest {
         ).job.join()
 
         assertEquals(0L, requireNotNull(observed).first.positionMs)
-        assertEquals(descriptor.streamUrl, requireNotNull(observed).second)
+        assertEquals("${descriptor.streamUrl}&reencodeVideo=true", requireNotNull(observed).second)
         scope.cancel()
     }
 

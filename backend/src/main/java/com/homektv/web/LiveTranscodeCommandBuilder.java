@@ -49,7 +49,11 @@ final class LiveTranscodeCommandBuilder {
     List<String> build(File source, SongFile songFile, Double startSeconds,
                        Integer audioTrack, boolean copyVideo, boolean copyAudio, boolean mergeTracks,
                        TranscodeHardwareService.HardwareStatus hardwareStatus) {
-        boolean useHardware = !copyVideo
+        boolean hasPositiveSeek = startSeconds != null && startSeconds > 0;
+        // 非零偏移 Seek 时必须禁用 -c:v copy：大 GOP (例如 8.54s) 下 -noaccurate_seek 会导致
+        // 视频倒退到前一关键帧，而重编码音频被精确裁到目标时间，产生数秒音画撕裂或歌词偏移。
+        boolean effectiveCopyVideo = copyVideo && !hasPositiveSeek;
+        boolean useHardware = !effectiveCopyVideo
                 && hardwareStatus != null
                 && hardwareStatus.available()
                 && hardwareStatus.supportedCodecs() != null
@@ -70,11 +74,7 @@ final class LiveTranscodeCommandBuilder {
             command.add("-vaapi_device");
             command.add(hardwareStatus.device());
         }
-        if (startSeconds != null && startSeconds > 0) {
-            if (copyVideo) {
-                // -c:v copy 只能在关键帧切入，保留 -noaccurate_seek 防首帧花屏
-                command.add("-noaccurate_seek");
-            }
+        if (hasPositiveSeek) {
             command.add("-ss");
             command.add(String.format(Locale.US, "%.3f", startSeconds));
         }
@@ -129,7 +129,7 @@ final class LiveTranscodeCommandBuilder {
             }
         }
 
-        if (copyVideo) {
+        if (effectiveCopyVideo) {
             command.add("-c:v");
             command.add("copy");
         } else if (useVaapi) {
@@ -205,6 +205,10 @@ final class LiveTranscodeCommandBuilder {
 
         command.add("-avoid_negative_ts");
         command.add("make_zero");
+        command.add("-sn");
+        command.add("-dn");
+        command.add("-map_chapters");
+        command.add("-1");
 
         command.add("-f");
         command.add("mp4");

@@ -139,9 +139,12 @@ internal class PlaybackCoordinator(
                         val playbackSnapshot = snapshot.withRecoveryState(request, liveTranscode)
                         val resolvedUrl = result.descriptor.streamUrl
                             ?: source.streamUrl(result.source.id)
-                        val streamUrl = if (liveTranscode && playbackSnapshot.positionMs > 0L) {
-                            LiveTranscodeStreamUrl.withStart(resolvedUrl, playbackSnapshot.positionMs)
+                        val reencodedUrl = if (liveTranscode && request.forceTranscode) {
+                            LiveTranscodeStreamUrl.withReencodeVideo(resolvedUrl)
                         } else resolvedUrl
+                        val streamUrl = if (liveTranscode && playbackSnapshot.positionMs > 0L) {
+                            LiveTranscodeStreamUrl.withStart(reencodedUrl, playbackSnapshot.positionMs)
+                        } else reencodedUrl
                         onFileReady(token, result.playableFile(), playbackSnapshot, streamUrl)
                         return@launch
                     }
@@ -305,6 +308,15 @@ internal object LiveTranscodeStreamUrl {
         val separator = if ('?' in withoutOldStart) '&' else '?'
         val seconds = String.format(Locale.US, "%.3f", positionMs.coerceAtLeast(0L) / 1_000.0)
         return "$withoutOldStart${separator}start=$seconds"
+    }
+
+    fun withReencodeVideo(streamUrl: String): String {
+        val params = streamUrl.substringAfter('?', "")
+            .split('&')
+            .filter(String::isNotBlank)
+        if (params.any { it.substringBefore('=') == "reencodeVideo" }) return streamUrl
+        val separator = if ('?' in streamUrl) '&' else '?'
+        return "$streamUrl${separator}reencodeVideo=true"
     }
 
     fun isLiveTranscode(streamUrl: String?): Boolean {

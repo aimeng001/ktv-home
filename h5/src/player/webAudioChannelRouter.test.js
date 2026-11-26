@@ -121,4 +121,33 @@ describe('webAudioChannelRouter', () => {
     expect(() => router.resumeDirect()).not.toThrow()
     expect(fakeCtx.resume).toHaveBeenCalled()
   })
+
+  it('deduplicates concurrent resumeDirect/resume calls and supports bounded timeout', async () => {
+    let resolveResume
+    const fakeCtx = {
+      state: 'suspended',
+      destination: {},
+      createMediaElementSource: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
+      createChannelSplitter: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
+      createChannelMerger: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
+      createGain: vi.fn(() => ({ gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() })),
+      close: vi.fn(),
+      resume: vi.fn(() => new Promise(resolve => { resolveResume = resolve })),
+    }
+    const router = createWebAudioChannelRouter({ AudioContextCtor: function() { return fakeCtx } })
+    router.attach({ tagName: 'VIDEO' })
+
+    const p1 = router.resumeDirect()
+    const p2 = router.resume()
+    expect(fakeCtx.resume).toHaveBeenCalledTimes(1)
+
+    // Bounded timeout returns false immediately while suspended, without rejecting
+    const timedOut = await router.resume(10)
+    expect(timedOut).toBe(false)
+
+    fakeCtx.state = 'running'
+    resolveResume()
+    await expect(p1).resolves.toBe(true)
+    await expect(p2).resolves.toBe(true)
+  })
 })

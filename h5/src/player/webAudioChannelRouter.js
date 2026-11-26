@@ -48,6 +48,7 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
   let lastVolume = 1
   let lastMuted = false
   let connectedRouteKey = null
+  let pendingResumePromise = null
 
   function resolveCtor() {
     if (AudioContextCtor) return AudioContextCtor
@@ -129,26 +130,44 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
   }
 
   function resumeDirect() {
-    if (ctx && ctx.state === 'suspended' && typeof ctx.resume === 'function') {
-      try {
-        const p = ctx.resume()
-        if (p && typeof p.catch === 'function') {
-          p.catch(() => {})
-        }
-      } catch {
-        // user gesture may still be pending
+    if (!ctx) return Promise.resolve(false)
+    if (ctx.state !== 'suspended') return Promise.resolve(true)
+    if (pendingResumePromise) return pendingResumePromise
+    if (typeof ctx.resume !== 'function') return Promise.resolve(false)
+    try {
+      const p = ctx.resume()
+      if (p && typeof p.then === 'function') {
+        pendingResumePromise = p.then(
+          () => ctx?.state !== 'suspended',
+          () => false,
+        ).finally(() => {
+          pendingResumePromise = null
+        })
+        return pendingResumePromise
       }
+      return Promise.resolve(ctx.state !== 'suspended')
+    } catch {
+      pendingResumePromise = null
+      return Promise.resolve(false)
     }
   }
 
-  async function resume() {
-    if (ctx && ctx.state === 'suspended') {
+  async function resume(timeoutMs = 0) {
+    const p = resumeDirect()
+    if (timeoutMs > 0) {
+      let timer = null
       try {
-        await ctx.resume()
-      } catch {
-        // user gesture may still be pending
+        return await Promise.race([
+          p,
+          new Promise(resolve => {
+            timer = setTimeout(() => resolve(ctx?.state !== 'suspended'), timeoutMs)
+          }),
+        ])
+      } finally {
+        if (timer) clearTimeout(timer)
       }
     }
+    return await p
   }
 
   function suspend() {
@@ -188,6 +207,7 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     frequencyDataArray = null
     attachedElement = null
     connectedRouteKey = null
+    pendingResumePromise = null
   }
 
   return {

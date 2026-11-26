@@ -60,8 +60,11 @@ class LiveTranscodeCommandBuilderTest {
             assertThat(seekCommand).containsSubsequence("-ss", "12.346", "-i", source.getAbsolutePath());
             assertThat(seekCommand).doesNotContain("-noaccurate_seek");
 
+            // 正数 Seek 时即使外部请求 copyVideo=true，也必须自动禁用 -c:v copy 并移除 -noaccurate_seek，防止大 GOP 音画错位
             List<String> copySeekCommand = builder.build(source, song, 12.3456, 0, true);
-            assertThat(copySeekCommand).containsSubsequence("-noaccurate_seek", "-ss", "12.346", "-i", source.getAbsolutePath());
+            assertThat(copySeekCommand).containsSubsequence("-ss", "12.346", "-i", source.getAbsolutePath());
+            assertThat(copySeekCommand).doesNotContain("-noaccurate_seek");
+            assertThat(copySeekCommand).containsSubsequence("-c:v", "libx264");
 
             assertThat(builder.build(source, song, null)).doesNotContain("-ss");
             assertThat(builder.build(source, song, 0.0)).doesNotContain("-ss");
@@ -72,17 +75,22 @@ class LiveTranscodeCommandBuilderTest {
     }
 
     @Test
-    void selectsSingleAudioTrackAndSupportsVideoStreamCopyForBrowserCompatibleMp4() {
+    void selectsSingleAudioTrackWithAccurateVideoReencodeOnSeekAndCopyVideoAtZeroStart() {
         File source = temp.resolve("dual-track.mp4").toFile();
         SongFile song = new SongFile();
         song.setAudioTracks(2);
 
-        List<String> copyCommand = builder.build(source, song, 18.5, 1, true);
-        assertThat(copyCommand).containsSubsequence("-ss", "18.500", "-i", source.getAbsolutePath());
-        assertThat(copyCommand).containsSubsequence("-map", "0:V:0?", "-map", "0:a:1");
-        assertThat(copyCommand).containsSubsequence("-c:v", "copy", "-c:a", "aac");
-        assertThat(copyCommand).doesNotContain("0:a:0");
-        assertThat(copyCommand).doesNotContain("libx264");
+        List<String> seekCommand = builder.build(source, song, 18.5, 1, true);
+        assertThat(seekCommand).containsSubsequence("-ss", "18.500", "-i", source.getAbsolutePath());
+        assertThat(seekCommand).containsSubsequence("-map", "0:V:0?", "-map", "0:a:1");
+        assertThat(seekCommand).containsSubsequence("-c:v", "libx264", "-c:a", "aac");
+        assertThat(seekCommand).doesNotContain("-noaccurate_seek");
+        assertThat(seekCommand).doesNotContain("0:a:0");
+
+        List<String> zeroStartCopy = builder.build(source, song, 0.0, 1, true);
+        assertThat(zeroStartCopy).containsSubsequence("-map", "0:V:0?", "-map", "0:a:1");
+        assertThat(zeroStartCopy).containsSubsequence("-c:v", "copy", "-c:a", "aac");
+        assertThat(zeroStartCopy).doesNotContain("libx264");
 
         List<String> transcodeCommand = builder.build(source, song, null, 0, false);
         assertThat(transcodeCommand).containsSubsequence("-map", "0:V:0?", "-map", "0:a:0");
@@ -142,13 +150,18 @@ class LiveTranscodeCommandBuilderTest {
     }
 
     @Test
-    void addsNoaccurateSeekBeforeInputWhenStartSecondsIsPositive() {
+    void stripsSubtitlesDataAndChaptersFromLiveFmp4AndNeverUsesNoaccurateSeek() {
         File source = temp.resolve("seek-keyframe.mkv").toFile();
         SongFile song = new SongFile();
+        song.setAudioTracks(2);
 
-        List<String> command = builder.build(source, song, 15.0, null, true, true, false);
+        var vaapi = new com.homektv.library.TranscodeHardwareService.HardwareStatus(
+                true, "Intel VAAPI", "/dev/dri/renderD128", List.of("h264"), "vaapi", null);
+        List<String> seekVaapiCmd = builder.build(source, song, 15.0, null, true, false, true, vaapi);
 
-        assertThat(command).containsSubsequence("-noaccurate_seek", "-ss", "15.000", "-i", source.getAbsolutePath());
+        assertThat(seekVaapiCmd).containsSubsequence("-vaapi_device", "/dev/dri/renderD128", "-ss", "15.000", "-i", source.getAbsolutePath());
+        assertThat(seekVaapiCmd).containsSubsequence("-c:v", "h264_vaapi", "-sn", "-dn", "-map_chapters", "-1", "-f", "mp4");
+        assertThat(seekVaapiCmd).doesNotContain("-noaccurate_seek");
     }
 
     @Test

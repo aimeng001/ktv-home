@@ -545,6 +545,9 @@ async function attemptPlay() {
     syncAudioRouter()
     if (webAudioActive && typeof channelRouter.resumeDirect === 'function') {
       channelRouter.resumeDirect()
+      if (channelRouter.isSuspended?.() && typeof channelRouter.resume === 'function') {
+        await channelRouter.resume(120)
+      }
     }
     await el.play()
     if (!isSilentConsole.value && !player.muted && webAudioActive && channelRouter.isSuspended()) {

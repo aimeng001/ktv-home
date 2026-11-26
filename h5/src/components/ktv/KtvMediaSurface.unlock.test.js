@@ -331,4 +331,43 @@ describe('KtvMediaSurface 解码失败时的上报兜底', () => {
       host.remove()
     }
   })
+
+  it('在暂停恢复 AudioContext 异步唤醒时有界等待并避免误报拦截', async () => {
+    media.playImpl = () => Promise.resolve()
+    const prevIsSuspended = routerMock.isSuspended
+    const prevResume = routerMock.resume
+    let suspended = true
+    routerMock.isActive.mockReturnValue(true)
+    routerMock.isSuspended = () => suspended
+    routerMock.resume = vi.fn(() => new Promise(resolve => {
+      setTimeout(() => {
+        suspended = false
+        resolve(true)
+      }, 15)
+    }))
+
+    const { instance, host, scopedPlayer } = await mountSurface()
+    try {
+      scopedPlayer.audioLayout = { layout: 'DUAL_CHANNEL', originalChannel: 'LEFT', accompanimentChannel: 'RIGHT' }
+      scopedPlayer.state = 'paused'
+      await nextTick()
+      routerMock.resumeDirect.mockClear()
+      routerMock.resume.mockClear()
+
+      scopedPlayer.state = 'playing'
+      await nextTick()
+      await new Promise(resolve => setTimeout(resolve, 40))
+      await nextTick()
+
+      expect(routerMock.resumeDirect).toHaveBeenCalled()
+      expect(routerMock.resume).toHaveBeenCalledWith(120)
+      expect(scopedPlayer.audioBlockedByAutoplay).toBe(false)
+    } finally {
+      routerMock.isSuspended = prevIsSuspended
+      routerMock.resume = prevResume
+      routerMock.isActive.mockReturnValue(false)
+      instance.unmount()
+      host.remove()
+    }
+  })
 })

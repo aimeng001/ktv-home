@@ -1616,13 +1616,22 @@ class StreamControllerTest {
                 controller.streamInternal(302L, null, null, false, 2, null);
         assertThat(outOfRange.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 
-        ResponseEntity<StreamingResponseBody> valid =
-                controller.streamInternal(302L, null, 25.0, false, 1, null);
-        assertThat(valid.getStatusCode()).isEqualTo(HttpStatus.OK);
-        valid.getBody().writeTo(new ByteArrayOutputStream());
+        // start=0 时允许直拷兼容 MP4 视频流；start>0 时禁用 copyVideo，确保精准 Seek 音画同步
+        ResponseEntity<StreamingResponseBody> zeroStart =
+                controller.streamInternal(302L, null, 0.0, false, 1, null);
+        assertThat(zeroStart.getStatusCode()).isEqualTo(HttpStatus.OK);
+        zeroStart.getBody().writeTo(new ByteArrayOutputStream());
         assertThat(capturedCommand.get()).containsSubsequence("-map", "0:V:0?", "-map", "0:a:1");
         assertThat(capturedCommand.get()).containsSubsequence("-c:v", "copy");
+
+        ResponseEntity<StreamingResponseBody> validSeek =
+                controller.streamInternal(302L, null, 25.0, false, 1, null);
+        assertThat(validSeek.getStatusCode()).isEqualTo(HttpStatus.OK);
+        validSeek.getBody().writeTo(new ByteArrayOutputStream());
+        assertThat(capturedCommand.get()).containsSubsequence("-map", "0:V:0?", "-map", "0:a:1");
+        assertThat(capturedCommand.get()).containsSubsequence("-c:v", "libx264");
         assertThat(capturedCommand.get()).containsSubsequence("-ss", "25.000");
+        assertThat(capturedCommand.get()).doesNotContain("-noaccurate_seek");
     }
 
     @Test
@@ -1901,6 +1910,112 @@ class StreamControllerTest {
         // Cache hit avoids redundant probe calls
         assertThat(controller.shouldCopyVideo(unknownMkv, mkvFile, false, true, null, false)).isFalse();
         verify(ffprobe, org.mockito.Mockito.times(1)).probe(mkvFile.toPath());
+    }
+
+    @Test
+    void positiveSeekDisablesCopyVideoAndPrefersHardwareEncodeWhileZeroStartKeepsCopyVideo() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("seek-sync-mkv-lib")).toRealPath();
+        Path media = Files.createFile(library.resolve("duet.mkv")).toRealPath();
+        SongFile mkv = new SongFile();
+        mkv.setId(702L);
+        mkv.setFilePath(media.toString());
+        mkv.setFormat("matroska,webm");
+        mkv.setMediaType("MV");
+        mkv.setVideoCodec("h264");
+        mkv.setAudioCodec("aac");
+        mkv.setAudioTracks(2);
+
+        SongFile singleTrackMkv = new SongFile();
+        singleTrackMkv.setId(703L);
+        singleTrackMkv.setFilePath(media.toString());
+        singleTrackMkv.setFormat("matroska,webm");
+        singleTrackMkv.setMediaType("MV");
+        singleTrackMkv.setVideoCodec("h264");
+        singleTrackMkv.setAudioCodec("aac");
+        singleTrackMkv.setAudioTracks(1);
+
+        SongFileRepository repo = mock(SongFileRepository.class);
+        when(repo.findById(702L)).thenReturn(Optional.of(mkv));
+        when(repo.findById(703L)).thenReturn(Optional.of(singleTrackMkv));
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+
+        com.homektv.library.TranscodeHardwareService hwService = mock(com.homektv.library.TranscodeHardwareService.class);
+        when(hwService.detect()).thenReturn(new com.homektv.library.TranscodeHardwareService.HardwareStatus(
+                true, "Intel VAAPI", "/dev/dri/renderD128", List.of("h264"), "vaapi", null));
+
+        AtomicReference<List<String>> capturedCommand = new AtomicReference<>();
+        StreamController controller = new StreamController(
+                repo, props, new SongAvailabilityPolicy(repo),
+                "ffmpeg", 3,
+                builder -> {
+                    capturedCommand.set(List.copyOf(builder.command()));
+                    Process proc = mock(Process.class);
+                    when(proc.getInputStream()).thenReturn(new ByteArrayInputStream(new byte[]{0x00, 0x01}));
+                    try {
+                        when(proc.waitFor(5, TimeUnit.SECONDS)).thenReturn(true);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                    when(proc.exitValue()).thenReturn(0);
+                    when(proc.isAlive()).thenReturn(false);
+                    return proc;
+                },
+                new ResourceBudget(4, 4, 4, () -> false),
+                null,
+                hwService,
+                true);
+
+        // 1. start=0 仍保留 -c:v copy 零开销直通
+        MockMvc mvc = standaloneSetup(controller).build();
+        MvcResult zeroStart = mvc.perform(get("/api/stream/702")
+                .param("transcode", "true")
+                .param("mergeTracks", "true")).andReturn();
+        if (zeroStart.getRequest().isAsyncStarted()) {
+            zeroStart = mvc.perform(asyncDispatch(zeroStart)).andReturn();
+        }
+        assertThat(zeroStart.getResponse().getStatus()).isEqualTo(HttpStatus.OK.value());
+        assertThat(capturedCommand.get()).containsSubsequence("-c:v", "copy", "-sn", "-dn", "-map_chapters", "-1");
+        assertThat(capturedCommand.get()).doesNotContain("h264_vaapi", "libx264", "-noaccurate_seek");
+
+        // 2. start>0 (Seek/续播) 必须关闭 -c:v copy 并走精准 Seek + VAAPI 硬编
+        capturedCommand.set(null);
+        MvcResult seekStart = mvc.perform(get("/api/stream/702")
+                .param("transcode", "true")
+                .param("mergeTracks", "true")
+                .param("start", "15.000")).andReturn();
+        if (seekStart.getRequest().isAsyncStarted()) {
+            seekStart = mvc.perform(asyncDispatch(seekStart)).andReturn();
+        }
+        assertThat(seekStart.getResponse().getStatus()).isEqualTo(HttpStatus.OK.value());
+        assertThat(capturedCommand.get()).containsSubsequence("-ss", "15.000", "-i", media.toString());
+        assertThat(capturedCommand.get()).containsSubsequence("-c:v", "h264_vaapi", "-sn", "-dn", "-map_chapters", "-1");
+        assertThat(capturedCommand.get()).doesNotContain("-noaccurate_seek");
+
+        // 3. 单音轨 H.264 MKV 执行 Seek 同样走精准重编，不回退关键帧
+        capturedCommand.set(null);
+        MvcResult singleSeek = mvc.perform(get("/api/stream/703")
+                .param("transcode", "true")
+                .param("start", "30.000")).andReturn();
+        if (singleSeek.getRequest().isAsyncStarted()) {
+            singleSeek = mvc.perform(asyncDispatch(singleSeek)).andReturn();
+        }
+        assertThat(singleSeek.getResponse().getStatus()).isEqualTo(HttpStatus.OK.value());
+        assertThat(capturedCommand.get()).containsSubsequence("-ss", "30.000", "-i", media.toString());
+        assertThat(capturedCommand.get()).containsSubsequence("-c:v", "h264_vaapi");
+        assertThat(capturedCommand.get()).doesNotContain("-noaccurate_seek");
+
+        // 4. Android TV 解码失败强制 reencodeVideo=true 时即使 start=0 也必须禁用 copyVideo 且允许 VAAPI
+        capturedCommand.set(null);
+        MvcResult tvFallback = mvc.perform(get("/api/stream/702")
+                .param("transcode", "true")
+                .param("reencodeVideo", "true")).andReturn();
+        if (tvFallback.getRequest().isAsyncStarted()) {
+            tvFallback = mvc.perform(asyncDispatch(tvFallback)).andReturn();
+        }
+        assertThat(tvFallback.getResponse().getStatus()).isEqualTo(HttpStatus.OK.value());
+        assertThat(capturedCommand.get()).containsSubsequence("-c:v", "h264_vaapi");
+        assertThat(capturedCommand.get()).doesNotContain("-c:v copy");
     }
 
     private static void diesWhenDestroyed(Process process) {

@@ -138,4 +138,130 @@ describe('pitchShifter 纯前端 Web Audio 变调器', () => {
     expect(hasNaN).toBe(false)
     expect(hasNonZeroL).toBe(true)
   })
+
+  it('非安全上下文回退模式使用 1024 低延迟缓冲并在 AudioWorklet 可用时优先使用 Worklet', async () => {
+    const fallbackShifter = createPitchShifter(mockContext)
+    fallbackShifter.connect(mockInputNode, mockOutputNode)
+    fallbackShifter.setSemitones(1)
+    expect(mockContext.createScriptProcessor).toHaveBeenCalledWith(1024, 2, 2)
+    expect(fallbackShifter.getEngine()).toBe('script')
+    fallbackShifter.dispose()
+
+    const origWorkletNode = globalThis.AudioWorkletNode
+    const origCreateObjectURL = globalThis.URL?.createObjectURL
+    const origRevokeObjectURL = globalThis.URL?.revokeObjectURL
+    const postedMessages = []
+    const workletNodes = []
+    const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0))
+
+    class FakeAudioWorkletNode {
+      constructor(ctx, name, opts) {
+        this.ctx = ctx
+        this.name = name
+        this.opts = opts
+        this.connect = vi.fn()
+        this.disconnect = vi.fn()
+        this.port = { postMessage: vi.fn(msg => postedMessages.push(msg)) }
+        workletNodes.push(this)
+      }
+    }
+
+    globalThis.AudioWorkletNode = FakeAudioWorkletNode
+    if (globalThis.URL) {
+      globalThis.URL.createObjectURL = vi.fn(() => 'blob:fake-worklet')
+      globalThis.URL.revokeObjectURL = vi.fn()
+    }
+
+    try {
+      const workletCtx = {
+        sampleRate: 48000,
+        createGain: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn(), gain: { value: 1 } })),
+        createScriptProcessor: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn(), onaudioprocess: null })),
+        audioWorklet: { addModule: vi.fn(() => Promise.resolve()) },
+      }
+      const shifter = createPitchShifter(workletCtx)
+      shifter.connect(mockInputNode, mockOutputNode)
+      shifter.setSemitones(3)
+      await flushMicrotasks()
+
+      expect(workletCtx.audioWorklet.addModule).toHaveBeenCalledTimes(1)
+      expect(workletCtx.createScriptProcessor).not.toHaveBeenCalled()
+      expect(workletNodes).toHaveLength(1)
+      expect(shifter.getEngine()).toBe('worklet')
+      expect(postedMessages.some(m => m.type === 'setPitchRatio' && Math.abs(m.pitchRatio - semitonesToPitchRatio(3)) < 1e-4)).toBe(true)
+
+      shifter.setSemitones(0)
+      expect(workletNodes[0].disconnect).toHaveBeenCalled()
+      expect(shifter.getEngine()).toBe('bypass')
+      shifter.dispose()
+    } finally {
+      globalThis.AudioWorkletNode = origWorkletNode
+      if (globalThis.URL) {
+        globalThis.URL.createObjectURL = origCreateObjectURL
+        globalThis.URL.revokeObjectURL = origRevokeObjectURL
+      }
+    }
+  })
+
+  it('AudioWorklet addModule 失败时无感降级到低延迟 ScriptProcessor，归零竞态不挂载孤儿节点', async () => {
+    const origWorkletNode = globalThis.AudioWorkletNode
+    const origCreateObjectURL = globalThis.URL?.createObjectURL
+    const origRevokeObjectURL = globalThis.URL?.revokeObjectURL
+    const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0))
+
+    let createdWorkletNodes = 0
+    globalThis.AudioWorkletNode = class {
+      constructor() {
+        createdWorkletNodes += 1
+        this.connect = vi.fn()
+        this.disconnect = vi.fn()
+        this.port = { postMessage: vi.fn() }
+      }
+    }
+    if (globalThis.URL) {
+      globalThis.URL.createObjectURL = vi.fn(() => 'blob:fake')
+      globalThis.URL.revokeObjectURL = vi.fn()
+    }
+
+    try {
+      const failingCtx = {
+        sampleRate: 48000,
+        createGain: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn(), gain: { value: 1 } })),
+        createScriptProcessor: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn(), onaudioprocess: null })),
+        audioWorklet: { addModule: vi.fn(() => Promise.reject(new Error('CSP blocked'))) },
+      }
+      const shifter = createPitchShifter(failingCtx)
+      shifter.connect(mockInputNode, mockOutputNode)
+      shifter.setSemitones(2)
+      await flushMicrotasks()
+
+      expect(failingCtx.createScriptProcessor).toHaveBeenCalledWith(1024, 2, 2)
+      expect(shifter.getEngine()).toBe('script')
+      shifter.dispose()
+
+      let resolveLate
+      const raceCtx = {
+        sampleRate: 48000,
+        createGain: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn(), gain: { value: 1 } })),
+        createScriptProcessor: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn(), onaudioprocess: null })),
+        audioWorklet: { addModule: vi.fn(() => new Promise(r => { resolveLate = r })) },
+      }
+      const raceShifter = createPitchShifter(raceCtx)
+      raceShifter.connect(mockInputNode, mockOutputNode)
+      raceShifter.setSemitones(4)
+      raceShifter.setSemitones(0)
+      resolveLate()
+      await flushMicrotasks()
+
+      expect(createdWorkletNodes).toBe(0)
+      expect(raceShifter.getEngine()).toBe('bypass')
+      raceShifter.dispose()
+    } finally {
+      globalThis.AudioWorkletNode = origWorkletNode
+      if (globalThis.URL) {
+        globalThis.URL.createObjectURL = origCreateObjectURL
+        globalThis.URL.revokeObjectURL = origRevokeObjectURL
+      }
+    }
+  })
 })
