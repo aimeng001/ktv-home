@@ -1,11 +1,15 @@
 package com.homektv.domain;
 
+import com.homektv.common.CatalogCacheEpoch;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.PostPersist;
+import jakarta.persistence.PostRemove;
+import jakarta.persistence.PostUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
@@ -55,4 +59,11 @@ public class SongArtist {
     public void setArtistInit(String artistInit) { this.artistInit = artistInit == null ? "" : artistInit; }
     public int getArtistOrder() { return artistOrder; }
     public void setArtistOrder(int artistOrder) { this.artistOrder = artistOrder; }
+
+    @PostPersist
+    @PostUpdate
+    @PostRemove
+    void bumpSearchCacheEpoch() {
+        CatalogCacheEpoch.bump();
+    }
 }

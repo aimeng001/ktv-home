@@ -25,22 +25,6 @@ public record PlaybackDescriptor(
         audioLayout = audioLayout == null ? AudioLayoutDto.normalStereo() : audioLayout;
     }
 
-    /** Source-compatible constructor for callers predating container format propagation. */
-    public PlaybackDescriptor(
-            String kind,
-            String status,
-            Long sourceFileId,
-            Long variantId,
-            String streamUrl,
-            int audioTracks,
-            Integer vocalTrackIndex,
-            AudioLayoutDto audioLayout,
-            String errorCode,
-            String errorMessage) {
-        this(kind, status, sourceFileId, variantId, streamUrl, audioTracks, vocalTrackIndex,
-                audioLayout, errorCode, errorMessage, null, null, null);
-    }
-
     public static PlaybackDescriptor idle() {
         return new PlaybackDescriptor("NONE", "IDLE", null, null, null, 0, null,
                 AudioLayoutDto.normalStereo(), null, null, null, null, null);

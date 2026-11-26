@@ -12,9 +12,6 @@ class AppConfigCredentialScopeContractTest {
 
         assertTrue(source.contains("scopes.forEach(credentialStore::clearAllScopes)"))
         assertTrue(source.contains("remove(KEY_HOST)"))
-        assertTrue(source.contains("fun migrateLegacyScope(from: SavedServer, to: SavedServer): Boolean"))
-        assertTrue(source.contains("remove(oldPendingKey)"))
-        assertTrue(!source.contains("migrateLegacyScope(existing, selected)"))
         assertTrue(credentialStore.contains("fun clearAllScopes"))
     }
 

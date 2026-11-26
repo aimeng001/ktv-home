@@ -31,23 +31,6 @@ public record SongDto(
         String resolution,
         @JsonInclude(JsonInclude.Include.NON_NULL) String vocalForm
 ) {
-    /** Source-compatible constructor for the previous catalog DTO shape. */
-    public SongDto(Long id, String catalogNumber, String title, String artist, String artistGender,
-                   String mediaType, boolean hasVocalTrack, int durationMs, String lyricType,
-                   String coverUrl, int playCount, String artistAvatarUrl, boolean playable,
-                   String unavailableReason) {
-        this(id, catalogNumber, title, artist, artistGender, mediaType, hasVocalTrack, durationMs,
-                lyricType, coverUrl, playCount, artistAvatarUrl, playable, unavailableReason,
-                "", "", "", "", null, "未知");
-    }
-
-    /** Source-compatible constructor for callers that also supplied an avatar URL. */
-    public SongDto(Long id, String title, String artist, String artistGender, String mediaType,
-                   boolean hasVocalTrack, int durationMs, String lyricType, String coverUrl,
-                   int playCount, String artistAvatarUrl) {
-        this(id, "", title, artist, artistGender, mediaType, hasVocalTrack, durationMs, lyricType,
-                coverUrl, playCount, artistAvatarUrl, true, null);
-    }
     /**
      * 将 {@link Song} 领域对象转换为 SongDto，封面路径组装为 API 访问地址，无封面时返回 {@code null}。
      *

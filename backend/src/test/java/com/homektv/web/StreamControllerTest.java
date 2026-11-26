@@ -2018,6 +2018,47 @@ class StreamControllerTest {
         assertThat(capturedCommand.get()).doesNotContain("-c:v copy");
     }
 
+    @Test
+    void liveTranscodeSeeksReuseResolvedStreamMetadataCacheAcrossRequests() throws Exception {
+        Path library = Files.createDirectory(tempDir.resolve("live-meta-cache-lib"));
+        Path media = Files.write(library.resolve("song.rmvb"), new byte[128]);
+        SongFile sf = new SongFile();
+        sf.setId(805L);
+        sf.setFilePath(media.toString());
+        sf.setFormat("rmvb");
+        sf.setMediaType("KTV_VIDEO");
+        sf.setValid(true);
+        sf.setProbePending(false);
+
+        SongFileRepository repo = mock(SongFileRepository.class);
+        when(repo.findById(805L)).thenReturn(Optional.of(sf));
+
+        AppProperties props = new AppProperties();
+        props.setKtvLibraryPath(library.toString());
+        StreamController controller = new StreamController(
+                repo, props, new SongAvailabilityPolicy(repo), "ffmpeg",
+                builder -> {
+                    Process proc = mock(Process.class);
+                    when(proc.getInputStream()).thenReturn(new ByteArrayInputStream(new byte[]{0x01, 0x02}));
+                    when(proc.isAlive()).thenReturn(false);
+                    try {
+                        when(proc.waitFor(5, TimeUnit.SECONDS)).thenReturn(true);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                    when(proc.exitValue()).thenReturn(0);
+                    return proc;
+                },
+                new ResourceBudget(4, 4, 4, 1, 8, () -> false));
+
+        controller.streamInternal(805L, null, 0.0, false, null, false, false, null)
+                .getBody().writeTo(new ByteArrayOutputStream());
+        controller.streamInternal(805L, null, 25.0, false, null, false, false, null)
+                .getBody().writeTo(new ByteArrayOutputStream());
+
+        verify(repo, org.mockito.Mockito.times(1)).findById(805L);
+    }
+
     private static void diesWhenDestroyed(Process process) {
         AtomicBoolean alive = new AtomicBoolean(true);
         when(process.isAlive()).thenAnswer(invocation -> alive.get());

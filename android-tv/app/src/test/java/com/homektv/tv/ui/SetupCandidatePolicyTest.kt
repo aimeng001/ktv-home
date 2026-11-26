@@ -68,16 +68,11 @@ class SetupCandidatePolicyTest {
     }
 
     @Test
-    fun legacyHostDoesNotMigrateUnchangedCredentialToAFirstIdentityWithoutProof() {
+    fun legacyHostDoesNotMigrateUnchangedCredentialToDifferentIdentity() {
         val legacy = SavedServer("nas-a:8080", "旧服务")
         val identified = legacy.copy(instanceId = "550e8400-e29b-41d4-a716-446655440000")
 
         assertFalse(SetupCandidatePolicy.shouldReuseInitialCredential(legacy, identified, credentialChanged = false))
-        assertTrue(
-            SetupCandidatePolicy.shouldReuseInitialCredential(
-                legacy, identified, credentialChanged = false, legacyMigrationAccepted = true,
-            ),
-        )
     }
 
     @Test

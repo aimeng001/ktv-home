@@ -30,7 +30,6 @@ public interface AiAnalysisTaskRepository extends JpaRepository<AiAnalysisTask, 
     List<AiAnalysisTask> findTop100ByStatusOrderByCreatedAtAscIdAsc(String status);
     List<AiAnalysisTask> findTop100ByOrderByCreatedAtDesc();
     Optional<AiAnalysisTask> findFirstByBatchIdIsNotNullOrderByCreatedAtDescIdDesc();
-    List<AiAnalysisTask> findByBatchIdOrderByCreatedAtAsc(String batchId);
     boolean existsBySongIdAndStatusIn(Long songId, List<String> statuses);
     Optional<AiAnalysisTask> findFirstBySongIdAndStatusInOrderByCreatedAtDesc(Long songId, List<String> statuses);
 
@@ -53,21 +52,6 @@ public interface AiAnalysisTaskRepository extends JpaRepository<AiAnalysisTask, 
             WHERE task.batchId = :batchId AND task.status IN ('pending', 'paused', 'processing')
             """)
     int cancelBatch(@Param("batchId") String batchId);
-    /**
-     * Atomically claims a pending task. A concurrent worker that observes the
-     * same task receives zero rows and must not execute the provider call.
-     */
-    @Transactional
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("""
-            UPDATE AiAnalysisTask task
-            SET task.status = 'processing',
-                task.attemptCount = task.attemptCount + 1,
-                task.errorMessage = NULL
-            WHERE task.id = :taskId AND task.status = 'pending'
-            """)
-    int claimPending(@Param("taskId") Long taskId);
-
     /**
      * Publishes a worker result only while the worker still owns the processing
      * state. A pause that wins the race cannot be overwritten by a stale entity.

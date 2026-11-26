@@ -26,10 +26,6 @@ class AppConfig private constructor(
     private val credentialStore = credentialStoreFactory(appContext)
     private val json = Json { ignoreUnknownKeys = true }
 
-    init {
-        migrateLegacyServer()
-    }
-
     /** 形如 192.168.1.10:8080 的服务端 host:port（已归一化）。未配置时为 null。 */
     var serverHost: String?
         get() = prefs.getString(KEY_HOST, null)
@@ -71,58 +67,7 @@ class AppConfig private constructor(
         writeSavedServersAndSelect(updated, hostPort)
     }
 
-    @Synchronized
-    fun migrateLegacyScope(from: SavedServer, to: SavedServer): Boolean {
-        if (from.hostPort != to.hostPort || from.instanceId != null || to.instanceId == null) return false
-        // This method is called only after the user explicitly accepted the
-        // legacy-to-instance migration dialog. Write and verify the encrypted
-        // credential first; clear the old scope only after every new value is
-        // present so a failed Keystore operation cannot destroy the old login.
-        if (!credentialStore.migrate(from, to)) return false
-
-        val oldUserTokenKey = ServerSessionScope.preferenceKey(KEY_USER_TOKEN_PREFIX, from)
-        val newUserTokenKey = ServerSessionScope.preferenceKey(KEY_USER_TOKEN_PREFIX, to)
-        val oldUserToken = prefs.getString(oldUserTokenKey, null)
-
-        val oldPlayerTokenKey = ServerSessionScope.preferenceKey(KEY_PLAYER_TOKEN_PREFIX, from)
-        val newPlayerTokenKey = ServerSessionScope.preferenceKey(KEY_PLAYER_TOKEN_PREFIX, to)
-        val oldPlayerToken = prefs.getString(oldPlayerTokenKey, null)
-
-        val oldNicknameKey = ServerSessionScope.preferenceKey(KEY_NICKNAME_PREFIX, from)
-        val newNicknameKey = ServerSessionScope.preferenceKey(KEY_NICKNAME_PREFIX, to)
-        val oldNickname = prefs.getString(oldNicknameKey, null)
-
-        val oldPendingKey = ServerSessionScope.preferenceKey(KEY_PENDING_FINISHED_PREFIX, from)
-        val pendingFrom = pendingFinishedQueueIds(from)
-        val pendingTo = pendingFinishedQueueIds(to)
-        val oldPlayErrorKey = ServerSessionScope.preferenceKey(KEY_PENDING_PLAYBACK_ERRORS_PREFIX, from)
-        val pendingPlayErrorsFrom = pendingPlaybackErrors(from)
-        val pendingPlayErrorsTo = pendingPlaybackErrors(to)
-
-        prefs.edit(commit = true) {
-            if (!oldUserToken.isNullOrBlank() && prefs.getString(newUserTokenKey, null).isNullOrBlank()) {
-                putString(newUserTokenKey, oldUserToken)
-            }
-            if (!oldPlayerToken.isNullOrBlank() && prefs.getString(newPlayerTokenKey, null).isNullOrBlank()) {
-                putString(newPlayerTokenKey, oldPlayerToken)
-            }
-            if (!oldNickname.isNullOrBlank() && prefs.getString(newNicknameKey, null).isNullOrBlank()) {
-                putString(newNicknameKey, oldNickname)
-            }
-        }
-        savePendingFinishedQueueIds(PendingFinishedPolicy.merge(pendingTo, pendingFrom), to)
-        savePendingPlaybackErrors(PlaybackErrorOutbox.merge(pendingPlayErrorsTo, pendingPlayErrorsFrom), to)
-        prefs.edit(commit = true) {
-            remove(oldUserTokenKey)
-            remove(oldPlayerTokenKey)
-            remove(oldNicknameKey)
-            remove(oldPendingKey)
-            remove(oldPlayErrorKey)
-            remove(KEY_TOKEN)
-        }
-        credentialStore.clear(from)
-        return true
-    }
+    /** 形如 192.168.1.10:8080 的服务端 host:port（已归一化）。未配置时为 null。 */
 
     @Synchronized
     fun removeSavedServer(hostPort: String) {
@@ -150,7 +95,6 @@ class AppConfig private constructor(
             if (selectedHost == normalizedHost) {
                 val nextServer = remaining.firstOrNull()
                 if (nextServer == null) remove(KEY_HOST) else putString(KEY_HOST, nextServer.hostPort)
-                remove(KEY_TOKEN)
             }
         }
     }
@@ -222,30 +166,17 @@ class AppConfig private constructor(
             if (sanitized.isEmpty()) remove(key) else putString(key, value)
         }
     }
-    /** WebSocket 地址：ws://host:port/ws?client_type=tv&client_token=xxx */
-    fun wsUrl(clientToken: String): String {
-        return wsUrlFor(serverForHost(), clientToken)
-    }
-
     internal fun wsUrlFor(server: SavedServer?, clientToken: String): String =
         buildTvWebSocketUrl(server?.hostPort.orEmpty(), clientToken)
 
     /** REST/资源基址；服务器显式配置 HTTPS 时保持 TLS。 */
     fun apiBase(): String = buildServerHttpUrl(serverHost.orEmpty(), "/api")
 
-    /** H5 点歌地址（用于待机页二维码/明文兜底） */
-    fun h5Url(): String = buildServerHttpUrl(serverHost.orEmpty(), "/m")
-
-    /**
-     * Stable player token for the currently selected server. The old global
-     * key is migrated only for the current server so switching servers cannot
-     * accidentally reuse the playback identity.
-     */
     val playerToken: String
         get() = playerTokenFor(serverForHost())
 
     internal fun playerTokenFor(server: SavedServer?): String =
-        tokenForServer(KEY_PLAYER_TOKEN_PREFIX, "tv-", server, migrateLegacy = true)
+        tokenForServer(KEY_PLAYER_TOKEN_PREFIX, "tv-", server)
 
     /** Backwards-compatible name used by the existing TV playback code. */
     val clientToken: String
@@ -272,7 +203,6 @@ class AppConfig private constructor(
         prefix: String,
         label: String,
         server: SavedServer?,
-        migrateLegacy: Boolean = false,
     ): String {
         val key = if (server == null) {
             ServerSessionScope.hostPreferenceKey(prefix, null)
@@ -282,19 +212,7 @@ class AppConfig private constructor(
         val scopedToken = prefs.getString(key, null)?.trim()
         if (!scopedToken.isNullOrEmpty()) return scopedToken
 
-        val matchingLegacyScope = migrateLegacy &&
-            server?.instanceId == null &&
-            server?.hostPort == serverHost?.trim()
-        val legacy = if (matchingLegacyScope) {
-            val rawLegacyToken = prefs.getString(KEY_TOKEN, null)
-            if (rawLegacyToken == null) {
-                null
-            } else {
-                val trimmedLegacyToken = rawLegacyToken.trim()
-                if (trimmedLegacyToken.isEmpty()) null else trimmedLegacyToken
-            }
-        } else null
-        val token = legacy ?: label + java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+        val token = label + java.util.UUID.randomUUID().toString().replace("-", "").take(16)
         prefs.edit(commit = true) {
             putString(key, token)
         }
@@ -313,15 +231,6 @@ class AppConfig private constructor(
         prefs.edit(commit = true) {
             putString(ServerSessionScope.preferenceKey(prefix, server), value)
         }
-    }
-
-    private fun migrateLegacyServer() {
-        if (prefs.contains(KEY_SAVED_SERVERS)) return
-        val legacyHost = prefs.getString(KEY_HOST, null)
-        val initial = legacyHost?.takeIf { it.isNotBlank() }
-            ?.let { listOf(SavedServer(it, it)) }
-            .orEmpty()
-        writeSavedServers(initial)
     }
 
     private fun readSavedServers(): List<SavedServer> {
@@ -345,7 +254,6 @@ class AppConfig private constructor(
 
     companion object {
         private const val KEY_HOST = "server_host"
-        private const val KEY_TOKEN = "client_token"
         private const val KEY_PLAYER_TOKEN_PREFIX = "player_token_"
         private const val KEY_USER_TOKEN_PREFIX = "user_token_"
         private const val KEY_NICKNAME_PREFIX = "nickname_"

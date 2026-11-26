@@ -42,7 +42,6 @@ const { apiMock, controlsMock } = vi.hoisted(() => ({
     setVolume: vi.fn(),
     setMuted: vi.fn(),
     setVocal: vi.fn(),
-    swapVocalTracks: vi.fn(),
     effect: vi.fn(),
   }
 }))

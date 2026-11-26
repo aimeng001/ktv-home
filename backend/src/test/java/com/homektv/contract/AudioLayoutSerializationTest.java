@@ -32,7 +32,7 @@ class AudioLayoutSerializationTest {
 
     @Test
     void missingLayoutFieldsDefaultToNormalStereoSemantics() {
-        AudioLayoutDto fromNulls = new AudioLayoutDto(null, null, null, null, null);
+        AudioLayoutDto fromNulls = new AudioLayoutDto(null, null, null, null, null, null);
         AudioLayoutDto missingFile = AudioLayoutDto.from(null);
         AudioLayoutDto unsetFile = AudioLayoutDto.from(new SongFile());
 
@@ -93,7 +93,8 @@ class AudioLayoutSerializationTest {
                 null,
                 null,
                 AudioChannel.LEFT,
-                AudioChannel.RIGHT);
+                AudioChannel.RIGHT,
+                null);
         QueueSnapshot snapshot = new QueueSnapshot(
                 null, List.of(), "playing", 60, false, "original", layout, true, 1);
 

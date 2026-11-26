@@ -1,5 +1,6 @@
 package com.homektv.domain;
 
+import com.homektv.common.CatalogCacheEpoch;
 import jakarta.persistence.*;
 
 import java.time.OffsetDateTime;
@@ -295,5 +296,12 @@ public class SongFile {
                 && mediaType != null
                 && !mediaType.isBlank()
                 && !"PENDING_PROBE".equalsIgnoreCase(mediaType);
+    }
+
+    @PostPersist
+    @PostUpdate
+    @PostRemove
+    void bumpSearchCacheEpoch() {
+        CatalogCacheEpoch.bump();
     }
 }

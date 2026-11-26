@@ -84,15 +84,6 @@ class CatalogStatusPolicyTest {
     }
 
     @Test
-    fun legacyServerResponsesResolveReadyFilteredEmptyAndEmptyStates() {
-        val legacy = LibraryStatus()
-
-        assertEquals(CatalogLoadState.READY, CatalogStatusPolicy.from(legacy, true, false).state)
-        assertEquals(CatalogLoadState.FILTER_EMPTY, CatalogStatusPolicy.from(legacy, false, true).state)
-        assertEquals(CatalogLoadState.EMPTY, CatalogStatusPolicy.from(legacy, false, false).state)
-    }
-
-    @Test
     fun completedCatalogWithKnownCountsAndUnknownIdentityRemainsAvailable() {
         val status = CatalogStatusPolicy.from(
             LibraryStatus(

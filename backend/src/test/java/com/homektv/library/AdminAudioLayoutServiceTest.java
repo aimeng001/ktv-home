@@ -190,17 +190,6 @@ class AdminAudioLayoutServiceTest {
     }
 
     @Test
-    void confirmVocalTrackRejectsSingleTrackMedia() {
-        SongFile file = file(11L, 1);
-        when(fileRepo.findById(11L)).thenReturn(Optional.of(file));
-
-        assertThatThrownBy(() -> service.confirmVocalTrack(11L, 0))
-                .isInstanceOf(ApiException.class)
-                .hasMessageContaining("至少需要 2");
-        verify(fileRepo, never()).save(any(SongFile.class));
-    }
-
-    @Test
     void updatesAndSwapsDualTrackAssignments() {
         SongFile file = file(10L, 2);
         when(fileRepo.findById(10L)).thenReturn(Optional.of(file));

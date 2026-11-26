@@ -178,8 +178,6 @@ class IncrementalLibraryScanTest {
                             .max()
                             .orElse(0L);
                 });
-        lenient().when(songFileRepository.findByFileRoleOrderByImportedAtDesc(anyString())).thenAnswer(invocation ->
-                filesByPath.values().stream().filter(file -> invocation.getArgument(0).equals(file.getFileRole())).toList());
         lenient().when(songFileRepository.findByFileRoleAndFilePathIn(anyString(), org.mockito.ArgumentMatchers.anyCollection()))
                 .thenAnswer(invocation -> {
                     String role = invocation.getArgument(0);
@@ -798,8 +796,6 @@ class IncrementalLibraryScanTest {
 
         verify(songRepository).findDistinctArtistByStatus("ok");
         verify(songRepository, org.mockito.Mockito.never()).findAll();
-        verify(songFileRepository, org.mockito.Mockito.never())
-                .findByFileRoleOrderByImportedAtDesc(anyString());
     }
 
     @Test

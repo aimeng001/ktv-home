@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  clearFailedArtistUrl,
   rememberFailedThumbUrl,
   resolveSongArtistAvatarUrl,
   resolveSongThumbUrl,
@@ -36,16 +35,7 @@ describe('songThumbnail helpers', () => {
       .toBe('')
   })
 
-  it('clears failed url and artist key together and resolves artist initial first', () => {
-    const cleared = clearFailedArtistUrl(
-      new Set(['/api/artists/avatar?key=a']),
-      new Set(['a']),
-      { artistKey: 'a' },
-      '/api/artists/avatar?key=a'
-    )
-    expect(cleared.failedUrls.size).toBe(0)
-    expect(cleared.failedArtistKeys.size).toBe(0)
-
+  it('resolves artist initial first and falls back cleanly', () => {
     expect(songAvatarInitial({ artist: '谭咏麟', title: '一生中最爱' })).toBe('谭')
     expect(songAvatarInitial({ artist: '', title: '一路生花' })).toBe('一')
     expect(songAvatarInitial(null)).toBe('音')

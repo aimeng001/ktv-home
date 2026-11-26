@@ -6,8 +6,6 @@ enum class PlaybackEngineType {
     FALLBACK_FFMPEG,
     /** The server must provide a playable sidecar before Media3 is retried. */
     RESOLVE_REQUIRED,
-    /** Kept for source compatibility with older test doubles. */
-    UNSUPPORTED,
 }
 
 /** Routes unsupported containers/tracks to the software fallback player. */

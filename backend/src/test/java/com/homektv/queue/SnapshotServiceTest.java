@@ -317,7 +317,7 @@ class SnapshotServiceTest {
         QueueItem current = queueItem(10L, 100L, 1L);
         SongFile pending = sourceFile(701L, 100,
                 new AudioLayoutDto(AudioLayout.DUAL_CHANNEL, null, null,
-                        AudioChannel.RIGHT, AudioChannel.LEFT), true);
+                        AudioChannel.RIGHT, AudioChannel.LEFT, null), true);
         when(playerRepository.getSingleton()).thenReturn(player);
         when(queueRepository.findByStatusOrderByOrderIndexAsc(QueueService.WAITING)).thenReturn(List.of());
         when(queueRepository.findById(10L)).thenReturn(java.util.Optional.of(current));
@@ -370,16 +370,16 @@ class SnapshotServiceTest {
         return Stream.of(
                 Arguments.of(
                         new AudioLayoutDto(AudioLayout.DUAL_TRACK, 0, 1,
-                                AudioChannel.LEFT, AudioChannel.RIGHT),
+                                AudioChannel.LEFT, AudioChannel.RIGHT, null),
                         AudioLayoutDto.normalStereo()),
                 Arguments.of(
                         new AudioLayoutDto(AudioLayout.DUAL_CHANNEL, null, null,
-                                AudioChannel.RIGHT, AudioChannel.LEFT),
+                                AudioChannel.RIGHT, AudioChannel.LEFT, null),
                         AudioLayoutDto.normalStereo()),
                 Arguments.of(
                         AudioLayoutDto.normalStereo(),
                         new AudioLayoutDto(AudioLayout.DUAL_CHANNEL, null, null,
-                                AudioChannel.RIGHT, AudioChannel.LEFT)));
+                                AudioChannel.RIGHT, AudioChannel.LEFT, null)));
     }
 
     private static SongFile sourceFile(Long id, int priority, AudioLayoutDto layout, boolean pending) {

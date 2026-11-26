@@ -863,6 +863,17 @@ describe('ArtistLibraryView', () => {
     expect(root.querySelector('tbody .artist-avatar img')?.getAttribute('src')).toContain('/api/artists/avatar?key=tanyonglin&t=')
   })
 
+  it('ignores AbortError without displaying a load error banner', async () => {
+    await mount()
+    apiMock.adminArtistPage.mockRejectedValueOnce(new DOMException('Aborted', 'AbortError'))
+    const actions = app._instance.setupState
+    await actions.load({ resetPage: true })
+    await flushUi()
+
+    expect(actions.loadError).toBe('')
+    expect(root.querySelector('.load-error')).toBeNull()
+  })
+
   async function mount() {
     app?.unmount()
     root?.remove()

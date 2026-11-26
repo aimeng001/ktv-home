@@ -1,9 +1,9 @@
 export const MAX_SCAN_POLL_FAILURES = 3
 
 /** 扫描进度轮询：基准 1s，每次 ×1.2，5s 封顶（20 万首扫描要跑十几分钟）。 */
-export const SCAN_POLL_BASE_MS = 1000
-export const SCAN_POLL_MAX_MS = 5000
-export const SCAN_POLL_BACKOFF = 1.2
+const SCAN_POLL_BASE_MS = 1000
+const SCAN_POLL_MAX_MS = 5000
+const SCAN_POLL_BACKOFF = 1.2
 
 /**
  * 第 attempt 次轮询之后的等待时长（毫秒）。

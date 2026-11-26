@@ -106,8 +106,7 @@ internal class PlaybackSessionMetadata {
         )
 
         val action = when (engineChoice) {
-            PlaybackEngineType.RESOLVE_REQUIRED,
-            PlaybackEngineType.UNSUPPORTED -> PlaybackPrepareAction.RESOLVE_REQUIRED
+            PlaybackEngineType.RESOLVE_REQUIRED -> PlaybackPrepareAction.RESOLVE_REQUIRED
             PlaybackEngineType.FALLBACK_FFMPEG -> PlaybackPrepareAction.FALLBACK
             PlaybackEngineType.PRIMARY_MEDIA3 -> PlaybackPrepareAction.START_PRIMARY
         }

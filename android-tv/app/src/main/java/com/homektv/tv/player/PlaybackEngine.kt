@@ -377,11 +377,27 @@ class PlaybackEngine(
         onError = { requestToken, failure -> handleFallbackError(requestToken, failure) },
     )
 
+    private val streamSessionId = java.util.UUID.randomUUID().toString()
+
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         // 读超时放宽至 20s：兼顾 NAS 磁盘唤醒、FFmpeg 实时转码首包关键帧等待与 WiFi 链路波动，
         // 避免短暂慢起播被误判超时切歌。
         .readTimeout(PlaybackTransientRetryPolicy.STREAM_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .addInterceptor { chain ->
+            val request = chain.request()
+            if (request.url.encodedPath.startsWith("/api/stream/")
+                && request.header("X-Playback-Session") == null
+            ) {
+                chain.proceed(
+                    request.newBuilder()
+                        .header("X-Playback-Session", "tv-$streamSessionId")
+                        .build(),
+                )
+            } else {
+                chain.proceed(request)
+            }
+        }
         .retryOnConnectionFailure(true)
         .build()
 
@@ -396,13 +412,13 @@ class PlaybackEngine(
         // 缓冲上限控制在 ~25s：真机（腾讯极光 6SE）实测，HTTP 拉流连接空闲 ~60s
         // 后会被链路中间设备掐断（unexpected end of stream），且长时间无流量会
         // 触发盒子 WiFi 省电导致 30s 级读超时。保持小缓冲让连接持续有数据流动，
-        // 避免这两种停顿；25s 缓冲对局域网播放已足够。
+        // 避免这两种停顿；同时收紧重缓冲恢复阈值到 2.5s，减少卡顿等待。
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 15_000,
                 25_000,
+                1_500,
                 2_500,
-                5_000,
             )
             .build()
         val renderersFactory = object : DefaultRenderersFactory(appContext) {

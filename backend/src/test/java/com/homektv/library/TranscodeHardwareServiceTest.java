@@ -138,6 +138,27 @@ class TranscodeHardwareServiceTest {
         }
     }
 
+    @Test
+    void healthyDetectionIsCachedAcrossRepeatedCalls() throws Exception {
+        Path dri = Files.createDirectories(temp.resolve("dri-cache"));
+        Path sys = Files.createDirectories(temp.resolve("sys-cache/renderD128/device"));
+        Files.createFile(dri.resolve("renderD128"));
+        Files.writeString(sys.resolve("vendor"), "0x8086\n");
+        java.util.concurrent.atomic.AtomicInteger probeCalls = new java.util.concurrent.atomic.AtomicInteger();
+        TranscodeHardwareService service = new TranscodeHardwareService(
+                dri.toString(), temp.resolve("sys-cache").toString(), temp.resolve("mpp-cache").toString(), "ffmpeg") {
+            @Override
+            boolean run(List<String> command) {
+                probeCalls.incrementAndGet();
+                return true;
+            }
+        };
+
+        assertThat(service.detect().available()).isTrue();
+        assertThat(service.detect().available()).isTrue();
+        assertThat(probeCalls.get()).isEqualTo(2); // 1x h264_vaapi + 1x hevc_vaapi only on initial probe
+    }
+
     private TranscodeHardwareService workingService(Path dri, Path sys) {
         return new TranscodeHardwareService(dri.toString(), sys.toString(), temp.resolve("missing-mpp").toString(), "ffmpeg") {
             @Override boolean run(List<String> command) { return true; }

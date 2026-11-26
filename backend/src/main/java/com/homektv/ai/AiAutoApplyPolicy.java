@@ -1,8 +1,6 @@
 package com.homektv.ai;
 
-import com.homektv.config.AppProperties;
 import org.springframework.beans.factory.annotation.Autowired;
-
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,18 +12,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class AiAutoApplyPolicy {
     private final AiConfigService configService;
-    private final AppProperties legacyProperties;
 
     @Autowired
     public AiAutoApplyPolicy(AiConfigService configService) {
         this.configService = configService;
-        this.legacyProperties = null;
-    }
-
-    /** Backward-compatible constructor used by lightweight unit tests. */
-    public AiAutoApplyPolicy(AppProperties properties) {
-        this.configService = null;
-        this.legacyProperties = properties;
     }
 
     /**
@@ -50,7 +40,6 @@ public class AiAutoApplyPolicy {
      * @return 阈值，范围 [0.0, 1.0] / the threshold, in range [0.0, 1.0]
      */
     public double threshold() {
-        return configService != null ? configService.resolve().classificationThreshold()
-                : Math.max(0, Math.min(1, legacyProperties.getAi().getAutoApplyConfidence()));
+        return configService.resolve().classificationThreshold();
     }
 }

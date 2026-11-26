@@ -1,5 +1,6 @@
 package com.homektv.library;
 
+import com.homektv.common.CatalogCacheEpoch;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -42,6 +43,7 @@ public class CatalogRevisionService {
                  RETURNING revision
                 """, Long.class, ACTIVE_LIBRARY_KEY);
         long nextRevision = revision == null ? 0L : revision;
+        CatalogCacheEpoch.bump();
         if (catalogStats != null || directoryProjection != null) {
             Runnable refreshes = () -> {
                 if (catalogStats != null) catalogStats.requestRefresh();

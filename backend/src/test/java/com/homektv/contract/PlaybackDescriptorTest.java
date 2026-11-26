@@ -13,7 +13,7 @@ class PlaybackDescriptorTest {
     void idleAndNullLayoutUseThePlatformNeutralStereoDefaults() {
         PlaybackDescriptor idle = PlaybackDescriptor.idle();
         PlaybackDescriptor constructed = new PlaybackDescriptor("NONE", "IDLE", null, null,
-                null, 0, null, null, null, null);
+                null, 0, null, null, null, null, null, null, null);
 
         assertThat(idle.kind()).isEqualTo("NONE");
         assertThat(idle.status()).isEqualTo("IDLE");

@@ -1,10 +1,12 @@
 package com.homektv.web;
 
+import com.homektv.common.CatalogCacheEpoch;
 import com.homektv.config.AppProperties;
 import com.homektv.domain.Song;
 import com.homektv.domain.SongFile;
 import com.homektv.library.ArtistProfileService;
 import com.homektv.library.AssetWriter;
+import com.homektv.library.CatalogRevisionService;
 import com.homektv.library.MediaClassifier;
 import com.homektv.library.SongAvailabilityPolicy;
 import com.homektv.library.SongSearchService;
@@ -23,6 +25,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -42,6 +45,10 @@ public class SongController {
 
     /** 封面缓存 1 天：首屏 11 张图不再每次重新下载，同时保留「换封面次日生效」。 */
     private static final Duration COVER_CACHE_TTL = Duration.ofDays(1);
+    private static final int SEARCH_DTO_CACHE_CAPACITY = 256;
+    private static final long SEARCH_DTO_CACHE_TTL_NANOS = 30_000_000_000L;
+
+    private record SearchDtoCacheEntry(List<SongDto> dtos, long expiresAtNanos) {}
 
     private final SongSearchService searchService;
     private final SongRepository songRepo;
@@ -49,6 +56,14 @@ public class SongController {
     private final AssetWriter assetWriter;
     private SongAvailabilityPolicy availabilityPolicy;
     private ArtistProfileService artistProfileService;
+    private CatalogRevisionService catalogRevisionService;
+    private final Map<String, SearchDtoCacheEntry> searchDtoCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, SearchDtoCacheEntry> eldest) {
+                    return size() > SEARCH_DTO_CACHE_CAPACITY;
+                }
+            });
 
     /** Compatibility constructor for test callers providing AppProperties directly. */
     public SongController(SongSearchService searchService, SongRepository songRepo,
@@ -75,6 +90,11 @@ public class SongController {
         this.artistProfileService = artistProfileService;
     }
 
+    @Autowired(required = false)
+    void setCatalogRevisionService(CatalogRevisionService catalogRevisionService) {
+        this.catalogRevisionService = catalogRevisionService;
+    }
+
     /**
      * 综合搜索（P1.6）：keyword/acronym 均支持中文/全拼/首字母，acronym 为电视端简拼查询别名。
      *
@@ -91,6 +111,18 @@ public class SongController {
                                 @RequestParam(defaultValue = "") String type,
                                 @RequestParam(defaultValue = "0") int page) {
         String searchTerm = acronym.isBlank() ? keyword : acronym;
+        String normalizedType = type == null ? "" : type.trim().toUpperCase(Locale.ROOT);
+        String dtoCacheKey = null;
+        if (catalogRevisionService != null && searchTerm != null && !searchTerm.isBlank() && page >= 0) {
+            long revision = currentCatalogRevision();
+            long epoch = CatalogCacheEpoch.current();
+            dtoCacheKey = revision + ":" + epoch + "|" + normalizedType + "|" + page + "|" + searchTerm.trim();
+            long now = System.nanoTime();
+            SearchDtoCacheEntry cached = searchDtoCache.get(dtoCacheKey);
+            if (cached != null && now < cached.expiresAtNanos()) {
+                return cached.dtos();
+            }
+        }
         List<Song> songs = searchService.search(searchTerm, type, page);
         if (songs.isEmpty()) return List.of();
         List<SongFile> files = loadValidFiles(songs);
@@ -111,7 +143,21 @@ public class SongController {
                             resolutions.get(song.getId())))
                     .toList();
         }
-        return artistProfileService == null ? dtos : artistProfileService.resolveSongAvatars(dtos);
+        List<SongDto> resolved = artistProfileService == null ? dtos : artistProfileService.resolveSongAvatars(dtos);
+        if (dtoCacheKey != null) {
+            searchDtoCache.put(dtoCacheKey, new SearchDtoCacheEntry(
+                    List.copyOf(resolved), System.nanoTime() + SEARCH_DTO_CACHE_TTL_NANOS));
+        }
+        return resolved;
+    }
+
+    private long currentCatalogRevision() {
+        if (catalogRevisionService == null) return 0L;
+        try {
+            return catalogRevisionService.current();
+        } catch (RuntimeException ignored) {
+            return 0L;
+        }
     }
 
     /** Loads valid files once for the current search page; never opens media files. */

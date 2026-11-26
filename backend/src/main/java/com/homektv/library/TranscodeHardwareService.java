@@ -2,6 +2,8 @@ package com.homektv.library;
 
 import com.homektv.common.ApiException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -15,7 +17,8 @@ import java.util.Locale;
 @Service
 public class TranscodeHardwareService {
 
-    private static final long DETECT_CACHE_TTL_MS = 60_000L;
+    private static final long HEALTHY_DETECT_CACHE_TTL_MS = 30 * 60_000L;
+    private static final long FAILURE_DETECT_CACHE_TTL_MS = 60_000L;
     private final Path driRoot;
     private final Object detectLock = new Object();
     private volatile CachedHardwareStatus cachedStatus;
@@ -34,22 +37,31 @@ public class TranscodeHardwareService {
         this.ffmpegPath = ffmpegPath;
     }
 
+    @EventListener(ApplicationReadyEvent.class)
+    void warmHardwareDetectionInBackground() {
+        Thread.ofVirtual().name("transcode-hw-warmup").start(this::detect);
+    }
+
     public HardwareStatus detect() {
         long now = System.currentTimeMillis();
         CachedHardwareStatus current = cachedStatus;
-        if (current != null && now - current.detectedAtMs() < DETECT_CACHE_TTL_MS) {
+        if (current != null && now - current.detectedAtMs() < cacheTtlMs(current.status())) {
             return current.status();
         }
         synchronized (detectLock) {
             current = cachedStatus;
             long lockedNow = System.currentTimeMillis();
-            if (current != null && lockedNow - current.detectedAtMs() < DETECT_CACHE_TTL_MS) {
+            if (current != null && lockedNow - current.detectedAtMs() < cacheTtlMs(current.status())) {
                 return current.status();
             }
             HardwareStatus fresh = detectUncached();
             cachedStatus = new CachedHardwareStatus(fresh, System.currentTimeMillis());
             return fresh;
         }
+    }
+
+    private static long cacheTtlMs(HardwareStatus status) {
+        return status != null && status.available() ? HEALTHY_DETECT_CACHE_TTL_MS : FAILURE_DETECT_CACHE_TTL_MS;
     }
 
     private HardwareStatus detectUncached() {

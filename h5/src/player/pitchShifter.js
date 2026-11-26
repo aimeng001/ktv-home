@@ -8,9 +8,9 @@
  * - Non-secure LAN HTTP or AudioWorklet failure: automatically falls back to low-buffer ScriptProcessorNode (1024).
  */
 
-export const MIN_SEMITONES = -6
-export const MAX_SEMITONES = 6
-export const SCRIPT_BUFFER_SIZE = 1024 // ~21.3ms at 48kHz (down from 4096 = 85.3ms)
+const MIN_SEMITONES = -6
+const MAX_SEMITONES = 6
+const SCRIPT_BUFFER_SIZE = 1024 // ~21.3ms at 48kHz (down from 4096 = 85.3ms)
 const PITCH_WINDOW_SIZE = 1024 // ~21.3ms at 48kHz (dual-tap overlap-add window)
 const CIRCULAR_BUFFER_SIZE = 4096
 const CIRCULAR_BUFFER_MASK = CIRCULAR_BUFFER_SIZE - 1
@@ -114,7 +114,7 @@ class KtvPitchShifterProcessor extends AudioWorkletProcessor {
 registerProcessor('${WORKLET_PROCESSOR_NAME}', KtvPitchShifterProcessor);
 `
 
-export function clampSemitones(semitones) {
+function clampSemitones(semitones) {
   const val = Number.isFinite(Number(semitones)) ? Math.round(Number(semitones)) : 0
   return Math.max(MIN_SEMITONES, Math.min(MAX_SEMITONES, val))
 }

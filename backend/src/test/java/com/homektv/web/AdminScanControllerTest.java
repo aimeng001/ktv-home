@@ -277,62 +277,6 @@ class AdminScanControllerTest {
     }
 
     @Test
-    void vocalTrackConfirmationAcceptsNumbersAndTrimmedIntegerStrings() {
-        AdminService admin = mock(AdminService.class);
-        AdminScanController controller = new AdminScanController(mock(LibraryScanService.class),
-                mock(LibraryWatchService.class), admin, mock(MediaImportService.class),
-                mock(SettingService.class), mock(TranscodeService.class), mock(TranscodeHardwareService.class),
-                mock(SongReparseService.class), mock(SongMergeService.class), managedProps());
-
-        assertThat(controller.confirmVocalTrack(8L, Map.of("accompanimentIndex", 2)))
-                .containsEntry("status", "confirmed").containsEntry("accompanimentIndex", 2);
-        assertThat(controller.confirmVocalTrack(9L, Map.of("accompanimentIndex", " 3 ")))
-                .containsEntry("status", "confirmed").containsEntry("accompanimentIndex", 3);
-        verify(admin).confirmVocalTrack(8L, 2);
-        verify(admin).confirmVocalTrack(9L, 3);
-    }
-
-    @Test
-    void vocalTrackConfirmationDefaultsMissingIndexToOne() {
-        AdminService admin = mock(AdminService.class);
-        AdminScanController controller = new AdminScanController(mock(LibraryScanService.class),
-                mock(LibraryWatchService.class), admin, mock(MediaImportService.class),
-                mock(SettingService.class), mock(TranscodeService.class), mock(TranscodeHardwareService.class),
-                mock(SongReparseService.class), mock(SongMergeService.class), managedProps());
-
-        assertThat(controller.confirmVocalTrack(10L, Map.of()))
-                .containsEntry("status", "confirmed").containsEntry("accompanimentIndex", 1);
-        verify(admin).confirmVocalTrack(10L, 1);
-    }
-
-    @Test
-    void vocalTrackConfirmationRejectsMalformedStringsAndUnsupportedTypes() {
-        AdminScanController controller = controller(managedProps(), mock(LibraryScanService.class),
-                mock(MediaImportService.class), mock(SettingService.class), mock(TranscodeService.class));
-        Map<String, Object> nullIndex = new java.util.HashMap<>();
-        nullIndex.put("accompanimentIndex", null);
-
-        assertThatThrownBy(() -> controller.confirmVocalTrack(8L,
-                Map.of("accompanimentIndex", "two")))
-                .isInstanceOf(ApiException.class)
-                .hasMessageContaining("非负整数");
-        assertThatThrownBy(() -> controller.confirmVocalTrack(8L, nullIndex))
-                .isInstanceOf(ApiException.class)
-                .hasMessageContaining("类型无效");
-    }
-
-    @Test
-    void vocalTrackConfirmationRejectsNegativeIndexes() {
-        AdminScanController controller = controller(managedProps(), mock(LibraryScanService.class),
-                mock(MediaImportService.class), mock(SettingService.class), mock(TranscodeService.class));
-
-        assertThatThrownBy(() -> controller.confirmVocalTrack(8L,
-                Map.of("accompanimentIndex", -1)))
-                .isInstanceOf(ApiException.class)
-                .hasMessageContaining("不能为负数");
-    }
-
-    @Test
     void externalSourceLibraryEndpointDoesNotExposeManagedImportRecords() {
         AppProperties props = new AppProperties();
         props.setLibraryMode(LibraryMode.EXTERNAL_READ_ONLY);

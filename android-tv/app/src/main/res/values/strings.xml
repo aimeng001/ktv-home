@@ -98,11 +98,6 @@
     <string name="setup_scan_done">扫描完成，共发现 %1$d 台设备</string>
     <string name="setup_verifying">正在验证 %1$s …</string>
     <string name="setup_invalid">无法连接到点歌服务，请确认地址正确且服务已启动</string>
-    <string name="setup_identity_migration_title">服务器身份已升级</string>
-    <string name="setup_identity_migration_message">检测到该服务器新增了设备身份。是否保留本机的登录凭据、点歌昵称、模式和用户身份？</string>
-    <string name="setup_identity_migration_keep">保留并升级</string>
-    <string name="setup_identity_migration_new">作为新服务器</string>
-    <string name="setup_identity_migration_failed">身份迁移未完成，原连接设置仍保留，请重试或重新输入凭据</string>
 
     <!-- 待机/状态 -->
     <string name="standby_scan_title">扫码点歌</string>

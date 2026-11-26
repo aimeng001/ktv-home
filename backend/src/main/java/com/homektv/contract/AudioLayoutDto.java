@@ -30,16 +30,6 @@ public record AudioLayoutDto(
         accompanimentChannel = accompanimentChannel == null ? AudioChannel.RIGHT : accompanimentChannel;
     }
 
-    /** Source-compatible constructor for callers that predate provenance propagation. */
-    public AudioLayoutDto(
-            AudioLayout layout,
-            Integer originalTrackIndex,
-            Integer accompanimentTrackIndex,
-            AudioChannel originalChannel,
-            AudioChannel accompanimentChannel) {
-        this(layout, originalTrackIndex, accompanimentTrackIndex, originalChannel, accompanimentChannel, null);
-    }
-
     /** Synthetic default used when no file is known: provenance is unknown, so it stays null. */
     public static AudioLayoutDto normalStereo() {
         return new AudioLayoutDto(AudioLayout.NORMAL_STEREO, null, null, AudioChannel.LEFT, AudioChannel.RIGHT, null);

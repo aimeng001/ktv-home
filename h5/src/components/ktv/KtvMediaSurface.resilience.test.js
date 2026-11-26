@@ -25,13 +25,23 @@ vi.mock('../../player/webAudioChannelRouter', () => ({
   createWebAudioChannelRouter: () => routerMock
 }))
 vi.mock('../../player/streamSelection', () => ({
-  buildWebStreamSpec: ({ playback, startSeconds = 0 } = {}) => {
+  buildWebStreamSpec: ({ playback, startSeconds = 0, forceTranscode = false, softVideo = false } = {}) => {
     if (!playback || playback.status !== 'READY' || !playback.sourceFileId) {
       return { url: '', liveTranscode: false, trackSwitchedByServer: false, isAudioOnly: false }
     }
+    const liveTranscode = Boolean(forceTranscode || softVideo || playback.kind === 'LIVE_TRANSCODE')
+    if (!liveTranscode) {
+      return {
+        url: `/api/stream/${playback.sourceFileId}`,
+        liveTranscode: false,
+        trackSwitchedByServer: false,
+        isAudioOnly: false,
+      }
+    }
+    const softParam = softVideo ? '&softVideo=true' : ''
     const startParam = startSeconds > 0.5 ? `&start=${startSeconds.toFixed(3)}` : ''
     return {
-      url: `/api/stream/${playback.sourceFileId}?transcode=true${startParam}`,
+      url: `/api/stream/${playback.sourceFileId}?transcode=true${softParam}${startParam}`,
       liveTranscode: true,
       trackSwitchedByServer: false,
       isAudioOnly: false,
@@ -159,7 +169,7 @@ describe('KtvMediaSurface live transcode resilience & reconnect guard', () => {
     expect(video.getAttribute('src')).toContain('start=112.000')
   })
 
-  it('prebuffers live transcode video until 1.2s buffered or 1.8s fallback before calling play', async () => {
+  it('prebuffers live transcode video until 0.6s buffered or 900ms fallback before calling play', async () => {
     const playSpy = vi.spyOn(video, 'play')
     playSpy.mockClear()
 
@@ -172,20 +182,20 @@ describe('KtvMediaSurface live transcode resilience & reconnect guard', () => {
     expect(video.getAttribute('src')).toContain('/api/stream/89?transcode=true')
     expect(playSpy).not.toHaveBeenCalled()
 
-    // Provide >= 1.2s buffered range and fire progress -> starts immediately
+    // Provide >= 0.6s buffered range and fire progress -> starts immediately
     Object.defineProperty(video, 'buffered', {
       configurable: true,
       get: () => ({
         length: 1,
         start: () => 0,
-        end: () => 1.5,
+        end: () => 0.8,
       }),
     })
     video.dispatchEvent(new Event('progress'))
     await nextTick()
     expect(playSpy).toHaveBeenCalledTimes(1)
 
-    // Subsequent song with no progress event still starts via 1.8s prebuffer timeout
+    // Subsequent song with no progress event still starts via 900ms prebuffer timeout
     playSpy.mockClear()
     Object.defineProperty(video, 'buffered', {
       configurable: true,
@@ -197,8 +207,29 @@ describe('KtvMediaSurface live transcode resilience & reconnect guard', () => {
     await nextTick()
     expect(playSpy).not.toHaveBeenCalled()
 
-    vi.advanceTimersByTime(1800)
+    vi.advanceTimersByTime(900)
     await nextTick()
     expect(playSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('escalates native decode error to VAAPI transcode first and only then softVideo', async () => {
+    player.nowPlaying = { queueId: 15, song: { id: 95, title: 'NATIVE HEVC', artist: 'TEST', durationMs: 180000 } }
+    player.playback = { sourceFileId: 95, kind: 'NATIVE', status: 'READY', streamUrl: '/api/stream/95' }
+    await nextTick()
+    await nextTick()
+
+    expect(video.getAttribute('src')).toBe('/api/stream/95')
+
+    // Step 1: native error tries hardware-accelerated live transcode (no softVideo=true)
+    video.dispatchEvent(new Event('error'))
+    await nextTick()
+    await nextTick()
+    expect(video.getAttribute('src')).toBe('/api/stream/95?transcode=true')
+
+    // Step 2: if VAAPI live transcode also fails, escalate to softVideo=true
+    video.dispatchEvent(new Event('error'))
+    await nextTick()
+    await nextTick()
+    expect(video.getAttribute('src')).toBe('/api/stream/95?transcode=true&softVideo=true')
   })
 })

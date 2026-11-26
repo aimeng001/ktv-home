@@ -26,15 +26,7 @@ class AppConfigStateTest {
     }
 
     @Test
-    fun legacyHostMigratesOnceAndMalformedSavedServerJsonFailsClosed() {
-        val context = InMemoryContext()
-        context.preferences().edit().putString("server_host", "legacy.local:8080").commit()
-
-        val config = AppConfig(context)
-
-        assertEquals("legacy.local:8080", config.serverHost)
-        assertEquals(listOf(SavedServer("legacy.local:8080", "legacy.local:8080")), config.savedServers)
-
+    fun malformedSavedServerJsonAndBlankHostFailClosed() {
         val malformed = InMemoryContext()
         malformed.preferences().edit().putString("saved_servers", "not-json").commit()
         assertTrue(AppConfig(malformed).savedServers.isEmpty())
@@ -146,98 +138,15 @@ class AppConfigStateTest {
     }
 
     @Test
-    fun legacyScopeMigrationCopiesServerStateAndPreservesTargetValues() {
-        val context = InMemoryContext()
-        val config = AppConfig(context)
-        val source = SavedServer("nas-a:8080", "A")
-        val target = source.copy(instanceId = "00000000-0000-0000-0000-000000000001")
-        val sourceUserKey = ServerSessionScope.preferenceKey("user_token_", source)
-        val targetUserKey = ServerSessionScope.preferenceKey("user_token_", target)
-        val sourceNicknameKey = ServerSessionScope.preferenceKey("nickname_", source)
-
-        context.preferences().edit()
-            .putString(sourceUserKey, " old-user ")
-            .putString(targetUserKey, "target-user")
-            .putString(sourceNicknameKey, "房主")
-            .putString("pending_finished_queue_ids_nas-a:8080", "5,7")
-            .putString("pending_playback_errors_nas-a:8080", "[{\"queueId\":5,\"fileId\":6,\"message\":\"failed\"}]")
-            .putString("client_token", "legacy-token")
-            .commit()
-
-        assertTrue(config.migrateLegacyScope(source, target))
-
-        assertEquals("target-user", context.preferences().getString(targetUserKey, null))
-        assertEquals("房主", context.preferences().getString(
-            ServerSessionScope.preferenceKey("nickname_", target), null,
-        ))
-        assertEquals(listOf(5L, 7L), config.pendingFinishedQueueIds(target))
-        assertEquals(listOf(5L), config.pendingPlaybackErrors(target).map { it.queueId })
-        assertFalse(context.preferences().contains(sourceUserKey))
-        assertFalse(context.preferences().contains("client_token"))
-    }
-
-    @Test
-    fun legacyScopeMigrationRejectsInvalidPairsAndKeepsPlainCredentialOnEncryptionFailure() {
-        val context = InMemoryContext()
-        val config = AppConfig(context)
-        val source = SavedServer("nas-a:8080", "A")
-        val target = source.copy(instanceId = "00000000-0000-0000-0000-000000000001")
-        assertFalse(config.migrateLegacyScope(source.copy(hostPort = "nas-b:8080"), target))
-        assertFalse(config.migrateLegacyScope(source.copy(instanceId = "00000000-0000-0000-0000-000000000002"), target))
-        assertFalse(config.migrateLegacyScope(source, source))
-
-        context.preferences().edit()
-            .putString("server_host", source.hostPort)
-            .putString("player_credential", "secret")
-            .putString(ServerSessionScope.preferenceKey("user_token_", source), "old-user")
-            .commit()
-        val withLegacyCredential = AppConfig(
-            context,
-            CredentialKeyProvider { throw IllegalStateException("synthetic keystore failure") },
-        )
-        val result = withLegacyCredential.migrateLegacyScope(source, target)
-
-        assertFalse(result)
-        assertEquals("secret", context.preferences().getString("player_credential", null))
-        assertEquals(
-            "old-user",
-            context.preferences().getString(ServerSessionScope.preferenceKey("user_token_", source), null),
-        )
-    }
-
-    @Test
-    fun forgettingOneHostDoesNotClearLegacyCredentialOwnedByAnotherHost() {
-        val context = InMemoryContext()
-        val store = CredentialStore(context)
-        val owner = SavedServer("nas-owner:8080", "Owner")
-        val unrelated = SavedServer("nas-unrelated:8080", "Unrelated")
-        context.preferences().edit()
-            .putString("server_host", owner.hostPort)
-            .putString("player_credential", "owner-secret")
-            .commit()
-
-        store.clearAllScopes(unrelated)
-        assertEquals("owner-secret", context.preferences().getString("player_credential", null))
-
-        store.clearAllScopes(owner)
-        assertNull(context.preferences().getString("player_credential", null))
-    }
-
-    @Test
-    fun scopedTokensNicknameAndStartupPreferenceRemainStableWhenLegacyModePrefsExist() {
+    fun scopedTokensNicknameAndStartupPreferenceRemainStable() {
         val context = InMemoryContext()
         val config = AppConfig(context)
         val server = SavedServer("nas-a:8080", "A")
         config.rememberServer(server)
-        context.preferences().edit()
-            .putString("client_token", " legacy-player ")
-            .putString(ServerSessionScope.preferenceKey("mode_", server), "CONTROLLER")
-            .putInt("mode_migration_version", 4)
-            .commit()
 
         assertEquals(server.hostPort, config.serverHost)
         assertEquals(listOf(server), config.savedServers)
-        assertEquals("legacy-player", config.playerToken)
+        assertTrue(config.playerToken.startsWith("tv-"))
         assertEquals(config.playerToken, config.clientToken)
         assertNotEquals(config.playerToken, config.userToken)
         assertEquals(config.userToken, config.userToken)
@@ -258,18 +167,20 @@ class AppConfigStateTest {
     @Test
     fun websocketAndHttpUrlsUseTheSelectedServerAndKeepCredentialsOutOfTheUrl() {
         val config = AppConfig(InMemoryContext())
-        config.rememberServer(SavedServer("https://ktv.local:8443", "TV"))
+        val httpsServer = SavedServer("https://ktv.local:8443", "TV")
+        config.rememberServer(httpsServer)
 
-        assertTrue(config.wsUrl("token with spaces").startsWith("wss://ktv.local:8443/ws?"))
-        assertTrue(config.wsUrl("token with spaces").contains("client_token=token%20with%20spaces"))
-        assertFalse(config.wsUrl("secret").contains("player_credential"))
+        val wss = config.wsUrlFor(httpsServer, "token with spaces")
+        assertTrue(wss.startsWith("wss://ktv.local:8443/ws?"))
+        assertTrue(wss.contains("client_token=token%20with%20spaces"))
+        assertFalse(config.wsUrlFor(httpsServer, "secret").contains("player_credential"))
         assertEquals("https://ktv.local:8443/api", config.apiBase())
-        assertEquals("https://ktv.local:8443/m", config.h5Url())
 
-        val legacyHttp = AppConfig(InMemoryContext())
-        legacyHttp.rememberServer(SavedServer("nas.local:8080", "NAS"))
-        assertTrue(legacyHttp.wsUrl("token").startsWith("ws://nas.local:8080/ws?"))
-        assertEquals("http://nas.local:8080/api", legacyHttp.apiBase())
+        val httpConfig = AppConfig(InMemoryContext())
+        val httpServer = SavedServer("nas.local:8080", "NAS")
+        httpConfig.rememberServer(httpServer)
+        assertTrue(httpConfig.wsUrlFor(httpServer, "token").startsWith("ws://nas.local:8080/ws?"))
+        assertEquals("http://nas.local:8080/api", httpConfig.apiBase())
     }
 
     @Test
@@ -294,7 +205,6 @@ class AppConfigStateTest {
         assertTrue(config.pendingPlaybackErrors(server).isEmpty())
         config.serverHost = null
         assertEquals("http:///api", config.apiBase())
-        assertEquals("http:///m", config.h5Url())
         assertEquals(buildTvWebSocketUrl("", "token"), config.wsUrlFor(null, "token"))
         assertEquals("", config.nicknameFor(null))
         config.saveNickname("  ", server.hostPort)
@@ -337,28 +247,25 @@ class AppConfigStateTest {
     }
 
     @Test
-    fun tokenMigrationUsesOnlyTheMatchingLegacyHostAndCreatesMissingScopedTokens() {
+    fun scopedTokensAreIsolatedPerServerAndCreatedWhenMissing() {
         val context = InMemoryContext()
         val config = AppConfig(context)
         val server = SavedServer("nas-a:8080", "A")
         config.rememberServer(server)
         assertEquals("", config.nicknameFor(server.hostPort))
-        context.preferences().edit().putString("client_token", "   ").commit()
 
         val generatedPlayerToken = config.playerToken
         assertTrue(generatedPlayerToken.startsWith("tv-"))
         assertEquals(generatedPlayerToken, config.playerToken)
 
-        context.preferences().edit().putString("client_token", "legacy-global").commit()
         val identifiedServer = server.copy(instanceId = "00000000-0000-0000-0000-000000000002")
         val identifiedToken = config.playerTokenFor(identifiedServer)
         assertTrue(identifiedToken.startsWith("tv-"))
-        assertNotEquals("legacy-global", identifiedToken)
+        assertNotEquals(generatedPlayerToken, identifiedToken)
 
         val otherPlayerToken = config.playerTokenFor(SavedServer("nas-other:8080", "Other"))
         assertTrue(otherPlayerToken.startsWith("tv-"))
-        assertNotEquals("legacy-global", otherPlayerToken)
-        assertEquals("legacy-global", context.preferences().getString("client_token", null))
+        assertNotEquals(generatedPlayerToken, otherPlayerToken)
 
         val blankScope = SavedServer("nas-blank:8080", "Blank")
         context.preferences().edit()
@@ -371,52 +278,6 @@ class AppConfigStateTest {
         val hostlessPlayerToken = config.playerTokenFor(null)
         assertTrue(hostlessPlayerToken.startsWith("tv-"))
         assertEquals(hostlessPlayerToken, config.playerTokenFor(null))
-
-        val noLegacyContext = InMemoryContext()
-        val noLegacy = AppConfig(noLegacyContext)
-        noLegacy.rememberServer(SavedServer("nas-no-legacy:8080", "No legacy"))
-        assertTrue(noLegacy.playerToken.startsWith("tv-"))
-
-        val hostlessLegacyContext = InMemoryContext()
-        hostlessLegacyContext.preferences().edit().putString("client_token", "legacy-hostless").commit()
-        val hostlessLegacy = AppConfig(hostlessLegacyContext)
-        assertEquals("legacy-hostless", hostlessLegacy.playerTokenFor(null))
-    }
-
-    @Test
-    fun legacyScopeMigrationCoversCopyPreserveAndBlankSourceCombinations() {
-        val prefixes = listOf("user_token_", "player_token_", "nickname_")
-        val scenarios: List<List<Pair<String?, String?>>> = listOf(
-            listOf("source-user" to null, "source-player" to null, "source-name" to null),
-            listOf("source-user" to "  ", "source-player" to "target-player", "source-name" to "target-name"),
-            listOf(null to null, null to null, null to null),
-            listOf("  " to null, "  " to null, "  " to null),
-            listOf("source-user" to "  ", "source-player" to "  ", "source-name" to "  "),
-        )
-
-        scenarios.forEachIndexed { index, values ->
-            val context = InMemoryContext()
-            val config = AppConfig(context)
-            val source = SavedServer("nas-$index:8080", "NAS $index")
-            val target = source.copy(instanceId = "00000000-0000-0000-0000-${(index + 10).toString().padStart(12, '0')}")
-            values.forEachIndexed { valueIndex, (fromValue, toValue) ->
-                val prefix = prefixes[valueIndex]
-                val fromKey = ServerSessionScope.preferenceKey(prefix, source)
-                val toKey = ServerSessionScope.preferenceKey(prefix, target)
-                context.preferences().edit().apply {
-                    if (fromValue != null) putString(fromKey, fromValue)
-                    if (toValue != null) putString(toKey, toValue)
-                }.commit()
-            }
-
-            assertTrue("scenario $index", config.migrateLegacyScope(source, target))
-            values.forEachIndexed { valueIndex, (fromValue, toValue) ->
-                val prefix = prefixes[valueIndex]
-                val toKey = ServerSessionScope.preferenceKey(prefix, target)
-                val expected = toValue?.takeIf { it.isNotBlank() } ?: fromValue?.takeIf { it.isNotBlank() }
-                assertEquals("scenario $index prefix $prefix", expected, context.preferences().getString(toKey, null))
-            }
-        }
     }
 
     @Test

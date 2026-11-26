@@ -1,7 +1,6 @@
 package com.homektv.tv.ui
 
 import com.homektv.tv.net.AudioLayout
-import com.homektv.tv.net.SongDto
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,12 +48,6 @@ class KioskPresentationState(initialTab: KioskTab = KioskTab.PINYIN) {
     private val _isVocalToggleEnabled = MutableStateFlow(false)
     val isVocalToggleEnabled: StateFlow<Boolean> = _isVocalToggleEnabled.asStateFlow()
 
-    private val _rankings = MutableStateFlow<List<SongDto>>(emptyList())
-    val rankings: StateFlow<List<SongDto>> = _rankings.asStateFlow()
-
-    private val _newSongs = MutableStateFlow<List<SongDto>>(emptyList())
-    val newSongs: StateFlow<List<SongDto>> = _newSongs.asStateFlow()
-
     fun selectTab(tab: KioskTab) {
         selectTab(tab, defaultCommercialRoute(tab))
     }
@@ -79,14 +72,6 @@ class KioskPresentationState(initialTab: KioskTab = KioskTab.PINYIN) {
 
     fun clearArtistSelection() {
         _selectedArtist.value = null
-    }
-
-    fun updateRankings(songs: List<SongDto>) {
-        _rankings.value = songs
-    }
-
-    fun updateNewSongs(songs: List<SongDto>) {
-        _newSongs.value = songs
     }
 
     fun updateAudioLayout(layout: AudioLayout, audioTracks: Int = 1) {

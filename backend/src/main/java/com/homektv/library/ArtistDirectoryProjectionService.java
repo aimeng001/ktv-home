@@ -1,5 +1,6 @@
 package com.homektv.library;
 import com.homektv.common.ArtistKind;
+import com.homektv.common.CatalogCacheEpoch;
 
 import jakarta.annotation.PreDestroy;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -13,13 +14,17 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Refreshes and serves the bounded public artist directory projection.
@@ -166,11 +171,20 @@ public class ArtistDirectoryProjectionService {
             """;
 
     private static final long METADATA_CACHE_TTL_NANOS = 15_000_000_000L;
+    private static final long PAGE_CACHE_TTL_NANOS = 45_000_000_000L;
+    private static final long INITIALS_CACHE_TTL_NANOS = 60_000_000_000L;
+    private static final int PAGE_CACHE_CAPACITY = 256;
+    private static final int INITIALS_CACHE_CAPACITY = 64;
+    private static final int QUERY_TIMEOUT_SECONDS = 6;
     private volatile long readyCachedUntilNanos;
     private volatile Boolean cachedRegionRef;
     private volatile long regionRefCachedUntilNanos;
 
+    private record CachedProjectionPage(ProjectionPage page, long expiresAtNanos) {}
+    private record CachedInitials(List<String> initials, long expiresAtNanos) {}
+
     private final JdbcTemplate jdbc;
+    private final JdbcTemplate queryJdbc;
     private final TransactionTemplate refreshTransaction;
     private final Runnable beforeRefreshTaskCompletion;
     private final ExecutorService refreshExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -180,7 +194,22 @@ public class ArtistDirectoryProjectionService {
     });
     private final AtomicBoolean refreshRequested = new AtomicBoolean();
     private final AtomicBoolean refreshRunning = new AtomicBoolean();
+    private final AtomicLong projectionEpoch = new AtomicLong(1L);
     private final Object refreshLock = new Object();
+    private final Map<String, CachedProjectionPage> pageCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, CachedProjectionPage> eldest) {
+                    return size() > PAGE_CACHE_CAPACITY;
+                }
+            });
+    private final Map<String, CachedInitials> initialsCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(32, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, CachedInitials> eldest) {
+                    return size() > INITIALS_CACHE_CAPACITY;
+                }
+            });
 
     public ArtistDirectoryProjectionService(JdbcTemplate jdbc) {
         this(jdbc, null, () -> {});
@@ -194,6 +223,14 @@ public class ArtistDirectoryProjectionService {
     ArtistDirectoryProjectionService(JdbcTemplate jdbc, PlatformTransactionManager transactionManager,
                                      Runnable beforeRefreshTaskCompletion) {
         this.jdbc = jdbc;
+        javax.sql.DataSource ds = jdbc.getDataSource();
+        if (ds != null) {
+            JdbcTemplate bounded = new JdbcTemplate(ds);
+            bounded.setQueryTimeout(QUERY_TIMEOUT_SECONDS);
+            this.queryJdbc = bounded;
+        } else {
+            this.queryJdbc = jdbc;
+        }
         this.refreshTransaction = transactionManager == null ? null : new TransactionTemplate(transactionManager);
         this.beforeRefreshTaskCompletion = beforeRefreshTaskCompletion;
     }
@@ -216,6 +253,7 @@ public class ArtistDirectoryProjectionService {
             int updated = jdbc.update(
                     "UPDATE artist_directory_stats SET avatar_path=?, updated_at=now() WHERE artist_key=?",
                     avatarPath, artistKey);
+            projectionEpoch.incrementAndGet();
             if (updated == 0) {
                 requestRefresh();
             }
@@ -244,6 +282,7 @@ public class ArtistDirectoryProjectionService {
             int updated = jdbc.update(
                     "UPDATE artist_directory_stats SET gender=?, reviewed=?, updated_at=now() WHERE artist_key=?",
                     gender, reviewed, artistKey);
+            projectionEpoch.incrementAndGet();
             if (updated == 0) {
                 requestRefresh();
             }
@@ -307,6 +346,7 @@ public class ArtistDirectoryProjectionService {
                 VALUES (?, now())
                 ON CONFLICT (projection_key) DO UPDATE SET refreshed_at = EXCLUDED.refreshed_at
                 """, ACTIVE_PROJECTION);
+        projectionEpoch.incrementAndGet();
         readyCachedUntilNanos = System.nanoTime() + METADATA_CACHE_TTL_NANOS;
         regionRefCachedUntilNanos = 0L;
     }
@@ -340,54 +380,83 @@ public class ArtistDirectoryProjectionService {
         String safeRegion = normalize(region);
         String safeKeyword = normalize(keyword);
         if ("热门".equals(safeInitial)) safeInitial = "";
+
+        long cacheRevision = projectionEpoch.get() ^ (CatalogCacheEpoch.current() << 20);
+        String cacheKey = cacheRevision + "|" + safeGender + "|" + safeInitial + "|" + safeRegion
+                + "|" + safeKeyword + "|" + safePage + "|" + safeSize;
+        long now = System.nanoTime();
+        CachedProjectionPage cached = pageCache.get(cacheKey);
+        if (cached != null && now < cached.expiresAtNanos()) {
+            return Optional.of(cached.page());
+        }
+
         boolean hashInitial = "#".equals(safeInitial);
-        String initialPredicate = hashInitial
-                ? "AND (COALESCE(directory.initial, '') = '' OR directory.initial NOT IN ('A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z')) "
-                : "AND (? = '' OR directory.initial = ?) ";
-        String where = "WHERE (? = '' OR directory.gender = ?) "
-                + initialPredicate
-                + "AND (? = '' OR directory.region = ?)";
-        if (!safeKeyword.isEmpty()) {
-            where += " AND (LOWER(directory.name) LIKE '%' || LOWER(?) || '%' "
-                    + "OR LOWER(directory.artist_init) LIKE LOWER(?) || '%' "
-                    + "OR LOWER(directory.artist_py) LIKE LOWER(?) || '%')";
+        StringBuilder where = new StringBuilder();
+        List<Object> countParams = new ArrayList<>(8);
+        if (!safeGender.isEmpty()) {
+            where.append(where.isEmpty() ? "WHERE " : " AND ").append("directory.gender = ?");
+            countParams.add(safeGender);
         }
-        List<Object> countParams = new java.util.ArrayList<>(8);
-        countParams.add(safeGender);
-        countParams.add(safeGender);
-        if (!hashInitial) {
-            countParams.add(safeInitial);
+        if (hashInitial) {
+            where.append(where.isEmpty() ? "WHERE " : " AND ")
+                    .append("(COALESCE(directory.initial, '') = '' OR directory.initial NOT IN ('A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z'))");
+        } else if (!safeInitial.isEmpty()) {
+            where.append(where.isEmpty() ? "WHERE " : " AND ").append("directory.initial = ?");
             countParams.add(safeInitial);
         }
-        countParams.add(safeRegion);
-        countParams.add(safeRegion);
-        if (!safeKeyword.isEmpty()) {
-            countParams.add(safeKeyword);
-            countParams.add(safeKeyword);
-            countParams.add(safeKeyword);
+        if (!safeRegion.isEmpty()) {
+            where.append(where.isEmpty() ? "WHERE " : " AND ").append("directory.region = ?");
+            countParams.add(safeRegion);
         }
-        Long total = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM artist_directory_stats directory " + where,
-                Long.class, countParams.toArray());
+        if (!safeKeyword.isEmpty()) {
+            String lower = safeKeyword.toLowerCase(Locale.ROOT);
+            String lowerLike = escapeLike(lower);
+            boolean asciiOnly = isAscii(lower);
+            where.append(where.isEmpty() ? "WHERE " : " AND ")
+                    .append("(LOWER(directory.name) LIKE '%' || ? || '%' ESCAPE '\\'");
+            countParams.add(lowerLike);
+            if (asciiOnly) {
+                where.append(" OR LOWER(directory.artist_init) LIKE ? || '%' ESCAPE '\\'")
+                        .append(" OR LOWER(directory.artist_py) LIKE ? || '%' ESCAPE '\\'");
+                countParams.add(lowerLike);
+                countParams.add(lowerLike);
+            }
+            where.append(")");
+        }
+        String whereSql = where.isEmpty() ? "" : " " + where;
+
+        List<Object> rowParams = new ArrayList<>(countParams.size() + 2);
+        rowParams.addAll(countParams);
+        rowParams.add(safeSize + 1);
+        rowParams.add(safePage * safeSize);
         String rowsSql = """
                 SELECT directory.artist_key, directory.name, directory.initial, directory.gender,
                        directory.song_count, directory.reviewed, directory.artist_kind, directory.avatar_path,
                        directory.region
-                FROM artist_directory_stats directory
-                """ + where + """
-                 ORDER BY CASE WHEN directory.artist_kind = 'UNATTRIBUTED' THEN 1 ELSE 0 END ASC,
-                          directory.song_count DESC, directory.name ASC, directory.artist_key ASC LIMIT ? OFFSET ?""";
-        List<Object> rowParams = new java.util.ArrayList<>(countParams);
-        rowParams.add(safeSize);
-        rowParams.add(safePage * safeSize);
-        List<ArtistRow> rows = jdbc.query(
+                FROM artist_directory_stats directory""" + whereSql
+                + " ORDER BY CASE WHEN directory.artist_kind = 'UNATTRIBUTED' THEN 1 ELSE 0 END ASC,"
+                + " directory.song_count DESC, directory.name ASC, directory.artist_key ASC LIMIT ? OFFSET ?";
+        List<ArtistRow> rawRows = queryJdbc.query(
                 rowsSql,
                 (rs, index) -> new ArtistRow(
                         rs.getString("artist_key"), rs.getString("name"), rs.getString("initial"),
                         rs.getString("gender"), rs.getLong("song_count"), rs.getBoolean("reviewed"),
                         rs.getString("artist_kind"), rs.getString("avatar_path"), normalize(rs.getString("region"))),
                 rowParams.toArray());
-        return Optional.of(new ProjectionPage(rows, total == null ? 0L : total));
+        boolean hasMore = rawRows.size() > safeSize;
+        List<ArtistRow> rows = hasMore ? List.copyOf(rawRows.subList(0, safeSize)) : List.copyOf(rawRows);
+        long totalCount;
+        if (!hasMore && (safePage == 0 || !rows.isEmpty())) {
+            totalCount = (long) safePage * safeSize + rows.size();
+        } else {
+            Long total = queryJdbc.queryForObject(
+                    "SELECT COUNT(*) FROM artist_directory_stats directory" + whereSql,
+                    Long.class, countParams.toArray());
+            totalCount = total == null ? 0L : total;
+        }
+        ProjectionPage resultPage = new ProjectionPage(rows, totalCount);
+        pageCache.put(cacheKey, new CachedProjectionPage(resultPage, System.nanoTime() + PAGE_CACHE_TTL_NANOS));
+        return Optional.of(resultPage);
     }
 
     public Optional<List<String>> initials(String gender) {
@@ -398,14 +467,31 @@ public class ArtistDirectoryProjectionService {
         if (!isReady()) return Optional.empty();
         String safeGender = normalize(gender);
         String safeRegion = normalize(region);
-        List<String> raw = jdbc.query("""
-                SELECT DISTINCT directory.initial
-                FROM artist_directory_stats directory
-                WHERE (? = '' OR directory.gender = ?)
-                  AND (? = '' OR directory.region = ?)
-                ORDER BY directory.initial
-                """, (rs, index) -> rs.getString(1), safeGender, safeGender, safeRegion, safeRegion);
-        return Optional.of(normalizeInitialBuckets(raw));
+        long cacheRevision = projectionEpoch.get() ^ (CatalogCacheEpoch.current() << 20);
+        String cacheKey = cacheRevision + "|" + safeGender + "|" + safeRegion;
+        long now = System.nanoTime();
+        CachedInitials cached = initialsCache.get(cacheKey);
+        if (cached != null && now < cached.expiresAtNanos()) {
+            return Optional.of(cached.initials());
+        }
+
+        StringBuilder where = new StringBuilder();
+        List<Object> params = new ArrayList<>(2);
+        if (!safeGender.isEmpty()) {
+            where.append(" WHERE directory.gender = ?");
+            params.add(safeGender);
+        }
+        if (!safeRegion.isEmpty()) {
+            where.append(where.isEmpty() ? " WHERE " : " AND ").append("directory.region = ?");
+            params.add(safeRegion);
+        }
+        List<String> raw = queryJdbc.query(
+                "SELECT DISTINCT directory.initial FROM artist_directory_stats directory"
+                        + where + " ORDER BY directory.initial",
+                (rs, index) -> rs.getString(1), params.toArray());
+        List<String> normalized = normalizeInitialBuckets(raw);
+        initialsCache.put(cacheKey, new CachedInitials(normalized, System.nanoTime() + INITIALS_CACHE_TTL_NANOS));
+        return Optional.of(normalized);
     }
 
     static List<String> normalizeInitialBuckets(List<String> raw) {
@@ -485,19 +571,25 @@ public class ArtistDirectoryProjectionService {
             filterArgs.add(reviewed);
         }
         if (!safeKeyword.isEmpty()) {
+            String lower = safeKeyword.toLowerCase(Locale.ROOT);
+            String lowerLike = escapeLike(lower);
+            boolean asciiOnly = isAscii(lower);
             where.append(where.isEmpty() ? "WHERE " : " AND ")
-                    .append("(LOWER(name) LIKE '%' || LOWER(?) || '%'"
-                            + " OR LOWER(artist_key) LIKE '%' || LOWER(?) || '%'"
-                            + " OR LOWER(artist_init) LIKE LOWER(?) || '%'"
-                            + " OR LOWER(artist_py) LIKE LOWER(?) || '%')");
-            filterArgs.add(safeKeyword);
-            filterArgs.add(safeKeyword);
-            filterArgs.add(safeKeyword);
-            filterArgs.add(safeKeyword);
+                    .append("(LOWER(name) LIKE '%' || ? || '%' ESCAPE '\\'");
+            filterArgs.add(lowerLike);
+            if (asciiOnly) {
+                where.append(" OR LOWER(artist_key) LIKE '%' || ? || '%' ESCAPE '\\'")
+                        .append(" OR LOWER(artist_init) LIKE ? || '%' ESCAPE '\\'")
+                        .append(" OR LOWER(artist_py) LIKE ? || '%' ESCAPE '\\'");
+                filterArgs.add(lowerLike);
+                filterArgs.add(lowerLike);
+                filterArgs.add(lowerLike);
+            }
+            where.append(")");
         }
 
         String whereSql = where.isEmpty() ? "" : " " + where;
-        Long total = jdbc.queryForObject(
+        Long total = queryJdbc.queryForObject(
                 "SELECT COUNT(*) FROM artist_directory_stats" + whereSql,
                 Long.class,
                 filterArgs.toArray());
@@ -513,7 +605,7 @@ public class ArtistDirectoryProjectionService {
         rowArgs.addAll(filterArgs);
         rowArgs.add(safeSize);
         rowArgs.add(safePage * safeSize);
-        List<AdminArtistRow> rows = jdbc.query(
+        List<AdminArtistRow> rows = queryJdbc.query(
                 "SELECT artist_key, name, gender, song_count, reviewed, artist_kind, avatar_path "
                         + "FROM artist_directory_stats" + whereSql
                         + " ORDER BY song_count DESC, name ASC, artist_key ASC LIMIT ? OFFSET ?",
@@ -527,6 +619,17 @@ public class ArtistDirectoryProjectionService {
                         rs.getString("avatar_path")),
                 rowArgs.toArray());
         return Optional.of(new AdminProjectionPage(rows, totalCount));
+    }
+
+    private static String escapeLike(String value) {
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
+    private static boolean isAscii(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            if (value.charAt(i) > 0x7F) return false;
+        }
+        return true;
     }
 
     public record ArtistRow(String artistKey, String name, String initial, String gender,

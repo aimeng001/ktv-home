@@ -818,7 +818,6 @@ class AiLibraryServiceTest {
         verify(tasks).existsByBatchId(batchId);
         verify(tasks).pauseBatch(batchId);
         verify(tasks).countStatusesByBatchId(batchId);
-        verify(tasks, never()).findByBatchIdOrderByCreatedAtAsc(anyString());
     }
 
     @Test
@@ -1616,7 +1615,6 @@ class AiLibraryServiceTest {
         verify(taskRepository).resetBatchStatusToPending(batchId, "paused");
         verify(worker).analyze(91L);
         verify(worker, never()).analyze(92L);
-        verify(taskRepository, never()).findByBatchIdOrderByCreatedAtAsc(anyString());
     }
 
     @Test
@@ -1667,7 +1665,6 @@ class AiLibraryServiceTest {
         verify(taskRepository).resetBatchStatusToPending(batchId, "failed");
         verify(worker).analyze(93L);
         verify(worker, never()).analyze(94L);
-        verify(taskRepository, never()).findByBatchIdOrderByCreatedAtAsc(anyString());
     }
 
     @Test

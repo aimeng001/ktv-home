@@ -14,6 +14,8 @@ final class LiveTranscodeCommandBuilder {
     static final int MAX_LIVE_TRANSCODE_THREADS = 4;
     static final String DEFAULT_PROBE_SIZE = "2097152";
     static final String DEFAULT_ANALYZE_DURATION = "1500000";
+    static final String LIVE_SCALE_EVEN_FILTER =
+            "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2";
 
     private final String ffmpegPath;
     private final int liveTranscodeThreads;
@@ -98,14 +100,22 @@ final class LiveTranscodeCommandBuilder {
                     + "[0:a:" + rightSourceTrack + "]aresample=async=1:first_pts=0,aformat=sample_rates=48000:channel_layouts=mono[a1];"
                     + "[a0][a1]join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR[aout]";
             command.add("-filter_complex");
-            if (useVaapi) {
-                command.add("[0:V:0]format=nv12,hwupload[vout];" + audioFilter);
-                command.add("-map");
-                command.add("[vout]");
-            } else {
+            if (effectiveCopyVideo) {
                 command.add(audioFilter);
                 command.add("-map");
                 command.add("0:V:0?");
+            } else if (useVaapi) {
+                command.add("[0:V:0]" + LIVE_SCALE_EVEN_FILTER + ",format=nv12,hwupload[vout];" + audioFilter);
+                command.add("-map");
+                command.add("[vout]");
+            } else if (useRkmpp) {
+                command.add("[0:V:0]" + LIVE_SCALE_EVEN_FILTER + ",format=nv12[vout];" + audioFilter);
+                command.add("-map");
+                command.add("[vout]");
+            } else {
+                command.add("[0:V:0]" + LIVE_SCALE_EVEN_FILTER + ",format=yuv420p[vout];" + audioFilter);
+                command.add("-map");
+                command.add("[vout]");
             }
             command.add("-map");
             command.add("[aout]");
@@ -135,7 +145,7 @@ final class LiveTranscodeCommandBuilder {
         } else if (useVaapi) {
             if (!shouldMerge) {
                 command.add("-vf");
-                command.add("format=nv12,hwupload");
+                command.add(LIVE_SCALE_EVEN_FILTER + ",format=nv12,hwupload");
             }
             command.add("-c:v");
             command.add("h264_vaapi");
@@ -149,6 +159,10 @@ final class LiveTranscodeCommandBuilder {
             command.add("-bf");
             command.add("0");
         } else if (useRkmpp) {
+            if (!shouldMerge) {
+                command.add("-vf");
+                command.add(LIVE_SCALE_EVEN_FILTER);
+            }
             command.add("-pix_fmt");
             command.add("nv12");
             command.add("-c:v");
@@ -164,12 +178,18 @@ final class LiveTranscodeCommandBuilder {
             command.add("-bufsize");
             command.add("9000k");
         } else {
+            if (!shouldMerge) {
+                command.add("-vf");
+                command.add(LIVE_SCALE_EVEN_FILTER);
+            }
             command.add("-c:v");
             command.add("libx264");
             command.add("-threads");
             command.add(String.valueOf(liveTranscodeThreads));
             command.add("-preset");
             command.add("superfast");
+            command.add("-profile:v");
+            command.add("main");
             command.add("-bf");
             command.add("0");
             command.add("-g");
@@ -209,6 +229,8 @@ final class LiveTranscodeCommandBuilder {
         command.add("-dn");
         command.add("-map_chapters");
         command.add("-1");
+        command.add("-max_muxing_queue_size");
+        command.add("1024");
 
         command.add("-f");
         command.add("mp4");

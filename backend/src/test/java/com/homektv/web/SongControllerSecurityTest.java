@@ -14,6 +14,7 @@ import com.homektv.contract.SongDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.core.io.Resource;
@@ -261,6 +262,37 @@ class SongControllerSecurityTest {
         mvc.perform(get("/api/songs").param("keyword", "x").param("page", "4001"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_PAGE"));
+    }
+
+    @Test
+    @ResourceLock("catalog-cache-epoch")
+    void searchCachesDtosAcrossRepeatedCallsAndInvalidatesOnCatalogEpochBump() {
+        Song song = song(80L, null, null);
+        song.setTitle("一曲相思");
+        SongFile readyFile = new SongFile();
+        readyFile.setSongId(80L);
+        readyFile.setValid(true);
+        readyFile.setProbePending(false);
+        readyFile.setMediaType("KTV_VIDEO");
+
+        com.homektv.library.CatalogRevisionService rev = mock(com.homektv.library.CatalogRevisionService.class);
+        when(rev.current()).thenReturn(11L);
+        controller.setCatalogRevisionService(rev);
+        controller.setAvailabilityPolicy(new SongAvailabilityPolicy(fileRepo));
+        when(searchService.search("yqxs", "", 0)).thenReturn(List.of(song));
+        when(fileRepo.findBySongIdInAndValidTrueOrderByPriorityDesc(Set.of(80L))).thenReturn(List.of(readyFile));
+
+        List<SongDto> first = controller.search("yqxs", "", 0);
+        List<SongDto> second = controller.search("yqxs", "", 0);
+
+        assertThat(first).hasSize(1);
+        assertThat(second).isEqualTo(first);
+        verify(searchService, org.mockito.Mockito.times(1)).search("yqxs", "", 0);
+        verify(fileRepo, org.mockito.Mockito.times(1)).findBySongIdInAndValidTrueOrderByPriorityDesc(Set.of(80L));
+
+        com.homektv.common.CatalogCacheEpoch.bump();
+        controller.search("yqxs", "", 0);
+        verify(searchService, org.mockito.Mockito.times(2)).search("yqxs", "", 0);
     }
 
     private static Song song(long id, String coverPath, String lyricPath) {

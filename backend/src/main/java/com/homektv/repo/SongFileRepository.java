@@ -1,7 +1,6 @@
 package com.homektv.repo;
 
 import com.homektv.domain.SongFile;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -60,7 +59,6 @@ public interface SongFileRepository extends JpaRepository<SongFile, Long> {
     java.util.Set<Long> findSongIdsWithReadyFile(@Param("songIds") java.util.Collection<Long> songIds);
     boolean existsBySourceMd5(String sourceMd5);
     boolean existsByOutputMd5(String outputMd5);
-    List<SongFile> findByFileRoleOrderByImportedAtDesc(String fileRole);
     Optional<SongFile> findByFileRoleAndFilePath(String fileRole, String filePath);
     List<SongFile> findByFileRoleAndFilePathIn(String fileRole, Collection<String> filePaths);
     List<SongFile> findByFileRoleAndRelativePathIn(String fileRole, Collection<String> relativePaths);
@@ -109,14 +107,6 @@ public interface SongFileRepository extends JpaRepository<SongFile, Long> {
                                      @Param("backslashPrefix") String backslashPrefix,
                                      @Param("slashPrefix") String slashPrefix);
     List<SongFile> findBySourcePath(String sourcePath);
-
-    /** 伴奏轨判定为低置信度的文件源，供后台人工复核（详设§11：入库记伴奏轨，判不准的挑出来核对）。
-     *
-     * Files whose vocal track confidence is low, queued for manual review
-     * (per detailed design §11: record accompaniment tracks on ingestion,
-     * flag uncertain ones for verification).
-     */
-    Page<SongFile> findByVocalConfidence(String vocalConfidence, Pageable pageable);
 
     @Modifying
     @Query("""

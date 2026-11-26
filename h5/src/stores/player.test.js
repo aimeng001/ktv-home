@@ -298,13 +298,13 @@ describe('usePlayerStore', () => {
     expect(p.playback).toEqual({ kind: 'NONE', status: 'IDLE' })
   })
 
-  it('accepts wrapped control snapshots and ignores invalid response shapes', () => {
+  it('accepts direct control snapshots and ignores invalid response shapes', () => {
     const p = usePlayerStore()
-    p.applyControlResponse({ snapshot: { ...snapshot, stateRevision: 2, list: [] } })
+    p.applyControlResponse({ ...snapshot, stateRevision: 2, list: [] })
     expect(p.stateRevision).toBe(2)
     expect(p.queue).toEqual([])
 
-    p.applyControlResponse({ snapshot: { list: 'not-an-array', state: 'playing' } })
+    p.applyControlResponse({ list: 'not-an-array', state: 'playing' })
     p.applyControlResponse(null)
     expect(p.state).toBe('playing')
     expect(p.queue).toEqual([])

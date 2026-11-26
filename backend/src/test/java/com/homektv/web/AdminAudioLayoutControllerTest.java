@@ -30,7 +30,7 @@ class AdminAudioLayoutControllerTest {
         AudioLayoutUpdateRequest request = new AudioLayoutUpdateRequest(
                 AudioLayout.DUAL_CHANNEL, null, null, AudioChannel.LEFT, AudioChannel.RIGHT);
         AudioLayoutDto dto = new AudioLayoutDto(AudioLayout.DUAL_CHANNEL, null, null,
-                AudioChannel.LEFT, AudioChannel.RIGHT);
+                AudioChannel.LEFT, AudioChannel.RIGHT, null);
         when(admin.updateAudioLayout(12L, request)).thenReturn(dto);
         when(admin.swapAudioLayout(12L)).thenReturn(dto);
 

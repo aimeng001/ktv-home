@@ -288,6 +288,14 @@
           <span>收藏状态同步失败，收藏标记可能不准确</span>
           <button type="button" class="btn ghost small" @click="syncFavorites">重新同步</button>
         </div>
+        <div v-if="loading && hasItems" class="stage-inline-status" role="status" aria-live="polite">
+          <span class="mini-spinner" aria-hidden="true" />
+          <span>{{ keyword.trim() ? `正在搜索“${keyword.trim()}”…` : '正在加载曲目…' }}</span>
+        </div>
+        <div v-if="loadError && hasItems" class="stage-inline-error" role="alert">
+          <span>{{ loadError }}</span>
+          <button type="button" class="btn ghost small" @click="reloadActive({ bypassCache: true })">重试</button>
+        </div>
         <div v-if="loading && !hasItems" class="stage-state">加载中…</div>
         <div v-else-if="loadError && !hasItems" class="stage-state error">
           <span>{{ loadError }}</span>
@@ -484,6 +492,7 @@ import {
   resolveSongThumbUrl,
   songAvatarInitial,
 } from '../../utils/songThumbnail'
+import { createSearchCache } from '../../utils/searchCache'
 import {
   HOT_NEW_MODES,
   SORT_OPTIONS,
@@ -578,7 +587,9 @@ const orderingPlaylist = ref(false)
 const recentItems = ref([])
 const busyHistoryId = ref(null)
 
+const SEARCH_DEBOUNCE_MS = 150
 const reqGate = createLatestRequest()
+const searchCache = createSearchCache({ maxEntries: 80, ttlMs: 45_000 })
 let debounceTimer = null
 let suppressKeywordWatch = false
 
@@ -773,10 +784,11 @@ function nextPage() {
   }
 }
 
-async function reloadActive() {
+async function reloadActive(arg = {}) {
+  const bypassCache = Boolean(arg?.bypassCache) || (typeof Event !== 'undefined' && arg instanceof Event)
   const t = activeTab.value
   if (t === 'singer' && !selectedArtist.value) {
-    await loadArtistsAndInitials()
+    await loadArtistsAndInitials({ bypassCache })
     return
   }
   if (t === 'language') {
@@ -785,7 +797,7 @@ async function reloadActive() {
       songTotal.value = 0
       return
     }
-    await loadSongsByBrowse()
+    await loadSongsByBrowse({ bypassCache })
     return
   }
   if (t === 'theme') {
@@ -794,15 +806,15 @@ async function reloadActive() {
       songTotal.value = 0
       return
     }
-    await loadSongsByBrowse()
+    await loadSongsByBrowse({ bypassCache })
     return
   }
   if (t === 'opera') {
-    await loadVarietySongs()
+    await loadVarietySongs({ bypassCache })
     return
   }
   if (t === 'hot_new') {
-    await loadHotNewSongs()
+    await loadHotNewSongs({ bypassCache })
     return
   }
   if (t === 'featured') {
@@ -817,20 +829,20 @@ async function reloadActive() {
     await loadRecentHistory()
     return
   }
-  await loadSongsOnly()
+  await loadSongsOnly({ bypassCache })
 }
 
-function loadSongsOnly() {
+function loadSongsOnly({ bypassCache = false } = {}) {
   if (activeTab.value === 'hot_new') {
-    return loadHotNewSongs()
+    return loadHotNewSongs({ bypassCache })
   }
   if (activeTab.value === 'opera') {
-    return loadVarietySongs()
+    return loadVarietySongs({ bypassCache })
   }
   if ((activeTab.value === 'song_name' || activeTab.value === 'local') && keyword.value.trim() && !vocalFormFilter.value && !wordCount.value) {
-    return loadSongsBySearch()
+    return loadSongsBySearch(null, { bypassCache })
   }
-  return loadSongsByBrowse()
+  return loadSongsByBrowse({ bypassCache })
 }
 
 function normalizeSongSearchResult(res, page) {
@@ -847,10 +859,21 @@ function normalizeSongSearchResult(res, page) {
   songTotal.value = Number.isFinite(res?.total) ? res.total : songs.value.length
 }
 
-async function loadSongsBySearch(explicitKw = null) {
+async function loadSongsBySearch(explicitKw = null, { bypassCache = false } = {}) {
   const q = (explicitKw ?? keyword.value).trim()
   if (!q) {
-    return loadSongsByBrowse()
+    return loadSongsByBrowse({ bypassCache })
+  }
+  const cacheKey = `songs|${q}|${mediaFilter.value}|${songPage.value}`
+  if (!bypassCache) {
+    const cached = searchCache.get(cacheKey)
+    if (cached !== undefined) {
+      reqGate.cancel()
+      loading.value = false
+      loadError.value = ''
+      normalizeSongSearchResult(cached, songPage.value)
+      return
+    }
   }
   const req = reqGate.begin()
   loading.value = true
@@ -858,6 +881,7 @@ async function loadSongsBySearch(explicitKw = null) {
   try {
     const res = await api.searchSongs(q, mediaFilter.value, songPage.value, { signal: req.signal })
     if (!reqGate.isCurrent(req.id)) return
+    searchCache.set(cacheKey, res)
     normalizeSongSearchResult(res, songPage.value)
   } catch (e) {
     if (!reqGate.isCurrent(req.id) || e.name === 'AbortError') return
@@ -867,36 +891,49 @@ async function loadSongsBySearch(explicitKw = null) {
   }
 }
 
-async function loadSongsByBrowse() {
+async function loadSongsByBrowse({ bypassCache = false } = {}) {
+  const params = {
+    sort: songSort.value,
+    page: songPage.value,
+    size: PAGE_SIZE_SONGS,
+  }
+  if (mediaFilter.value) params.mediaType = mediaFilter.value
+  if (vocalFormFilter.value) params.vocalForm = vocalFormFilter.value
+  if (keyword.value.trim()) params.keyword = keyword.value.trim()
+  if (wordCount.value > 0) params.wordCount = wordCount.value
+  if (activeTab.value === 'hd') {
+    params.tag = HIGH_DEFINITION_TAG
+  } else if (activeTab.value === 'tiktok') {
+    params.tag = TIKTOK_TAG
+  } else if (activeTab.value === 'singer' && selectedArtist.value) {
+    params.artist = selectedArtist.value.name
+    if (selectedArtist.value.artistKey) params.artistKey = selectedArtist.value.artistKey
+  } else if (activeTab.value === 'language' && selectedLanguage.value) {
+    params.language = selectedLanguage.value
+  } else if (activeTab.value === 'theme' && selectedTag.value) {
+    params.tag = selectedTag.value
+  }
+  const cacheKey = `browse|${JSON.stringify(params)}`
+  approximateSearchPager.value = false
+  searchHasMore.value = false
+  if (!bypassCache) {
+    const cached = searchCache.get(cacheKey)
+    if (cached !== undefined) {
+      reqGate.cancel()
+      loading.value = false
+      loadError.value = ''
+      songs.value = Array.isArray(cached?.items) ? cached.items : []
+      songTotal.value = Number.isFinite(cached?.total) ? cached.total : songs.value.length
+      return
+    }
+  }
   const req = reqGate.begin()
   loading.value = true
   loadError.value = ''
-  approximateSearchPager.value = false
-  searchHasMore.value = false
   try {
-    const params = {
-      sort: songSort.value,
-      page: songPage.value,
-      size: PAGE_SIZE_SONGS,
-    }
-    if (mediaFilter.value) params.mediaType = mediaFilter.value
-    if (vocalFormFilter.value) params.vocalForm = vocalFormFilter.value
-    if (keyword.value.trim()) params.keyword = keyword.value.trim()
-    if (wordCount.value > 0) params.wordCount = wordCount.value
-    if (activeTab.value === 'hd') {
-      params.tag = HIGH_DEFINITION_TAG
-    } else if (activeTab.value === 'tiktok') {
-      params.tag = TIKTOK_TAG
-    } else if (activeTab.value === 'singer' && selectedArtist.value) {
-      params.artist = selectedArtist.value.name
-      if (selectedArtist.value.artistKey) params.artistKey = selectedArtist.value.artistKey
-    } else if (activeTab.value === 'language' && selectedLanguage.value) {
-      params.language = selectedLanguage.value
-    } else if (activeTab.value === 'theme' && selectedTag.value) {
-      params.tag = selectedTag.value
-    }
     const res = await api.browseSongPage(params, { signal: req.signal })
     if (!reqGate.isCurrent(req.id)) return
+    searchCache.set(cacheKey, res)
     songs.value = Array.isArray(res?.items) ? res.items : []
     songTotal.value = Number.isFinite(res?.total) ? res.total : songs.value.length
   } catch (e) {
@@ -907,21 +944,35 @@ async function loadSongsByBrowse() {
   }
 }
 
-async function loadHotNewSongs() {
+async function loadHotNewSongs({ bypassCache = false } = {}) {
   if (hotNewMode.value === 'all') {
-    return loadSongsByBrowse()
+    return loadSongsByBrowse({ bypassCache })
+  }
+  approximateSearchPager.value = false
+  searchHasMore.value = false
+  const cacheKey = `hotNew|${hotNewMode.value}`
+  if (!bypassCache) {
+    const cachedRaw = searchCache.get(cacheKey)
+    if (cachedRaw !== undefined) {
+      reqGate.cancel()
+      loading.value = false
+      loadError.value = ''
+      const filtered = filterAndSortClientSongs(cachedRaw)
+      songs.value = filtered
+      songTotal.value = filtered.length
+      return
+    }
   }
   const req = reqGate.begin()
   loading.value = true
   loadError.value = ''
-  approximateSearchPager.value = false
-  searchHasMore.value = false
   try {
     const res = hotNewMode.value === 'ranking'
       ? await api.ranking(30, { signal: req.signal })
       : await api.newSongs({ signal: req.signal })
     if (!reqGate.isCurrent(req.id)) return
     const rawList = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : [])
+    searchCache.set(cacheKey, rawList)
     const filtered = filterAndSortClientSongs(rawList)
     songs.value = filtered
     songTotal.value = filtered.length
@@ -933,25 +984,38 @@ async function loadHotNewSongs() {
   }
 }
 
-async function loadVarietySongs() {
+async function loadVarietySongs({ bypassCache = false } = {}) {
+  const params = {
+    tag: selectedVariety.value,
+    sort: songSort.value,
+    page: songPage.value,
+    size: PAGE_SIZE_SONGS,
+  }
+  if (mediaFilter.value) params.mediaType = mediaFilter.value
+  if (vocalFormFilter.value) params.vocalForm = vocalFormFilter.value
+  if (keyword.value.trim()) params.keyword = keyword.value.trim()
+  if (wordCount.value > 0) params.wordCount = wordCount.value
+  const cacheKey = `variety|${JSON.stringify(params)}`
+  approximateSearchPager.value = false
+  searchHasMore.value = false
+  if (!bypassCache) {
+    const cached = searchCache.get(cacheKey)
+    if (cached !== undefined) {
+      reqGate.cancel()
+      loading.value = false
+      loadError.value = ''
+      songs.value = Array.isArray(cached?.items) ? cached.items : []
+      songTotal.value = Number.isFinite(cached?.total) ? cached.total : songs.value.length
+      return
+    }
+  }
   const req = reqGate.begin()
   loading.value = true
   loadError.value = ''
-  approximateSearchPager.value = false
-  searchHasMore.value = false
   try {
-    const params = {
-      tag: selectedVariety.value,
-      sort: songSort.value,
-      page: songPage.value,
-      size: PAGE_SIZE_SONGS,
-    }
-    if (mediaFilter.value) params.mediaType = mediaFilter.value
-    if (vocalFormFilter.value) params.vocalForm = vocalFormFilter.value
-    if (keyword.value.trim()) params.keyword = keyword.value.trim()
-    if (wordCount.value > 0) params.wordCount = wordCount.value
     const res = await api.browseSongPage(params, { signal: req.signal })
     if (!reqGate.isCurrent(req.id)) return
+    searchCache.set(cacheKey, res)
     songs.value = Array.isArray(res?.items) ? res.items : []
     songTotal.value = Number.isFinite(res?.total) ? res.total : songs.value.length
   } catch (e) {
@@ -962,25 +1026,44 @@ async function loadVarietySongs() {
   }
 }
 
-async function loadArtistsAndInitials() {
+async function loadArtistsAndInitials({ bypassCache = false } = {}) {
+  const params = {
+    gender: artistGender.value,
+    region: artistRegion.value,
+    initial: artistLetter.value === '热门' ? '' : artistLetter.value,
+    keyword: keyword.value.trim(),
+    page: artistPage.value,
+    size: PAGE_SIZE_ARTISTS,
+  }
+  const pageKey = `artists|${JSON.stringify(params)}`
+  const initKey = `artistInitials|${artistGender.value}|${artistRegion.value}`
+  approximateSearchPager.value = false
+  searchHasMore.value = false
+  if (!bypassCache) {
+    const cachedPage = searchCache.get(pageKey)
+    const cachedInit = searchCache.get(initKey)
+    if (cachedPage !== undefined && cachedInit !== undefined) {
+      reqGate.cancel()
+      loading.value = false
+      loadError.value = ''
+      artists.value = Array.isArray(cachedPage?.items) ? cachedPage.items : []
+      artistTotal.value = Number.isFinite(cachedPage?.total) ? cachedPage.total : artists.value.length
+      regionDataAvailable.value = cachedPage?.regionDataAvailable !== false
+      artistInitials.value = Array.isArray(cachedInit) ? cachedInit : []
+      return
+    }
+  }
   const req = reqGate.begin()
   loading.value = true
   loadError.value = ''
-  approximateSearchPager.value = false
-  searchHasMore.value = false
   try {
     const [pageRes, initRes] = await Promise.all([
-      api.browseArtistPage({
-        gender: artistGender.value,
-        region: artistRegion.value,
-        initial: artistLetter.value === '热门' ? '' : artistLetter.value,
-        keyword: keyword.value.trim(),
-        page: artistPage.value,
-        size: PAGE_SIZE_ARTISTS,
-      }, { signal: req.signal }),
+      api.browseArtistPage(params, { signal: req.signal }),
       api.browseArtistInitials(artistGender.value, artistRegion.value, { signal: req.signal }),
     ])
     if (!reqGate.isCurrent(req.id)) return
+    searchCache.set(pageKey, pageRes)
+    searchCache.set(initKey, initRes)
     artists.value = Array.isArray(pageRes?.items) ? pageRes.items : []
     artistTotal.value = Number.isFinite(pageRes?.total) ? pageRes.total : artists.value.length
     regionDataAvailable.value = pageRes?.regionDataAvailable !== false
@@ -993,22 +1076,37 @@ async function loadArtistsAndInitials() {
   }
 }
 
-async function loadArtistsOnly() {
+async function loadArtistsOnly({ bypassCache = false } = {}) {
+  const params = {
+    gender: artistGender.value,
+    region: artistRegion.value,
+    initial: artistLetter.value === '热门' ? '' : artistLetter.value,
+    keyword: keyword.value.trim(),
+    page: artistPage.value,
+    size: PAGE_SIZE_ARTISTS,
+  }
+  const pageKey = `artists|${JSON.stringify(params)}`
+  approximateSearchPager.value = false
+  searchHasMore.value = false
+  if (!bypassCache) {
+    const cached = searchCache.get(pageKey)
+    if (cached !== undefined) {
+      reqGate.cancel()
+      loading.value = false
+      loadError.value = ''
+      artists.value = Array.isArray(cached?.items) ? cached.items : []
+      artistTotal.value = Number.isFinite(cached?.total) ? cached.total : artists.value.length
+      regionDataAvailable.value = cached?.regionDataAvailable !== false
+      return
+    }
+  }
   const req = reqGate.begin()
   loading.value = true
   loadError.value = ''
-  approximateSearchPager.value = false
-  searchHasMore.value = false
   try {
-    const res = await api.browseArtistPage({
-      gender: artistGender.value,
-      region: artistRegion.value,
-      initial: artistLetter.value === '热门' ? '' : artistLetter.value,
-      keyword: keyword.value.trim(),
-      page: artistPage.value,
-      size: PAGE_SIZE_ARTISTS,
-    }, { signal: req.signal })
+    const res = await api.browseArtistPage(params, { signal: req.signal })
     if (!reqGate.isCurrent(req.id)) return
+    searchCache.set(pageKey, res)
     artists.value = Array.isArray(res?.items) ? res.items : []
     artistTotal.value = Number.isFinite(res?.total) ? res.total : artists.value.length
     regionDataAvailable.value = res?.regionDataAvailable !== false
@@ -1324,7 +1422,7 @@ function triggerSearchNow() {
   clearTimeout(debounceTimer)
   songPage.value = 0
   artistPage.value = 0
-  reloadActive()
+  reloadActive({ bypassCache: Boolean(loadError.value) })
 }
 
 function focusSearchKeyboard() {
@@ -1345,7 +1443,7 @@ watch(keyword, () => {
     } else if (showKeyboard.value) {
       loadSongsOnly()
     }
-  }, 280)
+  }, SEARCH_DEBOUNCE_MS)
 })
 
 watch(wordCount, () => {
@@ -1689,6 +1787,40 @@ defineExpose({ switchTab, focusSearchKeyboard })
   gap: 12px;
 }
 .stage-state.error { color: var(--coral-soft); }
+.stage-inline-status,
+.stage-inline-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  flex: none;
+}
+.stage-inline-status {
+  justify-content: flex-start;
+  color: #bfdbfe;
+  background: rgba(49, 130, 251, 0.14);
+  border: 1px solid rgba(49, 130, 251, 0.32);
+}
+.stage-inline-error {
+  color: var(--coral-soft);
+  background: rgba(216, 90, 48, 0.16);
+  border: 1px solid rgba(216, 90, 48, 0.4);
+}
+.mini-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(191, 219, 254, 0.35);
+  border-top-color: #93c5fd;
+  animation: ktv-spin 0.8s linear infinite;
+  flex: none;
+}
+@keyframes ktv-spin {
+  to { transform: rotate(360deg); }
+}
 .favorites-sync-error {
   display: flex;
   align-items: center;

@@ -4,11 +4,11 @@
       <input
         ref="inputEl"
         type="text"
-        :value="modelValue"
+        :value="composingDraft !== null ? composingDraft : modelValue"
         maxlength="40"
         :placeholder="kbMode === 'number' ? '输入 6 位歌曲编号（如 800101）直接秒定歌曲' : '输入歌名 / 歌手 / 拼音首字母'"
         @input="onManualInput"
-        @compositionstart="isComposing = true"
+        @compositionstart="onCompositionStart"
         @compositionend="onCompositionEnd"
         @keydown.enter="onEnter"
       />
@@ -134,6 +134,7 @@ function selectWordCount(val) {
 const kbMode = ref('qwerty')
 const inputEl = ref(null)
 const isComposing = ref(false)
+const composingDraft = ref(null)
 const qwertyRows = QWERTY_ROWS
 const t9Keys = T9_KEYS
 const numberKeys = NUMBER_KEYS
@@ -146,6 +147,10 @@ function resetMultiTap() {
   lastT9Digit = null
   lastT9TapAt = 0
   lastT9TapCount = 0
+}
+
+function normalizeImeSearchValue(raw) {
+  return String(raw ?? '').replace(/['\u2018\u2019\s]+/g, '')
 }
 
 function switchMode(mode) {
@@ -167,14 +172,28 @@ function onNumberPress(item) {
   }
 }
 
+function onCompositionStart(e) {
+  isComposing.value = true
+  composingDraft.value = e?.target?.value ?? (props.modelValue || '')
+}
+
 function onManualInput(e) {
   resetMultiTap()
-  emit('update:modelValue', e.target.value)
+  const raw = e?.target?.value ?? ''
+  if (isComposing.value || e?.isComposing) {
+    composingDraft.value = raw
+    emit('update:modelValue', normalizeImeSearchValue(raw))
+    return
+  }
+  composingDraft.value = null
+  emit('update:modelValue', raw)
 }
 
 function onCompositionEnd(e) {
   isComposing.value = false
-  onManualInput(e)
+  composingDraft.value = null
+  const raw = e?.target?.value ?? ''
+  emit('update:modelValue', raw)
 }
 
 function onEnter(e) {
@@ -185,11 +204,15 @@ function onEnter(e) {
 
 function appendChar(ch) {
   resetMultiTap()
+  isComposing.value = false
+  composingDraft.value = null
   emit('update:modelValue', (props.modelValue || '') + ch)
 }
 
 function backspace() {
   resetMultiTap()
+  isComposing.value = false
+  composingDraft.value = null
   const v = props.modelValue || ''
   if (!v) return
   emit('update:modelValue', v.slice(0, -1))
@@ -197,6 +220,8 @@ function backspace() {
 
 function clearAll() {
   resetMultiTap()
+  isComposing.value = false
+  composingDraft.value = null
   emit('update:modelValue', '')
 }
 

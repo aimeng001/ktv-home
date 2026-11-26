@@ -32,16 +32,14 @@ class MainActivityNonKioskFocusContractTest {
     }
 
     @Test
-    fun legacyHomeAndMixerFocusHelpersTargetVisibleRemoteFocusableControls() {
+    fun homeFocusHelperTargetsVisibleRemoteFocusableControls() {
         val dock = locate("src/main/java/com/homektv/tv/ui/KtvBottomDockController.kt").readText()
         val focusHomeBody = dock.substringAfter("fun focusHome()")
-            .substringBefore("fun focusMixer()")
-        val focusMixerBody = dock.substringAfter("fun focusMixer()")
             .substringBefore("fun updateFocusUp")
 
         assertTrue(dock.contains("fun focusDefaultControl("))
         assertFalse("focusHome 不得聚焦 GONE 的 btnDockHome", focusHomeBody.contains("btnDockHome"))
-        assertFalse("focusMixer 不得聚焦 GONE 的 btnDockMixer", focusMixerBody.contains("btnDockMixer"))
+        assertFalse("已废弃的 focusMixer 死方法应保持移除", dock.contains("fun focusMixer("))
         assertTrue(dock.contains("requestRemoteFocus()"))
 
         val main = locate("src/main/java/com/homektv/tv/ui/MainActivity.kt").readText()

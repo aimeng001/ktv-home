@@ -269,10 +269,6 @@ class KtvBottomDockController(
         focusDefaultControl()
     }
 
-    fun focusMixer() {
-        focusDefaultControl()
-    }
-
     fun updateFocusUpTargets(isDashboard: Boolean) {
         updateFocusUpMode(
             if (isDashboard) DockFocusUpMode.KIOSK_DASHBOARD else DockFocusUpMode.KIOSK_BROWSER,

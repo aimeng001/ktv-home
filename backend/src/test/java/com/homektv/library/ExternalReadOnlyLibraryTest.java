@@ -96,8 +96,6 @@ class ExternalReadOnlyLibraryTest {
                             .max()
                             .orElse(0L);
                 });
-        lenient().when(songFileRepository.findByFileRoleOrderByImportedAtDesc(anyString()))
-                .thenAnswer(invocation -> new ArrayList<>(filesByPath.values()));
         lenient().when(songFileRepository.findByFileRoleAndFilePathIn(anyString(), org.mockito.ArgumentMatchers.anyCollection()))
                 .thenAnswer(invocation -> {
                     String role = invocation.getArgument(0);

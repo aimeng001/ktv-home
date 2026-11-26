@@ -54,21 +54,6 @@ internal class PlaybackResolver(
         )
 
     internal fun classifyPlaybackFailure(source: FileSource, error: KtvApiError): PlaybackResolution = when {
-        // Older servers do not expose the resolver endpoint. Keep native stream
-        // compatibility; an upgraded server returns FILE_NOT_FOUND explicitly.
-        error.kind == KtvApiErrorKind.HTTP && error.status == 404 && error.code == "HTTP_404" ->
-            PlaybackResolution.Ready(
-                source,
-                PlaybackDescriptor(
-                    kind = "NATIVE",
-                    status = "READY",
-                    sourceFileId = source.id,
-                    streamUrl = streamUrl(source.id),
-                    audioTracks = source.audioTracks,
-                    vocalTrackIndex = source.audioLayout.accompanimentTrackIndex ?: source.vocalTrackIndex,
-                    audioLayout = source.audioLayout,
-                ),
-            )
         error.code == "FILE_NOT_FOUND" || error.code == "NO_VALID_FILE" ->
             PlaybackResolution.Absent(AbsentReason.NO_VALID_FILE)
         error.kind == KtvApiErrorKind.HTTP && error.status == 404 -> PlaybackResolution.Absent(AbsentReason.NO_VALID_FILE)
@@ -85,6 +70,4 @@ internal class PlaybackResolver(
         val base = apiBaseProvider().removeSuffix("/api")
         return base + "/" + path.removePrefix("/")
     }
-
-    private fun streamUrl(fileId: Long): String = "${apiBaseProvider()}/stream/$fileId"
 }

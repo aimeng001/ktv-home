@@ -115,18 +115,18 @@ class ArtistDirectoryProjectionServiceTest {
     void pageTrimsFiltersAndClampsNegativePageAndOversizedPageLength() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class))).thenReturn(true);
-        when(jdbc.queryForObject(contains("SELECT COUNT(*)"), eq(Long.class), any(Object[].class))).thenReturn(3L);
         stubSingleArtistRow(jdbc);
         ArtistDirectoryProjectionService service = new ArtistDirectoryProjectionService(jdbc);
 
         var result = service.page(" 女歌手 ", " 热门 ", -3, 500).orElseThrow();
 
-        assertThat(result.total()).isEqualTo(3L);
+        assertThat(result.total()).isEqualTo(1L);
         assertThat(result.rows()).containsExactly(new ArtistDirectoryProjectionService.ArtistRow(
                 "lee-hom", "王力宏", "W", "男歌手", 42L, true, "PERSON", "/data/artist/lee.webp"));
         var arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
         verify(jdbc).query(contains("LIMIT ? OFFSET ?"), any(RowMapper.class), arguments.capture());
-        assertThat(arguments.getValue()).containsExactly("女歌手", "女歌手", "", "", "", "", 100, 0);
+        assertThat(arguments.getValue()).containsExactly("女歌手", 101, 0);
+        verify(jdbc, never()).queryForObject(contains("SELECT COUNT(*)"), eq(Long.class), any(Object[].class));
     }
 
     @Test
@@ -143,7 +143,7 @@ class ArtistDirectoryProjectionServiceTest {
         assertThat(result.rows()).isEmpty();
         var arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
         verify(jdbc).query(contains("LIMIT ? OFFSET ?"), any(RowMapper.class), arguments.capture());
-        assertThat(arguments.getValue()).containsExactly("", "", "", "", "", "", 1, 2);
+        assertThat(arguments.getValue()).containsExactly(2, 2);
     }
 
     @Test
@@ -156,17 +156,18 @@ class ArtistDirectoryProjectionServiceTest {
 
         assertThat(service.initials("女歌手")).isEmpty();
         assertThat(service.initials(" 女歌手 ")).contains(List.of("A", "W"));
+        // Cached hit on second invocation does not re-query DB
+        assertThat(service.initials("女歌手")).contains(List.of("A", "W"));
 
         var arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
         verify(jdbc).query(contains("SELECT DISTINCT directory.initial"), any(RowMapper.class), arguments.capture());
-        assertThat(arguments.getValue()).containsExactly("女歌手", "女歌手", "", "");
+        assertThat(arguments.getValue()).containsExactly("女歌手");
     }
 
     @Test
     void hashInitialQueriesNonAzBucketsAndInitialsCollapseNonAzToTrailingHash() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class))).thenReturn(true);
-        when(jdbc.queryForObject(contains("SELECT COUNT(*)"), eq(Long.class), any(Object[].class))).thenReturn(1L);
         stubSingleArtistRow(jdbc);
         doReturn(List.of("B", "a", "あ", "А", "9", "#")).when(jdbc)
                 .query(contains("SELECT DISTINCT directory.initial"), any(RowMapper.class), any(Object[].class));
@@ -177,7 +178,7 @@ class ArtistDirectoryProjectionServiceTest {
         service.page("", "#", "", 0, 20);
         var arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
         verify(jdbc).query(contains("directory.initial NOT IN ('A'"), any(RowMapper.class), arguments.capture());
-        assertThat(arguments.getValue()).containsExactly("", "", "", "", 20, 0);
+        assertThat(arguments.getValue()).containsExactly(21, 0);
     }
 
     @Test
@@ -457,5 +458,24 @@ class ArtistDirectoryProjectionServiceTest {
 
         service.onApplicationReady();
         verify(jdbc, never()).update(anyString());
+    }
+
+    @Test
+    void pageEscapesLikeWildcardsAndSkipsPinyinBranchesForCjkKeyword() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class))).thenReturn(true);
+        doReturn(List.of()).when(jdbc).query(anyString(), any(RowMapper.class), any(Object[].class));
+        ArtistDirectoryProjectionService service = new ArtistDirectoryProjectionService(jdbc);
+
+        service.page("", "", "", "周%_杰\\伦", 0, 30);
+
+        var sqlCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        var argsCaptor = org.mockito.ArgumentCaptor.forClass(Object[].class);
+        verify(jdbc).query(sqlCaptor.capture(), any(RowMapper.class), argsCaptor.capture());
+        assertThat(sqlCaptor.getValue())
+                .contains("ESCAPE '\\'")
+                .doesNotContain("artist_init")
+                .doesNotContain("artist_py");
+        assertThat(argsCaptor.getValue()).containsExactly("周\\%\\_杰\\\\伦", 31, 0);
     }
 }

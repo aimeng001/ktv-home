@@ -73,8 +73,8 @@ class SnapshotChunkingTest {
     }
 
     private static QueueSnapshot snapshotWithEntries(int count, String title) {
-        SongDto song = new SongDto(1L, title, title, "", "AUDIO", false,
-                180_000, "none", null, 0, null);
+        SongDto song = new SongDto(1L, "", title, title, "", "AUDIO", false,
+                180_000, "none", null, 0, null, true, null, "", "", "", "", null, "未知");
         List<QueueSnapshot.QueueEntry> entries = new ArrayList<>();
         for (long id = 1; id <= count; id++) {
             entries.add(new QueueSnapshot.QueueEntry(id, song, id, "点歌人", "waiting"));

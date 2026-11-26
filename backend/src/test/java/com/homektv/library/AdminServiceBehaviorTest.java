@@ -194,46 +194,6 @@ class AdminServiceBehaviorTest {
     }
 
     @Test
-    void vocalReviewHandlesDeletedSongsAndConfirmationValidatesBothTrackBounds() {
-        SongFile reviewFile = file(10L, 99L, 2);
-        reviewFile.setFormat("mkv");
-        reviewFile.setVocalConfidence("LOW");
-        when(fileRepo.findByVocalConfidence(eq("LOW"), any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(reviewFile)));
-        when(songRepo.findById(99L)).thenReturn(Optional.empty());
-
-        var review = service.listVocalReview(-2, 500).getContent().getFirst();
-
-        assertThat(review.title()).isNull();
-        assertThat(review.artist()).isNull();
-        ArgumentCaptor<Pageable> reviewPage = ArgumentCaptor.forClass(Pageable.class);
-        verify(fileRepo).findByVocalConfidence(eq("LOW"), reviewPage.capture());
-        assertThat(reviewPage.getValue().getPageNumber()).isZero();
-        assertThat(reviewPage.getValue().getPageSize()).isEqualTo(200);
-
-        when(fileRepo.findById(101L)).thenReturn(Optional.empty());
-        assertApiCode(() -> service.confirmVocalTrack(101L, 0), "FILE_NOT_FOUND");
-
-        SongFile singleTrack = file(102L, 12L, 1);
-        when(fileRepo.findById(102L)).thenReturn(Optional.of(singleTrack));
-        assertApiCode(() -> service.confirmVocalTrack(102L, 0), "INVALID_ACTION");
-
-        SongFile twoTracks = file(103L, 13L, 2);
-        when(fileRepo.findById(103L)).thenReturn(Optional.of(twoTracks));
-        assertApiCode(() -> service.confirmVocalTrack(103L, -1), "INVALID_ACTION");
-        service.setCatalogRevisionService(catalogRevision);
-        when(fileRepo.save(twoTracks)).thenReturn(twoTracks);
-
-        service.confirmVocalTrack(103L, 1);
-
-        assertThat(twoTracks.getOriginalTrackIndex()).isZero();
-        assertThat(twoTracks.getAccompanimentTrackIndex()).isEqualTo(1);
-        assertThat(twoTracks.getVocalConfidence()).isEqualTo("HIGH");
-        verify(projection).recompute(13L);
-        verify(catalogRevision).bumpIfChanged(true);
-    }
-
-    @Test
     void deletingCurrentSongFileAndQueueClearsThePlayerWithinManagedRoot() throws Exception {
         Path root = Files.createDirectory(tempDir.resolve("managed"));
         Path media = root.resolve("song.mkv");

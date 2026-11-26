@@ -182,14 +182,17 @@ public class SnapshotService {
     public QueueSnapshot snapshot() {
         if (!isCacheEnabled()) {
             synchronized (this) {
+                CapturedDbState captured;
                 if (transactionManager == null) {
-                    return materializeWireSnapshot(captureSnapshot());
+                    captured = captureDbState();
+                } else {
+                    TransactionTemplate tx = new TransactionTemplate(transactionManager);
+                    tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                    tx.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+                    tx.setReadOnly(true);
+                    captured = tx.execute(status -> captureDbState());
                 }
-                TransactionTemplate tx = new TransactionTemplate(transactionManager);
-                tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-                tx.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
-                tx.setReadOnly(true);
-                return materializeWireSnapshot(tx.execute(status -> captureSnapshot()));
+                return materializeWireSnapshot(finishSnapshotResolution(captured));
             }
         }
         long currentRevision = currentCatalogRevision();
@@ -208,16 +211,18 @@ public class SnapshotService {
                 return materializeWireSnapshot(hit.base());
             }
             long genBefore = cacheGeneration.get();
-            QueueSnapshot built;
+            CapturedDbState captured;
             if (transactionManager == null) {
-                built = captureSnapshot();
+                captured = captureDbState();
             } else {
                 TransactionTemplate tx = new TransactionTemplate(transactionManager);
                 tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
                 tx.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
                 tx.setReadOnly(true);
-                built = tx.execute(status -> captureSnapshot());
+                captured = tx.execute(status -> captureDbState());
             }
+            // Run potential on-demand FFprobe codec resolution after closing REPEATABLE_READ DB transaction.
+            QueueSnapshot built = finishSnapshotResolution(captured);
             if (built != null && cacheGeneration.get() == genBefore && currentCatalogRevision() == currentRevision) {
                 cachedSnapshot = new CachedBaseSnapshot(built, genBefore, currentRevision);
             }
@@ -251,8 +256,20 @@ public class SnapshotService {
                 base.playback());
     }
 
-    private QueueSnapshot captureSnapshot() {
-        long stateRevision = snapshotRevision.incrementAndGet();
+    private record CapturedDbState(
+            QueueSnapshot.NowPlaying nowPlaying,
+            List<QueueSnapshot.QueueEntry> list,
+            String state,
+            int volume,
+            boolean muted,
+            String vocalMode,
+            AudioLayoutDto audioLayout,
+            long positionMs,
+            long seekSequence,
+            SongFile sourceToResolve
+    ) {}
+
+    private CapturedDbState captureDbState() {
         PlayerState ps = playerRepo.getSingleton();
         long waitingCount = queueRepo.countByStatus(QueueService.WAITING);
         if (waitingCount > QueueService.MAX_WAITING_ITEMS) {
@@ -300,28 +317,36 @@ public class SnapshotService {
                 .toList();
 
         AudioLayoutDto audioLayout = AudioLayoutDto.normalStereo();
-        PlaybackDescriptor playback = PlaybackDescriptor.idle();
+        SongFile source = null;
         if (songFileRepo != null && current != null) {
             List<SongFile> sources = songFileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(current.getSongId());
-            SongFile source = sources.stream()
+            source = sources.stream()
                     .filter(SongAvailabilityPolicy::isReadyMediaFile)
                     .findFirst().orElse(null);
             if (source != null) {
                 audioLayout = AudioLayoutDto.from(source);
-                if (playbackResolution != null) {
-                    try {
-                        playback = playbackResolution.resolveReady(source, false);
-                    } catch (ApiException failure) {
-                        playback = PlaybackDescriptor.failed(source, failure.getCode(), failure.getMessage());
-                    }
-                }
             }
         }
 
-        return new QueueSnapshot(nowPlaying, list, ps.getState(), ps.getVolume(),
+        return new CapturedDbState(nowPlaying, list, ps.getState(), ps.getVolume(),
                 ps.isMuted(), ps.getVocalMode(), audioLayout,
-                false, 0L,
-                ps.getPositionMs(), ps.getSeekSequence(), 0L, playback);
+                ps.getPositionMs(), ps.getSeekSequence(), source);
+    }
+
+    private QueueSnapshot finishSnapshotResolution(CapturedDbState captured) {
+        if (captured == null) return null;
+        PlaybackDescriptor playback = PlaybackDescriptor.idle();
+        SongFile source = captured.sourceToResolve();
+        if (source != null && playbackResolution != null) {
+            try {
+                playback = playbackResolution.resolveReady(source, false);
+            } catch (ApiException failure) {
+                playback = PlaybackDescriptor.failed(source, failure.getCode(), failure.getMessage());
+            }
+        }
+        return new QueueSnapshot(captured.nowPlaying(), captured.list(), captured.state(),
+                captured.volume(), captured.muted(), captured.vocalMode(), captured.audioLayout(),
+                false, 0L, captured.positionMs(), captured.seekSequence(), 0L, playback);
     }
 
     private void addIds(QueueItem item, Set<Long> songIds, Set<Long> userIds) {

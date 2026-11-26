@@ -419,11 +419,7 @@ class KtvSocket(
                 when (reportType) {
                     "play_error" -> playErrorOutbox.acknowledge(queueId, status)
                     "finished" -> finishedOutbox.acknowledge(queueId, status)
-                    else -> {
-                        // Legacy servers did not identify the report type.
-                        finishedOutbox.acknowledge(queueId, status)
-                        playErrorOutbox.acknowledge(queueId, status)
-                    }
+                    else -> Unit
                 }
             }
             "progress" -> {

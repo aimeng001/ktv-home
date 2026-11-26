@@ -17,14 +17,12 @@ internal fun interface CredentialKeyProvider {
 
 /**
  * Stores the optional TV WebSocket credential encrypted by Android Keystore.
- * A legacy plaintext value is migrated only after encryption succeeds.
  */
 internal class CredentialStore(
     context: Context,
     private val keyProvider: CredentialKeyProvider? = null,
 ) {
     private val securePrefs = context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
-    private val legacyPrefs = context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
     private var cachedKey: SecretKey? = null
     private val cachedValues = HashMap<String, String>(4)
 
@@ -33,27 +31,10 @@ internal class CredentialStore(
         val scope = server?.hostPort.orEmpty().trim()
         val scopedKey = server?.instanceId?.let { identityKey(it) } ?: scopedKey(scope)
         cachedValues[scopedKey]?.let { return it }
-        val stored = securePrefs.getString(scopedKey, null)
-        if (!stored.isNullOrBlank()) {
-            val decrypted = decrypt(stored).orEmpty()
-            cachedValues[scopedKey] = decrypted
-            return decrypted
-        }
-
-        // Once an instance id is known, do not fall back to another instance's
-        // host namespace. A newly identified server starts with an empty scope.
-        if (server?.instanceId != null) return ""
-
-        val legacyHost = legacyPrefs.getString(LEGACY_HOST_KEY, null)
-        val legacy = if (shouldMigrateLegacyCredential(legacyHost, scope)) {
-            legacyPrefs.getString(LEGACY_KEY, null)?.trim().orEmpty()
-        } else {
-            ""
-        }
-        if (legacy.isBlank() || !writeEncrypted(scopedKey, legacy)) return ""
-        cachedValues[scopedKey] = legacy
-        legacyPrefs.edit().remove(LEGACY_KEY).apply()
-        return legacy
+        val stored = securePrefs.getString(scopedKey, null) ?: return ""
+        val decrypted = decrypt(stored).orEmpty()
+        cachedValues[scopedKey] = decrypted
+        return decrypted
     }
 
     @Synchronized
@@ -64,16 +45,12 @@ internal class CredentialStore(
         if (trimmed.isBlank()) {
             cachedValues.remove(scopedKey)
             securePrefs.edit().remove(scopedKey).apply()
-            legacyPrefs.edit().remove(LEGACY_KEY).apply()
             return
         }
         // Fail closed: never introduce a new plaintext fallback if Keystore is
         // unavailable or the key has been invalidated.
         if (writeEncrypted(scopedKey, trimmed)) {
             cachedValues[scopedKey] = trimmed
-            if (shouldMigrateLegacyCredential(legacyPrefs.getString(LEGACY_HOST_KEY, null), scope)) {
-                legacyPrefs.edit().remove(LEGACY_KEY).apply()
-            }
         }
     }
 
@@ -83,13 +60,11 @@ internal class CredentialStore(
         val scopedKey = server?.instanceId?.let { identityKey(it) } ?: scopedKey(scope)
         cachedValues.remove(scopedKey)
         securePrefs.edit().remove(scopedKey).apply()
-        clearLegacyCredentialFor(scope)
     }
 
     /**
      * Forgetting a server must remove both the identity namespace and the
-     * legacy host namespace. Otherwise selecting the same host again can
-     * resurrect a credential that belonged to the forgotten instance.
+     * host namespace.
      */
     @Synchronized
     fun clearAllScopes(server: SavedServer?) {
@@ -101,33 +76,6 @@ internal class CredentialStore(
         editor.remove(hostKey)
         identityKey?.let(editor::remove)
         editor.apply()
-        clearLegacyCredentialFor(server?.hostPort.orEmpty().trim())
-    }
-
-    @Synchronized
-    fun migrate(from: SavedServer?, to: SavedServer): Boolean {
-        if (from == null) return true
-        val sourceHost = from.hostPort.trim()
-        val oldCred = read(from)
-        if (oldCred.isBlank()) {
-            // A matching legacy secret can remain when encryption failed. Do
-            // not treat that failure as an empty source and let the caller
-            // clear the only copy of the user's credential.
-            val matchingLegacyRemains = from.instanceId == null &&
-                shouldMigrateLegacyCredential(legacyPrefs.getString(LEGACY_HOST_KEY, null), sourceHost) &&
-                !legacyPrefs.getString(LEGACY_KEY, null).isNullOrBlank()
-            return !matchingLegacyRemains
-        }
-        if (read(to).isBlank()) {
-            write(oldCred, to)
-        }
-        return read(to) == oldCred
-    }
-
-    private fun clearLegacyCredentialFor(serverHost: String) {
-        if (shouldMigrateLegacyCredential(legacyPrefs.getString(LEGACY_HOST_KEY, null), serverHost)) {
-            legacyPrefs.edit().remove(LEGACY_KEY).apply()
-        }
     }
 
     private fun writeEncrypted(scopedKey: String, value: String): Boolean {
@@ -199,16 +147,7 @@ internal class CredentialStore(
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val GCM_TAG_BITS = 128
         private const val SECURE_PREFS = "ktv_tv_secure"
-        private const val LEGACY_PREFS = "ktv_tv"
-        private const val LEGACY_KEY = "player_credential"
-        private const val LEGACY_HOST_KEY = "server_host"
         private const val KEY_CIPHERTEXT_PREFIX = "player_credential_gcm_"
         private const val SEPARATOR = "."
     }
-}
-
-/** Legacy credentials may only migrate into the namespace of their old server. */
-internal fun shouldMigrateLegacyCredential(legacyHost: String?, requestedHost: String?): Boolean {
-    val normalizedLegacy = legacyHost?.let(AppConfig::normalizeHost) ?: return false
-    return normalizedLegacy == requestedHost?.trim().orEmpty()
 }

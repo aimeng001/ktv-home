@@ -1,5 +1,6 @@
 package com.homektv.domain;
 
+import com.homektv.common.CatalogCacheEpoch;
 import jakarta.persistence.*;
 import org.hibernate.annotations.Generated;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -262,4 +263,11 @@ public class Song {
     public void setFingerprint(String fingerprint) { this.fingerprint = fingerprint; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
+
+    @PostPersist
+    @PostUpdate
+    @PostRemove
+    void bumpSearchCacheEpoch() {
+        CatalogCacheEpoch.bump();
+    }
 }

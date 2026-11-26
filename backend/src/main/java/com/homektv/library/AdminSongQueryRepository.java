@@ -26,6 +26,7 @@ import java.util.Map;
 public class AdminSongQueryRepository {
     private static final int MAX_COUNT_CACHE_ENTRIES = 128;
     private static final long COUNT_CACHE_TTL_MS = 30_000L;
+    private static final int QUERY_TIMEOUT_SECONDS = 8;
 
     private record CountCacheEntry(long total, long catalogRevision, long cachedAtMs) {}
 
@@ -44,7 +45,14 @@ public class AdminSongQueryRepository {
     public AdminSongQueryRepository(JdbcTemplate jdbc,
                                     SongRepository songRepo,
                                     @Autowired(required = false) CatalogRevisionService catalogRevisionService) {
-        this.jdbc = jdbc;
+        javax.sql.DataSource ds = jdbc.getDataSource();
+        if (ds != null) {
+            JdbcTemplate bounded = new JdbcTemplate(ds);
+            bounded.setQueryTimeout(QUERY_TIMEOUT_SECONDS);
+            this.jdbc = bounded;
+        } else {
+            this.jdbc = jdbc;
+        }
         this.songRepo = songRepo;
         this.catalogRevisionService = catalogRevisionService;
     }
@@ -61,23 +69,28 @@ public class AdminSongQueryRepository {
         List<Object> params = new ArrayList<>();
 
         if (!safeKeyword.isEmpty()) {
-            String likePattern = escapeLike(safeKeyword);
-            String lowerPrefix = escapeLike(safeKeyword.toLowerCase(Locale.ROOT));
+            String lower = safeKeyword.toLowerCase(Locale.ROOT);
+            String lowerLike = escapeLike(lower);
+            boolean asciiOnly = isAscii(lower);
             where.append("""
                      AND (
-                        s.title ILIKE '%' || ? || '%' ESCAPE '\\'
-                        OR s.artist ILIKE '%' || ? || '%' ESCAPE '\\'
+                        LOWER(s.title) LIKE '%' || ? || '%' ESCAPE '\\'
+                        OR LOWER(s.artist) LIKE '%' || ? || '%' ESCAPE '\\'""");
+            params.add(lowerLike);
+            params.add(lowerLike);
+            if (asciiOnly) {
+                where.append("""
+                        
                         OR LOWER(s.title_py) LIKE ? || '%' ESCAPE '\\'
                         OR LOWER(s.title_init) LIKE ? || '%' ESCAPE '\\'
                         OR LOWER(s.artist_py) LIKE ? || '%' ESCAPE '\\'
-                        OR LOWER(s.artist_init) LIKE ? || '%' ESCAPE '\\'
-                    )""");
-            params.add(likePattern);
-            params.add(likePattern);
-            params.add(lowerPrefix);
-            params.add(lowerPrefix);
-            params.add(lowerPrefix);
-            params.add(lowerPrefix);
+                        OR LOWER(s.artist_init) LIKE ? || '%' ESCAPE '\\'""");
+                params.add(lowerLike);
+                params.add(lowerLike);
+                params.add(lowerLike);
+                params.add(lowerLike);
+            }
+            where.append(")");
         }
 
         if (!safeType.isEmpty()) {
@@ -155,5 +168,12 @@ public class AdminSongQueryRepository {
 
     private static String escapeLike(String value) {
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
+    private static boolean isAscii(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            if (value.charAt(i) > 0x7F) return false;
+        }
+        return true;
     }
 }

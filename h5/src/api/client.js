@@ -363,7 +363,6 @@ export function makeControls(clientToken, { onResponse } = {}) {
     setVolume: (volume) => c('set_volume', { volume }),
     setMuted: (muted) => c('mute', { muted: Boolean(muted) }),
     setVocal: (mode) => c('set_vocal', { mode }),
-    swapVocalTracks: () => c('swap_vocal_tracks', {}),
     effect: (effectId) => c('effect', { effect_id: effectId })
   }
 }

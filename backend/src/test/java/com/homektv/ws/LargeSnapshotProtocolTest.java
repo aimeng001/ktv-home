@@ -91,8 +91,8 @@ class LargeSnapshotProtocolTest {
 
     private static QueueSnapshot oversizedSnapshot() {
         String longText = "歌名和歌手字段用于构造合法但超预算的快照。".repeat(24);
-        SongDto song = new SongDto(1L, longText, longText, "", "AUDIO", false,
-                180_000, "none", null, 0, null);
+        SongDto song = new SongDto(1L, "", longText, longText, "", "AUDIO", false,
+                180_000, "none", null, 0, null, true, null, "", "", "", "", null, "未知");
         List<QueueSnapshot.QueueEntry> entries = new ArrayList<>();
         for (long id = 1; id <= 1_000; id++) {
             entries.add(new QueueSnapshot.QueueEntry(id, song, id, longText, "waiting"));

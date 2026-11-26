@@ -20,7 +20,6 @@ import com.homektv.contract.AudioLayoutDto;
 import com.homektv.contract.AudioLayoutUpdateRequest;
 import com.homektv.contract.SongDto;
 import com.homektv.contract.SongEditRequest;
-import com.homektv.contract.VocalReviewDto;
 import org.springframework.data.domain.Page;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -242,59 +241,6 @@ public class AdminScanController {
     @PostMapping("/songs/{id}/merge")
     public Map<String, Object> mergeSong(@PathVariable Long id, @RequestBody MergeSongRequest request) {
         return songMergeService.merge(id, request.sourceSongId());
-    }
-
-    /**
-     * 伴奏轨低置信度复核列表：入库判不准原伴唱、需人工核对的文件源。
-     *
-     * Low-confidence accompaniment track review list: source files whose vocal/accompaniment
-     * classification is uncertain and require manual verification.
-     * @param page page number (0-based)
-     * @param size page size
-     * @return paginated vocal review list
-     */
-    @GetMapping("/vocal-review")
-    public Map<String, Object> vocalReview(@RequestParam(defaultValue = "0") int page,
-                                           @RequestParam(defaultValue = "20") int size) {
-        Page<VocalReviewDto> p = adminService.listVocalReview(page, size);
-        return Map.of(
-                "content", p.getContent(),
-                "total", p.getTotalElements(),
-                "page", p.getNumber(),
-                "totalPages", p.getTotalPages()
-        );
-    }
-
-    /**
-     * 人工确认伴奏轨 index（0-based），标为高置信度、脱离复核列表。
-     *
-     * Manually confirm the accompaniment track index (0-based), marking it high-confidence
-     * and removing it from the review list.
-     * @param fileId source file ID
-     * @param body request body containing accompanimentIndex
-     * @return confirmation result
-     */
-    @PutMapping("/files/{fileId}/vocal-track")
-    public Map<String, Object> confirmVocalTrack(@PathVariable Long fileId,
-                                                 @RequestBody Map<String, Object> body) {
-        Object rawIndex = body.getOrDefault("accompanimentIndex", 1);
-        int index;
-        if (rawIndex instanceof Number num) {
-            index = num.intValue();
-        } else if (rawIndex instanceof String str) {
-            try {
-                index = Integer.parseInt(str.trim());
-            } catch (NumberFormatException e) {
-                throw new ApiException("INVALID_ARGUMENT", "伴奏轨索引必须为非负整数");
-            }
-        } else {
-            throw new ApiException("INVALID_ARGUMENT", "伴奏轨索引类型无效");
-        }
-        if (index < 0) {
-            throw new ApiException("INVALID_ARGUMENT", "伴奏轨索引不能为负数");
-        }
-        adminService.confirmVocalTrack(fileId, index);
-        return Map.of("status", "confirmed", "fileId", fileId, "accompanimentIndex", index);
     }
 
     /** Update one file's audio layout semantics without touching the media file. */

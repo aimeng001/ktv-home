@@ -114,8 +114,4 @@ public class DatabaseRetentionPurgeService {
         }
         return deleted;
     }
-
-    static List<String> governedTables() {
-        return List.of("music_metadata_scrape_items", "ai_analysis_tasks", "iktv_song_match_batch_items");
-    }
 }

@@ -306,11 +306,11 @@ public class StreamController {
             boolean reencodeVideo,
             HttpServletRequest request) {
 
-        boolean canUseFastPathCache = !forceTranscode && audioTrack == null && !mergeTracks && !softVideo && !reencodeVideo;
+        boolean canUseMetadataCache = !forceTranscode && audioTrack == null && !mergeTracks && !softVideo && !reencodeVideo;
         SongFile sf = null;
         Path safePath = null;
         File file = null;
-        if (canUseFastPathCache) {
+        if (canUseMetadataCache) {
             ResolvedStreamEntry cached = resolvedStreamCache.get(fileId);
             if (cached != null) {
                 long now = System.nanoTime();
@@ -349,7 +349,7 @@ public class StreamController {
             if (!file.exists() || !file.isFile()) {
                 return ResponseEntity.notFound().build();
             }
-            if (canUseFastPathCache && !PlaybackTransportPolicy.requiresLiveTranscode(sf, false)) {
+            if (canUseMetadataCache) {
                 resolvedStreamCache.put(fileId, new ResolvedStreamEntry(
                         sf, safePath, file.length(), file.lastModified(),
                         System.nanoTime() + STREAM_FILE_CACHE_TTL_NANOS));
@@ -466,7 +466,7 @@ public class StreamController {
         if (clientKey != null) {
             ActiveClientTranscode previous = activeTranscodesByClient.remove(clientKey);
             if (previous != null) {
-                previous.closePreempted();
+                Thread.ofVirtual().name("preempt-transcode-close").start(previous::closePreempted);
             }
         }
         MediaStreamLease mediaStreamLease = reserveMediaStream(request);
@@ -504,7 +504,7 @@ public class StreamController {
         if (clientKey != null) {
             ActiveClientTranscode raced = activeTranscodesByClient.put(clientKey, activeEntry);
             if (raced != null && raced.session() != session) {
-                raced.closePreempted();
+                Thread.ofVirtual().name("preempt-transcode-close").start(raced::closePreempted);
             }
         }
         Runnable cleanupActiveEntry = clientKey != null

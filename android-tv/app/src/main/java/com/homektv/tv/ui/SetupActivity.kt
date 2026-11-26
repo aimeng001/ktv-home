@@ -280,21 +280,7 @@ class SetupActivity : AppCompatActivity() {
             val confirmed = scanner.discover(server.hostPort)
                 ?.let { discovered -> SetupVerificationPolicy.confirm(server, discovered) }
             if (confirmed != null) {
-                if (LegacyIdentityMigrationPolicy.requiresConfirmation(initialServer, confirmed)) {
-                    AlertDialog.Builder(this@SetupActivity, R.style.Theme_HomeKtvTv_UpdateDialog)
-                        .setTitle(R.string.setup_identity_migration_title)
-                        .setMessage(R.string.setup_identity_migration_message)
-                        .setPositiveButton(R.string.setup_identity_migration_keep) { _, _ ->
-                            commitConfirmedServer(confirmed, button, legacyMigrationAccepted = true)
-                        }
-                        .setNegativeButton(R.string.setup_identity_migration_new) { _, _ ->
-                            commitConfirmedServer(confirmed, button, legacyMigrationAccepted = false)
-                        }
-                        .setOnCancelListener { restoreSetupButton(button) }
-                        .show()
-                } else {
-                    commitConfirmedServer(confirmed, button, legacyMigrationAccepted = false)
-                }
+                commitConfirmedServer(confirmed, button)
             } else {
                 restoreSetupButton(button)
                 Toast.makeText(this@SetupActivity, R.string.setup_invalid, Toast.LENGTH_LONG).show()
@@ -305,7 +291,6 @@ class SetupActivity : AppCompatActivity() {
     private fun commitConfirmedServer(
         confirmed: SavedServer,
         button: Button,
-        legacyMigrationAccepted: Boolean,
     ) {
         val enteredCredential = binding.inputCredential.text.toString()
         val credentialChanged = enteredCredential != initialCredential
@@ -313,7 +298,6 @@ class SetupActivity : AppCompatActivity() {
             initialServer = initialServer,
             targetServer = confirmed,
             credentialChanged = credentialChanged,
-            legacyMigrationAccepted = legacyMigrationAccepted,
         )
         if (SetupCandidatePolicy.requiresHttpsForPlayerCredential(
                 serverHost = confirmed.hostPort,
@@ -325,24 +309,14 @@ class SetupActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.setup_credential_requires_https, Toast.LENGTH_LONG).show()
             return
         }
-        if (legacyMigrationAccepted && initialServer != null &&
-            !runCatching { config.migrateLegacyScope(initialServer!!, confirmed) }.getOrDefault(false)
-        ) {
-            restoreSetupButton(button)
-            Toast.makeText(this, R.string.setup_identity_migration_failed, Toast.LENGTH_LONG).show()
-            return
-        }
 
         config.rememberServer(confirmed)
-        if (!legacyMigrationAccepted || credentialChanged) {
-            config.playerCredential = if (SetupCandidatePolicy.shouldReuseInitialCredential(
-                    initialServer = initialServer,
-                    targetServer = confirmed,
-                    credentialChanged = credentialChanged,
-                    legacyMigrationAccepted = legacyMigrationAccepted,
-                )
-            ) enteredCredential else ""
-        }
+        config.playerCredential = if (SetupCandidatePolicy.shouldReuseInitialCredential(
+                initialServer = initialServer,
+                targetServer = confirmed,
+                credentialChanged = credentialChanged,
+            )
+        ) enteredCredential else ""
         if (intent.getBooleanExtra(EXTRA_RETURN_TO_CALLER, false)) {
             setResult(RESULT_OK)
         } else {

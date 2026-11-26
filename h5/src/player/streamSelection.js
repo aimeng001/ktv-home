@@ -23,7 +23,7 @@ export function resolveTargetAudioTrack(audioLayout, vocalMode) {
   return Number.isInteger(candidate) && candidate >= 0 ? candidate : null
 }
 
-export function isAudioOnlyPlayback(playback, song) {
+function isAudioOnlyPlayback(playback, song) {
   if (song?.mediaType === 'AUDIO') return true
   const pathHint = playback?.streamUrl || ''
   return AUDIO_EXT_RE.test(pathHint)

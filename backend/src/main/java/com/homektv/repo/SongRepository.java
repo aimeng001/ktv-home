@@ -402,34 +402,37 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                                           @Param("artistKeys") List<String> artistKeys);
 
     @Query(value = """
-            WITH ranked AS (
-                SELECT lower(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) AS artist_key,
-                       s.id AS song_id,
+            WITH target_keys AS (
+                SELECT DISTINCT LOWER(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) AS artist_key
+                FROM songs s
+                WHERE s.status = :status
+                  AND LOWER(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) IN (:artistKeys)
+                  AND NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
+            )
+            SELECT tk.artist_key AS "artistKey",
+                   picked.song_id AS "songId",
+                   picked.title AS "title",
+                   picked.artist AS "artist",
+                   picked.language AS "language",
+                   picked.media_type AS "mediaType",
+                   picked.cover_path AS "coverPath"
+            FROM target_keys tk
+            CROSS JOIN LATERAL (
+                SELECT s.id AS song_id,
                        s.title,
                        s.artist,
                        s.language,
                        s.media_type,
                        s.cover_path,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY lower(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g'))
-                           ORDER BY s.play_count DESC, s.title ASC, s.id ASC
-                       ) AS row_number
+                       s.play_count
                 FROM songs s
                 WHERE s.status = :status
-                  AND s.artist IS NOT NULL AND trim(s.artist) <> ''
-                  AND lower(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) IN (:artistKeys)
+                  AND LOWER(regexp_replace(trim(s.artist), '[[:space:]]+', '', 'g')) = tk.artist_key
                   AND NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
-            )
-            SELECT artist_key AS "artistKey",
-                   song_id AS "songId",
-                   title AS "title",
-                   artist AS "artist",
-                   language AS "language",
-                   media_type AS "mediaType",
-                   cover_path AS "coverPath"
-            FROM ranked
-            WHERE row_number <= 5
-            ORDER BY artist_key, row_number
+                ORDER BY s.play_count DESC, s.title ASC, s.id ASC
+                LIMIT 5
+            ) picked
+            ORDER BY tk.artist_key, picked.play_count DESC, picked.title ASC, picked.song_id ASC
             """, nativeQuery = true)
     List<ArtistSongProjection> findLegacyArtistSamples(@Param("status") String status,
                                                          @Param("artistKeys") List<String> artistKeys);
@@ -443,49 +446,21 @@ public interface SongRepository extends JpaRepository<Song, Long> {
         if (distinctKeys.isEmpty()) return List.of();
         List<ArtistSongProjection> indexed = findIndexedArtistSamples(status, distinctKeys);
         List<ArtistSongProjection> results = indexed == null ? new ArrayList<>() : new ArrayList<>(indexed);
-        Set<String> resolvedKeys = new HashSet<>();
+        Set<String> coveredKeys = new java.util.HashSet<>();
         for (ArtistSongProjection row : results) {
             if (row != null && row.getArtistKey() != null) {
-                resolvedKeys.add(row.getArtistKey());
+                coveredKeys.add(row.getArtistKey());
             }
         }
         List<String> missingKeys = distinctKeys.stream()
-                .filter(key -> !resolvedKeys.contains(key))
+                .filter(k -> !coveredKeys.contains(k))
                 .toList();
         if (!missingKeys.isEmpty()) {
             List<ArtistSongProjection> legacy = findLegacyArtistSamples(status, missingKeys);
-            if (legacy != null && !legacy.isEmpty()) {
-                results.addAll(legacy);
-            }
+            if (legacy != null) results.addAll(legacy);
         }
         return results;
     }
-
-    @Query(value = """
-            SELECT category.tag AS name, COUNT(DISTINCT s.id) AS songCount
-            FROM songs s
-            CROSS JOIN LATERAL (
-                SELECT unnest(COALESCE(s.tags, ARRAY[]::text[])) AS tag
-                UNION ALL
-                SELECT unnest(COALESCE(s.ai_genres, ARRAY[]::text[])) AS tag
-                UNION ALL
-                SELECT unnest(COALESCE(s.ai_themes, ARRAY[]::text[])) AS tag
-                UNION ALL
-                SELECT reference_category.category AS tag
-                  FROM iktv_song_categories reference_category
-                  JOIN iktv_reference_snapshots reference_snapshot
-                    ON reference_snapshot.snapshot_version = reference_category.snapshot_version
-                   AND reference_snapshot.status = 'ACTIVE'
-                 WHERE reference_category.song_id = s.id
-            ) AS category
-            WHERE s.status = 'ok'
-              AND category.tag IS NOT NULL
-              AND category.tag <> ''
-            GROUP BY category.tag
-            ORDER BY COUNT(DISTINCT s.id) DESC, category.tag ASC
-            LIMIT 100
-            """, nativeQuery = true)
-    List<TagCountProjection> aggregateTagsByStatusOk();
 
     @Query(value = """
             SELECT MIN(sti.display_tag) AS name, COUNT(*) AS songCount
@@ -1008,22 +983,8 @@ public interface SongRepository extends JpaRepository<Song, Long> {
     long countIndexedByArtistKeyAndStatus(@Param("artistKey") String artistKey,
                                           @Param("status") String status);
 
-    @Query(value = """
-            SELECT COUNT(*)
-            FROM songs s
-            WHERE s.status = :status
-              AND NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
-              AND lower(regexp_replace(trim(coalesce(s.artist, '')), '[[:space:]]+', '', 'g')) = :artistKey
-            """, nativeQuery = true)
-    long countLegacyByArtistKeyAndStatus(@Param("artistKey") String artistKey,
-                                         @Param("status") String status);
-
     default long countByArtistKeyAndStatus(String artistKey, String status) {
-        long indexed = countIndexedByArtistKeyAndStatus(artistKey, status);
-        if (indexed > 0L) {
-            return indexed;
-        }
-        return countLegacyByArtistKeyAndStatus(artistKey, status);
+        return countIndexedByArtistKeyAndStatus(artistKey, status);
     }
 
     /** Same association lookup, bounded for AI representative-song samples. */
@@ -1039,27 +1000,11 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                                                                    @Param("status") String status,
                                                                    Pageable pageable);
 
-    @Query(value = """
-            SELECT s.*
-            FROM songs s
-            WHERE s.status = :status
-              AND NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = s.id)
-              AND lower(regexp_replace(trim(coalesce(s.artist, '')), '[[:space:]]+', '', 'g')) = :artistKey
-            ORDER BY s.play_count DESC, s.title ASC, s.id ASC
-            """, nativeQuery = true)
-    List<Song> findLegacyRepresentativeSongsByArtistKeyAndStatus(@Param("artistKey") String artistKey,
-                                                                  @Param("status") String status,
-                                                                  Pageable pageable);
-
     default List<Song> findRepresentativeSongsByArtistKeyAndStatus(String artistKey,
                                                                    String status,
                                                                    Pageable pageable) {
         List<Song> indexed = findIndexedRepresentativeSongsByArtistKeyAndStatus(artistKey, status, pageable);
-        if (indexed != null && !indexed.isEmpty()) {
-            return indexed;
-        }
-        List<Song> legacy = findLegacyRepresentativeSongsByArtistKeyAndStatus(artistKey, status, pageable);
-        return legacy == null ? List.of() : legacy;
+        return indexed == null ? List.of() : indexed;
     }
 
     Optional<Song> findByFingerprint(String fingerprint);

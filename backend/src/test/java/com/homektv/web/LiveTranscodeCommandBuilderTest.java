@@ -106,10 +106,14 @@ class LiveTranscodeCommandBuilderTest {
         List<String> command = builder.build(source, song, null, null, false, true);
 
         assertThat(command).contains("-filter_complex");
-        assertThat(command).anyMatch(arg -> arg.contains("aresample=async=1:first_pts=0")
+        assertThat(command).anyMatch(arg -> arg.contains("[0:V:0]" + LiveTranscodeCommandBuilder.LIVE_SCALE_EVEN_FILTER + ",format=yuv420p[vout]")
+                && arg.contains("aresample=async=1:first_pts=0")
                 && arg.contains("join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR"));
-        assertThat(command).containsSubsequence("-map", "0:V:0?", "-map", "[aout]");
+        assertThat(command).containsSubsequence("-map", "[vout]", "-map", "[aout]");
         assertThat(command).doesNotContain("-map 0:a:0", "-map 0:a:1");
+
+        List<String> copyVideoMerged = builder.build(source, song, null, null, true, true);
+        assertThat(copyVideoMerged).containsSubsequence("-map", "0:V:0?", "-map", "[aout]");
 
         SongFile threeTrack = new SongFile();
         threeTrack.setAudioTracks(3);
@@ -194,8 +198,10 @@ class LiveTranscodeCommandBuilderTest {
 
         LiveTranscodeCommandBuilder clampedLow = new LiveTranscodeCommandBuilder("ffmpeg-test", 0);
         assertThat(clampedLow.build(source, song, null)).containsSubsequence("-c:v", "libx264", "-threads", "1");
-        assertThat(defaultCmd).containsSubsequence("-preset", "superfast", "-bf", "0", "-g", "30",
+        assertThat(defaultCmd).containsSubsequence("-vf", LiveTranscodeCommandBuilder.LIVE_SCALE_EVEN_FILTER);
+        assertThat(defaultCmd).containsSubsequence("-preset", "superfast", "-profile:v", "main", "-bf", "0", "-g", "30",
                 "-keyint_min", "30", "-sc_threshold", "0", "-crf", "23", "-maxrate", "4000k", "-bufsize", "8000k");
+        assertThat(defaultCmd).containsSubsequence("-max_muxing_queue_size", "1024");
         assertThat(defaultCmd).doesNotContain("-tune", "zerolatency", "-frag_duration", "-flush_packets");
         assertThat(defaultCmd).containsSubsequence("-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "pipe:1");
     }
@@ -210,15 +216,17 @@ class LiveTranscodeCommandBuilderTest {
                 true, "Intel VAAPI", "/dev/dri/renderD128", List.of("h264"), "vaapi", null);
         List<String> vaapiMerged = builder.build(source, song, null, null, false, false, true, vaapi);
         assertThat(vaapiMerged).containsSubsequence("-vaapi_device", "/dev/dri/renderD128", "-i", source.getAbsolutePath());
-        assertThat(vaapiMerged).anyMatch(arg -> arg.contains("[0:V:0]format=nv12,hwupload[vout]")
+        assertThat(vaapiMerged).anyMatch(arg -> arg.contains("[0:V:0]" + LiveTranscodeCommandBuilder.LIVE_SCALE_EVEN_FILTER + ",format=nv12,hwupload[vout]")
                 && arg.contains("join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR"));
         assertThat(vaapiMerged).containsSubsequence("-map", "[vout]", "-map", "[aout]", "-c:v", "h264_vaapi",
                 "-rc_mode", "CQP", "-qp", "24", "-g", "30", "-bf", "0");
+        assertThat(vaapiMerged).containsSubsequence("-max_muxing_queue_size", "1024");
         assertThat(vaapiMerged).doesNotContain("-vf", "libx264", "-preset", "-tune", "-crf", "-threads", "-b:v");
 
         var rkmpp = new com.homektv.library.TranscodeHardwareService.HardwareStatus(
                 true, "Rockchip RK MPP", "/dev/mpp_service", List.of("h264"), "rkmpp", null);
         List<String> rkmppCmd = builder.build(source, song, null, null, false, false, false, rkmpp);
+        assertThat(rkmppCmd).containsSubsequence("-vf", LiveTranscodeCommandBuilder.LIVE_SCALE_EVEN_FILTER);
         assertThat(rkmppCmd).containsSubsequence("-pix_fmt", "nv12", "-c:v", "h264_rkmpp", "-g", "30", "-bf", "0");
         assertThat(rkmppCmd).doesNotContain("-vaapi_device", "libx264", "-preset", "-crf");
     }

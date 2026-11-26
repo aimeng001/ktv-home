@@ -233,8 +233,6 @@ class ControllerViewModel(
 
         val targetPage = if (restorePage > 0) {
             restorePage.coerceIn(0, MAX_RESTORE_PAGES)
-        } else if (query.codePointCount(0, query.length) <= 2) {
-            1
         } else {
             0
         }

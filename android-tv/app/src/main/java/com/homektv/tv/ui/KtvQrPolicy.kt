@@ -17,13 +17,4 @@ object KtvQrPolicy {
             "http://$host"
         }
     }
-
-    /**
-     * 构建 /api/qr 请求地址。
-     */
-    fun buildQrUrl(apiBase: String?, sizePx: Int = 540): String {
-        if (apiBase.isNullOrBlank()) return ""
-        val base = apiBase.trim().removeSuffix("/")
-        return "$base/qr?size=$sizePx"
-    }
 }

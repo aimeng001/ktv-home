@@ -295,7 +295,7 @@ class PlaybackResolverTest {
     }
 
     @Test
-    fun legacyServerHttp404WithHttp404CodeFallsBackToNativeReady() = runBlocking {
+    fun http404FromResolverProducesAbsentResolution() = runBlocking {
         val transport = RouteTransport(
             routes = mapOf(
                 "/songs/7" to KtvApiResult.Success(
@@ -310,12 +310,7 @@ class PlaybackResolverTest {
 
         val result = resolver.resolve(7L)
 
-        assertTrue(result is PlaybackResolution.Ready)
-        val ready = result as PlaybackResolution.Ready
-        assertEquals("NATIVE", ready.descriptor.kind)
-        assertEquals("READY", ready.descriptor.status)
-        assertEquals("http://192.168.1.10:8080/api/stream/11", ready.descriptor.streamUrl)
-        assertEquals(2, ready.descriptor.audioTracks)
+        assertEquals(PlaybackResolution.Absent(AbsentReason.NO_VALID_FILE), result)
     }
 
     @Test
@@ -442,7 +437,7 @@ class PlaybackResolverTest {
     }
 
     @Test
-    fun playbackFailureClassificationDistinguishesLegacyMissingAndTransientErrors() {
+    fun playbackFailureClassificationDistinguishesMissingAndTransientErrors() {
         val source = FileSource(
             id = 11L,
             audioTracks = 2,
@@ -451,14 +446,13 @@ class PlaybackResolverTest {
         )
         val resolver = PlaybackResolver(RouteTransport(emptyMap()), json, { apiBase })
 
-        val legacy = resolver.classifyPlaybackFailure(
-            source,
-            KtvApiError(KtvApiErrorKind.HTTP, "HTTP_404", "old server", status = 404),
-        ) as PlaybackResolution.Ready
-        assertEquals("NATIVE", legacy.descriptor.kind)
-        assertEquals("http://192.168.1.10:8080/api/stream/11", legacy.descriptor.streamUrl)
-        assertEquals(0, legacy.descriptor.vocalTrackIndex)
-        assertEquals(source.audioLayout, legacy.descriptor.audioLayout)
+        assertEquals(
+            PlaybackResolution.Absent(AbsentReason.NO_VALID_FILE),
+            resolver.classifyPlaybackFailure(
+                source,
+                KtvApiError(KtvApiErrorKind.HTTP, "HTTP_404", "missing", status = 404),
+            ),
+        )
 
         assertEquals(
             PlaybackResolution.Absent(AbsentReason.NO_VALID_FILE),

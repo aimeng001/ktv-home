@@ -26,17 +26,11 @@ internal object SetupCandidatePolicy {
         initialServer: SavedServer?,
         targetServer: SavedServer,
         credentialChanged: Boolean,
-        legacyMigrationAccepted: Boolean = false,
     ): Boolean {
         if (credentialChanged) return true
         val initialIdentity = ServerSessionScope.normalizeInstanceId(initialServer?.instanceId)
         val targetIdentity = ServerSessionScope.normalizeInstanceId(targetServer.instanceId)
         return when {
-            // A host-only credential is not proof that a newly identified
-            // instance is the same server. It may cross the boundary only
-            // after the explicit migration confirmation.
-            initialIdentity == null && targetIdentity != null && initialServer?.hostPort == targetServer.hostPort ->
-                legacyMigrationAccepted
             initialIdentity != null || targetIdentity != null ->
                 initialIdentity != null && initialIdentity == targetIdentity
             else -> initialServer?.hostPort == targetServer.hostPort

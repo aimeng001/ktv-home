@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.common.ArtistCreditParser;
+import com.homektv.common.CatalogCacheEpoch;
 import com.homektv.common.SearchKeyword;
 import com.homektv.domain.Song;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +25,11 @@ import java.util.Map;
 public class CategorySongBrowseRepository {
 
     private static final int COUNT_CACHE_CAPACITY = 256;
+    private static final int RESULT_CACHE_CAPACITY = 256;
     private static final long COUNT_CACHE_TTL_NANOS = 30_000_000_000L;
+    private static final long RESULT_CACHE_TTL_NANOS = 30_000_000_000L;
+    private static final int QUERY_TIMEOUT_SECONDS = 6;
+    private static final int KEYWORD_COUNT_SCAN_CAP = 1000;
 
     private static final String SELECT_COLUMNS = """
             SELECT s.id, s.catalog_number, s.title, s.artist, s.artist_gender,
@@ -35,6 +40,7 @@ public class CategorySongBrowseRepository {
             """;
 
     private record CountCacheEntry(long total, long expiresAtNanos) {}
+    private record ResultCacheEntry(BrowseResult result, long expiresAtNanos) {}
 
     public record BrowseCriteria(
             String artist,
@@ -62,12 +68,26 @@ public class CategorySongBrowseRepository {
                     return size() > COUNT_CACHE_CAPACITY;
                 }
             });
+    private final Map<String, ResultCacheEntry> resultCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, ResultCacheEntry> eldest) {
+                    return size() > RESULT_CACHE_CAPACITY;
+                }
+            });
 
     @Autowired
     public CategorySongBrowseRepository(
             JdbcTemplate jdbc,
             @Autowired(required = false) CatalogRevisionService catalogRevisionService) {
-        this.jdbc = jdbc;
+        javax.sql.DataSource ds = jdbc.getDataSource();
+        if (ds != null) {
+            JdbcTemplate bounded = new JdbcTemplate(ds);
+            bounded.setQueryTimeout(QUERY_TIMEOUT_SECONDS);
+            this.jdbc = bounded;
+        } else {
+            this.jdbc = jdbc;
+        }
         this.catalogRevisionService = catalogRevisionService;
     }
 
@@ -87,6 +107,17 @@ public class CategorySongBrowseRepository {
         String kwLower = kw.lower();
         String kwLike = kw.likePattern();
         long numericId = kwLower.matches("^[0-9]{1,10}$") ? Long.parseLong(kwLower) : 0L;
+
+        long revision = currentCatalogRevision();
+        long epoch = CatalogCacheEpoch.current();
+        String resultCacheKey = revision + ":" + epoch + "|" + artist + "|" + artistKey + "|" + artistGender + "|"
+                + language + "|" + tag + "|" + vocalForm + "|" + kw.raw() + "|" + mediaType
+                + "|" + wordCount + "|" + normalize(criteria.sort()) + "|" + safePage + "|" + safeSize;
+        long now = System.nanoTime();
+        ResultCacheEntry cachedResult = resultCache.get(resultCacheKey);
+        if (cachedResult != null && now < cachedResult.expiresAtNanos()) {
+            return cachedResult.result();
+        }
 
         StringBuilder where = new StringBuilder("WHERE s.status = 'ok'");
         List<Object> params = new ArrayList<>(12);
@@ -194,22 +225,27 @@ public class CategorySongBrowseRepository {
         }
 
         if (!kwLike.isEmpty()) {
+            boolean asciiOnly = isAscii(kwLower);
             where.append("""
                      AND (
                         s.title ILIKE '%' || ? || '%' ESCAPE '\\'
+                        OR s.artist ILIKE '%' || ? || '%' ESCAPE '\\'""");
+            params.add(kwLike);
+            params.add(kwLike);
+            if (asciiOnly) {
+                where.append("""
+                        
                         OR LOWER(s.title_init) LIKE ? || '%' ESCAPE '\\'
                         OR LOWER(s.title_py) LIKE ? || '%' ESCAPE '\\'
-                        OR s.artist ILIKE '%' || ? || '%' ESCAPE '\\'
                         OR LOWER(s.artist_init) LIKE ? || '%' ESCAPE '\\'
                         OR LOWER(s.artist_py) LIKE ? || '%' ESCAPE '\\'
                         OR (s.catalog_number <> '' AND s.catalog_number = ?)""");
-            params.add(kwLike);
-            params.add(kwLike);
-            params.add(kwLike);
-            params.add(kwLike);
-            params.add(kwLike);
-            params.add(kwLike);
-            params.add(kwLower);
+                params.add(kwLike);
+                params.add(kwLike);
+                params.add(kwLike);
+                params.add(kwLike);
+                params.add(kwLower);
+            }
             if (numericId > 0) {
                 where.append(" OR s.id = ?");
                 params.add(numericId);
@@ -225,7 +261,7 @@ public class CategorySongBrowseRepository {
         String orderBy = orderByClause(criteria.sort());
         List<Object> pageParams = new ArrayList<>(params.size() + 2);
         pageParams.addAll(params);
-        pageParams.add(safeSize);
+        pageParams.add(safeSize + 1);
         pageParams.add((long) safePage * safeSize);
 
         List<Song> rows = jdbc.query(
@@ -253,36 +289,54 @@ public class CategorySongBrowseRepository {
                 },
                 pageParams.toArray());
 
-        long total = resolveTotal(where, params, safePage, safeSize, rows.size(),
+        boolean hasMore = rows.size() > safeSize;
+        List<Song> pageRows = hasMore ? List.copyOf(rows.subList(0, safeSize)) : List.copyOf(rows);
+        long total = resolveTotal(where, params, safePage, safeSize, pageRows.size(), hasMore,
+                revision, epoch,
                 artist, artistKey, artistGender, language, tag, vocalForm, kwLower, mediaType, wordCount);
-        return new BrowseResult(rows, total);
+        BrowseResult browseResult = new BrowseResult(pageRows, total);
+        resultCache.put(resultCacheKey, new ResultCacheEntry(browseResult, System.nanoTime() + RESULT_CACHE_TTL_NANOS));
+        return browseResult;
     }
 
     private long resolveTotal(StringBuilder where, List<Object> params,
-                              int page, int size, int returnedCount,
+                              int page, int size, int returnedCount, boolean hasMore,
+                              long revision, long epoch,
                               String artist, String artistKey, String artistGender,
                               String language, String tag, String vocalForm,
                               String kwLower, String mediaType, int wordCount) {
-        if (page == 0 && returnedCount < size) {
-            return returnedCount;
+        if (!hasMore && (page == 0 || returnedCount > 0)) {
+            return (long) page * size + returnedCount;
         }
-        long revision = currentCatalogRevision();
-        String cacheKey = revision + "|" + artist + "|" + artistKey + "|" + artistGender + "|"
+        String cacheKey = revision + ":" + epoch + "|" + artist + "|" + artistKey + "|" + artistGender + "|"
                 + language + "|" + tag + "|" + vocalForm + "|" + kwLower + "|" + mediaType + "|" + wordCount;
         long now = System.nanoTime();
-        // Always refresh total on page 0 so direct writes/edits are immediately reflected,
-        // then reuse the cached count on subsequent pages (page > 0) within TTL & same revision.
         if (page > 0) {
             CountCacheEntry cached = countCache.get(cacheKey);
             if (cached != null && now < cached.expiresAtNanos()) {
-                return Math.max(cached.total(), (long) page * size + returnedCount);
+                return Math.max(cached.total(), (long) page * size + returnedCount + (hasMore ? 1 : 0));
             }
         }
-        Long counted = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM songs s " + where,
-                Long.class,
-                params.toArray());
-        long total = counted == null ? 0L : counted;
+        long total;
+        if (!kwLower.isEmpty()) {
+            long minCap = Math.max(KEYWORD_COUNT_SCAN_CAP, ((long) page + 2) * size);
+            List<Object> countParams = new ArrayList<>(params.size() + 1);
+            countParams.addAll(params);
+            countParams.add(minCap);
+            Long counted = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM (SELECT 1 FROM songs s " + where + " LIMIT ?) bounded_count",
+                    Long.class,
+                    countParams.toArray());
+            long bounded = counted == null ? 0L : counted;
+            long floor = (long) page * size + returnedCount + (hasMore ? 1 : 0);
+            total = Math.max(bounded, floor);
+        } else {
+            Long counted = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM songs s " + where,
+                    Long.class,
+                    params.toArray());
+            total = counted == null ? 0L : counted;
+        }
         countCache.put(cacheKey, new CountCacheEntry(total, now + COUNT_CACHE_TTL_NANOS));
         return total;
     }
@@ -308,5 +362,12 @@ public class CategorySongBrowseRepository {
 
     private static String normalize(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static boolean isAscii(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            if (value.charAt(i) > 0x7F) return false;
+        }
+        return true;
     }
 }

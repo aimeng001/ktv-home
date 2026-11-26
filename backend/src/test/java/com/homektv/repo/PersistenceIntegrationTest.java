@@ -375,7 +375,7 @@ class PersistenceIntegrationTest {
         assertThat(artists.stream().anyMatch(a -> "张学友".equals(a.getArtist()))).isTrue();
 
         // 3. Tags aggregation
-        var tags = songRepository.aggregateTagsByStatusOk();
+        var tags = songRepository.aggregateIndexedTagsByStatusOk();
         assertThat(tags).isNotEmpty();
         assertThat(tags.stream().anyMatch(t -> "经典".equals(t.getName()))).isTrue();
         assertThat(tags.stream()
@@ -427,88 +427,6 @@ class PersistenceIntegrationTest {
     }
 
     @Test
-    void tagAggregationUsesOneSongsScanAndPreservesTopHundredResults() throws Exception {
-        jdbc.execute("""
-                CREATE TABLE category_bench AS
-                SELECT n::bigint AS id, 'ok'::text AS status,
-                       ARRAY['common', 'tag-' || (n % 180)::text]::text[] AS tags,
-                       ARRAY['common', 'genre-' || (n % 130)::text]::text[] AS ai_genres,
-                       ARRAY['common', 'theme-' || (n % 120)::text]::text[] AS ai_themes
-                FROM generate_series(1, 30000) AS series(n)
-                """);
-        jdbc.execute("ANALYZE category_bench");
-        String baselineSql = """
-                SELECT tag AS name, COUNT(DISTINCT song_id) AS song_count FROM (
-                    SELECT id AS song_id, unnest(tags) AS tag FROM category_bench WHERE status = 'ok'
-                    UNION ALL
-                    SELECT id AS song_id, unnest(ai_genres) AS tag FROM category_bench WHERE status = 'ok'
-                    UNION ALL
-                    SELECT id AS song_id, unnest(ai_themes) AS tag FROM category_bench WHERE status = 'ok'
-                ) sub
-                WHERE tag IS NOT NULL AND tag <> ''
-                GROUP BY tag
-                ORDER BY COUNT(DISTINCT song_id) DESC, tag ASC
-                LIMIT 100
-                """;
-
-        String candidateSql = """
-                SELECT category.tag AS name, COUNT(DISTINCT s.id) AS song_count
-                FROM category_bench s
-                CROSS JOIN LATERAL unnest(
-                    COALESCE(s.tags, ARRAY[]::text[])
-                    || COALESCE(s.ai_genres, ARRAY[]::text[])
-                    || COALESCE(s.ai_themes, ARRAY[]::text[])
-                ) AS category(tag)
-                WHERE s.status = 'ok'
-                  AND category.tag IS NOT NULL
-                  AND category.tag <> ''
-                GROUP BY category.tag
-                ORDER BY COUNT(DISTINCT s.id) DESC, category.tag ASC
-                LIMIT 100
-                """;
-        var expected = jdbc.query(baselineSql,
-                (result, row) -> result.getString("name") + "\t" + result.getLong(2));
-        String productionSql = com.homektv.repo.SongRepository.class
-                .getMethod("aggregateTagsByStatusOk")
-                .getAnnotation(org.springframework.data.jpa.repository.Query.class)
-                .value();
-        String productionProbeSql = productionSql.replace("FROM songs", "FROM category_bench");
-        var actual = jdbc.query(productionProbeSql,
-                (result, row) -> result.getString("name") + "\t" + result.getLong(2));
-        assertThat(actual).containsExactlyElementsOf(expected);
-        assertThat(actual).hasSize(100);
-
-        var productionPlan = jdbc.query("EXPLAIN (ANALYZE, BUFFERS) " + productionProbeSql,
-                (result, row) -> result.getString(1));
-        var candidatePlan = jdbc.query("EXPLAIN (ANALYZE, BUFFERS) " + candidateSql,
-                (result, row) -> result.getString(1));
-        long productionScans = productionPlan.stream().filter(line -> line.contains("Scan on category_bench")).count();
-        long candidateScans = candidatePlan.stream().filter(line -> line.contains("Scan on category_bench")).count();
-        assertThat(candidateScans).isEqualTo(1L);
-
-        var baselineSamples = new java.util.ArrayList<Long>();
-        var candidateSamples = new java.util.ArrayList<Long>();
-        for (int i = 0; i < 2; i++) {
-            jdbc.query(baselineSql, (result, row) -> result.getString(1));
-            jdbc.query(candidateSql, (result, row) -> result.getString(1));
-        }
-        for (int i = 0; i < 5; i++) {
-            long baselineStart = System.nanoTime();
-            jdbc.query(baselineSql, (result, row) -> result.getString(1));
-            baselineSamples.add((System.nanoTime() - baselineStart) / 1_000_000);
-            long candidateStart = System.nanoTime();
-            jdbc.query(candidateSql, (result, row) -> result.getString(1));
-            candidateSamples.add((System.nanoTime() - candidateStart) / 1_000_000);
-        }
-        long baselineMedian = baselineSamples.stream().sorted().toList().get(2);
-        long candidateMedian = candidateSamples.stream().sorted().toList().get(2);
-        System.out.println("tag aggregation benchmark: rows=30000 production_scans=" + productionScans
-                + " candidate_scans=" + candidateScans + " baseline_median_ms=" + baselineMedian
-                + " candidate_median_ms=" + candidateMedian);
-        assertThat(productionScans).isEqualTo(1L);
-    }
-
-    @Test
     void activeReferenceCategoryUsesSamePredicateForTagsListAndCount() {
         String suffix = UUID.randomUUID().toString();
         String category = "iktv-ref-test-" + suffix;
@@ -545,7 +463,7 @@ class PersistenceIntegrationTest {
                     VALUES (?, ?, ?, ?)
                     """, saved.getId(), snapshotVersion, referenceId, category);
 
-            var tag = songRepository.aggregateTagsByStatusOk().stream()
+            var tag = songRepository.aggregateIndexedTagsByStatusOk().stream()
                     .filter(value -> category.equals(value.getName())).findFirst().orElseThrow();
             var page = songRepository.browseCategorySongs("", "", "", category, "",
                     org.springframework.data.domain.PageRequest.of(0, 10));

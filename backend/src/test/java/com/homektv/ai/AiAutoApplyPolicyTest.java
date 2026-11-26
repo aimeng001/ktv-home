@@ -1,6 +1,5 @@
 package com.homektv.ai;
 
-import com.homektv.config.AppProperties;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -12,9 +11,11 @@ import java.util.List;
 class AiAutoApplyPolicyTest {
     @Test
     void autoAppliesAtConfiguredNinetyPercentThreshold() {
-        AppProperties properties = new AppProperties();
-        properties.getAi().setAutoApplyConfidence(0.90);
-        AiAutoApplyPolicy policy = new AiAutoApplyPolicy(properties);
+        AiConfigService configService = mock(AiConfigService.class);
+        when(configService.resolve()).thenReturn(new AiConfigService.ResolvedConfig(
+                true, "http://localhost:8080/v1", "bulk", null, 5, 0.9, 0.90,
+                AiConfigService.JsonMode.AUTO, 2, 1, null));
+        AiAutoApplyPolicy policy = new AiAutoApplyPolicy(configService);
 
         assertThat(policy.shouldAutoApply(result(0.90))).isTrue();
         assertThat(policy.shouldAutoApply(result(0.95))).isTrue();
@@ -23,10 +24,9 @@ class AiAutoApplyPolicyTest {
 
     @Test
     void doesNotAutoApplyWhenClassificationIsNull() {
-        AppProperties properties = new AppProperties();
-        properties.getAi().setAutoApplyConfidence(0.90);
+        AiConfigService configService = mock(AiConfigService.class);
 
-        assertThat(new AiAutoApplyPolicy(properties).shouldAutoApply(null)).isFalse();
+        assertThat(new AiAutoApplyPolicy(configService).shouldAutoApply(null)).isFalse();
     }
 
     @Test

@@ -3,6 +3,7 @@ import com.homektv.common.ArtistAvatarUrl;
 import com.homektv.common.ArtistCreditParser;
 import com.homektv.common.ArtistKindClassifier;
 import com.homektv.common.ArtistKind;
+import com.homektv.common.CatalogCacheEpoch;
 import com.homektv.common.SearchKeyword;
 
 import com.homektv.domain.Song;
@@ -29,8 +30,21 @@ public class CategoryBrowseService {
     private final SongRepository songRepository;
     private final SongAvailabilityPolicy availabilityPolicy;
     private final ArtistDirectoryProjectionService artistDirectoryProjection;
+    private static final int SONG_PAGE_CACHE_CAPACITY = 256;
+    private static final long SONG_PAGE_CACHE_TTL_NANOS = 30_000_000_000L;
+
+    private record CachedSongPage(SongPage page, long expiresAtNanos) {}
+
     private CategorySongBrowseRepository dynamicBrowseRepository;
     private ArtistProfileService artistProfileService;
+    private CatalogRevisionService catalogRevisionService;
+    private final Map<String, CachedSongPage> songPageCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, CachedSongPage> eldest) {
+                    return size() > SONG_PAGE_CACHE_CAPACITY;
+                }
+            });
 
     @Autowired(required = false)
     void setDynamicBrowseRepository(CategorySongBrowseRepository dynamicBrowseRepository) {
@@ -40,6 +54,11 @@ public class CategoryBrowseService {
     @Autowired(required = false)
     void setArtistProfileService(ArtistProfileService artistProfileService) {
         this.artistProfileService = artistProfileService;
+    }
+
+    @Autowired(required = false)
+    void setCatalogRevisionService(CatalogRevisionService catalogRevisionService) {
+        this.catalogRevisionService = catalogRevisionService;
     }
     public CategoryBrowseService(SongRepository songRepository) {
         this(songRepository, null, null);
@@ -265,11 +284,28 @@ public class CategoryBrowseService {
             throw new com.homektv.common.ApiException("INVALID_MEDIA_TYPE", "媒体格式筛选值无效");
         }
         if (dynamicBrowseRepository != null) {
+            String pageCacheKey = null;
+            if (catalogRevisionService != null) {
+                long revision = currentCatalogRevision();
+                long epoch = CatalogCacheEpoch.current();
+                pageCacheKey = revision + ":" + epoch + "|" + normalize(artist) + "|" + normalizedKey
+                        + "|" + normalize(artistGender) + "|" + normalize(language) + "|" + normalize(tag)
+                        + "|" + normalize(vocalForm) + "|" + normalize(keyword) + "|" + safeMediaType
+                        + "|" + safeWordCount + "|" + normalize(sort) + "|" + safePage + "|" + safeSize;
+                CachedSongPage cached = songPageCache.get(pageCacheKey);
+                if (cached != null && System.nanoTime() < cached.expiresAtNanos()) {
+                    return cached.page();
+                }
+            }
             CategorySongBrowseRepository.BrowseResult result = dynamicBrowseRepository.browse(
                     new CategorySongBrowseRepository.BrowseCriteria(
                             artist, normalizedKey, artistGender, language, tag, vocalForm,
                             keyword, safeMediaType, safeWordCount, sort, safePage, safeSize));
-            return new SongPage(toSongDtos(result.songs()), result.total(), safePage, safeSize);
+            SongPage songPage = new SongPage(toSongDtos(result.songs()), result.total(), safePage, safeSize);
+            if (pageCacheKey != null) {
+                songPageCache.put(pageCacheKey, new CachedSongPage(songPage, System.nanoTime() + SONG_PAGE_CACHE_TTL_NANOS));
+            }
+            return songPage;
         }
         Page<Song> rows;
         if (safeMediaType.isEmpty()) {
@@ -346,6 +382,15 @@ public class CategoryBrowseService {
                     : Sort.by(Sort.Direction.DESC, "play_count")
                             .and(Sort.by(Sort.Direction.ASC, "title"))
                             .and(Sort.by(Sort.Direction.ASC, "id"));
+    }
+
+    private long currentCatalogRevision() {
+        if (catalogRevisionService == null) return 0L;
+        try {
+            return catalogRevisionService.current();
+        } catch (RuntimeException ignored) {
+            return 0L;
+        }
     }
 
     private static String normalize(String s) {

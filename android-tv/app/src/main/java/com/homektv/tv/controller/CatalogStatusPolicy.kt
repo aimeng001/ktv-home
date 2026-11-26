@@ -28,15 +28,6 @@ object CatalogStatusPolicy {
     fun from(status: LibraryStatus?, hasItems: Boolean, hasFilter: Boolean): CatalogUiStatus {
         if (status == null) return CatalogUiStatus(CatalogLoadState.OFFLINE)
         val revision = status.catalogRevision.takeIf { it > 0 } ?: status.statusRevision
-        // Older servers only returned totalSongs; do not mislabel that valid
-        // response as a scan that never finishes.
-        val legacy = status.libraryMode == "UNKNOWN" &&
-            status.rootState == "UNKNOWN" && status.catalogRevision == 0L && status.statusRevision == 0L
-        if (legacy) {
-            return if (hasItems) CatalogUiStatus(CatalogLoadState.READY)
-            else if (hasFilter) CatalogUiStatus(CatalogLoadState.FILTER_EMPTY)
-            else CatalogUiStatus(CatalogLoadState.EMPTY)
-        }
         if (status.rootState == "NOT_FOUND" || status.rootState == "NOT_READABLE") {
             return CatalogUiStatus(CatalogLoadState.ROOT_UNAVAILABLE, revision)
         }

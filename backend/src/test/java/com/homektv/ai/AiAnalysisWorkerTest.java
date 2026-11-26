@@ -10,7 +10,6 @@ import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.common.ApiException;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -51,6 +50,7 @@ class AiAnalysisWorkerTest {
 
     @Mock
     private AiAnalysisTaskRepository taskRepository;
+    @Mock
     private AiAnalysisTaskClaimService claimService;
     @Mock
     private AiAnalysisFinalizer finalizer;
@@ -71,25 +71,13 @@ class AiAnalysisWorkerTest {
     @Mock
     private LocalClassificationService localClassificationService;
 
-    @BeforeEach
-    void adaptLegacyRepositoryClaimStubsToTheExecutionClaimSeam() {
-        claimService = mock(AiAnalysisTaskClaimService.class, invocation -> {
-            if ("claim".equals(invocation.getMethod().getName())) {
-                Long taskId = invocation.getArgument(0);
-                return taskRepository.claimPending(taskId) == 1
-                        ? OptionalInt.of(1) : OptionalInt.empty();
-            }
-            return org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation);
-        });
-    }
-
     @Test
     void workerThatLosesAtomicClaimDoesNotLoadTaskOrCallProvider() {
-        when(taskRepository.claimPending(42L)).thenReturn(0);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.empty());
 
         worker().analyze(42L);
 
-        verify(taskRepository).claimPending(42L);
+        verify(claimService).claim(42L);
         verify(taskRepository, never()).findById(42L);
         verifyNoInteractions(songRepository, aiClient, objectMapper, configService,
                 autoApplyPolicy, concurrencyLimiter, finalizer,
@@ -103,11 +91,11 @@ class AiAnalysisWorkerTest {
                 autoApplyPolicy, concurrencyLimiter, finalizer, importRecordRepository,
                 localClassificationService);
 
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.empty());
         worker().analyze(42L);
 
-        verify(taskRepository).claimPending(42L);
+        verify(claimService).claim(42L);
         verify(taskRepository).findById(42L);
         verifyNoInteractions(songRepository, aiClient, objectMapper, configService,
                 autoApplyPolicy, concurrencyLimiter, finalizer, importRecordRepository,
@@ -117,7 +105,7 @@ class AiAnalysisWorkerTest {
     @Test
     void alreadyPausedTaskReturnsBeforeLoadingItsTarget() {
         AiAnalysisTask task = task(42L, "SONG", "BULK", "bulk-model", "paused");
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
 
         worker().analyze(42L);
@@ -143,7 +131,7 @@ class AiAnalysisWorkerTest {
                 "歌曲", "歌手", "国语", "90年代", java.util.List.of(), java.util.List.of(),
                 "全年龄", "独唱", java.util.List.of(), "本地解析", 0.5,
                 0.5, 0.5, 0.5, 0.5, "未知", java.util.Map.of());
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.isConfigured()).thenReturn(false);
@@ -185,7 +173,7 @@ class AiAnalysisWorkerTest {
         CountDownLatch continueApply = new CountDownLatch(1);
         AtomicBoolean songMutationCommitted = new AtomicBoolean();
 
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.isConfigured()).thenReturn(true);
@@ -235,7 +223,7 @@ class AiAnalysisWorkerTest {
         MediaImportRecord record = mock(MediaImportRecord.class);
         AiSongClassification result = classification(0.8, 0.8, 0.8, 0.8);
         AiConfigService.ResolvedConfig config = config("", 0.9, 0.9, "");
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(importRecordRepository.findById(13L)).thenReturn(Optional.of(record));
         when(configService.resolve()).thenReturn(config);
@@ -259,7 +247,7 @@ class AiAnalysisWorkerTest {
         AiSongClassification result = classification(0.95, 0.95, 0.95, 0.95);
         AiConfigService.ResolvedConfig config = config("", 0.9, 0.9, "secret-key");
         AiConcurrencyLimiter.Permit permit = mock(AiConcurrencyLimiter.Permit.class);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config);
@@ -290,7 +278,7 @@ class AiAnalysisWorkerTest {
         AiSongClassification result = classification(0.95, 0.95, 0.95, 0.95);
         AiConfigService.ResolvedConfig config = config("", 0.9, 0.9, "secret-key");
         AiConcurrencyLimiter.Permit permit = mock(AiConcurrencyLimiter.Permit.class);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(importRecordRepository.findById(13L)).thenReturn(Optional.of(record));
         when(configService.resolve()).thenReturn(config);
@@ -315,7 +303,7 @@ class AiAnalysisWorkerTest {
         MediaImportRecord record = mock(MediaImportRecord.class);
         AiSongClassification bulk = classification(0.4, 0.95, 0.95, 0.95);
         AiSongClassification reasoning = classification(0.98, 0.98, 0.98, 0.98);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(importRecordRepository.findById(13L)).thenReturn(Optional.of(record));
         when(configService.resolve()).thenReturn(config("reasoning-model", 0.9, 0.9, ""));
@@ -340,7 +328,7 @@ class AiAnalysisWorkerTest {
         Song song = song(7L);
         AiSongClassification local = classification(0.6, 0.7, 0.8, 0.9);
         AiConfigService.ResolvedConfig config = config("", 0.9, 0.9, "secret-key");
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config);
@@ -366,7 +354,7 @@ class AiAnalysisWorkerTest {
         AiSongClassification bulk = classification(0.4, 0.95, 0.95, 0.95);
         AiSongClassification reasoning = classification(0.98, 0.98, 0.98, 0.98);
         AiConfigService.ResolvedConfig config = config("reasoning-model", 0.9, 0.9, "secret-key");
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config);
@@ -399,7 +387,7 @@ class AiAnalysisWorkerTest {
         Song song = song(7L);
         AiSongClassification bulk = classification(title, artist, language, vocalForm);
         AiSongClassification reasoning = classification(0.98, 0.98, 0.98, 0.98);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config("reasoning-model", 0.9, 0.9, ""));
@@ -422,7 +410,7 @@ class AiAnalysisWorkerTest {
         AiAnalysisTask task = task(42L, "SONG", "BULK", "bulk-model", "processing");
         Song song = song(7L);
         AiSongClassification result = classification(0.95, 0.95, 0.95, 0.95);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config(null, 0.9, 0.9, ""));
@@ -443,7 +431,7 @@ class AiAnalysisWorkerTest {
         AiAnalysisTask task = task(42L, "SONG", "BULK", "bulk-model", "processing");
         Song song = song(7L);
         AiSongClassification result = classification(0.95, 0.95, 0.95, 0.95);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config("reasoning-model", 0.9, 0.9, ""));
@@ -464,7 +452,7 @@ class AiAnalysisWorkerTest {
         AiAnalysisTask task = task(42L, "SONG", "LOCAL", "LOCAL", "processing");
         Song song = song(7L);
         AiSongClassification result = classification(0.7, 0.7, 0.7, 0.7);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config("reasoning-model", 0.9, 0.9, ""));
@@ -488,7 +476,7 @@ class AiAnalysisWorkerTest {
         MediaImportRecord record = mock(MediaImportRecord.class);
         AiSongClassification result = classification(0.8, 0.8, 0.8, 0.8);
         AiConfigService.ResolvedConfig config = config("", 0.9, 0.9, "");
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(importRecordRepository.findById(13L)).thenReturn(Optional.of(record));
         when(configService.resolve()).thenReturn(config);
@@ -512,7 +500,7 @@ class AiAnalysisWorkerTest {
         Song song = song(7L);
         AiSongClassification bulk = classification(0.4, 0.95, 0.95, 0.95);
         AiSongClassification local = classification(0.6, 0.7, 0.8, 0.9);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config("reasoning-model", 0.9, 0.9, ""));
@@ -539,7 +527,7 @@ class AiAnalysisWorkerTest {
         MediaImportRecord record = mock(MediaImportRecord.class);
         AiSongClassification bulk = classification(0.4, 0.95, 0.95, 0.95);
         AiSongClassification local = classification(0.6, 0.7, 0.8, 0.9);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(importRecordRepository.findById(13L)).thenReturn(Optional.of(record));
         when(configService.resolve()).thenReturn(config("reasoning-model", 0.9, 0.9, ""));
@@ -567,7 +555,7 @@ class AiAnalysisWorkerTest {
         AiAnalysisTask paused = task(42L, "SONG", "BULK", "bulk-model", "paused");
         Song song = song(7L);
         AiSongClassification result = classification(0.95, 0.95, 0.95, 0.95);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task), Optional.of(task), Optional.of(paused));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config("", 0.9, 0.9, ""));
@@ -587,7 +575,7 @@ class AiAnalysisWorkerTest {
         Song song = song(7L);
         AiSongClassification bulk = classification(0.4, 0.95, 0.95, 0.95);
         AiSongClassification reasoning = classification(0.98, 0.98, 0.98, 0.98);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(
                 Optional.of(task), Optional.of(task), Optional.of(task), Optional.of(paused));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
@@ -606,7 +594,7 @@ class AiAnalysisWorkerTest {
     @Test
     void missingSongAndImportRecordAreRecordedAsFailedTasks() {
         AiAnalysisTask songTask = task(42L, "SONG", "BULK", "bulk-model", "processing");
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(songTask));
         when(songRepository.findById(7L)).thenReturn(Optional.empty());
         when(configService.resolve()).thenReturn(config("", 0.9, 0.9, ""));
@@ -615,10 +603,10 @@ class AiAnalysisWorkerTest {
 
         verify(taskRepository).finishProcessingError(42L, 1, "failed", "歌曲不存在: 7");
 
-        org.mockito.Mockito.reset(taskRepository, songRepository, importRecordRepository, configService);
+        org.mockito.Mockito.reset(taskRepository, claimService, songRepository, importRecordRepository, configService);
         AiAnalysisTask importTask = task(43L, "IMPORT_RECORD", "BULK", "bulk-model", "processing");
         importTask.setTargetId(13L);
-        when(taskRepository.claimPending(43L)).thenReturn(1);
+        when(claimService.claim(43L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(43L)).thenReturn(Optional.of(importTask));
         when(importRecordRepository.findById(13L)).thenReturn(Optional.empty());
         when(configService.resolve()).thenReturn(config("", 0.9, 0.9, ""));
@@ -633,7 +621,7 @@ class AiAnalysisWorkerTest {
         AiAnalysisTask task = task(42L, "SONG", "BULK", "bulk-model", "processing");
         Song song = song(7L);
         AiSongClassification result = classification(0.95, 0.95, 0.95, 0.95);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config("", 0.9, 0.9, ""));
@@ -654,7 +642,7 @@ class AiAnalysisWorkerTest {
         AiAnalysisTask task = task(42L, "SONG", "BULK", "bulk-model", "processing");
         Song song = song(7L);
         AiSongClassification result = classification(0.7, 0.7, 0.7, 0.7);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config("", 0.9, 0.9, ""));
@@ -693,7 +681,7 @@ class AiAnalysisWorkerTest {
         String secret = "secret-key";
         String longCause = secret + "x".repeat(1200);
         AiConfigService.ResolvedConfig config = config("", 0.9, 0.9, secret);
-        when(taskRepository.claimPending(42L)).thenReturn(1);
+        when(claimService.claim(42L)).thenReturn(OptionalInt.of(1));
         when(taskRepository.findById(42L)).thenReturn(Optional.of(task));
         when(songRepository.findById(7L)).thenReturn(Optional.of(song));
         when(configService.resolve()).thenReturn(config);

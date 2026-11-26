@@ -268,9 +268,7 @@ export const usePlayerStore = defineStore('player', {
       return true
     },
 
-    /** Accept both the current direct QueueSnapshot response and legacy {snapshot} wrappers. */
-    applyControlResponse(response) {
-      const snapshot = response?.snapshot ?? response
+    applyControlResponse(snapshot) {
       if (snapshot && Array.isArray(snapshot.list)) this.applySnapshot(snapshot)
     },
 

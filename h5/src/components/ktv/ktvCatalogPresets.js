@@ -189,14 +189,6 @@ export const NUMBER_KEYS = [
   { digit: 'back', label: '⌫', action: 'backspace' },
 ]
 
-export function formatSongNumber(song) {
-  if (!song) return '000000'
-  if (song.catalogNumber && song.catalogNumber.trim()) {
-    return song.catalogNumber.trim()
-  }
-  return String(song.id || 0).padStart(6, '0')
-}
-
 export const QWERTY_ROWS = [
   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
   ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],

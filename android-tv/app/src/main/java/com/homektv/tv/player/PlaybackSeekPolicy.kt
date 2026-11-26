@@ -6,7 +6,6 @@ internal object PlaybackSeekPolicy {
         isLiveTranscoded && when (engineType) {
             PlaybackEngineType.PRIMARY_MEDIA3,
             PlaybackEngineType.FALLBACK_FFMPEG -> true
-            PlaybackEngineType.RESOLVE_REQUIRED,
-            PlaybackEngineType.UNSUPPORTED -> false
+            PlaybackEngineType.RESOLVE_REQUIRED -> false
         }
 }

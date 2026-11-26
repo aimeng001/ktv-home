@@ -40,22 +40,6 @@ export function rememberFailedThumbUrl(failedUrls, url) {
   return next
 }
 
-export function clearFailedArtistUrl(failedUrls, failedArtistKeys, artist, url) {
-  const cleanUrl = normalizeUrl(url)
-  if (cleanUrl && failedUrls?.has(cleanUrl)) {
-    const nextUrls = new Set(failedUrls)
-    nextUrls.delete(cleanUrl)
-    failedUrls = nextUrls
-  }
-  const artistKey = artist?.artistKey || artist?.name || ''
-  if (artistKey && failedArtistKeys?.has(artistKey)) {
-    const nextKeys = new Set(failedArtistKeys)
-    nextKeys.delete(artistKey)
-    failedArtistKeys = nextKeys
-  }
-  return { failedUrls, failedArtistKeys }
-}
-
 export function songAvatarInitial(song) {
   const raw = (song?.artist || song?.title || '音').trim()
   return (raw || '音').slice(0, 1)

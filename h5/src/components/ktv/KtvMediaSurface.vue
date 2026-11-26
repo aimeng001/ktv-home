@@ -310,8 +310,8 @@ let awaitingMediaReload = false
 
 const MAX_LIVE_RECOVERY_ATTEMPTS = 2
 const LIVE_STALL_TIMEOUT_MS = 10000
-const LIVE_PREBUFFER_MIN_SEC = 1.2
-const LIVE_PREBUFFER_TIMEOUT_MS = 1800
+const LIVE_PREBUFFER_MIN_SEC = 0.6
+const LIVE_PREBUFFER_TIMEOUT_MS = 900
 
 const lyricLines = ref([])
 const lyricError = ref('')
@@ -526,9 +526,13 @@ async function applyMediaSource() {
       releaseLivePrebufferAndPlay()
     }, LIVE_PREBUFFER_TIMEOUT_MS)
   }
-  if (el.getAttribute('src') === nextUrl) {
+  const currentAttr = el.getAttribute('src')
+  if (currentAttr === nextUrl) {
     if (typeof el.load === 'function') el.load()
   } else {
+    if (currentAttr) {
+      try { el.pause() } catch { /* ignore */ }
+    }
     el.src = nextUrl
   }
   syncAudioRouter()
@@ -772,6 +776,9 @@ function onVideoEnded() {
 
 function onVideoError() {
   if (!streamSpec.value.url) return
+  // 阶梯回退：原生流首次失败先尝试服务端 VAAPI 硬编实时流（softVideo=false），
+  // 只有已在实时转码中失败才降级 CPU softVideo=true，避免一错就打满 N5105 CPU。
+  const nextSoftVideo = Boolean(streamSpec.value.liveTranscode)
   if ((!forceTranscodeFallback.value || !forceSoftVideoFallback.value) && !isAudioOnly.value) {
     const startSec = Math.max(0, (player.positionMs || 0) / 1000)
     const fallbackSpec = buildWebStreamSpec({
@@ -780,14 +787,14 @@ function onVideoError() {
       vocalMode: player.vocalMode,
       startSeconds: startSec,
       forceTranscode: true,
-      softVideo: true,
+      softVideo: nextSoftVideo,
       song: song.value,
       sid: streamSessionId,
     })
     if (fallbackSpec.url && fallbackSpec.url !== streamSpec.value.url) {
       liveStartSec.value = startSec
       forceTranscodeFallback.value = true
-      forceSoftVideoFallback.value = true
+      forceSoftVideoFallback.value = nextSoftVideo
       return
     }
   }

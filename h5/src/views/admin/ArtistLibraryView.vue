@@ -97,7 +97,7 @@ function load(options = {}) {
       selectedKeys.value = new Set([...selectedKeys.value].filter(key => keys.has(key)))
       return result
     } catch (e) {
-      if (sequence === requestSerial) loadError.value = e.message || '歌手列表加载失败'
+      if (sequence === requestSerial && e?.name !== 'AbortError') loadError.value = e?.message || '歌手列表加载失败'
       return undefined
     } finally {
       if (sequence === requestSerial) {

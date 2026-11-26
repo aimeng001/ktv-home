@@ -17,7 +17,6 @@ import com.homektv.contract.AdminSongDto;
 import com.homektv.contract.AudioLayoutDto;
 import com.homektv.contract.AudioLayoutUpdateRequest;
 import com.homektv.contract.SongEditRequest;
-import com.homektv.contract.VocalReviewDto;
 import com.homektv.ws.WsBroadcaster;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -40,8 +39,6 @@ import java.util.Map;
  */
 @Service
 public class AdminService {
-
-    private static final int MAX_VOCAL_REVIEW_PAGE_SIZE = 200;
 
     private final SongRepository songRepo;
     private final SongFileRepository fileRepo;
@@ -291,60 +288,6 @@ public class AdminService {
             catalogRevisionService.bumpIfChanged(true);
         }
         return saved;
-    }
-
-    /**
-     * 伴奏轨低置信度复核列表：入库判不准原伴唱、回落默认轨的文件源，供人工核对后 swap 校正。
-     */
-    @Transactional(readOnly = true)
-    public Page<VocalReviewDto> listVocalReview(int page, int size) {
-        int safeSize = Math.max(1, Math.min(size, MAX_VOCAL_REVIEW_PAGE_SIZE));
-        Pageable pageable = PageRequest.of(Math.max(0, page), safeSize, Sort.by(Sort.Direction.ASC, "songId"));
-        Page<SongFile> files = fileRepo.findByVocalConfidence("LOW", pageable);
-        List<Long> songIds = files.getContent().stream()
-                .map(SongFile::getSongId)
-                .filter(java.util.Objects::nonNull)
-                .distinct()
-                .toList();
-        Map<Long, Song> songsById = new LinkedHashMap<>();
-        if (!songIds.isEmpty()) {
-            songRepo.findAllById(songIds).forEach(s -> songsById.put(s.getId(), s));
-        }
-        return files.map(f -> {
-            Song s = songsById.get(f.getSongId());
-            return new VocalReviewDto(
-                    f.getId(), f.getSongId(),
-                    s != null ? s.getTitle() : null,
-                    s != null ? s.getArtist() : null,
-                    f.getFormat(), f.getAudioTracks(),
-                    f.getVocalTrackIndex(), f.getVocalConfidence());
-        });
-    }
-
-    /**
-     * 后台人工确认伴奏轨：直接指定 index 并标 HIGH（脱离复核列表）。
-     * index 须在音轨范围内。
-     */
-    @Transactional
-    public void confirmVocalTrack(Long fileId, int accompanimentIndex) {
-        SongFile file = fileRepo.findById(fileId)
-                .orElseThrow(() -> new ApiException("FILE_NOT_FOUND", "文件源不存在"));
-        if (accompanimentIndex < 0 || accompanimentIndex >= file.getAudioTracks()) {
-            throw new ApiException("INVALID_ACTION",
-                    "伴奏轨 index 越界：" + accompanimentIndex + "（共 " + file.getAudioTracks() + " 轨）");
-        }
-        if (file.getAudioTracks() < 2) {
-            throw new ApiException("INVALID_ACTION", "单轨媒体不能设置为 DUAL_TRACK，至少需要 2 条音轨");
-        }
-        file.setAudioLayout(AudioLayout.DUAL_TRACK);
-        file.setAudioLayoutSource(AudioLayoutSource.MANUAL);
-        file.setVocalTrackIndex(accompanimentIndex);
-        file.setAccompanimentTrackIndex(accompanimentIndex);
-        file.setOriginalTrackIndex(accompanimentIndex == 0 ? 1 : 0);
-        file.setVocalConfidence("HIGH");
-        SongFile saved = fileRepo.save(file);
-        songProjectionService.recompute(saved.getSongId());
-        bumpCatalogRevision();
     }
 
     /**

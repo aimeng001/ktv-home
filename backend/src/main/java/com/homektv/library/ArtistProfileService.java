@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,8 +27,20 @@ import java.util.Optional;
 public class ArtistProfileService {
     private static final Logger log = LoggerFactory.getLogger(ArtistProfileService.class);
     private static final int PROFILE_PAGE_SIZE = 500;
+    private static final int AVATAR_KEY_CACHE_CAPACITY = 4096;
+    private static final long AVATAR_KEY_CACHE_TTL_NANOS = 30_000_000_000L;
+
+    private record CachedAvatarKey(boolean cached, long expiresAtNanos) {}
+
     private final JdbcTemplate jdbc;
     private final ArtistDirectoryProjectionService directoryProjection;
+    private final Map<String, CachedAvatarKey> avatarKeyCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(256, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, CachedAvatarKey> eldest) {
+                    return size() > AVATAR_KEY_CACHE_CAPACITY;
+                }
+            });
 
     public ArtistProfileService(JdbcTemplate jdbc) {
         this(jdbc, null);
@@ -197,6 +210,7 @@ public class ArtistProfileService {
                 WHERE artist_key=?
                 """, path, provider, artistKey) > 0;
         if (changed) {
+            evictCachedAvatarKey(artistKey);
             try {
                 jdbc.update("""
                         UPDATE artist_avatar_jobs
@@ -247,8 +261,11 @@ public class ArtistProfileService {
                         AND job.status='PROCESSING' AND job.claim_token=?::uuid
                 )
                 """, path, provider, externalId, artistKey, jobId, claimToken) > 0;
-        if (changed && directoryProjection != null) {
-            directoryProjection.updateAvatarPathAfterCommit(artistKey, path);
+        if (changed) {
+            evictCachedAvatarKey(artistKey);
+            if (directoryProjection != null) {
+                directoryProjection.updateAvatarPathAfterCommit(artistKey, path);
+            }
         }
         return changed;
     }
@@ -341,8 +358,11 @@ public class ArtistProfileService {
                     avatar_status='PENDING', avatar_error=NULL, updated_at=now()
                 WHERE artist_key=? AND artist_kind IN ('PERSON', 'GROUP')
                 """, artistKey);
-        if (updated > 0 && directoryProjection != null) {
-            directoryProjection.updateAvatarPathAfterCommit(artistKey, null);
+        if (updated > 0) {
+            evictCachedAvatarKey(artistKey);
+            if (directoryProjection != null) {
+                directoryProjection.updateAvatarPathAfterCommit(artistKey, null);
+            }
         }
         return updated > 0;
     }
@@ -419,6 +439,7 @@ public class ArtistProfileService {
                 resetCount += batch.size();
             }
             if (resetCount > 0) {
+                avatarKeyCache.clear();
                 log.info("reset {} stale READY artist avatar(s) with missing cache files", resetCount);
             }
             return resetCount;
@@ -593,6 +614,12 @@ public class ArtistProfileService {
         }
     }
 
+    private void evictCachedAvatarKey(String artistKey) {
+        if (artistKey != null && !artistKey.isBlank()) {
+            avatarKeyCache.remove(artistKey);
+        }
+    }
+
     public Optional<java.util.Set<String>> findCachedAvatarKeys(Collection<String> artistKeys) {
         if (artistKeys == null || artistKeys.isEmpty()) return Optional.of(java.util.Set.of());
         List<String> keys = artistKeys.stream()
@@ -600,19 +627,39 @@ public class ArtistProfileService {
                 .distinct()
                 .toList();
         if (keys.isEmpty()) return Optional.of(java.util.Set.of());
+        long now = System.nanoTime();
+        java.util.Set<String> cached = new java.util.HashSet<>();
+        java.util.List<String> keysToQuery = new java.util.ArrayList<>();
+        for (String key : keys) {
+            CachedAvatarKey entry = avatarKeyCache.get(key);
+            if (entry != null && now < entry.expiresAtNanos()) {
+                if (entry.cached()) cached.add(key);
+            } else {
+                keysToQuery.add(key);
+            }
+        }
+        if (keysToQuery.isEmpty()) {
+            return Optional.of(cached);
+        }
         try {
-            java.util.Set<String> cached = new java.util.HashSet<>();
-            for (int start = 0; start < keys.size(); start += PROFILE_PAGE_SIZE) {
-                List<String> batch = keys.subList(start, Math.min(keys.size(), start + PROFILE_PAGE_SIZE));
+            java.util.Set<String> freshlyCached = new java.util.HashSet<>();
+            for (int start = 0; start < keysToQuery.size(); start += PROFILE_PAGE_SIZE) {
+                List<String> batch = keysToQuery.subList(start, Math.min(keysToQuery.size(), start + PROFILE_PAGE_SIZE));
                 String placeholders = String.join(",", java.util.Collections.nCopies(batch.size(), "?"));
                 jdbc.query(
                         "SELECT artist_key FROM artist_profiles WHERE artist_key IN (" + placeholders
                                 + ") AND avatar_path IS NOT NULL AND trim(avatar_path) <> ''",
                         rs -> {
                             String key = rs.getString("artist_key");
-                            if (key != null && !key.isBlank()) cached.add(key);
+                            if (key != null && !key.isBlank()) freshlyCached.add(key);
                         },
                         batch.toArray());
+            }
+            long expiresAt = System.nanoTime() + AVATAR_KEY_CACHE_TTL_NANOS;
+            for (String key : keysToQuery) {
+                boolean hasAvatar = freshlyCached.contains(key);
+                avatarKeyCache.put(key, new CachedAvatarKey(hasAvatar, expiresAt));
+                if (hasAvatar) cached.add(key);
             }
             return Optional.of(cached);
         } catch (DataAccessException failure) {

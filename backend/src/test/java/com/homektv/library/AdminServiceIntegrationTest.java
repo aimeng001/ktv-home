@@ -219,50 +219,6 @@ class AdminServiceIntegrationTest {
         assertThat(all.get("standby_carousel")).isEqualTo(true);
     }
 
-    @Test
-    void vocalReviewListsOnlyLowConfidence() {
-        Song ktv = songRepo.findByFingerprint("fp-晴天").orElseThrow();
-        fileRepo.save(vocalFile(ktv.getId(), "/music/晴天.mkv", 2, 1, "LOW"));
-        fileRepo.save(vocalFile(ktv.getId(), "/music/晴天.hi.mkv", 2, 1, "HIGH"));
-
-        var review = adminService.listVocalReview(0, 20);
-        assertThat(review.getTotalElements()).isEqualTo(1);
-        assertThat(review.getContent().get(0).title()).isEqualTo("晴天");
-        assertThat(review.getContent().get(0).vocalConfidence()).isEqualTo("LOW");
-    }
-
-    @Test
-    void confirmVocalTrackSetsIndexAndHigh() {
-        Song ktv = songRepo.findByFingerprint("fp-晴天").orElseThrow();
-        var file = fileRepo.save(vocalFile(ktv.getId(), "/music/晴天.mkv", 2, 1, "LOW"));
-
-        adminService.confirmVocalTrack(file.getId(), 0);
-
-        var updated = fileRepo.findById(file.getId()).orElseThrow();
-        assertThat(updated.getVocalTrackIndex()).isEqualTo(0);
-        assertThat(updated.getVocalConfidence()).isEqualTo("HIGH");
-        // 已确认 → 脱离复核列表
-        assertThat(adminService.listVocalReview(0, 20).getTotalElements()).isZero();
-    }
-
-    @Test
-    void confirmVocalTrackRejectsOutOfRangeIndex() {
-        Song ktv = songRepo.findByFingerprint("fp-晴天").orElseThrow();
-        var file = fileRepo.save(vocalFile(ktv.getId(), "/music/晴天.mkv", 2, 1, "LOW"));
-        org.assertj.core.api.Assertions.assertThatThrownBy(
-                        () -> adminService.confirmVocalTrack(file.getId(), 5))
-                .hasMessageContaining("越界");
-    }
-
-    private com.homektv.domain.SongFile vocalFile(Long songId, String path, int tracks,
-                                                  Integer vocalIdx, String confidence) {
-        var f = new com.homektv.domain.SongFile();
-        f.setSongId(songId); f.setFilePath(path); f.setFormat("matroska");
-        f.setAudioTracks(tracks); f.setVocalTrackIndex(vocalIdx); f.setVocalConfidence(confidence);
-        f.setFileMtime(java.time.OffsetDateTime.now());
-        return f;
-    }
-
     private com.homektv.domain.SongFile adminFile(Long songId, String path, boolean transcode, String sourcePath) {
         var f = new com.homektv.domain.SongFile();
         f.setSongId(songId); f.setFilePath(path); f.setFormat("mkv");

@@ -92,6 +92,28 @@ class SearchMigrationContractTest {
         assertThat(SongSearchRepository.SHORT_SEARCH_SQL).contains("'ALIAS'");
     }
 
+    @Test
+    void v77AddsTopNFirstLetterIndexesAndLowerCollaborativeArtistIndexes() throws Exception {
+        String sql = Files.readString(migrationPath("V77__search_hot_path_topn_indexes.sql"));
+        assertThat(sql)
+                .contains("idx_songs_ok_title_init_first_play")
+                .contains("idx_songs_ok_title_init_first_media_play")
+                .contains("idx_songs_ok_artist_init_first_play")
+                .contains("idx_song_artists_name_lower_trgm")
+                .contains("idx_song_files_valid_song_id");
+    }
+
+    @Test
+    void v78AddsTwoCharPrefixAndLanguagePlayCountTopNIndexes() throws Exception {
+        String sql = Files.readString(migrationPath("V78__search_topn_and_browse_hot_path_indexes.sql"));
+        assertThat(sql)
+                .contains("idx_songs_ok_title_init_prefix2_play")
+                .contains("idx_songs_ok_artist_init_prefix2_play")
+                .contains("idx_songs_ok_title_first_play")
+                .contains("idx_songs_ok_artist_first_play")
+                .contains("idx_songs_ok_language_lower_play");
+    }
+
     private Path migrationPath() throws IOException {
         return migrationPath("V36__song_search_hot_path_indexes.sql");
     }
