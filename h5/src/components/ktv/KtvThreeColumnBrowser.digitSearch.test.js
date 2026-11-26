@@ -53,7 +53,7 @@ describe('KtvThreeColumnBrowser 6 位数字点歌编号与纯数字搜索', () =
     vi.clearAllMocks()
   })
 
-  it('歌曲卡片上展示 6 位数字点歌编号 No.810234', async () => {
+  it('歌曲卡片下行仅展示歌手与时长，不再展示 8 位编号', async () => {
     app = createApp(KtvThreeColumnBrowser, {
       initialTab: 'song_name',
     })
@@ -62,8 +62,8 @@ describe('KtvThreeColumnBrowser 6 位数字点歌编号与纯数字搜索', () =
     await nextTick()
     await nextTick()
 
-    const songNumEl = root.querySelector('.song-num')
-    expect(songNumEl).not.toBeNull()
-    expect(songNumEl.textContent).toBe('No.810234')
+    expect(root.querySelector('.song-num')).toBeNull()
+    expect(root.querySelector('.card-title')?.textContent?.trim()).toBe('吻别')
+    expect(root.querySelector('.card-sub')?.textContent?.trim()).toBe('张学友 · 05:00')
   })
 })

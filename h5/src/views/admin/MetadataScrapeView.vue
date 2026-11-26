@@ -58,8 +58,8 @@
               <thead><tr><th>歌曲</th><th>刮削建议</th><th>来源</th><th>置信度</th><th>状态</th><th>操作</th></tr></thead>
               <tbody>
                 <tr v-for="item in task.items" :key="item.id">
-                  <td><strong>{{ item.title }}</strong><small>{{ item.artist || '未知歌手' }}</small></td>
-                  <td><template v-if="item.result?.track"><strong>{{ item.result.track.title }}</strong><small>{{ (item.result.track.artists||[]).join(' / ') || '未知歌手' }}<template v-if="item.result.track.album"> · {{ item.result.track.album }}</template></small></template><span v-else class="muted">{{ item.error || '等待刮削' }}</span></td>
+                  <td><strong :title="item.title">{{ item.title }}</strong><small :title="item.artist || '未知歌手'">{{ item.artist || '未知歌手' }}</small></td>
+                  <td><template v-if="item.result?.track"><strong :title="item.result.track.title">{{ item.result.track.title }}</strong><small :title="`${(item.result.track.artists||[]).join(' / ') || '未知歌手'}${item.result.track.album ? ` · ${item.result.track.album}` : ''}`">{{ (item.result.track.artists||[]).join(' / ') || '未知歌手' }}<template v-if="item.result.track.album"> · {{ item.result.track.album }}</template></small></template><span v-else class="muted" :title="item.error || ''">{{ item.error || '等待刮削' }}</span></td>
                   <td><span v-if="item.provider" class="provider" :class="item.provider.toLowerCase()">{{ providerText(item.provider) }}</span><span v-else>—</span></td>
                   <td><strong v-if="item.score!=null" class="score" :class="scoreClass(item.score)">{{ formatPercent(item.score) }}</strong><span v-else>—</span></td>
                   <td><span class="item-status" :class="item.status.toLowerCase()">{{ itemStatusText(item.status) }}</span><small v-if="item.error" class="error-text">{{ item.error }}</small></td>

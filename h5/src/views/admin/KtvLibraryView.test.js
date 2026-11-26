@@ -648,6 +648,18 @@ describe('KtvLibraryView', () => {
     expect(root.querySelector('.scrape-batch').disabled).toBe(true)
   })
 
+  it('enforces fixed table layout on wide admin tables so sticky action cells never occlude trailing columns', async () => {
+    const [ktvSource, sourceLibSource, aiLibSource] = await Promise.all([
+      import('./KtvLibraryView.vue?raw'),
+      import('./SourceLibraryView.vue?raw'),
+      import('./AiLibraryView.vue?raw'),
+    ])
+    expect(ktvSource.default).toMatch(/table\s*\{[^}]*table-layout:\s*fixed/)
+    expect(ktvSource.default).toMatch(/\.row-actions\s*\{[^}]*flex-wrap:\s*wrap/)
+    expect(sourceLibSource.default).toMatch(/table\.source-table\s*\{[^}]*table-layout:\s*fixed/)
+    expect(aiLibSource.default).toMatch(/table\.ai-table\s*\{[^}]*table-layout:\s*fixed/)
+  })
+
   async function mount() {
     app?.unmount()
     root?.remove()

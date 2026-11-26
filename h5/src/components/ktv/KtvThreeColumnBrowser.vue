@@ -154,6 +154,7 @@
             type="button"
             class="variety-btn"
             :class="{ on: selectedVariety === preset.key }"
+            :title="preset.label"
             @click="selectVariety(preset.key)"
           >
             <img :src="preset.image" :alt="preset.label" loading="lazy" decoding="async" />
@@ -335,21 +336,32 @@
               <span v-else>{{ songAvatarInitial(item.song) }}</span>
             </div>
             <div class="card-info">
-              <strong class="card-title">{{ item.song?.title }}</strong>
-              <small class="card-sub">{{ item.song?.artist }} · {{ item.playedByNick }} · {{ formatTimeClock(item.playedAt) }}</small>
+              <div class="card-title-row">
+                <strong class="card-title" :title="item.song?.title || ''">{{ item.song?.title }}</strong>
+              </div>
+              <div class="card-bottom-row">
+                <small
+                  class="card-sub"
+                  :title="`${item.song?.artist || '未知歌手'} · ${item.playedByNick || '家人'} · ${formatTimeClock(item.playedAt)}`"
+                >
+                  {{ item.song?.artist || '未知歌手' }} · {{ item.playedByNick }} · {{ formatTimeClock(item.playedAt) }}
+                </small>
+                <div class="card-actions">
+                  <button
+                    type="button"
+                    class="order-btn"
+                    :disabled="busyHistoryId === item.historyId"
+                    @click="repeatHistorySong(item)"
+                  >
+                    {{ busyHistoryId === item.historyId ? '加入中' : '再唱' }}
+                  </button>
+                </div>
+              </div>
             </div>
-            <button
-              type="button"
-              class="order-btn"
-              :disabled="busyHistoryId === item.historyId"
-              @click="repeatHistorySong(item)"
-            >
-              {{ busyHistoryId === item.historyId ? '加入中' : '再唱' }}
-            </button>
           </article>
         </div>
 
-        <!-- 歌曲卡片 3×3 九宫格（含搜索/分类/收藏/歌单歌曲/心愿反馈） -->
+        <!-- 歌曲卡片自适应网格（含搜索/分类/收藏/歌单歌曲/心愿反馈） -->
         <div v-else class="song-grid">
           <div v-if="!displayedSongs.length" class="stage-state empty-wish">
             <p>{{ keyword.trim() ? `曲库里还没找到“${keyword.trim()}”` : '当前分类暂无歌曲' }}</p>
@@ -379,39 +391,44 @@
                 <strong class="card-title" :title="song.title">{{ song.title }}</strong>
                 <span class="tag" :class="formatSongTypeBadge(song).cls">{{ formatSongTypeBadge(song).text }}</span>
               </div>
-              <small class="card-sub">
-                <span class="song-num">No.{{ formatSongNumber(song) }}</span> · {{ song.artist || '未知歌手' }} · {{ formatDurationMs(song.durationMs) }}
-              </small>
-            </div>
-            <div class="card-actions">
-              <button
-                type="button"
-                class="fav-btn"
-                :class="{ on: favorites.has(song.id) }"
-                :aria-label="favorites.has(song.id) ? '取消收藏' : '收藏'"
-                @click="toggleFav(song.id)"
-              >
-                <Heart :size="15" :fill="favorites.has(song.id) ? 'currentColor' : 'none'" />
-              </button>
-              <button
-                type="button"
-                class="top-order-btn"
-                :disabled="song.playable === false"
-                title="点歌并置顶优先播放"
-                @click="orderTopSong(song)"
-              >
-                置顶
-              </button>
-              <button
-                type="button"
-                class="order-btn"
-                :class="{ ordered: orderedIds.has(song.id), unavailable: song.playable === false }"
-                :disabled="song.playable === false"
-                :title="song.playable === false ? unavailableReasonLabel(song.unavailableReason) : ''"
-                @click="orderSong(song)"
-              >
-                {{ song.playable === false ? '准备中' : orderedIds.has(song.id) ? '已点' : '点歌' }}
-              </button>
+              <div class="card-bottom-row">
+                <small
+                  class="card-sub"
+                  :title="`${song.artist || '未知歌手'} · ${formatDurationMs(song.durationMs)}`"
+                >
+                  {{ song.artist || '未知歌手' }} · {{ formatDurationMs(song.durationMs) }}
+                </small>
+                <div class="card-actions">
+                  <button
+                    type="button"
+                    class="fav-btn"
+                    :class="{ on: favorites.has(song.id) }"
+                    :aria-label="favorites.has(song.id) ? '取消收藏' : '收藏'"
+                    @click="toggleFav(song.id)"
+                  >
+                    <Heart :size="15" :fill="favorites.has(song.id) ? 'currentColor' : 'none'" />
+                  </button>
+                  <button
+                    type="button"
+                    class="top-order-btn"
+                    :disabled="song.playable === false"
+                    title="点歌并置顶优先播放"
+                    @click="orderTopSong(song)"
+                  >
+                    置顶
+                  </button>
+                  <button
+                    type="button"
+                    class="order-btn"
+                    :class="{ ordered: orderedIds.has(song.id), unavailable: song.playable === false }"
+                    :disabled="song.playable === false"
+                    :title="song.playable === false ? unavailableReasonLabel(song.unavailableReason) : ''"
+                    @click="orderSong(song)"
+                  >
+                    {{ song.playable === false ? '准备中' : orderedIds.has(song.id) ? '已点' : '点歌' }}
+                  </button>
+                </div>
+              </div>
             </div>
           </article>
         </div>
@@ -483,7 +500,6 @@ import {
   VARIETY_PRESETS,
   VOCAL_FORM_FILTERS,
   formatDurationMs,
-  formatSongNumber,
   formatSongTypeBadge,
   formatTimeClock,
 } from './ktvCatalogPresets'
@@ -1497,6 +1513,7 @@ defineExpose({ switchTab, focusSearchKeyboard })
 .rail-divider { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 4px 0; }
 .rail-btn {
   width: 100%;
+  min-width: 0;
   padding: 8px 10px;
   border-radius: 8px;
   font-size: 13px;
@@ -1525,8 +1542,11 @@ defineExpose({ switchTab, focusSearchKeyboard })
 }
 .letter-chip.on { background: var(--iktv-blue); color: #ffffff; font-weight: 700; }
 .variety-btn {
-  display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+  display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 8px;
   border-radius: 8px; background: rgba(255, 255, 255, 0.05); font-size: 13px; text-align: left;
+}
+.variety-btn span {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .variety-btn.on { border: 1px solid var(--iktv-blue); background: rgba(49, 130, 251, 0.2); color: #ffffff; font-weight: 700; }
 .variety-btn img { width: 34px; height: 24px; border-radius: 4px; object-fit: cover; flex: none; }
@@ -1574,7 +1594,7 @@ defineExpose({ switchTab, focusSearchKeyboard })
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr));
   grid-auto-rows: min-content;
   gap: 10px;
 }
@@ -1593,26 +1613,18 @@ defineExpose({ switchTab, focusSearchKeyboard })
   background: rgba(49, 194, 124, 0.1);
 }
 .card-thumb {
-  width: 44px; height: 44px; border-radius: 8px; overflow: hidden; flex: none;
+  width: 46px; height: 46px; border-radius: 8px; overflow: hidden; flex: none;
   background: rgba(255, 255, 255, 0.1); display: grid; place-items: center;
   font-weight: 800; color: #dbeafe;
 }
 .card-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .card-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.card-title { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.card-title { font-size: 15px; font-weight: 700; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .card-title-row .tag { flex-shrink: 0; }
-.card-sub { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.song-num {
-  font-family: monospace;
-  font-weight: 700;
-  color: #93c5fd;
-  background: rgba(49, 130, 251, 0.16);
-  padding: 1px 4px;
-  border-radius: 4px;
-  flex-shrink: 0;
-}
-.card-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.card-bottom-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.card-sub { flex: 1; min-width: 0; font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-actions { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
 .fav-btn {
   width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
   color: var(--dim); background: rgba(255, 255, 255, 0.06);
@@ -1643,7 +1655,7 @@ defineExpose({ switchTab, focusSearchKeyboard })
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(156px, 100%), 1fr));
   grid-auto-rows: min-content;
   gap: 10px;
 }
@@ -1703,11 +1715,6 @@ defineExpose({ switchTab, focusSearchKeyboard })
 }
 .pager-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .pager-info { font-size: 12px; color: var(--dim); }
-
-@media (max-width: 1440px) {
-  .song-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .artist-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
 
 @media (max-width: 899px) {
   .kb-mobile-toggle { display: inline-flex; }

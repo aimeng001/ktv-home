@@ -42,7 +42,7 @@ vi.mock('../../composables/useToast', async () => {
 import KtvThreeColumnBrowser from './KtvThreeColumnBrowser.vue'
 import browserStyleSource from './KtvThreeColumnBrowser.vue?raw'
 
-describe('KtvThreeColumnBrowser 1280~1440px 中屏响应式断点与卡片布局加固', () => {
+describe('KtvThreeColumnBrowser 自适应网格与防挤压歌卡契约', () => {
   let app
   let root
   let pinia
@@ -61,27 +61,70 @@ describe('KtvThreeColumnBrowser 1280~1440px 中屏响应式断点与卡片布局
     vi.clearAllMocks()
   })
 
-  it('断点规则包含 1440px 阈值，确保 1280px/1366px 等常见触屏/中屏进入 2 列网格', () => {
-    // 验证 CSS 中断点是否升级为 max-width: 1440px（原 1260px 遗漏了 1280 与 1366）
-    expect(browserStyleSource).toMatch(/@media\s*\(\s*max-width:\s*1440px\s*\)/)
-    expect(browserStyleSource).not.toMatch(/@media\s*\(\s*max-width:\s*1260px\s*\)/)
+  it('歌曲与歌手网格使用容器自适应 auto-fill 且单卡保底宽度不少于 330px/156px，严禁回退 4 列写死', () => {
+    expect(browserStyleSource).toMatch(/\.song-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(\s*auto-fill\s*,\s*minmax\(\s*min\(\s*330px\s*,\s*100%\s*\)\s*,\s*1fr\s*\)\s*\)/)
+    expect(browserStyleSource).not.toMatch(/\.song-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(\s*4\s*,/)
+    expect(browserStyleSource).toMatch(/\.artist-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(\s*auto-fill\s*,\s*minmax\(\s*min\(\s*156px\s*,\s*100%\s*\)\s*,\s*1fr\s*\)\s*\)/)
+    expect(browserStyleSource).not.toMatch(/@media\s*\(\s*max-width:\s*1440px\s*\)/)
   })
 
-  it('歌曲卡片内部标题行与卡片信息具备弹性防挤压属性', async () => {
+  it('通用歌曲卡片采用双层排布：歌名独享上行，操作区位于下行 .card-bottom-row 不与歌名争宽', async () => {
     app = createApp(KtvThreeColumnBrowser, { initialTab: 'song_name' })
     app.use(pinia)
     app.mount(root)
     await nextTick()
     await nextTick()
 
-    const cardTitleEl = root.querySelector('.card-title')
     const cardInfoEl = root.querySelector('.card-info')
-    const cardActionsEl = root.querySelector('.card-actions')
+    const titleRowEl = cardInfoEl?.querySelector('.card-title-row')
+    const bottomRowEl = cardInfoEl?.querySelector('.card-bottom-row')
+    const cardTitleEl = titleRowEl?.querySelector('.card-title')
+    const cardSubEl = bottomRowEl?.querySelector('.card-sub')
+    const cardActionsEl = bottomRowEl?.querySelector('.card-actions')
 
-    expect(cardTitleEl).not.toBeNull()
     expect(cardInfoEl).not.toBeNull()
+    expect(titleRowEl).not.toBeNull()
+    expect(bottomRowEl).not.toBeNull()
+    expect(cardTitleEl).not.toBeNull()
+    expect(cardSubEl).not.toBeNull()
     expect(cardActionsEl).not.toBeNull()
-    expect(cardTitleEl.textContent).toContain('超长测试歌名')
+    expect(titleRowEl?.querySelector('.card-actions')).toBeNull()
+    expect(cardTitleEl?.getAttribute('title')).toContain('超长测试歌名')
+    expect(cardTitleEl?.textContent).toContain('超长测试歌名')
+    expect(cardSubEl?.textContent?.trim()).toBe('测试歌手名非常长 · 04:00')
+    expect(cardSubEl?.getAttribute('title')).toBe('测试歌手名非常长 · 04:00')
+  })
+
+  it('最近唱历史卡片同样使用双层结构与完整 title 悬浮提示，避免再唱按钮挤压歌名', async () => {
+    apiMock.recentHistory.mockResolvedValueOnce([
+      {
+        historyId: 77,
+        playedByNick: '客厅麦霸',
+        playedAt: '2026-11-26T12:00:00Z',
+        song: {
+          id: 901,
+          title: '海阔天空（经典粤语现场超长合唱版）',
+          artist: 'Beyond',
+        }
+      }
+    ])
+    app = createApp(KtvThreeColumnBrowser, { initialTab: 'recent' })
+    app.use(pinia)
+    app.mount(root)
+    await nextTick()
+    await nextTick()
+
+    const titleRowEl = root.querySelector('.card-info .card-title-row')
+    const bottomRowEl = root.querySelector('.card-info .card-bottom-row')
+    const cardTitleEl = titleRowEl?.querySelector('.card-title')
+    const cardSubEl = bottomRowEl?.querySelector('.card-sub')
+    const actionBtn = bottomRowEl?.querySelector('.card-actions .order-btn')
+
+    expect(cardTitleEl?.textContent?.trim()).toBe('海阔天空（经典粤语现场超长合唱版）')
+    expect(cardTitleEl?.getAttribute('title')).toBe('海阔天空（经典粤语现场超长合唱版）')
+    expect(cardSubEl?.textContent).toContain('Beyond · 客厅麦霸')
+    expect(cardSubEl?.getAttribute('title')).toContain('Beyond · 客厅麦霸')
+    expect(actionBtn?.textContent?.trim()).toBe('再唱')
   })
 
   it('歌手首字母栏将非 A-Z 字符收拢至末尾 # 桶，避免超长语种字母溢出', async () => {

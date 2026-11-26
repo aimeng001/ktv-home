@@ -54,8 +54,8 @@
           </div>
           <div class="now-meta">
             <small>{{ player.nowPlaying.autoPlay ? '随机公播中 · 点歌后立即切入' : '正在演唱' }}</small>
-            <strong>{{ player.nowPlaying.song?.title }}</strong>
-            <span>{{ player.nowPlaying.song?.artist }} · {{ player.nowPlaying.autoPlay ? '随机公播' : `${player.nowPlaying.orderedByNick || '家人'} 点` }}</span>
+            <strong :title="player.nowPlaying.song?.title">{{ player.nowPlaying.song?.title }}</strong>
+            <span :title="`${player.nowPlaying.song?.artist} · ${player.nowPlaying.autoPlay ? '随机公播' : `${player.nowPlaying.orderedByNick || '家人'} 点`}`">{{ player.nowPlaying.song?.artist }} · {{ player.nowPlaying.autoPlay ? '随机公播' : `${player.nowPlaying.orderedByNick || '家人'} 点` }}</span>
           </div>
           <div class="now-actions">
             <button type="button" class="mini-btn" @click="$emit('restart')">重唱</button>
@@ -79,8 +79,8 @@
               <span v-else>{{ songAvatarInitial(item.song) }}</span>
             </div>
             <div class="q-meta">
-              <strong>{{ item.song?.title }}</strong>
-              <small>{{ item.song?.artist }} · {{ item.orderedByNick || '他人' }} 点</small>
+              <strong :title="item.song?.title">{{ item.song?.title }}</strong>
+              <small :title="`${item.song?.artist} · ${item.orderedByNick || '他人'} 点`">{{ item.song?.artist }} · {{ item.orderedByNick || '他人' }} 点</small>
             </div>
             <div v-if="isMine(item) || host.isHost" class="q-ops">
               <button type="button" class="mini-btn gold" :disabled="busyQueueId === item.queueId" @click="topItem(item)">{{ busyQueueId === item.queueId ? '置顶中' : '顶歌' }}</button>
@@ -117,8 +117,8 @@
               <span v-else>{{ songAvatarInitial(entry.song) }}</span>
             </div>
             <div class="q-meta">
-              <strong>{{ entry.song?.title }}</strong>
-              <small>{{ entry.song?.artist }} · {{ entry.playedByNick }} · {{ formatTimeClock(entry.playedAt) }}</small>
+              <strong :title="entry.song?.title">{{ entry.song?.title }}</strong>
+              <small :title="`${entry.song?.artist} · ${entry.playedByNick} · ${formatTimeClock(entry.playedAt)}`">{{ entry.song?.artist }} · {{ entry.playedByNick }} · {{ formatTimeClock(entry.playedAt) }}</small>
             </div>
             <button type="button" class="mini-btn gold" :disabled="busyHistoryId === entry.historyId" @click="repeatSong(entry)">
               {{ busyHistoryId === entry.historyId ? '加入中' : '再唱' }}
@@ -427,7 +427,7 @@ async function repeatSong(entry) {
 .now-card > .now-meta { flex: 1; min-width: 0; }
 .now-card small { color: #93c5fd; font-size: 11px; font-weight: 700; display: block; }
 .now-card strong { display: block; font-size: 15px; margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.now-card span { font-size: 12px; color: var(--dim); }
+.now-card span { display: block; font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .q-avatar {
   width: 34px; height: 34px; border-radius: 50%; overflow: hidden; flex: none;
   display: grid; place-items: center; font-size: 14px; font-weight: 800; color: #191304;
@@ -450,11 +450,12 @@ async function repeatSong(entry) {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
-.q-index { width: 22px; text-align: center; font-weight: 700; color: #7dd3fc; font-size: 13px; }
+.q-index { width: 22px; flex-shrink: 0; text-align: center; font-weight: 700; color: #7dd3fc; font-size: 13px; }
 .q-meta { flex: 1; min-width: 0; }
 .q-meta strong { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.q-meta small { font-size: 11px; color: var(--dim); }
-.q-ops { display: flex; gap: 6px; }
+.q-meta small { display: block; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.q-ops { display: flex; gap: 6px; flex-shrink: 0; }
+.q-item > .mini-btn, .other-tag { flex-shrink: 0; white-space: nowrap; }
 .other-tag { font-size: 11px; color: var(--dim2); }
 .mini-btn {
   padding: 5px 10px;
