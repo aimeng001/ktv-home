@@ -57,7 +57,8 @@ describe('KtvBottomDock 音量步长', () => {
 
     const buttons = root.querySelectorAll('.dock-circle')
     expect(buttons).toHaveLength(10)
-    expect(root.querySelectorAll('.dock-circle .dock-png')).toHaveLength(10)
+    expect(root.querySelectorAll('.dock-circle .dock-png')).toHaveLength(9)
+    expect(root.querySelectorAll('.dock-circle .dock-svg')).toHaveLength(1)
 
     const labels = Array.from(buttons).map(btn => btn.querySelector('span:last-child')?.textContent?.trim())
     expect(labels).toEqual(['播放', '伴唱', '重唱', '切歌', '音量', '音量', '降调', '升调', '音效', '已点'])
@@ -68,7 +69,7 @@ describe('KtvBottomDock 音量步长', () => {
   })
 
   it('底部小屏按 Android TV 比例随视口等比放大且严格维持 16:9 约束', () => {
-    expect(bottomDockSource).toContain('--ktv-dock-height, clamp(136px, 18vh, 200px)')
+    expect(bottomDockSource).toContain('--ktv-dock-height, clamp(140px, 16vh, 176px)')
     expect(bottomDockSource).toContain('aspect-ratio: 16 / 9')
     expect(bottomDockSource).toContain('min(calc(var(--dock-h) * 16 / 9), 26vw, 356px)')
     expect(bottomDockSource).toContain('width: min(192px, 56vw)')

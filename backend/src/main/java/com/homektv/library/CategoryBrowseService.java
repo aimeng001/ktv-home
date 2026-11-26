@@ -156,19 +156,15 @@ public class CategoryBrowseService {
         }
         if (artistDirectoryProjection != null) {
             Optional<List<String>> projected = artistDirectoryProjection.initials(safeGender, safeRegion);
-            if (projected.isPresent()) return projected.get();
+            if (projected.isPresent()) return ArtistDirectoryProjectionService.normalizeInitialBuckets(projected.get());
         }
         List<SongRepository.ArtistInitialProjection> rows = songRepository.findPublicArtistInitials(
                 "ok", safeGender, safeRegion);
         if (rows == null) return List.of();
-        return rows.stream()
+        return ArtistDirectoryProjectionService.normalizeInitialBuckets(rows.stream()
                 .filter(Objects::nonNull)
                 .map(SongRepository.ArtistInitialProjection::getInitial)
-                .filter(value -> value != null && !value.isBlank())
-                .map(value -> value.trim().toUpperCase(Locale.ROOT))
-                .distinct()
-                .sorted()
-                .toList();
+                .toList());
     }
 
     private volatile CachedLanguages cachedLanguages;

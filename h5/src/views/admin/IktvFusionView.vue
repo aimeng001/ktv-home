@@ -189,57 +189,61 @@ onMounted(loadStatus)
 
 <style scoped>
 .iktv-fusion {
-  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 .page-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
 }
 .page-head h1 {
   margin: 0 0 4px;
-  font-size: 18px;
+  font-size: 24px;
   font-weight: 600;
   color: #172033;
 }
 .page-head p {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   color: #64748b;
 }
 .card-row {
   display: flex;
-  gap: 14px;
+  gap: 16px;
   flex-wrap: wrap;
 }
 .card {
   flex: 1;
-  min-width: 260px;
-  padding: 14px 16px;
+  min-width: 280px;
+  padding: 18px 20px;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   background: #fff;
 }
 .card h2 {
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #475569;
 }
 .card .big {
   margin: 0;
-  font-size: 20px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
   font-weight: 600;
+  line-height: 1.5;
   color: #172033;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 .card .muted {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #94a3b8;
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #64748b;
 }
 .card-error {
   display: flex;
@@ -249,15 +253,15 @@ onMounted(loadStatus)
   border-color: #f5c2c2;
   background: #fef2f2;
   color: #b42318;
-  font-size: 12px;
+  font-size: 13px;
 }
 .risk-note {
-  padding: 10px 14px;
+  padding: 12px 16px;
   border-radius: 8px;
   border: 1px solid #fde68a;
   background: #fffbeb;
   color: #92400e;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
 }
 .op-row {
@@ -283,9 +287,9 @@ onMounted(loadStatus)
 .primary,
 .ghost,
 .danger {
-  padding: 7px 14px;
+  padding: 8px 16px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -312,32 +316,32 @@ onMounted(loadStatus)
 }
 .batch-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
   margin: 0;
 }
 .batch-grid div {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 .batch-grid dt {
-  font-size: 11px;
+  font-size: 12px;
   color: #94a3b8;
 }
 .batch-grid dd {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #172033;
 }
 .conflict-alert {
   margin: 12px 0 0;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-radius: 6px;
   border: 1px solid #f5c2c2;
   background: #fef2f2;
   color: #b42318;
-  font-size: 12px;
+  font-size: 13px;
 }
 </style>

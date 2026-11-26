@@ -125,12 +125,10 @@ onBeforeUnmount(() => {
   object-fit: cover;
   pointer-events: none;
 }
-/* 双拼人物底图沿中缝精准对齐，避免宽屏裁剪截断人物 */
-.area-singer .tile-art {
-  object-position: center bottom;
-}
+/* 双拼人物底图居中微偏上对齐，防止宽屏裁剪裁掉人物头部 */
+.area-singer .tile-art,
 .area-songname .tile-art {
-  object-position: center top;
+  object-position: center 22%;
 }
 .tile-photo-push-enter-active,
 .tile-photo-push-leave-active {
@@ -156,15 +154,15 @@ onBeforeUnmount(() => {
 .tile-gradient {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, transparent 72%, rgba(0, 0, 0, 0.24) 100%);
+  background: linear-gradient(180deg, transparent 62%, rgba(0, 0, 0, 0.36) 100%);
   pointer-events: none;
 }
 .tile-title {
   position: absolute;
-  bottom: 12px;
-  left: 16px;
-  right: 16px;
-  font-size: clamp(18px, 1.35vw, 24px);
+  bottom: 14px;
+  left: 18px;
+  right: 18px;
+  font-size: clamp(19px, 1.35vw, 24px);
   font-weight: 800;
   font-style: italic;
   letter-spacing: 0.5px;

@@ -28,7 +28,11 @@
 
       <!-- 手机扫码点歌 -->
       <div v-else-if="activeModal === 'qr'" class="modal-body qr-body">
-        <img :src="qrUrl" alt="微信扫码点歌二维码" class="qr-img" />
+        <div v-if="qrLoadError" class="qr-fallback-box" role="alert">
+          <p>二维码加载失败，请刷新重试或直接复制下方地址</p>
+          <button type="button" class="btn ghost small" @click="reloadQr">刷新二维码</button>
+        </div>
+        <img v-else :src="qrUrl" alt="微信扫码点歌二维码" class="qr-img" @load="qrLoadError = false" @error="qrLoadError = true" />
         <p class="qr-tip">用微信或手机浏览器扫码，即可接入当前房间共同点歌与遥控</p>
         <div v-if="shareUrlFallback" class="share-url-fallback" role="status">
           <span>无法访问剪贴板，请长按下方地址手动复制</span>
@@ -43,6 +47,7 @@
         </div>
         <div class="modal-actions">
           <button type="button" class="btn ghost" @click="copyShareUrl">复制点歌地址</button>
+          <button type="button" class="btn ghost" @click="reloadQr">刷新二维码</button>
         </div>
       </div>
 
@@ -233,12 +238,17 @@ const savingNick = ref(false)
 const submittingWish = ref(false)
 const scanning = ref(false)
 const vol = ref(player.volume)
+const qrNonce = ref(0)
+const qrLoadError = ref(false)
 
 watch(() => player.volume, v => { vol.value = v })
 watch(() => props.activeModal, async (modal) => {
   if (modal === 'settings') {
     nickDraft.value = user.nickname || ''
     wishDraft.value = ''
+  }
+  if (modal === 'qr') {
+    qrLoadError.value = false
   }
   if (modal === 'system') {
     await loadSystemInfo()
@@ -278,7 +288,11 @@ const modeText = computed(() => (
       : '多端协同控制台'
 ))
 
-const qrUrl = computed(() => '/api/qr?room=default&size=420')
+const qrUrl = computed(() => qrNonce.value ? `/api/qr?room=default&size=420&t=${qrNonce.value}` : '/api/qr?room=default&size=420')
+function reloadQr() {
+  qrLoadError.value = false
+  qrNonce.value += 1
+}
 const canVocal = computed(() => (
   player.nowPlaying?.song?.hasVocalTrack === true
   || ['DUAL_TRACK', 'DUAL_CHANNEL'].includes(player.audioLayout?.layout)
@@ -393,11 +407,11 @@ async function triggerScan() {
   padding: 16px;
 }
 .modal-card {
-  width: min(480px, 100%);
+  width: min(540px, 100%);
   border-radius: 16px;
   background: linear-gradient(180deg, #1b2234, #111622);
   border: 1px solid rgba(49, 130, 251, 0.34);
-  padding: 16px;
+  padding: 20px;
   box-shadow: var(--shadow);
 }
 .modal-card .btn:not(.ghost) {
@@ -409,23 +423,24 @@ async function triggerScan() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
-.modal-hd h3 { font-size: 16px; color: #dbeafe; }
+.modal-hd h3 { font-size: 18px; color: #dbeafe; }
 .close-btn {
-  width: 32px; height: 32px; border-radius: 50%;
+  width: 34px; height: 34px; border-radius: 50%;
   background: rgba(255, 255, 255, 0.08); display: grid; place-items: center;
 }
-.modal-body { display: flex; flex-direction: column; gap: 12px; }
-.kv-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-.kv { padding: 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); }
-.kv small { display: block; font-size: 11px; color: var(--dim); }
-.kv strong { font-size: 13px; margin-top: 4px; display: block; }
+.modal-body { display: flex; flex-direction: column; gap: 13px; }
+.kv-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.kv { padding: 12px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); }
+.kv small { display: block; font-size: 12px; color: var(--dim); }
+.kv strong { font-size: 14px; margin-top: 4px; display: block; }
 .qr-body { align-items: center; text-align: center; }
-.qr-img { width: 220px; height: 220px; border-radius: 12px; background: #fff; padding: 8px; }
-.share-url-fallback { width: 100%; display: flex; flex-direction: column; gap: 6px; text-align: left; font-size: 12px; color: var(--dim); }
+.qr-img { width: 240px; height: 240px; border-radius: 12px; background: #fff; padding: 8px; }
+.qr-fallback-box { width: 240px; min-height: 160px; padding: 16px; border-radius: 12px; border: 1px dashed rgba(255, 255, 255, 0.28); background: rgba(255, 255, 255, 0.04); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font-size: 13px; color: var(--coral-soft); }
+.share-url-fallback { width: 100%; display: flex; flex-direction: column; gap: 6px; text-align: left; font-size: 13px; color: var(--dim); }
 .share-url-fallback input { width: 100%; height: 38px; border-radius: 8px; padding: 0 10px; user-select: all; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.14); color: var(--text); }
-.qr-tip, .scan-desc, .hint { font-size: 12px; color: var(--dim); line-height: 1.5; }
+.qr-tip, .scan-desc, .hint { font-size: 13px; color: var(--dim); line-height: 1.55; }
 .field-label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--dim); }
 .nick-row { display: flex; gap: 8px; }
 .nick-row input {

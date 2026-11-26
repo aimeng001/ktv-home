@@ -5,7 +5,11 @@
       <div class="brand">
         <strong>家庭KTV</strong>
         <span>管理后台</span>
-        <button class="logout" type="button" @click="logout">退出管理</button>
+        <div class="brand-actions">
+          <button class="logout" type="button" @click="logout">退出管理</button>
+          <i class="brand-sep" aria-hidden="true">·</i>
+          <router-link class="back-kiosk" to="/">返回点歌台</router-link>
+        </div>
       </div>
       <!-- 侧边栏导航菜单 / Sidebar navigation menu -->
       <nav>
@@ -20,7 +24,7 @@
       </nav>
     </aside>
     <!-- 主内容区 / Main content area -->
-    <main class="main"><slot /></main>
+    <main class="main"><div class="admin-content"><slot /></div></main>
 
     <div v-if="releaseNoticeOpen" class="notice-mask" @click.self="dismissReleaseNotice">
       <section ref="releaseNoticeBox" class="release-notice" role="dialog" aria-modal="true" aria-labelledby="release-notice-title">
@@ -139,43 +143,47 @@ function formatBytes(bytes) {
 
 <style scoped>
 .admin-shell { --admin-blue:#2563eb; --admin-border:#e2e8f0; --admin-muted:#64748b; display:flex; min-height:100vh; background:#f5f7fa; color:#172033; }
-.side { width:220px; flex:none; background:#fff; border-right:1px solid var(--admin-border); overflow-y:auto; }
-.brand { height:76px; padding:18px 20px; border-bottom:1px solid var(--admin-border); display:flex; flex-direction:column; justify-content:center; }
-.brand strong { font-size:18px; line-height:1; }.brand span { margin-top:7px; color:var(--admin-muted); font-size:11px; }
-.logout { align-self:flex-start; margin-top:9px; padding:0; border:0; background:transparent; color:#64748b; font-size:11px; cursor:pointer; }.logout:hover { color:#1d4ed8; }
-nav { padding:16px 12px; }.nav-label { padding:0 10px 8px; font-size:11px; color:var(--admin-muted); }
-.mi { display:flex; align-items:center; gap:10px; min-height:42px; padding:0 12px; margin-bottom:4px; border-radius:6px; color:#475569; font-size:13px; border:1px solid transparent; }
-.mi span { width:18px; text-align:center; font-size:16px; color:#64748b; }.mi:hover { background:#f8fafc; color:#172033; }
+.side { width:236px; flex:none; background:#fff; border-right:1px solid var(--admin-border); overflow-y:auto; }
+.brand { min-height:84px; padding:18px 20px; border-bottom:1px solid var(--admin-border); display:flex; flex-direction:column; justify-content:center; }
+.brand strong { font-size:19px; line-height:1.1; }.brand span { margin-top:6px; color:var(--admin-muted); font-size:12px; }
+.brand-actions { display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap; }
+.brand-sep { font-style:normal; color:#cbd5e1; font-size:12px; }
+.logout,.back-kiosk { padding:0; border:0; background:transparent; color:#64748b; font-size:12px; font-weight:500; cursor:pointer; }.logout:hover,.back-kiosk:hover { color:#1d4ed8; }
+nav { padding:16px 12px; }.nav-label { padding:0 12px 10px; font-size:12px; color:var(--admin-muted); }
+.mi { display:flex; align-items:center; gap:10px; min-height:44px; padding:0 12px; margin-bottom:4px; border-radius:6px; color:#475569; font-size:14px; border:1px solid transparent; }
+.mi span { width:20px; text-align:center; font-size:16px; color:#64748b; }.mi:hover { background:#f8fafc; color:#172033; }
 .mi.on { color:var(--admin-blue); background:#eff6ff; border-color:#bfdbfe; font-weight:600; box-shadow:inset 3px 0 0 var(--admin-blue); }.mi.on span { color:var(--admin-blue); }
-.main { flex:1; min-width:0; padding:24px 28px 48px; overflow:auto; }
+.main { flex:1; min-width:0; padding:28px 32px 56px; overflow:auto; }
+.admin-content { width:100%; max-width:1520px; margin:0 auto; }
 .notice-mask { position:fixed; inset:0; z-index:200; display:grid; place-items:center; padding:20px; background:rgba(15,23,42,.48); }
-.release-notice { width:min(520px,calc(100vw - 28px)); overflow:hidden; border:1px solid #dbe3ee; border-radius:8px; background:#fff; box-shadow:0 24px 70px rgba(15,23,42,.24); }
+.release-notice { width:min(540px,calc(100vw - 28px)); overflow:hidden; border:1px solid #dbe3ee; border-radius:8px; background:#fff; box-shadow:0 24px 70px rgba(15,23,42,.24); }
 .release-notice header { display:flex; align-items:center; gap:12px; padding:19px 20px 16px; border-bottom:1px solid var(--admin-border); }
 .notice-mark { display:grid; width:42px; height:42px; flex:none; place-items:center; border-radius:7px; background:#eff6ff; color:var(--admin-blue); font-size:13px; font-weight:800; }
 .release-notice header>div:nth-child(2) { min-width:0; }
-.notice-kicker { display:block; color:var(--admin-blue); font-size:10px; font-weight:700; }
-.release-notice h2 { margin:4px 0 0; overflow:hidden; color:#172033; font-size:17px; text-overflow:ellipsis; white-space:nowrap; }
+.notice-kicker { display:block; color:var(--admin-blue); font-size:12px; font-weight:700; }
+.release-notice h2 { margin:4px 0 0; overflow:hidden; color:#172033; font-size:18px; text-overflow:ellipsis; white-space:nowrap; }
 .notice-close { display:grid; width:32px; height:32px; margin-left:auto; flex:none; place-items:center; border:1px solid #cbd5e1; border-radius:6px; background:#fff; color:#64748b; font-size:20px; }
-.notice-message { margin:0; padding:17px 20px 12px; color:#475569; font-size:12px; line-height:1.7; }
+.notice-message { margin:0; padding:17px 20px 12px; color:#475569; font-size:13px; line-height:1.7; }
 .package-list { display:grid; grid-template-columns:1fr 1fr; gap:9px; padding:4px 20px 20px; }
 .package-link { min-width:0; padding:12px 13px; border:1px solid #bfdbfe; border-radius:7px; background:#f8fbff; color:#172033; }
 .package-link:hover { border-color:#60a5fa; background:#eff6ff; }
 .package-link strong,.package-link span { display:block; }
-.package-link strong { color:#1d4ed8; font-size:12px; }
-.package-link span { margin-top:5px; overflow:hidden; color:#64748b; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.package-link strong { color:#1d4ed8; font-size:13px; }
+.package-link span { margin-top:5px; overflow:hidden; color:#64748b; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
 .release-notice footer { display:flex; justify-content:flex-end; gap:8px; padding:13px 20px; border-top:1px solid var(--admin-border); background:#f8fafc; }
-.notice-secondary,.notice-primary { min-height:34px; padding:0 13px; border-radius:6px; font-size:11px; font-weight:600; }
+.notice-secondary,.notice-primary { min-height:36px; padding:0 14px; border-radius:6px; font-size:13px; font-weight:600; }
 .notice-secondary { border:1px solid #cbd5e1; background:#fff; color:#475569; }
 .notice-primary { border:1px solid var(--admin-blue); background:var(--admin-blue); color:#fff; }
 @media (max-width:760px) {
   .admin-shell { display:block; }
   .side { position:sticky; top:0; z-index:20; width:100%; border-right:0; border-bottom:1px solid var(--admin-border); }
-  .brand { height:52px; padding:10px 14px; }
-  .brand strong { font-size:16px; }.brand span { margin-top:4px; font-size:9px; }
+  .brand { min-height:0; padding:10px 14px; }
+  .brand strong { font-size:16px; }.brand span { margin-top:4px; font-size:11px; }
+  .brand-actions { margin-top:6px; }
   nav { display:flex; gap:5px; padding:8px 10px; overflow-x:auto; scrollbar-width:none; }
   nav::-webkit-scrollbar { display:none; }
   .nav-label { display:none; }
-  .mi { flex:none; min-height:36px; margin:0; padding:0 10px; font-size:11px; white-space:nowrap; }
+  .mi { flex:none; min-height:36px; margin:0; padding:0 10px; font-size:12px; white-space:nowrap; }
   .mi span { width:15px; font-size:13px; }
   .mi.on { box-shadow:none; }
   .main { padding:16px 12px 36px; overflow:visible; }

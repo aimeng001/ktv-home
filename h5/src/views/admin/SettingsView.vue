@@ -6,7 +6,7 @@
         <span class="page-context">{{ categories.length }} 个配置分类</span>
       </header>
       <div class="settings-shell">
-        <aside class="settings-nav">
+        <div class="settings-nav">
           <div class="search-wrap"><Search :size="16" /><input v-model="search" class="search" placeholder="搜索设置" aria-label="搜索设置" /></div>
           <div v-if="search" class="search-results">
             <button v-for="item in searchResults" :key="item.key" @click="jump(item)"><span><strong>{{ item.label }}</strong><small>{{ item.category }}</small></span><ChevronRight :size="14" /></button>
@@ -19,9 +19,9 @@
               <ChevronRight :size="15" class="chevron" />
             </button>
           </nav>
-        </aside>
+        </div>
 
-        <main class="settings-content">
+        <div class="settings-content">
         <div v-if="hasLoadErrors" class="settings-load-alert" role="alert">
           <span>部分设置读取失败，失败分区不会保存默认值。</span>
           <button class="text-btn" :disabled="loading" @click="retryFailedSections">重试</button>
@@ -41,7 +41,7 @@
           </div>
           <div class="setting-group">
             <div class="group-head"><strong>外部曲库音频默认</strong><span>只用于外部只读曲库中新建索引的文件；单曲设置优先</span></div>
-            <SettingRow id="external_default_audio_layout" label="默认 AudioLayout" hint="DUAL_CHANNEL 默认 Original = LEFT、Accompaniment = RIGHT"><select v-model="form.external_default_audio_layout" class="input"><option value="NORMAL_STEREO">普通立体声</option><option value="DUAL_TRACK">双独立音轨</option><option value="DUAL_CHANNEL">单音轨左右声道</option></select></SettingRow>
+            <SettingRow id="external_default_audio_layout" label="默认 AudioLayout" hint="DUAL_CHANNEL 默认 Original = LEFT、Accompaniment = RIGHT"><span class="select-control"><select v-model="form.external_default_audio_layout" class="input"><option value="NORMAL_STEREO">普通立体声</option><option value="DUAL_TRACK">双独立音轨</option><option value="DUAL_CHANNEL">单音轨左右声道</option></select><ChevronDown :size="15" aria-hidden="true" /></span></SettingRow>
           </div>
           <div class="setting-group">
             <div class="group-head"><strong>局域网访问</strong><span>控制电视端展示的手机点歌地址</span></div>
@@ -70,7 +70,7 @@
           <div class="setting-group">
             <div class="group-head"><strong>高级设置</strong><span>输出格式、超时、阈值和任务并发</span></div>
             <SettingRow id="ai_allow_private_network" label="允许局域网私网模型" hint="放行 http:// 及局域网私网 IP（如 Ollama / LocalAI），防范公网未授权访问"><Toggle v-model="aiForm.allowPrivateNetwork" /></SettingRow>
-            <SettingRow id="ai_json_mode" label="JSON 模式"><select v-model="aiForm.jsonMode" class="input"><option value="AUTO">自动检测</option><option value="FORCE">强制 response_format</option><option value="PROMPT_ONLY">仅提示词约束</option></select></SettingRow>
+            <SettingRow id="ai_json_mode" label="JSON 模式"><span class="select-control"><select v-model="aiForm.jsonMode" class="input"><option value="AUTO">自动检测</option><option value="FORCE">强制 response_format</option><option value="PROMPT_ONLY">仅提示词约束</option></select><ChevronDown :size="15" aria-hidden="true" /></span></SettingRow>
             <SettingRow id="ai_timeout" label="请求超时"><div class="unit-input"><input v-model.number="aiForm.timeoutSeconds" class="input short" type="number" min="5" max="600" /><span>秒</span></div></SettingRow>
             <SettingRow id="ai_threshold" label="自动应用阈值" hint="低于阈值的结果进入人工审核"><div class="thresholds"><label><span>身份</span><input v-model.number="aiForm.identityThreshold" class="input short" type="number" min="0" max="1" step="0.01" /></label><label><span>分类</span><input v-model.number="aiForm.classificationThreshold" class="input short" type="number" min="0" max="1" step="0.01" /></label></div></SettingRow>
             <SettingRow label="任务并发数"><div class="thresholds"><label><span>批量</span><input v-model.number="aiForm.bulkConcurrency" class="input short" type="number" min="1" max="10" /></label><label><span>增强</span><input v-model.number="aiForm.reasoningConcurrency" class="input short" type="number" min="1" max="5" /></label></div></SettingRow>
@@ -79,31 +79,41 @@
         </section>
 
         <section v-show="section === 'metadata'" class="section" id="section-metadata">
-          <SectionHead title="音乐元数据" description="为 KTV 曲库刮削歌名、歌手、专辑、发行时间和封面；歌手头像按本地优先 + 音乐平台与网页兜底低频补全"><Music2 :size="19" /><template #aside><span class="source-pill" :class="{ok: musicForm.enabled && musicForm.providers.length}"><i></i>{{ musicForm.enabled && musicForm.providers.length ? '已启用' : '默认关闭' }}</span></template></SectionHead>
+          <SectionHead title="音乐元数据与头像刮削" description="为 KTV 曲库补全歌名、歌手、专辑、发行时间（不在线刮削歌曲封面）；歌手头像按本地优先 + 5 大音乐平台并行与 6 大网页图源兜底补全"><Music2 :size="19" /><template #aside><span class="source-pill" :class="{ok: musicForm.enabled && (musicForm.providers.length || musicForm.fallbackProviders.length)}"><i></i>{{ musicForm.enabled && (musicForm.providers.length || musicForm.fallbackProviders.length) ? '已启用' : '默认关闭' }}</span></template></SectionHead>
           <div class="setting-group">
-            <div class="group-head"><strong>刮削来源</strong><span>仅用于补全 KTV 曲库，不提供在线搜歌或播放</span></div>
-            <SettingRow id="music_sources_enabled" label="启用元数据刮削"><Toggle v-model="musicForm.enabled" /></SettingRow>
-            <SettingRow id="music_sources_providers" label="刮削平台" hint="批量任务会从已选平台匹配最可靠的候选"><Checks v-model="musicForm.providers" :options="musicProviderOptions" /></SettingRow>
+            <div class="group-head"><strong>刮削来源</strong><span>音乐平台并行优先匹配高置信度肖像；未命中时按顺序触发网页/图库兜底源（海外源超时自动熔断）</span></div>
+            <SettingRow id="music_sources_enabled" label="启用在线刮削"><Toggle v-model="musicForm.enabled" /></SettingRow>
+            <SettingRow id="music_sources_providers" label="音乐平台（主源）" hint="网易云、QQ、酷狗支持歌曲文本与头像；酷我、iTunes 专用于歌手头像补全"><Checks v-model="musicForm.providers" :options="musicProviderOptions" /></SettingRow>
+            <SettingRow id="music_sources_fallback_providers" label="网页 / 图库兜底源" hint="主源全部未命中后按序兜底；Bing / 百度图片覆盖冷门歌手，Deezer / 维基适合海外网络"><Checks v-model="musicForm.fallbackProviders" :options="fallbackProviderOptions" /></SettingRow>
           </div>
           <div class="setting-group">
-            <div class="group-head"><strong>请求与缓存</strong><span>API 搜索遵循平台间隔与每日配额；静态 CDN 图片与兜底图床使用独立下载通道</span></div>
+            <div class="group-head"><strong>请求与限速（保守稳健并行）</strong><span>多平台之间最多 3 线程并行不阻塞，单平台严格串行防封禁；静态 CDN 头像下载走独立通道</span></div>
             <SettingRow id="music_sources_limit" label="每个平台搜索数量"><div class="unit-input"><input v-model.number="musicForm.resultLimit" class="input short" type="number" min="1" max="50" /><span>条</span></div></SettingRow>
             <SettingRow id="music_sources_timeout" label="请求超时"><div class="unit-input"><input v-model.number="musicForm.timeoutSeconds" class="input short" type="number" min="2" max="30" /><span>秒</span></div></SettingRow>
             <SettingRow id="music_sources_cache" label="搜索缓存"><div class="unit-input"><input v-model.number="musicForm.searchCacheHours" class="input short" type="number" min="1" max="168" /><span>小时</span></div></SettingRow>
-            <SettingRow id="music_sources_threshold" label="自动写入阈值" hint="达到该置信度的结果自动写入，低于阈值进入人工审核"><div class="unit-input"><input v-model.number="musicForm.autoApplyThreshold" class="input short" type="number" min="0.5" max="1" step="0.01" /><span>{{ Math.round(musicForm.autoApplyThreshold * 100) }}%</span></div></SettingRow>
-            <SettingRow id="music_sources_concurrency" label="单平台并发上限" hint="批量刮削时，每个平台同时进行的请求数"><div class="unit-input"><input v-model.number="musicForm.concurrencyLimit" class="input short" type="number" min="1" max="4" /><span>个</span></div></SettingRow>
-            <SettingRow id="music_sources_interval" label="同平台请求间隔" hint="后端安全下限为 5000 毫秒（低于 5000 按 5000 生效）；头像搜索与歌曲元数据共用限速，静态 CDN 头像下载走独立通道"><div class="unit-input"><input v-model.number="musicForm.requestIntervalMs" class="input short" type="number" min="500" max="30000" step="100" /><span>毫秒</span></div></SettingRow>
-            <SettingRow id="music_sources_daily_limit" label="单平台每日请求上限" hint="防封禁防护机制；各平台累计请求达到上限后自动进入冷却"><div class="unit-input"><input v-model.number="musicForm.dailyLimit" class="input short" type="number" min="10" max="2000" /><span>次/天</span></div></SettingRow>
+            <SettingRow id="music_sources_threshold" label="自动写入阈值" hint="达到该置信度的歌曲文本元数据自动写入，低于阈值进入人工审核"><div class="unit-input"><input v-model.number="musicForm.autoApplyThreshold" class="input short" type="number" min="0.5" max="1" step="0.01" /><span>{{ Math.round(musicForm.autoApplyThreshold * 100) }}%</span></div></SettingRow>
+            <SettingRow id="music_sources_concurrency" label="单平台并发上限" hint="保守稳健模式：后端按每平台 1 并发防封禁执行，跨平台最多 3 线程并行"><div class="unit-input"><input v-model.number="musicForm.concurrencyLimit" class="input short" type="number" min="1" max="4" /><span>个</span></div></SettingRow>
+            <SettingRow id="music_sources_interval" label="同平台请求间隔" hint="后端安全下限为 1500 毫秒（推荐 2500 毫秒兼顾速度与防封）；静态 CDN 头像下载走独立通道"><div class="unit-input"><input v-model.number="musicForm.requestIntervalMs" class="input short" type="number" min="1500" max="30000" step="100" /><span>毫秒</span></div></SettingRow>
+            <SettingRow id="music_sources_daily_limit" label="单平台每日请求上限" hint="各音乐平台每日最高请求次数（10 ~ 10000），达到上限后等待次日 UTC 零点自动重置"><div class="unit-input"><input v-model.number="musicForm.dailyLimit" class="input short" type="number" min="10" max="10000" /><span>次/天</span></div></SettingRow>
+            <SettingRow id="music_sources_fallback_daily_limit" label="兜底图源每日总上限" hint="所有网页/图库兜底源共享的每日总触发次数上限（10 ~ 10000）"><div class="unit-input"><input v-model.number="musicForm.fallbackDailyLimit" class="input short" type="number" min="10" max="10000" /><span>次/天</span></div></SettingRow>
           </div>
           <div class="setting-group">
-            <div class="group-head"><strong>平台状态</strong><span>此处测试的是歌曲元数据连通性，不代表歌手头像搜索或头像 CDN 一定可用</span></div>
+            <div class="group-head"><strong>音乐平台状态</strong><span>支持按平台查看今日请求配额、错误冷却并单独测试连接</span></div>
             <div v-for="item in musicStatus" :key="item.provider" class="provider-health">
               <span class="health-dot" :class="{ok:item.healthy}"></span>
-              <div><strong>{{ item.displayName }}</strong><small v-if="isCooling(item)">请求冷却至 {{ formatTime(item.cooldownUntil) }}</small><small v-else-if="item.lastError">{{ item.lastError }}</small><small v-else-if="item.lastSuccessAt">最近成功 {{ formatTime(item.lastSuccessAt) }}</small><small v-else>尚未测试</small><small v-if="item.requestCount != null">今日外部请求 {{ item.requestCount }} / {{ item.dailyLimit || 300 }}</small></div>
+              <div><strong>{{ item.displayName }}<em class="provider-role">{{ item.supportsSongMetadata === false ? '仅歌手头像' : '歌曲 + 头像' }}</em></strong><small v-if="isCooling(item)">请求冷却至 {{ formatTime(item.cooldownUntil) }}</small><small v-else-if="item.lastError">{{ item.lastError }}</small><small v-else-if="item.lastSuccessAt">最近成功 {{ formatTime(item.lastSuccessAt) }}</small><small v-else>尚未测试</small><small v-if="item.requestCount != null">今日外部请求 {{ item.requestCount }} / {{ item.dailyLimit || 3000 }}</small></div>
               <button class="btn ghost small" :disabled="testingMusic" @click="testMusic([item.provider])">测试连接</button>
             </div>
           </div>
-          <div class="section-actions"><button class="btn" :disabled="testingMusic || !musicForm.providers.length" @click="testMusic(musicForm.providers)"><TestTube2 :size="15" />{{ testingMusic ? '测试中…' : '测试歌曲元数据连通性' }}</button><button class="btn ghost" :disabled="testingMusic" @click="resetMusicCooldowns">重置平台冷却</button><span v-if="musicTestMessage" class="test-message">{{ musicTestMessage }}</span></div>
+          <div v-if="fallbackStatus.length" class="setting-group">
+            <div class="group-head"><strong>网页 / 图库兜底源状态</strong><span>连续超时 3 次自动熔断 30 分钟，避免拖慢整体刮削队列</span></div>
+            <div v-for="item in fallbackStatus" :key="item.provider" class="provider-health">
+              <span class="health-dot" :class="{ok:item.healthy}"></span>
+              <div><strong>{{ item.displayName }}<em v-if="item.overseas" class="provider-role overseas">海外/需代理</em></strong><small v-if="isCooling(item)">超时熔断至 {{ formatTime(item.cooldownUntil) }}</small><small v-else-if="item.lastError">{{ item.lastError }}</small><small v-else-if="item.lastSuccessAt">最近成功 {{ formatTime(item.lastSuccessAt) }}</small><small v-else>尚未触发或测试</small><small>累计请求 {{ item.requestCount || 0 }} 次 · 命中 {{ item.successCount || 0 }} 次（总配额 {{ item.totalDailyUsed || 0 }} / {{ item.dailyLimit || musicForm.fallbackDailyLimit }}）</small></div>
+              <button class="btn ghost small" :disabled="testingMusic" @click="testFallback([item.provider])">测试连接</button>
+            </div>
+          </div>
+          <div class="section-actions"><button class="btn" :disabled="testingMusic || !musicForm.providers.length" @click="testMusic(musicForm.providers)"><TestTube2 :size="15" />{{ testingMusic ? '测试中…' : '测试已选平台连通性' }}</button><button class="btn ghost" :disabled="testingMusic" @click="resetMusicCooldowns">重置冷却与熔断</button><span v-if="musicTestMessage" class="test-message">{{ musicTestMessage }}</span></div>
         </section>
 
         <section v-show="section === 'transcode'" class="section" id="section-transcode">
@@ -123,9 +133,9 @@
           <div class="setting-group">
             <div class="group-head"><strong>转码输出</strong><span>不满足直拷条件时使用以下输出格式</span></div>
             <SettingRow label="纯音频文件转码"><Toggle v-model="form.transcode_audio_only" /></SettingRow>
-            <SettingRow label="输出容器"><select v-model="form.transcode_output_container" class="input"><option value="mkv">MKV</option><option value="mp4">MP4</option></select></SettingRow>
-            <SettingRow label="输出视频编码"><select v-model="form.transcode_video_codec" class="input"><option value="h264">H.264</option><option value="hevc">H.265 / HEVC</option></select></SettingRow>
-            <SettingRow label="输出音频编码"><select v-model="form.transcode_audio_codec" class="input"><option value="aac">AAC</option><option value="mp3">MP3</option><option value="opus">Opus</option></select></SettingRow>
+            <SettingRow label="输出容器"><span class="select-control"><select v-model="form.transcode_output_container" class="input"><option value="mkv">MKV</option><option value="mp4">MP4</option></select><ChevronDown :size="15" aria-hidden="true" /></span></SettingRow>
+            <SettingRow label="输出视频编码"><span class="select-control"><select v-model="form.transcode_video_codec" class="input"><option value="h264">H.264</option><option value="hevc">H.265 / HEVC</option></select><ChevronDown :size="15" aria-hidden="true" /></span></SettingRow>
+            <SettingRow label="输出音频编码"><span class="select-control"><select v-model="form.transcode_audio_codec" class="input"><option value="aac">AAC</option><option value="mp3">MP3</option><option value="opus">Opus</option></select><ChevronDown :size="15" aria-hidden="true" /></span></SettingRow>
             <SettingRow label="硬件加速" :hint="hardwareStatusText"><Toggle v-model="form.transcode_hardware_acceleration" /></SettingRow>
           </div>
           </template>
@@ -135,13 +145,13 @@
           <SectionHead title="TV 显示" description="待机页、视频画面和防烧屏设置"><Tv :size="19" /></SectionHead>
           <div class="setting-group">
             <div class="group-head"><strong>播放画面</strong><span>控制视频比例和播放页附加信息</span></div>
-            <SettingRow id="tv_video_scale_mode" label="视频画面模式"><select v-model="form.tv_video_scale_mode" class="input"><option value="zoom">铺满（等比裁切）</option><option value="fit">原画（完整显示）</option><option value="fill">拉伸（充满屏幕）</option></select></SettingRow>
+            <SettingRow id="tv_video_scale_mode" label="视频画面模式"><span class="select-control"><select v-model="form.tv_video_scale_mode" class="input"><option value="zoom">铺满（等比裁切）</option><option value="fit">原画（完整显示）</option><option value="fill">拉伸（充满屏幕）</option></select><ChevronDown :size="15" aria-hidden="true" /></span></SettingRow>
             <SettingRow label="播放页迷你二维码"><Toggle v-model="form.mini_qr" /></SettingRow>
           </div>
           <div class="setting-group">
             <div class="group-head"><strong>待机轮播</strong><span>设置无人播放时的歌曲内容和轮播节奏</span></div>
             <SettingRow label="待机热门轮播"><Toggle v-model="form.standby_carousel" /></SettingRow>
-            <SettingRow id="standby_source" label="待机内容来源"><select v-model="form.standby_source" class="input"><option value="mixed">热门与新歌混合</option><option value="hot">热门歌曲</option><option value="new">最近入库</option><option value="custom">指定歌曲</option></select></SettingRow>
+            <SettingRow id="standby_source" label="待机内容来源"><span class="select-control"><select v-model="form.standby_source" class="input"><option value="mixed">热门与新歌混合</option><option value="hot">热门歌曲</option><option value="new">最近入库</option><option value="custom">指定歌曲</option></select><ChevronDown :size="15" aria-hidden="true" /></span></SettingRow>
             <SettingRow v-if="form.standby_source === 'custom'" id="standby_song_ids" label="指定歌曲 ID" :hint="standbySongsHint"><input :value="(form.standby_song_ids || []).join(',')" class="input wide" @input="setStandbySongIds($event.target.value)" /></SettingRow>
             <SettingRow label="防烧屏微移"><Toggle v-model="form.anti_burn" /></SettingRow>
             <SettingRow label="轮播间隔"><div class="unit-input"><input v-model.number="form.standby_interval_sec" class="input short" type="number" min="3" max="60" /><span>秒</span></div></SettingRow>
@@ -200,7 +210,7 @@
             </SettingRow>
           </div>
         </section>
-        </main>
+        </div>
       </div>
       <div v-if="dirty" class="save-bar"><span><AlertCircle :size="16" />有未保存的修改</span><button class="btn ghost" :disabled="saving || restoring" @click="resetChanges"><RotateCcw :size="14" />放弃修改</button><button class="btn" :disabled="saving || restoring" @click="saveAll"><Save :size="14" />{{ saving ? '保存中…' : '保存设置' }}</button></div>
     </div>
@@ -230,7 +240,7 @@
 import { computed, h, onBeforeUnmount, onMounted, reactive, ref, watch, nextTick } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import {
-  AlertCircle, Bot, ChevronRight, Database, Download, RotateCcw, Save, Search,
+  AlertCircle, Bot, ChevronDown, ChevronRight, Database, Download, RotateCcw, Save, Search,
   SlidersHorizontal, TestTube2, Trash2, Tv, Wrench, Music2, X
 } from 'lucide-vue-next'
 import api from '../../api/client'
@@ -251,7 +261,7 @@ const search = ref(''); const section = ref(route.query.section && categories.so
 const form = reactive({ library_watch_enabled:false, library_filename_metadata_preferred:false, discovery_enabled:true, discovery_name:'家庭KTV', display_address:'', external_default_audio_layout:'NORMAL_STEREO', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_configured:false, anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false })
 const ai = reactive({ enabled:false, apiKeyConfigured:false, apiKeySuffix:null, sources:{}, capabilities:{}, lastTestAt:null })
 const aiForm = reactive({ enabled:false, baseUrl:'', apiKey:'', bulkModel:'', reasoningModel:'', timeoutSeconds:60, identityThreshold:.97, classificationThreshold:.92, jsonMode:'AUTO', bulkConcurrency:2, reasoningConcurrency:1, allowPrivateNetwork:false })
-const musicForm = reactive({enabled:false,providers:[],resultLimit:20,timeoutSeconds:5,searchCacheHours:6,concurrencyLimit:1,requestIntervalMs:1500,autoApplyThreshold:.95,dailyLimit:300})
+const musicForm = reactive({enabled:false,providers:[],fallbackProviders:[],resultLimit:20,timeoutSeconds:5,searchCacheHours:6,concurrencyLimit:1,requestIntervalMs:2500,autoApplyThreshold:.95,dailyLimit:3000,fallbackDailyLimit:2000})
 const memoryDiag = ref(null)
 const memoryUsedPercent = computed(() => {
   if (!memoryDiag.value || !memoryDiag.value.heapMaxBytes) return 0
@@ -263,7 +273,7 @@ function formatBytes(bytes) {
   if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB'
   return mb + ' MB'
 }
-const musicStatus = ref([]); const musicProviderOptions=[{value:'NETEASE',label:'网易云音乐'},{value:'QQ',label:'QQ 音乐'},{value:'KUGOU',label:'酷狗音乐'}]
+const musicStatus = ref([]); const fallbackStatus = ref([]); const musicProviderOptions=[{value:'NETEASE',label:'网易云音乐'},{value:'QQ',label:'QQ 音乐'},{value:'KUGOU',label:'酷狗音乐'},{value:'KUWO',label:'酷我音乐'},{value:'ITUNES',label:'iTunes / Apple Music'}]; const fallbackProviderOptions=[{value:'BAIDU_BAIKE',label:'百度百科'},{value:'BING_IMAGES',label:'Bing 图片'},{value:'BAIDU_IMAGES',label:'百度图片'},{value:'DEEZER',label:'Deezer (海外)'},{value:'WIKIPEDIA_ZH',label:'中文维基 (海外)'},{value:'WIKIPEDIA_EN',label:'英文维基 (海外)'}]
 const original = ref(''); const aiOriginal = ref(''); const musicOriginal = ref(''); const dirty = ref(false); const loading = ref(true); const saving=ref(false); const testing = ref(false); const testingMusic=ref(false); const restoring=ref(false); const testMessage = ref(''); const musicTestMessage=ref(''); const models = ref([]); const modelTarget = ref('bulk'); const wishes = ref([]); const clearKey = ref(false)
 const hardware = reactive({ available:false, reason:'尚未检测' })
 const releaseInfo = reactive({ version:'' })
@@ -299,15 +309,17 @@ const searchCatalog = {
     { key:'ai_threshold', label:'自动应用阈值', keywords:'置信度 审核 并发' }
   ],
   metadata: [
-    { key:'music_sources_enabled', label:'启用元数据刮削', keywords:'KTV 曲库 标签 聚合' },
-    { key:'music_sources_providers', label:'刮削平台', keywords:'网易云 QQ 酷狗 多选' },
+    { key:'music_sources_enabled', label:'启用在线刮削', keywords:'KTV 曲库 标签 聚合 头像' },
+    { key:'music_sources_providers', label:'音乐平台（主源）', keywords:'网易云 QQ 酷狗 酷我 iTunes 多选' },
+    { key:'music_sources_fallback_providers', label:'网页 / 图库兜底源', keywords:'百度百科 Bing 百度图片 Deezer 维基 兜底' },
     { key:'music_sources_limit', label:'每个平台搜索数量', keywords:'结果 条数 limit' },
     { key:'music_sources_timeout', label:'请求超时', keywords:'平台 timeout 秒' },
     { key:'music_sources_cache', label:'搜索缓存', keywords:'小时 缓存 刷新' },
     { key:'music_sources_threshold', label:'自动写入阈值', keywords:'置信度 自动应用 人工审核' },
     { key:'music_sources_concurrency', label:'单平台并发上限', keywords:'限流 并发 速度' },
     { key:'music_sources_interval', label:'同平台请求间隔', keywords:'限速 频率 毫秒' },
-    { key:'music_sources_daily_limit', label:'单平台每日请求上限', keywords:'限额 每日 上限 配额 次数' }
+    { key:'music_sources_daily_limit', label:'单平台每日请求上限', keywords:'限额 每日 上限 配额 次数' },
+    { key:'music_sources_fallback_daily_limit', label:'兜底图源每日总上限', keywords:'兜底 配额 每日 上限' }
   ],
   transcode: [
     { key:'delete_source_after_transcode', label:'转码成功后删除源文件', keywords:'删源 清理 自动删除' },
@@ -373,11 +385,12 @@ async function load(failedOnly=false){
     aiOriginal.value=snapshot(merged.baseline)
   }
   if (music) {
-    const incoming={ enabled:music.enabled||false, providers:music.providers||[], resultLimit:music.resultLimit||20, timeoutSeconds:music.timeoutSeconds||5, searchCacheHours:music.searchCacheHours||6, concurrencyLimit:music.concurrencyLimit||1, requestIntervalMs:music.requestIntervalMs||1500, autoApplyThreshold:music.autoApplyThreshold??.95, dailyLimit:music.dailyLimit||300 }
+    const incoming={ enabled:music.enabled||false, providers:music.providers||[], fallbackProviders:music.fallbackProviders||[], resultLimit:music.resultLimit||20, timeoutSeconds:music.timeoutSeconds||5, searchCacheHours:music.searchCacheHours||6, concurrencyLimit:music.concurrencyLimit||1, requestIntervalMs:music.requestIntervalMs||2500, autoApplyThreshold:music.autoApplyThreshold??.95, dailyLimit:music.dailyLimit||3000, fallbackDailyLimit:music.fallbackDailyLimit||2000 }
     const merged=reconcileSettingsDraft(musicForm,musicOriginal.value,incoming)
     Object.assign(musicForm,merged.value)
     musicOriginal.value=snapshot(merged.baseline)
     musicStatus.value=music.providerStatus||[]
+    fallbackStatus.value=music.fallbackStatus||[]
   }
   if (result.values.hardware) Object.assign(hardware, result.values.hardware)
   if (result.values.wishes) wishes.value=result.values.wishes
@@ -433,7 +446,7 @@ async function saveAll(){
       }},
       {name:'音乐元数据设置',dirty:musicDirty.value,state:sectionState.music,save:async()=>{
         const music=await api.adminPutMusicSourceConfig({...JSON.parse(initial.music)})
-        if(snapshot(musicForm)===initial.music){Object.assign(musicForm,{enabled:music.enabled,providers:music.providers,resultLimit:music.resultLimit,timeoutSeconds:music.timeoutSeconds,searchCacheHours:music.searchCacheHours,concurrencyLimit:music.concurrencyLimit,requestIntervalMs:music.requestIntervalMs,autoApplyThreshold:music.autoApplyThreshold,dailyLimit:music.dailyLimit||300});musicStatus.value=music.providerStatus||[]}
+        if(snapshot(musicForm)===initial.music){Object.assign(musicForm,{enabled:music.enabled,providers:music.providers,fallbackProviders:music.fallbackProviders||[],resultLimit:music.resultLimit,timeoutSeconds:music.timeoutSeconds,searchCacheHours:music.searchCacheHours,concurrencyLimit:music.concurrencyLimit,requestIntervalMs:music.requestIntervalMs,autoApplyThreshold:music.autoApplyThreshold,dailyLimit:music.dailyLimit||3000,fallbackDailyLimit:music.fallbackDailyLimit||2000});musicStatus.value=music.providerStatus||[];fallbackStatus.value=music.fallbackStatus||[]}
         return music
       }}
     ])
@@ -451,7 +464,8 @@ function chooseModel(model){ if(modelTarget.value==='reasoning') aiForm.reasonin
 async function loadModels(target='bulk'){ modelTarget.value=target; try { models.value=(await api.adminAiModels()).models||[] } catch(e){ await alertDialog(e.message||'模型列表获取失败') } }
 async function testAi(){ testing.value=true; try { const result=await api.adminAiTestConfig(); testMessage.value=`连接成功，已检测 ${Object.keys(result.testedModels||{}).length} 个模型`; Object.assign(ai,await api.adminAiConfig()) } catch(e){ testMessage.value=e.message||'连接测试失败' } finally { testing.value=false } }
 async function testMusic(providers){testingMusic.value=true;try{const result=await api.adminTestMusicSources(providers);musicStatus.value=result.providerStatus||musicStatus.value;const success=(result.results||[]).filter(item=>item.healthy).length;const total=(result.results||[]).length;const failed=(result.results||[]).filter(item=>!item.healthy&&item.error);if(failed.length>0){const details=failed.map(item=>`${item.displayName||item.provider}: ${item.error}`).join('；');musicTestMessage.value=`${success}/${total} 个平台连接成功（${details}）`}else{musicTestMessage.value=`${success}/${total} 个平台连接成功`}}catch(e){musicTestMessage.value=e.message||'平台连接测试失败'}finally{testingMusic.value=false}}
-async function resetMusicCooldowns(){testingMusic.value=true;try{const result=await api.adminResetMusicSourceCooldowns?.();musicStatus.value=result?.providerStatus||musicStatus.value;musicTestMessage.value='已清除平台错误冷却状态并重新唤醒队列'}catch(e){musicTestMessage.value=e.message||'重置冷却失败'}finally{testingMusic.value=false}}
+async function testFallback(providers){testingMusic.value=true;try{const result=await api.adminTestFallbackSources?.(providers);fallbackStatus.value=result?.fallbackStatus||fallbackStatus.value;const success=(result?.results||[]).filter(item=>item.healthy).length;const total=(result?.results||[]).length;const failed=(result?.results||[]).filter(item=>!item.healthy&&item.error);if(failed.length>0){const details=failed.map(item=>`${item.displayName||item.provider}: ${item.error}`).join('；');musicTestMessage.value=`兜底源测试 ${success}/${total} 通过（${details}）`}else{musicTestMessage.value=`兜底源测试 ${success}/${total} 通过`}}catch(e){musicTestMessage.value=e.message||'兜底图源测试失败'}finally{testingMusic.value=false}}
+async function resetMusicCooldowns(){testingMusic.value=true;try{const result=await api.adminResetMusicSourceCooldowns?.();musicStatus.value=result?.providerStatus||musicStatus.value;fallbackStatus.value=result?.fallbackStatus||fallbackStatus.value;musicTestMessage.value='已清除平台冷却与兜底熔断并重新唤醒队列'}catch(e){musicTestMessage.value=e.message||'重置冷却失败'}finally{testingMusic.value=false}}
 async function restoreTranscodeDefaults(){
   if(saving.value)return
   if(!await confirmDialog('恢复转码默认规则？',{title:'恢复默认'}))return
@@ -555,103 +569,107 @@ onBeforeRouteLeave(async()=>{ if(!dirty.value)return true; return await confirmD
 </script>
 
 <style scoped>
-.settings-page{width:100%;max-width:1180px;margin:0 auto;padding-bottom:76px;color:#172033}
+.settings-page{width:100%;padding-bottom:84px;color:#172033}
 .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:20px}
-.page-head h1{font-size:22px;line-height:1.25;color:#172033}
+.page-head h1{font-size:24px;line-height:1.25;color:#172033}
 .page-head p{margin-top:6px;color:#64748b;font-size:13px;line-height:1.5}
-.page-context{flex:none;margin-bottom:1px;padding:5px 9px;border:1px solid #dbe3ee;border-radius:6px;background:#fff;color:#64748b;font-size:11px}
-.settings-shell{display:grid;grid-template-columns:240px minmax(0,1fr);gap:18px;align-items:start}
-.settings-nav{position:sticky;top:18px;min-width:0;padding:10px;background:#fff;border:1px solid #dfe6ef;border-radius:8px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+.page-context{flex:none;margin-bottom:1px;padding:6px 11px;border:1px solid #dbe3ee;border-radius:6px;background:#fff;color:#64748b;font-size:12px}
+.settings-shell{display:grid;grid-template-columns:260px minmax(0,1fr);gap:20px;align-items:start}
+.settings-nav{position:sticky;top:18px;min-width:0;padding:12px;background:#fff;border:1px solid #dfe6ef;border-radius:8px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
 .search-wrap{position:relative}
 .search-wrap>svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:#94a3b8;pointer-events:none}
-.search{width:100%;height:38px;padding:0 10px 0 34px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#172033;font-size:12px}
+.search{width:100%;height:38px;padding:0 10px 0 34px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#172033;font-size:13px}
 .search:focus,.input:focus{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(37,99,235,.1);outline:0}
 .category-nav,.search-results{display:flex;flex-direction:column;gap:4px;margin-top:10px}
-.category-button{display:grid;grid-template-columns:32px minmax(0,1fr) 16px;align-items:center;gap:9px;width:100%;min-height:58px;padding:8px;border:1px solid transparent;border-radius:6px;text-align:left;color:#475569}
+.category-button{display:grid;grid-template-columns:34px minmax(0,1fr) 16px;align-items:center;gap:10px;width:100%;min-height:60px;padding:9px;border:1px solid transparent;border-radius:6px;text-align:left;color:#475569}
 .category-button:hover,.search-results button:hover{background:#f8fafc;color:#1e293b}
 .category-button.active{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}
-.category-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:6px;background:#f1f5f9;color:#64748b}
+.category-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:6px;background:#f1f5f9;color:#64748b}
 .category-button.active .category-icon{background:#dbeafe;color:#2563eb}
 .category-copy{display:block;min-width:0}
 .category-copy strong,.category-copy small{display:block;letter-spacing:0}
-.category-copy strong{font-size:12px;line-height:1.4}
-.category-copy small{margin-top:3px;color:var(--admin-muted);font-size:10px;line-height:1.35}
+.category-copy strong{font-size:14px;line-height:1.4}
+.category-copy small{margin-top:3px;color:var(--admin-muted);font-size:12px;line-height:1.35}
 .category-button.active .category-copy small{color:#1d4ed8}
 .chevron{color:#94a3b8}
 .search-results button{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:10px;border-radius:6px;text-align:left;color:#475569}
 .search-results button span,.search-results strong,.search-results small{display:block}
-.search-results strong{font-size:12px}.search-results small{margin-top:3px;color:var(--admin-muted);font-size:10px}
-.empty{display:block;padding:18px 10px;text-align:center;color:var(--admin-muted);font-size:12px}
+.search-results strong{font-size:13px}.search-results small{margin-top:3px;color:var(--admin-muted);font-size:12px}
+.empty{display:block;padding:18px 10px;text-align:center;color:var(--admin-muted);font-size:13px}
 .settings-content{min-width:0}
-.section{overflow:hidden;background:#fff;border:1px solid #dfe6ef;border-radius:8px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
-.section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:19px 20px;border-bottom:1px solid #e8edf3;background:#fbfcfe}
-.section-head :deep(.section-heading){display:flex;align-items:center;gap:11px;min-width:0}
-.section-head :deep(.section-icon){display:grid;place-items:center;width:36px;height:36px;flex:none;border-radius:7px;background:#eaf2ff;color:#2563eb}
-.section-head :deep(h2){font-size:17px;line-height:1.35;color:#172033}
-.section-head :deep(p){margin-top:4px;color:#64748b;font-size:11px;line-height:1.5}
-.section-head :deep(.section-aside){display:flex;align-items:center;min-height:36px;flex:none}
-.source-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid #e2e8f0;border-radius:999px;background:#f8fafc;color:#64748b;font-size:10px;white-space:nowrap}
+.section{overflow:hidden;min-height:460px;background:#fff;border:1px solid #dfe6ef;border-radius:8px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+.section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:20px 24px;border-bottom:1px solid #e8edf3;background:#fbfcfe}
+.section-head :deep(.section-heading){display:flex;align-items:center;gap:12px;min-width:0}
+.section-head :deep(.section-icon){display:grid;place-items:center;width:38px;height:38px;flex:none;border-radius:7px;background:#eaf2ff;color:#2563eb}
+.section-head :deep(h2){font-size:18px;line-height:1.35;color:#172033}
+.section-head :deep(p){margin-top:4px;color:#64748b;font-size:13px;line-height:1.5}
+.section-head :deep(.section-aside){display:flex;align-items:center;min-height:38px;flex:none}
+.source-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border:1px solid #e2e8f0;border-radius:999px;background:#f8fafc;color:#64748b;font-size:12px;white-space:nowrap}
 .source-pill i{width:6px;height:6px;border-radius:50%;background:#94a3b8}
 .source-pill.ok{border-color:#bbf7d0;background:#f0fdf4;color:#166534}.source-pill.ok i{background:#16a34a}
-.ai-status{display:grid;grid-template-columns:repeat(3,1fr);margin:16px 20px 0;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc}
-.ai-status>div{min-width:0;padding:10px 12px;border-right:1px solid #e2e8f0}.ai-status>div:last-child{border-right:0}
+.ai-status{display:grid;grid-template-columns:repeat(3,1fr);margin:18px 24px 0;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc}
+.ai-status>div{min-width:0;padding:12px 14px;border-right:1px solid #e2e8f0}.ai-status>div:last-child{border-right:0}
 .ai-status span,.ai-status strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ai-status span{color:var(--admin-muted);font-size:10px}.ai-status strong{margin-top:4px;color:#334155;font-size:11px}
-.setting-group{margin:18px 20px 0}
-.setting-group:last-child{margin-bottom:20px}
-.group-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;padding:0 0 9px;border-bottom:1px solid #dfe6ef}
+.ai-status span{color:var(--admin-muted);font-size:12px}.ai-status strong{margin-top:4px;color:#334155;font-size:13px}
+.setting-group{margin:20px 24px 0}
+.setting-group:last-child{margin-bottom:24px}
+.group-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;padding:0 0 10px;border-bottom:1px solid #dfe6ef}
 .group-head>div{min-width:0}.group-head strong,.group-head span{display:block}
-.group-head strong{color:#1e293b;font-size:12px}.group-head span{margin-top:3px;color:var(--admin-muted);font-size:10px;line-height:1.4}
+.group-head strong{color:#1e293b;font-size:14px}.group-head span{margin-top:4px;color:var(--admin-muted);font-size:12px;line-height:1.45}
 .warning-group .group-head{border-bottom-color:#fed7aa}.warning-group .group-head strong{color:#9a3412}
-.setting-row{display:grid;grid-template-columns:minmax(190px,250px) minmax(0,1fr);align-items:center;gap:24px;min-height:62px;padding:10px 0;border-bottom:1px solid #eef2f7}
+.setting-row{display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);align-items:center;gap:28px;min-height:66px;padding:12px 0;border-bottom:1px solid #eef2f7}
 .setting-group .setting-row:last-child{border-bottom:0}
 .setting-row :deep(.setting-label){min-width:0}.setting-row :deep(.setting-label strong),.setting-row :deep(.setting-label small){display:block;letter-spacing:0}
-.setting-row :deep(.setting-label strong){color:#334155;font-size:12px;line-height:1.45}
-.setting-row :deep(.setting-label small){max-width:270px;margin-top:4px;color:var(--admin-muted);font-size:10px;line-height:1.5}
-.setting-row :deep(.setting-value){display:flex;align-items:center;justify-content:flex-start;gap:9px;min-width:0}
-.input{width:min(250px,100%);height:36px;padding:0 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#172033;font-size:12px;line-height:1.4;box-shadow:0 1px 2px rgba(15,23,42,.03)}
-textarea.input{height:auto;min-height:58px;padding:8px 10px;resize:vertical}
-.input.wide{width:min(440px,100%)}.input.short{width:76px;flex:none}
-.ai-section .input.wide{width:min(560px,100%)}
-.readonly{color:#64748b;font-size:11px}.path-value{padding:5px 8px;border-radius:5px;background:#f1f5f9;color:#475569;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.setting-row :deep(.setting-label strong){color:#334155;font-size:13px;line-height:1.45}
+.setting-row :deep(.setting-label small){max-width:300px;margin-top:4px;color:var(--admin-muted);font-size:12px;line-height:1.5}
+.setting-row :deep(.setting-value){display:flex;align-items:center;justify-content:flex-start;gap:10px;min-width:0}
+.select-control{position:relative;display:block;width:min(280px,100%)}
+.select-control svg{position:absolute;right:10px;top:50%;color:#64748b;pointer-events:none;transform:translateY(-50%)}
+.select-control select.input{width:100%;padding-right:34px;-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:none;cursor:pointer}
+.select-control select.input::-ms-expand{display:none}
+.input{width:min(280px,100%);height:38px;padding:0 11px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#172033;font-size:13px;line-height:1.4;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+textarea.input{height:auto;min-height:62px;padding:9px 11px;resize:vertical}
+.input.wide{width:min(520px,100%)}.input.short{width:84px;flex:none}
+.ai-section .input.wide{width:min(620px,100%)}
+.readonly{color:#64748b;font-size:12px}.path-value{padding:6px 10px;border-radius:5px;background:#f1f5f9;color:#475569;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .memory-board{display:flex;flex-direction:column;gap:6px;width:100%;max-width:440px}
 .memory-bar-wrap{width:100%;height:10px;border-radius:999px;background:#e2e8f0;overflow:hidden}
 .memory-bar-fill{height:100%;border-radius:999px;background:#2563eb;transition:width .3s}
 .memory-bar-fill.warning{background:#ea580c}
-.memory-meta{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#64748b}
+.memory-meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#64748b}
 .memory-meta strong{color:#1e293b}
 .memory-percent{font-weight:600;color:#2563eb}
-.status-badge{display:inline-flex;align-items:center;padding:4px 8px;border-radius:5px;font-size:11px;font-weight:500}
+.status-badge{display:inline-flex;align-items:center;padding:5px 10px;border-radius:5px;font-size:12px;font-weight:500}
 .status-badge.ok{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
-.metric-value{color:#1d4ed8;font-size:20px;font-weight:700}.metric-value small{margin-left:4px;color:#64748b;font-size:10px;font-weight:500}
-.switch{position:relative;width:42px;height:24px;flex:none;border-radius:999px;background:#cbd5e1;transition:background .18s}
+.metric-value{color:#1d4ed8;font-size:20px;font-weight:700}.metric-value small{margin-left:4px;color:#64748b;font-size:12px;font-weight:500}
+.switch{position:relative;width:44px;height:24px;flex:none;border-radius:999px;background:#cbd5e1;transition:background .18s}
 .switch :deep(span){position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.22);transition:transform .18s}
-.switch.on{background:#2563eb}.switch.on :deep(span){transform:translateX(18px)}
-.key-control{display:grid;grid-template-columns:minmax(0,560px);justify-items:start;width:100%}
+.switch.on{background:#2563eb}.switch.on :deep(span){transform:translateX(20px)}
+.key-control{display:grid;grid-template-columns:minmax(0,620px);justify-items:start;width:100%}
 .key-control .input{width:100%}
-.key-meta{display:flex;align-items:center;justify-content:flex-start;gap:10px;margin-top:7px}.key-tail{color:#15803d;font-size:10px}
-.model-control{display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;max-width:560px}.model-control .input{width:auto;min-width:0;flex:1}
+.key-meta{display:flex;align-items:center;justify-content:flex-start;gap:10px;margin-top:7px}.key-tail{color:#15803d;font-size:12px}
+.model-control{display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;max-width:620px}.model-control .input{width:auto;min-width:0;flex:1}
 .presets,.thresholds{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap}
-.thresholds label{display:flex;align-items:center;gap:6px;color:#64748b;font-size:10px}.thresholds label span{white-space:nowrap}
-.unit-input{display:flex;align-items:center;gap:7px;color:#64748b;font-size:11px}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:0 14px;border-radius:6px;background:#2563eb;color:#fff;box-shadow:none;font-size:12px;font-weight:600;white-space:nowrap}
+.thresholds label{display:flex;align-items:center;gap:6px;color:#64748b;font-size:12px}.thresholds label span{white-space:nowrap}
+.unit-input{display:flex;align-items:center;gap:8px;color:#64748b;font-size:12px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:38px;padding:0 15px;border-radius:6px;background:#2563eb;color:#fff;box-shadow:none;font-size:13px;font-weight:600;white-space:nowrap}
 .btn:hover:not(:disabled){background:#1d4ed8}.btn:disabled{cursor:not-allowed;opacity:.5}
 .btn.ghost{background:#fff;color:#475569;border:1px solid #cbd5e1}.btn.ghost:hover:not(:disabled){background:#f8fafc;color:#172033;border-color:#94a3b8}
-.btn.small{min-height:32px;padding:0 11px;font-size:11px}
-.text-btn{flex:none;color:#2563eb;font-size:11px;font-weight:600}.text-btn:hover{color:#1d4ed8}.text-btn.danger{color:#b91c1c}
-.preset,.model-list button{min-height:30px;padding:0 10px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#475569;font-size:10px}
+.btn.small{min-height:34px;padding:0 12px;font-size:12px}
+.text-btn{flex:none;color:#2563eb;font-size:12px;font-weight:600}.text-btn:hover{color:#1d4ed8}.text-btn.danger{color:#b91c1c}
+.preset,.model-list button{min-height:32px;padding:0 11px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#475569;font-size:12px}
 .preset:hover,.model-list button:hover{border-color:#60a5fa;background:#eff6ff;color:#1d4ed8}
-.model-list{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px;margin-left:274px;padding:0 0 10px}.model-list-label{width:100%;color:var(--admin-muted);font-size:10px;line-height:1.4;text-align:left}
-.checks{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px;max-width:520px}
-.checks :deep(.check-chip){display:inline-flex;align-items:center;gap:5px;min-height:28px;padding:0 8px;border:1px solid #dbe3ee;border-radius:5px;background:#fff;color:#64748b;font-size:10px}
+.model-list{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px;margin-left:328px;padding:0 0 10px}.model-list-label{width:100%;color:var(--admin-muted);font-size:12px;line-height:1.4;text-align:left}
+.checks{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px;max-width:600px}
+.checks :deep(.check-chip){display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 10px;border:1px solid #dbe3ee;border-radius:5px;background:#fff;color:#64748b;font-size:12px}
 .checks :deep(.check-chip:hover){border-color:#93c5fd;color:#1d4ed8}.checks :deep(.check-chip.selected){border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;font-weight:600}
-.checks :deep(.check-mark){display:grid;place-items:center;width:13px;height:13px;border:1px solid #cbd5e1;border-radius:3px;background:#fff;color:#fff;font-size:9px;line-height:1}
+.checks :deep(.check-mark){display:grid;place-items:center;width:14px;height:14px;border:1px solid #cbd5e1;border-radius:3px;background:#fff;color:#fff;font-size:10px;line-height:1}
 .checks :deep(.check-chip.selected .check-mark){border-color:#2563eb;background:#2563eb}
-.section-actions{display:flex;align-items:center;gap:12px;margin:18px 20px 20px;padding-top:16px;border-top:1px solid #dfe6ef}.test-message{color:#15803d;font-size:11px}
-.provider-health{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;gap:10px;min-height:54px;border-bottom:1px solid #eef2f7}.provider-health:last-child{border-bottom:0}.provider-health strong,.provider-health small{display:block}.provider-health strong{font-size:12px;color:#334155}.provider-health small{margin-top:3px;color:var(--admin-muted);font-size:10px}.health-dot{width:7px;height:7px;border-radius:50%;background:#cbd5e1}.health-dot.ok{background:#16a34a}
-.upload-btn{display:inline-flex;align-items:center;min-height:34px;padding:0 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#2563eb;font-size:11px;font-weight:600;cursor:pointer}.upload-btn:hover{background:#f8fafc}.upload-btn input{display:none}
-.settings-load-alert,.settings-error{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;margin-bottom:14px;border:1px solid #fed7aa;border-radius:8px;background:#fff7ed;color:#9a3412;font-size:12px}.settings-error{display:block;border-color:#fecaca;background:#fef2f2;color:#b91c1c}.settings-load-alert .text-btn{flex:none}.save-bar{position:fixed;right:24px;bottom:16px;z-index:50;display:flex;align-items:center;justify-content:flex-end;gap:10px;width:min(720px,calc(100vw - 292px));padding:10px 12px;border:1px solid #334155;border-radius:8px;background:#172033;color:#fff;box-shadow:0 10px 30px rgba(15,23,42,.24)}
-.save-bar>span{display:flex;align-items:center;gap:7px;margin-right:auto;font-size:11px}.save-bar .btn{min-height:34px}.save-bar .btn.ghost{background:transparent;border-color:#64748b;color:#e2e8f0}.save-bar .btn.ghost:hover{background:#334155;color:#fff}
+.section-actions{display:flex;align-items:center;gap:12px;margin:20px 24px 24px;padding-top:16px;border-top:1px solid #dfe6ef}.test-message{color:#15803d;font-size:13px}
+.provider-health{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;gap:12px;min-height:58px;border-bottom:1px solid #eef2f7}.provider-health:last-child{border-bottom:0}.provider-health strong,.provider-health small{display:block}.provider-health strong{font-size:13px;color:#334155}.provider-role{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:4px;background:#f1f5f9;color:#475569;font-style:normal;font-size:11px;font-weight:500}.provider-role.overseas{background:#fef3c7;color:#92400e}.provider-health small{margin-top:3px;color:var(--admin-muted);font-size:12px}.health-dot{width:8px;height:8px;border-radius:50%;background:#cbd5e1}.health-dot.ok{background:#16a34a}
+.upload-btn{display:inline-flex;align-items:center;min-height:36px;padding:0 13px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#2563eb;font-size:12px;font-weight:600;cursor:pointer}.upload-btn:hover{background:#f8fafc}.upload-btn input{display:none}
+.settings-load-alert,.settings-error{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;margin-bottom:16px;border:1px solid #fed7aa;border-radius:8px;background:#fff7ed;color:#9a3412;font-size:13px}.settings-error{display:block;border-color:#fecaca;background:#fef2f2;color:#b91c1c}.settings-load-alert .text-btn{flex:none}.save-bar{position:fixed;left:calc(236px + (100vw - 236px) / 2);transform:translateX(-50%);bottom:18px;z-index:50;display:flex;align-items:center;justify-content:flex-end;gap:10px;width:min(820px,calc(100vw - 292px));padding:11px 14px;border:1px solid #334155;border-radius:8px;background:#172033;color:#fff;box-shadow:0 10px 30px rgba(15,23,42,.24)}
+.save-bar>span{display:flex;align-items:center;gap:8px;margin-right:auto;font-size:13px}.save-bar .btn{min-height:36px}.save-bar .btn.ghost{background:transparent;border-color:#64748b;color:#e2e8f0}.save-bar .btn.ghost:hover{background:#334155;color:#fff}
 .wish-row-actions{display:flex;align-items:center;gap:12px}
 .mask{position:fixed;inset:0;background:rgba(15,23,42,.45);display:grid;place-items:center;z-index:100}
 .modal{width:min(560px,calc(100vw - 32px));background:#fff;border-radius:8px;padding:22px;box-shadow:0 18px 50px rgba(15,23,42,.18)}
@@ -695,7 +713,7 @@ textarea.input{height:auto;min-height:58px;padding:8px 10px;resize:vertical}
   .key-control{grid-template-columns:1fr}.key-meta{justify-content:space-between;width:100%}
   .model-list{justify-content:flex-start}.model-list-label{text-align:left}
   .checks{max-width:none}.checks :deep(.check-chip){min-height:30px}
-  .section-actions{align-items:flex-start;flex-direction:column;margin:16px}.save-bar{right:10px;bottom:8px;width:calc(100vw - 20px);flex-wrap:wrap}.save-bar>span{width:100%;margin-bottom:2px}.save-bar .btn{flex:1}
+  .section-actions{align-items:flex-start;flex-direction:column;margin:16px}.save-bar{left:10px;right:10px;transform:none;bottom:8px;width:auto;flex-wrap:wrap}.save-bar>span{width:100%;margin-bottom:2px}.save-bar .btn{flex:1}
 }
 .logo-actions{display:inline-flex;align-items:center;gap:8px}
 </style>

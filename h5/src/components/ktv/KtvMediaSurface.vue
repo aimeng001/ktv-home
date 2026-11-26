@@ -4,8 +4,13 @@
     class="media-stage"
     :class="{ fullscreen, 'has-song': Boolean(song), 'audio-only': isAudioOnly }"
     :style="stageStyle"
+    :role="!fullscreen && song ? 'button' : undefined"
+    :tabindex="!fullscreen && song ? 0 : undefined"
+    :aria-label="!fullscreen && song ? '展开全屏 MV 播放' : undefined"
     @mousemove="wakeOsd"
     @click="onStageClick"
+    @keydown.enter.prevent="!fullscreen && song && onStageClick()"
+    @keydown.space.prevent="!fullscreen && song && onStageClick()"
   >
     <video
       v-show="hasVideoStream && !mirrorStreamFailed"
@@ -71,6 +76,10 @@
     <!-- 全屏覆盖层：极简顶部在播跑马灯、双行歌词、IKTV 底部两行大控台（对标 view_ktv_fullscreen_playback_panel.xml） -->
     <template v-if="fullscreen">
       <div class="fs-topbar" :class="{ hidden: !osdVisible }">
+        <button type="button" class="fs-back-btn" @click.stop="$emit('open-browser')">
+          <ArrowLeft :size="18" aria-hidden="true" />
+          <span>返回点歌台</span>
+        </button>
         <div v-if="marqueeText" class="fs-now-marquee" role="status" aria-live="polite">
           <span
             :key="marqueeRunKey"
@@ -234,7 +243,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Volume2 } from 'lucide-vue-next'
+import { ArrowLeft, Volume2 } from 'lucide-vue-next'
 import KaraokeLyricSurface from './KaraokeLyricSurface.vue'
 import { usePlayerStore } from '../../stores/player'
 import { parseLrc } from '../../composables/lrc'
@@ -287,6 +296,7 @@ const effectBanner = ref('')
 const marqueeRunKey = ref(0)
 const streamSessionId = `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 let osdTimer = null
+let lastOsdAutoWokeAt = 0
 let effectTimer = null
 let liveStallTimer = null
 let liveStallBaselineTime = -1
@@ -424,6 +434,7 @@ function wakeOsd() {
   if (!props.fullscreen) return
   if (!osdVisible.value) {
     marqueeRunKey.value += 1
+    lastOsdAutoWokeAt = Date.now()
   }
   osdVisible.value = true
   clearTimeout(osdTimer)
@@ -448,6 +459,10 @@ function onStageClick() {
   triggerAudioWakeGesture()
   if (!props.fullscreen) {
     emit('enter-fullscreen')
+    return
+  }
+  if (osdVisible.value && Date.now() - lastOsdAutoWokeAt < 350) {
+    wakeOsd()
     return
   }
   osdVisible.value = !osdVisible.value
@@ -1358,7 +1373,8 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 88px;
-  padding: 0;
+  padding: 0 24px;
+  gap: 20px;
   display: flex;
   align-items: center;
   overflow: hidden;
@@ -1366,13 +1382,35 @@ onBeforeUnmount(() => {
   transition: opacity 0.25s ease;
   z-index: 4;
 }
+.fs-back-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color 0.18s ease, border-color 0.18s ease;
+}
+.fs-back-btn:hover,
+.fs-back-btn:focus-visible {
+  background: var(--iktv-blue);
+  border-color: var(--iktv-blue);
+  outline: none;
+}
 .fs-topbar.hidden,
 .fs-bottom-panel.hidden {
   opacity: 0;
   pointer-events: none;
 }
 .fs-now-marquee {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
 }

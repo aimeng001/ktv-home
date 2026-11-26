@@ -560,7 +560,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ktv-kiosk-shell {
-  --ktv-dock-height: clamp(136px, 18vh, 200px);
+  --ktv-stage-max-width: 1680px;
+  --ktv-dock-height: clamp(140px, 16vh, 176px);
   height: 100vh;
   width: 100vw;
   box-sizing: border-box;
@@ -576,6 +577,8 @@ onBeforeUnmount(() => {
 .kiosk-stage {
   flex: 1;
   min-height: 0;
+  width: min(100%, var(--ktv-stage-max-width));
+  margin-inline: auto;
   overflow: hidden;
   display: flex;
   flex-direction: column;

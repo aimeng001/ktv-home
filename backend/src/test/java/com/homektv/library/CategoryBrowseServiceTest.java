@@ -369,6 +369,16 @@ class CategoryBrowseServiceTest {
     }
 
     @Test
+    void artistInitialsCollapseNonAsciiSymbolsToHashBucket() {
+        SongRepository repository = mock(SongRepository.class);
+        ArtistDirectoryProjectionService projection = mock(ArtistDirectoryProjectionService.class);
+        when(projection.initials("", "")).thenReturn(Optional.of(List.of("Z", "А", "あ", "1", "a")));
+        CategoryBrowseService service = new CategoryBrowseService(repository, null, projection);
+
+        assertThat(service.artistInitials("")).containsExactly("A", "Z", "#");
+    }
+
+    @Test
     void projectionPageIsUsedBeforeLegacyFullAggregate() {
         SongRepository repository = mock(SongRepository.class);
         ArtistDirectoryProjectionService projection = mock(ArtistDirectoryProjectionService.class);

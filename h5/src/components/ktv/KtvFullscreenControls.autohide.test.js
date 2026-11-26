@@ -223,4 +223,39 @@ describe('KtvMediaSurface 全屏播控 3 秒自隐藏与跑马灯', () => {
     expect(openedQueue).toBe(true)
     expect(openedHome).toBe(true)
   })
+
+  it('全屏顶栏提供返回点歌台按钮，且刚由移动鼠标唤醒的 OSD 在 350ms 内点击不会被误关闭', async () => {
+    let openedBrowser = false
+    app = createApp(KtvMediaSurface, {
+      fullscreen: true,
+      onOpenBrowser: () => { openedBrowser = true }
+    })
+    app.use(pinia)
+    app.mount(root)
+    await nextTick()
+    await nextTick()
+
+    const backBtn = root.querySelector('.fs-topbar .fs-back-btn')
+    expect(backBtn).not.toBeNull()
+    expect(backBtn.textContent).toContain('返回点歌台')
+    backBtn.click()
+    await nextTick()
+    expect(openedBrowser).toBe(true)
+
+    const stage = root.querySelector('.media-stage')
+    const bottomPanel = root.querySelector('.fs-bottom-panel')
+    stage.dispatchEvent(new MouseEvent('mousemove'))
+    vi.advanceTimersByTime(3100)
+    await nextTick()
+    expect(bottomPanel.classList.contains('hidden')).toBe(true)
+
+    stage.dispatchEvent(new MouseEvent('mousemove'))
+    await nextTick()
+    expect(bottomPanel.classList.contains('hidden')).toBe(false)
+
+    vi.advanceTimersByTime(100)
+    stage.click()
+    await nextTick()
+    expect(bottomPanel.classList.contains('hidden')).toBe(false)
+  })
 })

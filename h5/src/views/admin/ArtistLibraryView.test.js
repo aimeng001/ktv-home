@@ -766,9 +766,13 @@ describe('ArtistLibraryView', () => {
   })
 
   it('displays avatar scraping progress and triggers single-artist re-scrape', async () => {
+    apiMock.adminArtistAvatarProgress.mockResolvedValue({
+      totalArtists: 2, readyCount: 1, pendingCount: 1, unresolvedCount: 0, queuedJobs: 2, queuedArtists: 2, recentErrors: []
+    })
     await mount()
     expect(root.querySelector('.avatar-progress-bar').textContent).toContain('已缓存 1 / 2')
-    expect(root.querySelector('.avatar-progress-bar').textContent).toContain('队列待处理 2')
+    expect(root.querySelector('.avatar-progress-bar').textContent).toContain('队列待处理 2 位歌手')
+    expect(root.querySelector('.avatar-progress-bar').textContent).not.toContain('作业数')
 
     const scrapeBtn = root.querySelector('tbody .scrape-link')
     scrapeBtn.click()

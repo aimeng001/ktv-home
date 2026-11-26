@@ -326,7 +326,7 @@ async function repeatSong(entry) {
   justify-content: flex-end;
 }
 .queue-drawer {
-  width: min(440px, 94vw);
+  width: min(480px, 94vw);
   height: 100%;
   background-color: rgba(12, 16, 26, 0.96);
   background-position: center;
@@ -334,8 +334,8 @@ async function repeatSong(entry) {
   border-left: 1px solid rgba(255, 255, 255, 0.14);
   display: flex;
   flex-direction: column;
-  padding: 14px;
-  gap: 10px;
+  padding: 16px;
+  gap: 12px;
 }
 .drawer-hd {
   display: flex;

@@ -122,9 +122,10 @@
             type="button"
             class="rail-btn"
             :class="{ on: selectedLanguage === lang.name }"
+            :title="lang.name"
             @click="selectLanguage(lang.name)"
           >
-            <span>{{ lang.name }}</span>
+            <span class="rail-label">{{ lang.name }}</span>
             <small>{{ lang.songCount }}</small>
           </button>
         </template>
@@ -137,9 +138,10 @@
             type="button"
             class="rail-btn"
             :class="{ on: selectedTag === tag.name }"
+            :title="tag.name"
             @click="selectTag(tag.name)"
           >
-            <span>{{ tag.name }}</span>
+            <span class="rail-label">{{ tag.name }}</span>
             <small>{{ tag.songCount }}</small>
           </button>
         </template>
@@ -167,9 +169,10 @@
             type="button"
             class="rail-btn"
             :class="{ on: Number(selectedPlaylistId) === Number(pl.id) }"
+            :title="pl.name"
             @click="selectPlaylist(pl.id)"
           >
-            <span>{{ pl.name }}</span>
+            <span class="rail-label">{{ pl.name }}</span>
             <small>{{ pl.songCount ?? '' }}</small>
           </button>
         </template>
@@ -269,7 +272,7 @@
             <img v-if="avatarUrlFor(selectedArtist, avatarFailures)" :src="avatarUrlFor(selectedArtist, avatarFailures)" alt="" loading="lazy" decoding="async" @error="rememberAvatar(selectedArtist)" />
             <span v-else>{{ (selectedArtist.name || '?').slice(0, 1) }}</span>
           </div>
-          <div>
+          <div class="artist-banner-meta">
             <strong>{{ selectedArtist.name }}</strong>
             <small>{{ songTotal }} 首曲目</small>
           </div>
@@ -566,8 +569,16 @@ let suppressKeywordWatch = false
 const showKeyboard = computed(() => !['featured', 'recent', 'favorites'].includes(activeTab.value))
 
 const availableLetters = computed(() => {
-  const letters = artistInitials.value.filter(l => l && l !== '#')
-  if (artistInitials.value.includes('#')) letters.push('#')
+  const az = new Set()
+  let hasOther = false
+  for (const raw of artistInitials.value) {
+    const ch = String(raw || '').trim().toUpperCase().slice(0, 1)
+    if (!ch) continue
+    if (ch >= 'A' && ch <= 'Z') az.add(ch)
+    else hasOther = true
+  }
+  const letters = Array.from(az).sort()
+  if (hasOther) letters.push('#')
   return ['热门', ...letters]
 })
 
@@ -1420,17 +1431,18 @@ defineExpose({ switchTab, focusSearchKeyboard })
 }
 .capsule-scroll {
   flex: 1;
+  min-width: 0;
   display: flex;
-  gap: 6px;
+  gap: 8px;
   overflow-x: auto;
   scrollbar-width: none;
 }
 .capsule-scroll::-webkit-scrollbar { display: none; }
 .capsule-tab {
-  height: 34px;
-  padding: 0 14px;
+  height: 36px;
+  padding: 0 15px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
   background: rgba(255, 255, 255, 0.08);
@@ -1451,6 +1463,7 @@ defineExpose({ switchTab, focusSearchKeyboard })
 }
 .kb-mobile-toggle {
   display: none;
+  flex: none;
   align-items: center;
   gap: 4px;
   height: 34px;
@@ -1464,17 +1477,17 @@ defineExpose({ switchTab, focusSearchKeyboard })
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 168px minmax(0, 1fr) 268px;
-  gap: 10px;
+  grid-template-columns: 220px minmax(0, 1fr) 300px;
+  gap: 12px;
 }
 .three-col-body.no-kb {
-  grid-template-columns: 184px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
 }
 .left-rail {
   background: rgba(13, 18, 30, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  padding: 8px;
+  padding: 10px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1486,29 +1499,37 @@ defineExpose({ switchTab, focusSearchKeyboard })
   width: 100%;
   padding: 8px 10px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   background: rgba(255, 255, 255, 0.05);
   color: var(--dim);
 }
+.rail-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .rail-btn.on { background: var(--iktv-blue); color: #ffffff; font-weight: 700; }
 .rail-btn.gold { background: rgba(49, 130, 251, 0.22); color: #dbeafe; font-weight: 700; border: 1px solid rgba(49, 130, 251, 0.4); }
-.rail-btn small { font-size: 10px; opacity: 0.78; }
-.rail-letters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.rail-btn small { flex: none; font-size: 11px; opacity: 0.78; }
+.rail-letters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
 .letter-chip {
-  height: 28px; border-radius: 6px; font-size: 11px;
+  height: 30px; border-radius: 6px; font-size: 12px;
   background: rgba(255, 255, 255, 0.06); color: var(--dim);
 }
 .letter-chip.on { background: var(--iktv-blue); color: #ffffff; font-weight: 700; }
 .variety-btn {
-  display: flex; align-items: center; gap: 8px; padding: 6px;
-  border-radius: 8px; background: rgba(255, 255, 255, 0.05); font-size: 12px; text-align: left;
+  display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+  border-radius: 8px; background: rgba(255, 255, 255, 0.05); font-size: 13px; text-align: left;
 }
 .variety-btn.on { border: 1px solid var(--iktv-blue); background: rgba(49, 130, 251, 0.2); color: #ffffff; font-weight: 700; }
-.variety-btn img { width: 32px; height: 22px; border-radius: 4px; object-fit: cover; }
+.variety-btn img { width: 34px; height: 24px; border-radius: 4px; object-fit: cover; flex: none; }
 
 .center-stage {
   min-width: 0;
@@ -1516,45 +1537,52 @@ defineExpose({ switchTab, focusSearchKeyboard })
   background: rgba(13, 18, 30, 0.65);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  padding: 10px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 .playlist-hero, .artist-banner {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 12px;
+  padding: 10px 14px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.06);
 }
 .artist-banner { justify-content: flex-start; }
+.artist-banner-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
 .artist-mini-av {
-  width: 40px; height: 40px; border-radius: 50%; overflow: hidden;
+  width: 44px; height: 44px; border-radius: 50%; overflow: hidden; flex: none;
   background: var(--gold); color: #191304; display: grid; place-items: center; font-weight: 800;
 }
 .artist-mini-av img { width: 100%; height: 100%; object-fit: cover; }
-.pl-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.pl-meta strong, .artist-banner strong { font-size: 15px; }
-.pl-meta small, .artist-banner small { font-size: 11px; color: var(--dim); }
-.ai-tag { align-self: flex-start; font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--purple-glow); color: var(--purple); }
+.pl-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pl-meta strong, .artist-banner strong { font-size: 17px; }
+.pl-meta small, .artist-banner small { font-size: 13px; color: var(--dim); }
+.ai-tag { align-self: flex-start; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--purple-glow); color: var(--purple); }
 
 .song-grid {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-auto-rows: min-content;
-  gap: 8px;
+  gap: 10px;
 }
 .song-card {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 9px 10px;
+  gap: 10px;
+  padding: 10px 12px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -1565,16 +1593,16 @@ defineExpose({ switchTab, focusSearchKeyboard })
   background: rgba(49, 194, 124, 0.1);
 }
 .card-thumb {
-  width: 42px; height: 42px; border-radius: 8px; overflow: hidden; flex: none;
+  width: 44px; height: 44px; border-radius: 8px; overflow: hidden; flex: none;
   background: rgba(255, 255, 255, 0.1); display: grid; place-items: center;
   font-weight: 800; color: #dbeafe;
 }
 .card-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .card-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.card-title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.card-title { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .card-title-row .tag { flex-shrink: 0; }
-.card-sub { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-sub { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song-num {
   font-family: monospace;
   font-weight: 700;
@@ -1626,23 +1654,27 @@ defineExpose({ switchTab, focusSearchKeyboard })
 }
 .artist-card:hover { border-color: var(--iktv-blue); box-shadow: 0 0 12px rgba(49, 130, 251, 0.22); }
 .avatar-circle {
-  width: 64px; height: 64px; border-radius: 50%; overflow: hidden;
+  width: 72px; height: 72px; border-radius: 50%; overflow: hidden;
   background: linear-gradient(135deg, rgba(255, 198, 75, 0.3), rgba(84, 214, 226, 0.2));
-  display: grid; place-items: center; font-size: 22px; font-weight: 800; color: var(--gold2);
+  display: grid; place-items: center; font-size: 24px; font-weight: 800; color: var(--gold2);
 }
 .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
-.artist-card strong { font-size: 13px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.artist-card small { font-size: 11px; color: var(--dim); }
+.artist-card strong { font-size: 14px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.artist-card small { font-size: 12px; color: var(--dim); }
 
 .stage-state {
   grid-column: 1 / -1;
+  flex: 1;
+  min-height: 260px;
   padding: 40px 16px;
   text-align: center;
   color: var(--dim);
+  font-size: 14px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: 12px;
 }
 .stage-state.error { color: var(--coral-soft); }
 .favorites-sync-error {

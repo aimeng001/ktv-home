@@ -83,4 +83,17 @@ describe('KtvThreeColumnBrowser 1280~1440px 中屏响应式断点与卡片布局
     expect(cardActionsEl).not.toBeNull()
     expect(cardTitleEl.textContent).toContain('超长测试歌名')
   })
+
+  it('歌手首字母栏将非 A-Z 字符收拢至末尾 # 桶，避免超长语种字母溢出', async () => {
+    apiMock.browseArtistInitials.mockResolvedValueOnce(['B', 'a', 'А', 'あ', '9', '#'])
+    app = createApp(KtvThreeColumnBrowser, { initialTab: 'singer' })
+    app.use(pinia)
+    app.mount(root)
+    await nextTick()
+    await nextTick()
+    await nextTick()
+
+    const chips = Array.from(root.querySelectorAll('.rail-letters .letter-chip')).map(el => el.textContent.trim())
+    expect(chips).toEqual(['热门', 'A', 'B', '#'])
+  })
 })

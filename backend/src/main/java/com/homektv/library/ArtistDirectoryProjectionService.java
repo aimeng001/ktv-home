@@ -77,7 +77,9 @@ public class ArtistDirectoryProjectionService {
             SELECT a.artist_key,
                    a.name,
                    CASE WHEN COALESCE(a.artist_init, '') = '' THEN '#'
-                        ELSE upper(left(a.artist_init, 1)) END,
+                        WHEN upper(left(a.artist_init, 1)) IN ('A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z')
+                             THEN upper(left(a.artist_init, 1))
+                        ELSE '#' END,
                    CASE WHEN a.name IN ('群星', '多人', 'Various Artists') THEN '组合'
                         WHEN lower(a.name) IN ('佚名', '未知', '未知歌手', 'unknown', 'anonymous') THEN '未知'
                         ELSE COALESCE(NULLIF(p.gender, '未知'), ref.gender, inferred.gender, '未知') END,
@@ -338,22 +340,35 @@ public class ArtistDirectoryProjectionService {
         String safeRegion = normalize(region);
         String safeKeyword = normalize(keyword);
         if ("热门".equals(safeInitial)) safeInitial = "";
+        boolean hashInitial = "#".equals(safeInitial);
+        String initialPredicate = hashInitial
+                ? "AND (COALESCE(directory.initial, '') = '' OR directory.initial NOT IN ('A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z')) "
+                : "AND (? = '' OR directory.initial = ?) ";
         String where = "WHERE (? = '' OR directory.gender = ?) "
-                + "AND (? = '' OR directory.initial = ?) "
+                + initialPredicate
                 + "AND (? = '' OR directory.region = ?)";
         if (!safeKeyword.isEmpty()) {
             where += " AND (LOWER(directory.name) LIKE '%' || LOWER(?) || '%' "
                     + "OR LOWER(directory.artist_init) LIKE LOWER(?) || '%' "
                     + "OR LOWER(directory.artist_py) LIKE LOWER(?) || '%')";
         }
-        Long total = safeKeyword.isEmpty()
-                ? jdbc.queryForObject(
-                        "SELECT COUNT(*) FROM artist_directory_stats directory " + where,
-                        Long.class, safeGender, safeGender, safeInitial, safeInitial, safeRegion, safeRegion)
-                : jdbc.queryForObject(
-                        "SELECT COUNT(*) FROM artist_directory_stats directory " + where,
-                        Long.class, safeGender, safeGender, safeInitial, safeInitial, safeRegion, safeRegion,
-                        safeKeyword, safeKeyword, safeKeyword);
+        List<Object> countParams = new java.util.ArrayList<>(8);
+        countParams.add(safeGender);
+        countParams.add(safeGender);
+        if (!hashInitial) {
+            countParams.add(safeInitial);
+            countParams.add(safeInitial);
+        }
+        countParams.add(safeRegion);
+        countParams.add(safeRegion);
+        if (!safeKeyword.isEmpty()) {
+            countParams.add(safeKeyword);
+            countParams.add(safeKeyword);
+            countParams.add(safeKeyword);
+        }
+        Long total = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM artist_directory_stats directory " + where,
+                Long.class, countParams.toArray());
         String rowsSql = """
                 SELECT directory.artist_key, directory.name, directory.initial, directory.gender,
                        directory.song_count, directory.reviewed, directory.artist_kind, directory.avatar_path,
@@ -362,24 +377,16 @@ public class ArtistDirectoryProjectionService {
                 """ + where + """
                  ORDER BY CASE WHEN directory.artist_kind = 'UNATTRIBUTED' THEN 1 ELSE 0 END ASC,
                           directory.song_count DESC, directory.name ASC, directory.artist_key ASC LIMIT ? OFFSET ?""";
-        List<ArtistRow> rows = safeKeyword.isEmpty()
-                ? jdbc.query(
-                        rowsSql,
-                        (rs, index) -> new ArtistRow(
-                                rs.getString("artist_key"), rs.getString("name"), rs.getString("initial"),
-                                rs.getString("gender"), rs.getLong("song_count"), rs.getBoolean("reviewed"),
-                                rs.getString("artist_kind"), rs.getString("avatar_path"), normalize(rs.getString("region"))),
-                        safeGender, safeGender, safeInitial, safeInitial, safeRegion, safeRegion,
-                        safeSize, safePage * safeSize)
-                : jdbc.query(
-                        rowsSql,
-                        (rs, index) -> new ArtistRow(
-                                rs.getString("artist_key"), rs.getString("name"), rs.getString("initial"),
-                                rs.getString("gender"), rs.getLong("song_count"), rs.getBoolean("reviewed"),
-                                rs.getString("artist_kind"), rs.getString("avatar_path"), normalize(rs.getString("region"))),
-                        safeGender, safeGender, safeInitial, safeInitial, safeRegion, safeRegion,
-                        safeKeyword, safeKeyword, safeKeyword,
-                        safeSize, safePage * safeSize);
+        List<Object> rowParams = new java.util.ArrayList<>(countParams);
+        rowParams.add(safeSize);
+        rowParams.add(safePage * safeSize);
+        List<ArtistRow> rows = jdbc.query(
+                rowsSql,
+                (rs, index) -> new ArtistRow(
+                        rs.getString("artist_key"), rs.getString("name"), rs.getString("initial"),
+                        rs.getString("gender"), rs.getLong("song_count"), rs.getBoolean("reviewed"),
+                        rs.getString("artist_kind"), rs.getString("avatar_path"), normalize(rs.getString("region"))),
+                rowParams.toArray());
         return Optional.of(new ProjectionPage(rows, total == null ? 0L : total));
     }
 
@@ -391,13 +398,34 @@ public class ArtistDirectoryProjectionService {
         if (!isReady()) return Optional.empty();
         String safeGender = normalize(gender);
         String safeRegion = normalize(region);
-        return Optional.of(jdbc.query("""
+        List<String> raw = jdbc.query("""
                 SELECT DISTINCT directory.initial
                 FROM artist_directory_stats directory
                 WHERE (? = '' OR directory.gender = ?)
                   AND (? = '' OR directory.region = ?)
                 ORDER BY directory.initial
-                """, (rs, index) -> rs.getString(1), safeGender, safeGender, safeRegion, safeRegion));
+                """, (rs, index) -> rs.getString(1), safeGender, safeGender, safeRegion, safeRegion);
+        return Optional.of(normalizeInitialBuckets(raw));
+    }
+
+    static List<String> normalizeInitialBuckets(List<String> raw) {
+        if (raw == null || raw.isEmpty()) return List.of();
+        java.util.TreeSet<String> letters = new java.util.TreeSet<>();
+        boolean hasOther = false;
+        for (String item : raw) {
+            if (item == null) continue;
+            String normalized = item.trim().toUpperCase(Locale.ROOT);
+            if (normalized.isEmpty()) continue;
+            char ch = normalized.charAt(0);
+            if (ch >= 'A' && ch <= 'Z') {
+                letters.add(String.valueOf(ch));
+            } else {
+                hasOther = true;
+            }
+        }
+        List<String> result = new java.util.ArrayList<>(letters);
+        if (hasOther) result.add("#");
+        return List.copyOf(result);
     }
 
     public boolean hasRegionReference() {

@@ -244,13 +244,14 @@ defineExpose({ focusInput })
 
 <style scoped>
 .soft-keyboard {
-  background: rgba(13, 18, 30, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(13, 18, 30, 0.96);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 12px;
-  padding: 10px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
 }
 .kb-input-row {
   display: flex;
@@ -259,8 +260,8 @@ defineExpose({ focusInput })
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(49, 130, 251, 0.45);
   border-radius: 8px;
-  padding: 0 8px;
-  height: 38px;
+  padding: 0 10px;
+  height: 40px;
 }
 .kb-input-row input {
   flex: 1;
@@ -269,7 +270,7 @@ defineExpose({ focusInput })
   border: none;
   outline: none;
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
 }
 .kb-clear-mini {
   color: var(--dim);
@@ -282,9 +283,9 @@ defineExpose({ focusInput })
   gap: 4px;
 }
 .word-count-chip {
-  height: 28px;
+  height: 30px;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--dim, #a8b7d4);
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -310,7 +311,7 @@ defineExpose({ focusInput })
   gap: 6px;
 }
 .kb-mode-tabs button {
-  height: 30px;
+  height: 32px;
   border-radius: 6px;
   font-size: 12px;
   color: var(--dim);
@@ -326,7 +327,7 @@ defineExpose({ focusInput })
 .qwerty-wrap {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
 .qwerty-row {
   display: flex;
@@ -335,12 +336,12 @@ defineExpose({ focusInput })
 }
 .kb-key {
   flex: 1;
-  min-width: 20px;
-  height: 32px;
+  min-width: 22px;
+  height: 36px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.14);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--text);
 }
@@ -355,11 +356,11 @@ defineExpose({ focusInput })
   margin-top: 2px;
 }
 .kb-action {
-  height: 34px;
+  height: 36px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.09);
   border: 1px solid rgba(255, 255, 255, 0.14);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 .kb-action.gold {

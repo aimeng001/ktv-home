@@ -265,7 +265,7 @@ describe('MetadataScrapeView', () => {
 
     expect(apiMock.lyricText).toHaveBeenCalledWith(42)
     expect(root.querySelector('.review-file').textContent).toContain('review-song.mp4')
-    expect(root.querySelector('.cover-compare img').getAttribute('src')).toBe('/api/cover/42')
+    expect(root.querySelector('.cover-compare')).toBeNull()
     expect(root.textContent).toContain('QQ 推荐歌名')
 
     const neteaseFilter = [...root.querySelectorAll('.provider-filters button')].find(button => button.textContent.includes('网易云'))
@@ -287,7 +287,7 @@ describe('MetadataScrapeView', () => {
     await flushUi()
 
     expect(apiMock.adminApplyMetadataScrapeItem).toHaveBeenCalledWith('batch-2', 7, {
-      fields: ['title', 'artist', 'album', 'releaseDate', 'aliases', 'cover'],
+      fields: ['title', 'artist', 'album', 'releaseDate', 'aliases'],
       overrides: { title: '人工校正歌名' }, provider: 'NETEASE', externalId: 'ne-1'
     })
     expect(apiMock.adminEditSong).toHaveBeenCalledWith(42, { language: '粤语', lyricText: '[00:00]修订歌词' })
@@ -705,22 +705,23 @@ describe('MetadataScrapeView', () => {
     await flushUi()
 
     expect(apiMock.adminApplyExternalMatch).toHaveBeenCalledWith(
-      42, 'QQ', 'unchanged-1', ['title', 'artist', 'album', 'releaseDate', 'aliases', 'cover'], {}
+      42, 'QQ', 'unchanged-1', ['title', 'artist', 'album', 'releaseDate', 'aliases'], {}
     )
     expect(apiMock.adminEditSong).not.toHaveBeenCalled()
   })
 
-  it('allows applying only the available cover without creating unrelated field overrides', async () => {
+  it('omits online song cover fields from review editor and applies checked text fields only', async () => {
     routeMock.query = { songIds: '42', review: '1' }
-    apiMock.adminSongExternalMatches.mockResolvedValue({ matches: [candidate('QQ', 'cover-only', '封面候选')] })
+    apiMock.adminSongExternalMatches.mockResolvedValue({ matches: [candidate('QQ', 'cover-only', '文本候选')] })
     await mount()
+
+    expect(root.querySelector('.cover-compare')).toBeNull()
+    const coverRow = [...root.querySelectorAll('.compare-row')].find(row => row.textContent.includes('封面'))
+    expect(coverRow).toBeUndefined()
 
     const checks = [...root.querySelectorAll('.compare-row input[type="checkbox"]')]
     for (const check of checks) if (check.checked) check.click()
-    const coverRow = [...root.querySelectorAll('.compare-row')].find(row => row.textContent.includes('封面'))
-    const coverCheck = coverRow.querySelector('input[type="checkbox"]')
-    expect(coverCheck.disabled).toBe(false)
-    coverCheck.click()
+    checks[0].click()
     await nextTick()
 
     const applyButton = root.querySelector('.review-modal footer .primary')
@@ -728,7 +729,7 @@ describe('MetadataScrapeView', () => {
     applyButton.click()
     await flushUi()
 
-    expect(apiMock.adminApplyExternalMatch).toHaveBeenCalledWith(42, 'QQ', 'cover-only', ['cover'], {})
+    expect(apiMock.adminApplyExternalMatch).toHaveBeenCalledWith(42, 'QQ', 'cover-only', ['title'], {})
     expect(apiMock.adminEditSong).not.toHaveBeenCalled()
   })
 
@@ -921,8 +922,7 @@ describe('MetadataScrapeView', () => {
     const artistField = [...fields].find(row => row.textContent.includes('歌手'))
     const artistInput = artistField.querySelector('.review-input')
     expect(artistInput.value).toBe('')
-    const coverField = [...fields].find(row => row.textContent.includes('封面'))
-    expect(coverField.querySelector('input[type="checkbox"]').disabled).toBe(true)
+    expect([...fields].find(row => row.textContent.includes('封面'))).toBeUndefined()
 
     artistInput.value = '人工补充歌手'
     artistInput.dispatchEvent(new Event('input', { bubbles: true }))

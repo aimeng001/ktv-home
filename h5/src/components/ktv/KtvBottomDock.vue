@@ -1,126 +1,131 @@
 <template>
   <footer class="ktv-bottom-dock" aria-label="底部播控栏">
-    <!-- 左侧 5 个 IKTV 原版白线图标按钮 -->
-    <div class="dock-group dock-left">
-      <button type="button" class="dock-circle dock-play-btn" :aria-label="player.isPlaying ? '暂停' : '播放'" @click="$emit('toggle-play')">
-        <span class="dock-icon-ring">
-          <img :src="player.isPlaying ? assets.playerPause : assets.playerPlay" alt="" class="dock-png" />
-        </span>
-        <span>{{ player.isPlaying ? '暂停' : '播放' }}</span>
-      </button>
+    <div class="dock-inner">
+      <!-- 左侧 5 个 IKTV 原版白线图标按钮 -->
+      <div class="dock-group dock-left">
+        <button type="button" class="dock-circle dock-play-btn" :aria-label="player.isPlaying ? '暂停' : '播放'" @click="$emit('toggle-play')">
+          <span class="dock-icon-ring">
+            <img :src="player.isPlaying ? assets.playerPause : assets.playerPlay" alt="" class="dock-png" />
+          </span>
+          <span>{{ player.isPlaying ? '暂停' : '播放' }}</span>
+        </button>
 
-      <button
-        type="button"
-        class="dock-circle"
-        :class="{ active: player.vocalMode === 'accompaniment' }"
-        :disabled="!canVocal"
-        :aria-disabled="!canVocal"
-        :title="canVocal ? '' : '当前曲目无伴唱音轨'"
-        :aria-label="canVocal
-          ? (player.vocalMode === 'original' ? '当前原唱，点击切换伴唱' : '当前伴唱，点击切换原唱')
-          : '当前曲目无伴唱音轨'"
-        @click="$emit('toggle-vocal')"
-      >
-        <span class="dock-icon-ring">
-          <img :src="assets.playerVocal" alt="" class="dock-png" />
-        </span>
-        <span>{{ player.vocalMode === 'original' ? '原唱' : '伴唱' }}</span>
-      </button>
+        <button
+          type="button"
+          class="dock-circle"
+          :class="{ active: player.vocalMode === 'accompaniment' }"
+          :disabled="!canVocal"
+          :aria-disabled="!canVocal"
+          :title="canVocal ? '' : '当前曲目无伴唱音轨'"
+          :aria-label="canVocal
+            ? (player.vocalMode === 'original' ? '当前原唱，点击切换伴唱' : '当前伴唱，点击切换原唱')
+            : '当前曲目无伴唱音轨'"
+          @click="$emit('toggle-vocal')"
+        >
+          <span class="dock-icon-ring">
+            <img :src="assets.playerVocal" alt="" class="dock-png" />
+          </span>
+          <span>{{ player.vocalMode === 'original' ? '原唱' : '伴唱' }}</span>
+        </button>
 
-      <button type="button" class="dock-circle" aria-label="重唱" @click="$emit('restart')">
-        <span class="dock-icon-ring">
-          <img :src="assets.iconReplay" alt="" class="dock-png" />
-        </span>
-        <span>重唱</span>
-      </button>
+        <button type="button" class="dock-circle" aria-label="重唱" @click="$emit('restart')">
+          <span class="dock-icon-ring">
+            <img :src="assets.iconReplay" alt="" class="dock-png" />
+          </span>
+          <span>重唱</span>
+        </button>
 
-      <button type="button" class="dock-circle" aria-label="切歌" @click="$emit('next')">
-        <span class="dock-icon-ring">
-          <img :src="assets.iconNext" alt="" class="dock-png" />
-        </span>
-        <span>切歌</span>
-      </button>
+        <button type="button" class="dock-circle" aria-label="切歌" @click="$emit('next')">
+          <span class="dock-icon-ring">
+            <img :src="assets.iconNext" alt="" class="dock-png" />
+          </span>
+          <span>切歌</span>
+        </button>
 
-      <button type="button" class="dock-circle" aria-label="减小音量" @click="$emit('volume-delta', -VOLUME_STEP)">
-        <span class="dock-icon-ring">
-          <img :src="assets.iconVolDown" alt="" class="dock-png" />
-        </span>
-        <span>音量</span>
-      </button>
-    </div>
-
-    <!-- 中央贴底 16:9 实时 MV 小窗与左右梯形羽化阴影 -->
-    <div class="pip-stage-wrap">
-      <img :src="assets.shadowLeft" alt="" class="pip-shadow left" />
-      <div
-        ref="pipSlotEl"
-        class="video-container"
-        role="button"
-        tabindex="0"
-        aria-label="展开全屏 MV 播放"
-        @click="$emit('enter-fullscreen')"
-        @keydown.enter.prevent="$emit('enter-fullscreen')"
-        @keydown.space.prevent="$emit('enter-fullscreen')"
-      >
-        <div v-if="!player.nowPlaying" class="pip-idle">
-          <img
-            :src="effectiveStandbyLogo"
-            alt="待机画面"
-            class="pip-idle-img"
-            @error="logoLoadFailed = true"
-          />
-          <span>空闲待点歌</span>
-        </div>
-        <div v-else class="pip-hover-tip">点击全屏</div>
-        <span class="pip-inner-shadow left" aria-hidden="true" />
-        <span class="pip-inner-shadow right" aria-hidden="true" />
+        <button type="button" class="dock-circle" aria-label="减小音量" @click="$emit('volume-delta', -VOLUME_STEP)">
+          <span class="dock-icon-ring">
+            <img :src="assets.iconVolDown" alt="" class="dock-png" />
+          </span>
+          <span>音量</span>
+        </button>
       </div>
-      <img :src="assets.shadowRight" alt="" class="pip-shadow right" />
-    </div>
 
-    <!-- 右侧 5 个 IKTV 原版白线图标按钮 -->
-    <div class="dock-group dock-right">
-      <button type="button" class="dock-circle" aria-label="增加音量" @click="$emit('volume-delta', VOLUME_STEP)">
-        <span class="dock-icon-ring">
-          <img :src="assets.iconVolUp" alt="" class="dock-png" />
-        </span>
-        <span>音量</span>
-      </button>
+      <!-- 中央贴底 16:9 实时 MV 小窗与左右梯形羽化阴影 -->
+      <div class="pip-stage-wrap">
+        <img :src="assets.shadowLeft" alt="" class="pip-shadow left" />
+        <div
+          ref="pipSlotEl"
+          class="video-container"
+          :class="{ 'playing-passthrough': Boolean(player.nowPlaying) }"
+          :aria-hidden="player.nowPlaying ? 'true' : undefined"
+          role="button"
+          tabindex="0"
+          aria-label="展开全屏 MV 播放"
+          @click="$emit('enter-fullscreen')"
+          @keydown.enter.prevent="$emit('enter-fullscreen')"
+          @keydown.space.prevent="$emit('enter-fullscreen')"
+        >
+          <div v-if="!player.nowPlaying" class="pip-idle">
+            <img
+              :src="effectiveStandbyLogo"
+              alt="待机画面"
+              class="pip-idle-img"
+              @error="logoLoadFailed = true"
+            />
+            <span>空闲待点歌</span>
+          </div>
+          <div v-else class="pip-hover-tip">点击全屏</div>
+          <span class="pip-inner-shadow left" aria-hidden="true" />
+          <span class="pip-inner-shadow right" aria-hidden="true" />
+        </div>
+        <img :src="assets.shadowRight" alt="" class="pip-shadow right" />
+      </div>
 
-      <button type="button" class="dock-circle" aria-label="伴奏降调" @click="$emit('pitch-delta', -1)">
-        <span class="dock-icon-ring">
-          <img :src="assets.iconToneDown" alt="" class="dock-png" />
-        </span>
-        <span>降调</span>
-      </button>
+      <!-- 右侧 5 个 IKTV 原版白线图标按钮 -->
+      <div class="dock-group dock-right">
+        <button type="button" class="dock-circle" aria-label="增加音量" @click="$emit('volume-delta', VOLUME_STEP)">
+          <span class="dock-icon-ring">
+            <img :src="assets.iconVolUp" alt="" class="dock-png" />
+          </span>
+          <span>音量</span>
+        </button>
 
-      <button type="button" class="dock-circle" aria-label="伴奏升调" @click="$emit('pitch-delta', 1)">
-        <span class="dock-icon-ring">
-          <img :src="assets.iconToneUp" alt="" class="dock-png" />
-        </span>
-        <span>升调</span>
-      </button>
+        <button type="button" class="dock-circle" aria-label="伴奏降调" @click="$emit('pitch-delta', -1)">
+          <span class="dock-icon-ring">
+            <img :src="assets.iconToneDown" alt="" class="dock-png" />
+          </span>
+          <span>降调</span>
+        </button>
 
-      <button type="button" class="dock-circle" aria-label="氛围音效与音轨说明" @click="$emit('open-mixer')">
-        <span class="dock-icon-ring">
-          <img :src="assets.iconDownload" alt="" class="dock-png" />
-        </span>
-        <span>音效</span>
-      </button>
+        <button type="button" class="dock-circle" aria-label="伴奏升调" @click="$emit('pitch-delta', 1)">
+          <span class="dock-icon-ring">
+            <img :src="assets.iconToneUp" alt="" class="dock-png" />
+          </span>
+          <span>升调</span>
+        </button>
 
-      <button type="button" class="dock-circle queue-btn" aria-label="打开已点队列抽屉" @click="$emit('open-queue')">
-        <span class="dock-icon-ring">
-          <img :src="assets.playerQueue" alt="" class="dock-png" />
-          <em class="queue-badge">{{ player.queueCount }}</em>
-        </span>
-        <span>已点</span>
-      </button>
+        <button type="button" class="dock-circle" aria-label="氛围音效与音轨说明" @click="$emit('open-mixer')">
+          <span class="dock-icon-ring">
+            <AudioLines :size="30" class="dock-svg" aria-hidden="true" />
+          </span>
+          <span>音效</span>
+        </button>
+
+        <button type="button" class="dock-circle queue-btn" aria-label="打开已点队列抽屉" @click="$emit('open-queue')">
+          <span class="dock-icon-ring">
+            <img :src="assets.playerQueue" alt="" class="dock-png" />
+            <em class="queue-badge">{{ player.queueCount }}</em>
+          </span>
+          <span>已点</span>
+        </button>
+      </div>
     </div>
   </footer>
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { AudioLines } from 'lucide-vue-next'
 import { KTV_ASSETS } from './ktvCatalogPresets'
 import { VOLUME_STEP } from './ktvControlSteps'
 import { usePlayerStore } from '../../stores/player'
@@ -166,16 +171,22 @@ defineExpose({ pipSlotEl })
 
 <style scoped>
 .ktv-bottom-dock {
-  --dock-h: var(--ktv-dock-height, clamp(136px, 18vh, 200px));
+  --dock-h: var(--ktv-dock-height, clamp(140px, 16vh, 176px));
   height: var(--dock-h);
-  padding: 0 clamp(14px, 1.4vw, 26px);
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: clamp(6px, 0.7vw, 14px);
+  width: 100%;
   background: linear-gradient(0deg, rgba(6, 9, 18, 0.9), rgba(6, 9, 18, 0.48) 72%, transparent);
   flex: none;
   z-index: 20;
+}
+.dock-inner {
+  width: min(100%, var(--ktv-stage-max-width, 1680px));
+  height: 100%;
+  margin-inline: auto;
+  padding: 0 clamp(14px, 1.4vw, 24px);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: clamp(8px, 0.9vw, 18px);
 }
 .dock-group {
   display: grid;
@@ -245,9 +256,15 @@ defineExpose({ pipSlotEl })
   box-shadow: none;
 }
 .dock-png {
-  width: clamp(32px, 2.5vw, 46px);
-  height: clamp(32px, 2.5vw, 46px);
+  width: clamp(32px, 2.4vw, 44px);
+  height: clamp(32px, 2.4vw, 44px);
   object-fit: contain;
+}
+.dock-svg {
+  width: clamp(26px, 2vw, 34px);
+  height: clamp(26px, 2vw, 34px);
+  color: rgba(255, 255, 255, 0.92);
+  stroke-width: 1.85;
 }
 .queue-badge {
   position: absolute;
@@ -290,6 +307,9 @@ defineExpose({ pipSlotEl })
   cursor: pointer;
   transition: box-shadow 0.18s ease;
 }
+.video-container.playing-passthrough {
+  pointer-events: none;
+}
 .video-container:hover,
 .video-container:focus-visible {
   box-shadow: 0 0 0 2px var(--iktv-blue), 0 0 24px var(--iktv-blue-glow);
@@ -324,15 +344,20 @@ defineExpose({ pipSlotEl })
   width: 100%;
   height: 100%;
   object-fit: cover;
-  opacity: 0.72;
+  opacity: 0.78;
 }
 .pip-idle span {
-  position: relative;
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
   z-index: 3;
+  white-space: nowrap;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(6, 9, 16, 0.72);
-  padding: 3px 10px;
+  color: rgba(255, 255, 255, 0.94);
+  background: rgba(6, 9, 16, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 2px 10px;
   border-radius: 999px;
 }
 .pip-hover-tip {
@@ -386,6 +411,8 @@ defineExpose({ pipSlotEl })
 @media (max-width: 759px) {
   .ktv-bottom-dock {
     height: auto;
+  }
+  .dock-inner {
     grid-template-columns: 1fr;
     gap: 6px;
     padding: 6px 8px calc(8px + var(--safe-bottom));

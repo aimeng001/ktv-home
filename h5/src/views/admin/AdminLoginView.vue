@@ -13,6 +13,7 @@
           {{ loading ? '登录中…' : '登录' }}
         </button>
       </form>
+      <router-link class="back-link" to="/">← 返回前台点歌台</router-link>
     </section>
   </main>
 </template>
@@ -81,6 +82,8 @@ input { box-sizing:border-box; width:100%; height:42px; padding:0 12px; border:1
 input:focus { outline:2px solid #bfdbfe; border-color:#2563eb; }
 button { width:100%; height:42px; margin-top:16px; border:0; border-radius:7px; background:#2563eb; color:#fff; font:inherit; font-weight:700; cursor:pointer; }
 button:disabled { background:#94a3b8; cursor:not-allowed; }
-.warning,.error { margin:0 0 16px; padding:10px 12px; border-radius:7px; font-size:12px; line-height:1.6; }
+.warning,.error { margin:0 0 16px; padding:10px 12px; border-radius:7px; font-size:13px; line-height:1.6; }
 .warning { background:#fff7ed; color:#9a3412; }.error { background:#fef2f2; color:#b91c1c; }
+.back-link { display:inline-block; margin-top:16px; font-size:13px; font-weight:600; color:#2563eb; }
+.back-link:hover { text-decoration:underline; }
 </style>

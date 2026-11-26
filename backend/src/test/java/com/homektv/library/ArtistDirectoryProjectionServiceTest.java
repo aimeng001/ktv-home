@@ -163,6 +163,24 @@ class ArtistDirectoryProjectionServiceTest {
     }
 
     @Test
+    void hashInitialQueriesNonAzBucketsAndInitialsCollapseNonAzToTrailingHash() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class))).thenReturn(true);
+        when(jdbc.queryForObject(contains("SELECT COUNT(*)"), eq(Long.class), any(Object[].class))).thenReturn(1L);
+        stubSingleArtistRow(jdbc);
+        doReturn(List.of("B", "a", "あ", "А", "9", "#")).when(jdbc)
+                .query(contains("SELECT DISTINCT directory.initial"), any(RowMapper.class), any(Object[].class));
+
+        ArtistDirectoryProjectionService service = new ArtistDirectoryProjectionService(jdbc);
+        assertThat(service.initials("")).contains(List.of("A", "B", "#"));
+
+        service.page("", "#", "", 0, 20);
+        var arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
+        verify(jdbc).query(contains("directory.initial NOT IN ('A'"), any(RowMapper.class), arguments.capture());
+        assertThat(arguments.getValue()).containsExactly("", "", "", "", 20, 0);
+    }
+
+    @Test
     void refreshAfterCommitDoesNotStartUntilTheTransactionCommits() throws Exception {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         CountDownLatch refreshComplete = stubRefreshCompletion(jdbc);

@@ -252,6 +252,7 @@ export const api = {
   adminMusicSourceConfig: () => request('/admin/music-sources/config'),
   adminPutMusicSourceConfig: (body) => request('/admin/music-sources/config', { method: 'PUT', body: JSON.stringify(body) }),
   adminTestMusicSources: (providers = []) => request('/admin/music-sources/test', { method: 'POST', body: JSON.stringify({ providers }) }),
+  adminTestFallbackSources: (providers = []) => request('/admin/music-sources/test-fallback', { method: 'POST', body: JSON.stringify({ providers }) }),
   adminResetMusicSourceCooldowns: () => request('/admin/music-sources/reset-cooldown', { method: 'POST' }),
   adminSongExternalMatches: (songId, refresh = false, keyword = '', providers = []) => request(`/admin/songs/${songId}/external-matches?` + new URLSearchParams([
     ['refresh', String(refresh)],

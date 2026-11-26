@@ -143,12 +143,14 @@ const modeBadge = computed(() => {
 
 <style scoped>
 .ktv-header {
-  height: clamp(54px, 6.4vh, 68px);
-  padding: 0 clamp(16px, 1.5vw, 26px);
+  width: min(100%, var(--ktv-stage-max-width, 1680px));
+  margin-inline: auto;
+  height: clamp(58px, 6.2vh, 70px);
+  padding: 0 clamp(16px, 1.5vw, 24px);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
   background: transparent;
   flex: none;
   z-index: 20;
@@ -160,8 +162,8 @@ const modeBadge = computed(() => {
   flex: none;
 }
 .hdr-btn {
-  width: clamp(38px, 2.6vw, 46px);
-  height: clamp(38px, 2.6vw, 46px);
+  width: clamp(38px, 2.5vw, 44px);
+  height: clamp(38px, 2.5vw, 44px);
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -178,25 +180,25 @@ const modeBadge = computed(() => {
   outline: none;
 }
 .hdr-img {
-  width: clamp(24px, 1.6vw, 30px);
-  height: clamp(24px, 1.6vw, 30px);
+  width: clamp(24px, 1.5vw, 28px);
+  height: clamp(24px, 1.5vw, 28px);
   object-fit: contain;
 }
 .right-group {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex: none;
   margin-left: auto;
 }
 .mode-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.06);
@@ -230,16 +232,16 @@ const modeBadge = computed(() => {
   background: rgba(84, 214, 226, 0.12);
 }
 .admin-pill {
-  height: 28px;
-  padding: 0 10px;
+  height: 32px;
+  padding: 0 12px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(255, 255, 255, 0.85);
 }
 .admin-pill:hover {
   color: #fff;
@@ -250,10 +252,10 @@ const modeBadge = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
-  padding: 0 6px;
+  height: 32px;
+  padding: 0 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.82);
 }
@@ -272,7 +274,7 @@ const modeBadge = computed(() => {
   object-fit: contain;
 }
 .ws-text {
-  font-size: 11px;
+  font-size: 12px;
 }
 .ws-pill.ok .ws-text {
   color: rgba(255, 255, 255, 0.65);

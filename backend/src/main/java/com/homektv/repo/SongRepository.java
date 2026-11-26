@@ -295,7 +295,7 @@ public interface SongRepository extends JpaRepository<Song, Long> {
               AND (:region = '' OR COALESCE(reference_artist.region, '') = :region)
               AND (
                     :initial = ''
-                    OR (:initial = '#' AND COALESCE(a.artist_init, '') = '')
+                    OR (:initial = '#' AND (COALESCE(a.artist_init, '') = '' OR upper(left(a.artist_init, 1)) NOT IN ('A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z')))
                     OR (:initial <> '#' AND upper(COALESCE(a.artist_init, '')) LIKE upper(:initial) || '%')
               )
               AND (
