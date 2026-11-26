@@ -5,13 +5,25 @@ import com.homektv.common.ApiException;
 import java.util.Locale;
 
 public enum MusicProvider {
-    NETEASE("网易云音乐"), QQ("QQ 音乐"), KUGOU("酷狗音乐");
+    NETEASE("网易云音乐", true),
+    QQ("QQ 音乐", true),
+    KUGOU("酷狗音乐", true),
+    KUWO("酷我音乐", false),
+    ITUNES("iTunes / Apple Music", false);
 
     private final String displayName;
+    private final boolean supportsSongMetadata;
 
-    MusicProvider(String displayName) { this.displayName = displayName; }
+    MusicProvider(String displayName, boolean supportsSongMetadata) {
+        this.displayName = displayName;
+        this.supportsSongMetadata = supportsSongMetadata;
+    }
 
     public String displayName() { return displayName; }
+
+    public boolean supportsSongMetadata() { return supportsSongMetadata; }
+
+    public boolean supportsArtistAvatar() { return true; }
 
     public static MusicProvider parse(String value) {
         try {

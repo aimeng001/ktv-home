@@ -15,7 +15,7 @@ import java.util.concurrent.Executors;
 
 @Service
 public class MusicMetadataScrapeWorker {
-    private static final Set<String> APPLY_FIELDS = Set.of("title", "artist", "album", "releaseDate", "aliases", "cover");
+    private static final Set<String> APPLY_FIELDS = Set.of("title", "artist", "album", "releaseDate", "aliases");
     private final JdbcTemplate jdbc;
     private final MusicSourceSearchService searchService;
     private final MusicMetadataApplyService applyService;

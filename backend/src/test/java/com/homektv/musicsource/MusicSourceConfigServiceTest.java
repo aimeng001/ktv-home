@@ -98,7 +98,7 @@ class MusicSourceConfigServiceTest {
                 config(20, 1, 6, 1, 1500, 0.95), config(20, 31, 6, 1, 1500, 0.95),
                 config(20, 5, 0, 1, 1500, 0.95), config(20, 5, 169, 1, 1500, 0.95),
                 config(20, 5, 6, 0, 1500, 0.95), config(20, 5, 6, 5, 1500, 0.95),
-                config(20, 5, 6, 1, 499, 0.95), config(20, 5, 6, 1, 30001, 0.95),
+                config(20, 5, 6, 1, 1499, 0.95), config(20, 5, 6, 1, 30001, 0.95),
                 config(20, 5, 6, 1, 1500, 0.49), config(20, 5, 6, 1, 1500, 1.01));
 
         for (MusicSourceConfig value : invalid) {
@@ -134,8 +134,9 @@ class MusicSourceConfigServiceTest {
 
         List<Map<String, Object>> states = limited.states();
 
-        assertThat(states).hasSize(3);
-        assertThat(states).extracting(row -> row.get("provider")).containsExactly("NETEASE", "QQ", "KUGOU");
+        assertThat(states).hasSize(5);
+        assertThat(states).extracting(row -> row.get("provider"))
+                .containsExactly("NETEASE", "QQ", "KUGOU", "KUWO", "ITUNES");
         assertThat(states).allSatisfy(row -> {
             assertThat(row.get("healthy")).isEqualTo(false);
             assertThat(row.get("requestCount")).isEqualTo(0);
@@ -185,7 +186,8 @@ class MusicSourceConfigServiceTest {
                 .containsEntry("resultLimit", 20).containsEntry("timeoutSeconds", 5)
                 .containsEntry("searchCacheHours", 6).containsEntry("concurrencyLimit", 1)
                 .containsEntry("requestIntervalMs", 1500).containsEntry("autoApplyThreshold", 0.95);
-        assertThat((List<?>) view.get("providerStatus")).hasSize(3);
+        assertThat((List<?>) view.get("providerStatus")).hasSize(5);
+        assertThat((List<?>) view.get("fallbackStatus")).hasSize(6);
     }
 
     @Test
@@ -258,10 +260,31 @@ class MusicSourceConfigServiceTest {
 
     @Test
     void rejectsOutOfRangeDailyLimit() {
-        for (int invalidDailyLimit : List.of(9, 2001)) {
+        for (int invalidDailyLimit : List.of(9, 10001)) {
             assertThatThrownBy(() -> service.save(new MusicSourceConfig(true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95, invalidDailyLimit)))
                     .isInstanceOfSatisfying(ApiException.class, error -> assertThat(error.getCode()).isEqualTo("MUSIC_SOURCE_CONFIG_INVALID"));
         }
+        for (int invalidFallbackDailyLimit : List.of(9, 10001)) {
+            assertThatThrownBy(() -> service.save(new MusicSourceConfig(
+                    true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95, 3000,
+                    Set.of(AvatarFallbackProvider.BAIDU_BAIKE), invalidFallbackDailyLimit)))
+                    .isInstanceOfSatisfying(ApiException.class, error -> assertThat(error.getCode()).isEqualTo("MUSIC_SOURCE_CONFIG_INVALID"));
+        }
+    }
+
+    @Test
+    void parsesAndPersistsFallbackProvidersAndFallbackDailyLimit() {
+        stubConfig(List.of("""
+                {"enabled":true,"providers":["NETEASE","KUWO","ITUNES"],"fallbackProviders":["BAIDU_BAIKE","BING_IMAGES"],
+                 "resultLimit":20,"timeoutSeconds":5,"searchCacheHours":6,"concurrencyLimit":1,"requestIntervalMs":2500,
+                 "autoApplyThreshold":0.95,"dailyLimit":3000,"fallbackDailyLimit":2500}
+                """));
+
+        MusicSourceConfig parsed = service.getConfig();
+        assertThat(parsed.providers()).containsExactlyInAnyOrder(MusicProvider.NETEASE, MusicProvider.KUWO, MusicProvider.ITUNES);
+        assertThat(parsed.fallbackProviders()).containsExactlyInAnyOrder(AvatarFallbackProvider.BAIDU_BAIKE, AvatarFallbackProvider.BING_IMAGES);
+        assertThat(parsed.fallbackDailyLimit()).isEqualTo(2500);
+        assertThat(parsed.requestIntervalMs()).isEqualTo(2500);
     }
 
     private void stubConfig(List<String> values) {

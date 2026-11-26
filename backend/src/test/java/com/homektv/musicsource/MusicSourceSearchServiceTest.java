@@ -311,6 +311,28 @@ class MusicSourceSearchServiceTest {
     }
 
     @Test
+    void songSearchIgnoresAvatarOnlyProvidersAndTestProbesArtistAdapters() {
+        Fixture mixed = fixture(config(true, Set.of(MusicProvider.QQ, MusicProvider.KUWO, MusicProvider.ITUNES)));
+        ArtistMetadataProvider kuwoArtist = mock(ArtistMetadataProvider.class);
+        when(kuwoArtist.provider()).thenReturn(MusicProvider.KUWO);
+        when(kuwoArtist.search(eq("周杰伦"), eq(1), eq(Duration.ofSeconds(5)))).thenReturn(List.of(
+                new ExternalArtist(MusicProvider.KUWO, "336", "周杰伦", List.of(), "https://img1.kuwo.cn/336.jpg")));
+        mixed.service.setArtistProviders(List.of(kuwoArtist));
+
+        when(mixed.provider.search(eq("晴天"), eq(20), eq(Duration.ofSeconds(5)))).thenReturn(List.of(track("qq-1", "晴天")));
+        MusicSourceSearchService.SearchResponse search = mixed.service.search("晴天", Set.of(), false);
+        assertThat(search.providers()).extracting(MusicSourceSearchService.ProviderResult::provider)
+                .containsExactly(MusicProvider.QQ);
+
+        List<MusicSourceSearchService.TestResult> probed = mixed.service.test(Set.of(MusicProvider.KUWO));
+        assertThat(probed).singleElement().satisfies(item -> {
+            assertThat(item.provider()).isEqualTo(MusicProvider.KUWO);
+            assertThat(item.healthy()).isTrue();
+        });
+        verify(mixed.configService).recordSuccess(MusicProvider.KUWO);
+    }
+
+    @Test
     void searchFetchesWhenCacheIsEmptyAndUsesSafeMessageForMessageLessFailures() {
         Fixture success = fixture(config(true, Set.of(MusicProvider.QQ)));
         ExternalTrack track = track("network-result", "晴天");

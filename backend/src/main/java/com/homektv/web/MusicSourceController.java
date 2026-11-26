@@ -2,11 +2,15 @@ package com.homektv.web;
 import com.homektv.common.ApiException;
 
 import com.homektv.library.ArtistAvatarJobService;
+import com.homektv.musicsource.ArtistAvatarFallbackChain;
+import com.homektv.musicsource.AvatarFallbackProvider;
 import com.homektv.musicsource.MusicMetadataApplyService;
 import com.homektv.musicsource.MusicProvider;
 import com.homektv.musicsource.MusicSourceConfig;
 import com.homektv.musicsource.MusicSourceConfigService;
 import com.homektv.musicsource.MusicSourceSearchService;
+import com.homektv.musicsource.ProviderRequestRateLimiter;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,7 +32,8 @@ public class MusicSourceController {
     private final MusicSourceSearchService searchService;
     private final MusicMetadataApplyService applyService;
     private final ArtistAvatarJobService avatarJobs;
-    private com.homektv.musicsource.ProviderRequestRateLimiter rateLimiter;
+    private ProviderRequestRateLimiter rateLimiter;
+    private ArtistAvatarFallbackChain fallbackChain;
 
     public MusicSourceController(MusicSourceConfigService configService, MusicSourceSearchService searchService,
                                  MusicMetadataApplyService applyService, ArtistAvatarJobService avatarJobs) {
@@ -36,9 +41,14 @@ public class MusicSourceController {
         this.avatarJobs = avatarJobs;
     }
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setRateLimiter(com.homektv.musicsource.ProviderRequestRateLimiter rateLimiter) {
+    @Autowired(required = false)
+    public void setRateLimiter(ProviderRequestRateLimiter rateLimiter) {
         this.rateLimiter = rateLimiter;
+    }
+
+    @Autowired(required = false)
+    public void setFallbackChain(ArtistAvatarFallbackChain fallbackChain) {
+        this.fallbackChain = fallbackChain;
     }
 
     @GetMapping("/music-sources/config")
@@ -47,12 +57,20 @@ public class MusicSourceController {
     @PutMapping("/music-sources/config")
     public Map<String, Object> saveConfig(@RequestBody ConfigRequest request) {
         Set<MusicProvider> providers = parseProviders(request.providers());
+        MusicSourceConfig existing = configService.getConfig();
         int dailyLimit = request.dailyLimit() == null
-                ? configService.getConfig().dailyLimit()
+                ? (existing != null ? existing.dailyLimit() : 3000)
                 : request.dailyLimit();
+        Set<AvatarFallbackProvider> fallbackProviders = request.fallbackProviders() == null
+                ? (existing != null && existing.fallbackProviders() != null ? existing.fallbackProviders() : Set.of())
+                : parseFallbackProviders(request.fallbackProviders());
+        int fallbackDailyLimit = request.fallbackDailyLimit() == null
+                ? (existing != null ? existing.fallbackDailyLimit() : MusicSourceConfig.DEFAULT_FALLBACK_DAILY_LIMIT)
+                : request.fallbackDailyLimit();
         configService.save(new MusicSourceConfig(request.enabled(), providers, request.resultLimit(),
                 request.timeoutSeconds(), request.searchCacheHours(), request.concurrencyLimit(),
-                request.requestIntervalMs(), request.autoApplyThreshold(), dailyLimit));
+                request.requestIntervalMs(), request.autoApplyThreshold(), dailyLimit,
+                fallbackProviders, fallbackDailyLimit));
         avatarJobs.enqueueUnresolvedProfilesAsync();
         return configService.configView();
     }
@@ -66,13 +84,25 @@ public class MusicSourceController {
         return Map.of("results", searchService.test(providers), "providerStatus", configService.states());
     }
 
+    @PostMapping("/music-sources/test-fallback")
+    public Map<String, Object> testFallback(@RequestBody(required = false) ProviderRequest request) {
+        Set<AvatarFallbackProvider> providers = request == null ? Set.of() : parseFallbackProviders(request.providers());
+        return Map.of("results", searchService.testFallback(providers), "fallbackStatus", configService.fallbackStates());
+    }
+
     @PostMapping("/music-sources/reset-cooldown")
     public Map<String, Object> resetCooldown() {
         if (rateLimiter != null) {
             rateLimiter.resetCooldowns();
         }
+        if (fallbackChain != null) {
+            fallbackChain.resetCircuitBreakers();
+        }
         avatarJobs.enqueueUnresolvedProfilesAsync();
-        return Map.of("success", true, "providerStatus", configService.states());
+        return Map.of(
+                "success", true,
+                "providerStatus", configService.states(),
+                "fallbackStatus", configService.fallbackStates());
     }
 
     @GetMapping("/songs/{songId}/external-matches")
@@ -109,6 +139,12 @@ public class MusicSourceController {
         return result;
     }
 
+    private static Set<AvatarFallbackProvider> parseFallbackProviders(List<String> values) {
+        Set<AvatarFallbackProvider> result = new LinkedHashSet<>();
+        if (values != null) values.forEach(value -> result.add(AvatarFallbackProvider.parse(value)));
+        return result;
+    }
+
     private static void validateExternalId(String value) {
         if (value == null || !value.matches("[A-Za-z0-9_.:-]{1,160}"))
             throw new ApiException("EXTERNAL_TRACK_ID_INVALID", "外部歌曲 ID 无效");
@@ -116,12 +152,20 @@ public class MusicSourceController {
 
     public record ConfigRequest(boolean enabled, List<String> providers, int resultLimit,
                                 int timeoutSeconds, int searchCacheHours, int concurrencyLimit,
-                                int requestIntervalMs, double autoApplyThreshold, Integer dailyLimit) {
+                                int requestIntervalMs, double autoApplyThreshold, Integer dailyLimit,
+                                List<String> fallbackProviders, Integer fallbackDailyLimit) {
         public ConfigRequest(boolean enabled, List<String> providers, int resultLimit,
                              int timeoutSeconds, int searchCacheHours, int concurrencyLimit,
                              int requestIntervalMs, double autoApplyThreshold) {
             this(enabled, providers, resultLimit, timeoutSeconds, searchCacheHours, concurrencyLimit,
-                    requestIntervalMs, autoApplyThreshold, null);
+                    requestIntervalMs, autoApplyThreshold, null, null, null);
+        }
+
+        public ConfigRequest(boolean enabled, List<String> providers, int resultLimit,
+                             int timeoutSeconds, int searchCacheHours, int concurrencyLimit,
+                             int requestIntervalMs, double autoApplyThreshold, Integer dailyLimit) {
+            this(enabled, providers, resultLimit, timeoutSeconds, searchCacheHours, concurrencyLimit,
+                    requestIntervalMs, autoApplyThreshold, dailyLimit, null, null);
         }
     }
     public record ProviderRequest(List<String> providers) {}

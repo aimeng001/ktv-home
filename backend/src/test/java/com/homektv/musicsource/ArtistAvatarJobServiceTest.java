@@ -314,7 +314,7 @@ class ArtistAvatarJobServiceTest {
         java.sql.PreparedStatement statement = mock(java.sql.PreparedStatement.class);
         binder.getValue().setValues(statement, jobs.getValue().iterator().next());
         org.mockito.Mockito.verify(statement).setString(1, "zhoujielun");
-        org.mockito.Mockito.verify(statement).setString(2, "QQ");
+        org.mockito.Mockito.verify(statement).setString(2, "AUTO");
         verify(worker).trigger();
     }
 
@@ -363,23 +363,24 @@ class ArtistAvatarJobServiceTest {
     }
 
     @Test
-    void enqueuesFallbackJobWhenFallbackScrapingIsEnabled() {
+    void enqueuesSingleAutoJobPerArtistEvenWhenBothPrimaryAndFallbackAreEnabled() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ArtistAvatarWorker worker = mock(ArtistAvatarWorker.class);
         MusicSourceConfigService config = mock(MusicSourceConfigService.class);
         when(worker.pendingKeys()).thenReturn(List.of("zhoujielun"));
         when(worker.songPriorities(List.of("zhoujielun"))).thenReturn(Map.of("zhoujielun", 42));
         when(config.getConfig()).thenReturn(new MusicSourceConfig(
-                true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 5000, 0.95));
+                true, Set.of(MusicProvider.QQ, MusicProvider.NETEASE, MusicProvider.KUWO),
+                20, 5, 6, 1, 2500, 0.95));
         when(config.isAvatarFallbackEnabled()).thenReturn(true);
         when(jdbc.batchUpdate(anyString(), any(Collection.class), anyInt(),
-                any(ParameterizedPreparedStatementSetter.class))).thenReturn(new int[][]{{1, 1}});
+                any(ParameterizedPreparedStatementSetter.class))).thenReturn(new int[][]{{1}});
 
         new ArtistAvatarJobService(jdbc, worker, config).enqueuePendingProfiles();
 
         org.mockito.ArgumentCaptor<Collection<?>> batchCaptor = org.mockito.ArgumentCaptor.forClass(Collection.class);
         verify(jdbc).batchUpdate(anyString(), batchCaptor.capture(), eq(500),
                 any(ParameterizedPreparedStatementSetter.class));
-        assertThat(batchCaptor.getValue()).hasSize(2);
+        assertThat(batchCaptor.getValue()).hasSize(1);
     }
 }

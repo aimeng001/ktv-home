@@ -87,22 +87,20 @@ class MusicMetadataApplyServiceBoundaryTest {
     }
 
     @Test
-    void downloadsRequestedUnlockedCoverAndKeepsStructuredArtistCredits() {
+    void skipsOnlineSongCoverDownloadEvenWhenCoverFieldIsRequestedAndKeepsStructuredArtistCredits() {
         Fixture fixture = fixture(song(8L), track("Title", List.of("Singer A", "Singer B"),
                 null, null, List.of(), "https://cover.invalid/cover.jpg"));
-        when(fixture.cover.download(eq(MusicProvider.QQ), anyString(), anyString(), any(Duration.class)))
-                .thenReturn("/data/covers/8.jpg");
+        fixture.song.setCoverPath("/data/covers/existing-local.jpg");
         CatalogRevisionService revision = mock(CatalogRevisionService.class);
         fixture.service.setCatalogRevisionService(revision);
 
         MusicMetadataApplyService.ApplyResult result = fixture.service.apply(8L, MusicProvider.QQ, "ext",
                 new MusicMetadataApplyService.ApplyRequest(Set.of("artist", "cover")));
 
-        assertThat(result.appliedFields()).containsExactly("artist", "cover");
+        assertThat(result.appliedFields()).containsExactly("artist");
         assertThat(fixture.song.getArtist()).isEqualTo("Singer A / Singer B");
-        assertThat(fixture.song.getCoverPath()).isEqualTo("/data/covers/8.jpg");
-        verify(fixture.cover).download(eq(MusicProvider.QQ), eq("https://cover.invalid/cover.jpg"),
-                eq(fixture.song.getFingerprint()), eq(Duration.ofSeconds(5)));
+        assertThat(fixture.song.getCoverPath()).isEqualTo("/data/covers/existing-local.jpg");
+        verifyNoInteractions(fixture.cover);
         verify(fixture.artistCredits).replace(8L, fixture.track.artists());
         verify(revision).bumpIfChanged(true);
     }

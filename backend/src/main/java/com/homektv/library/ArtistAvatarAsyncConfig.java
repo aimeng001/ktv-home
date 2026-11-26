@@ -9,9 +9,9 @@ public class ArtistAvatarAsyncConfig {
     @Bean("artistAvatarExecutor")
     public ThreadPoolTaskExecutor artistAvatarExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(1);
-        executor.setMaxPoolSize(1);
-        executor.setQueueCapacity(1);
+        executor.setCorePoolSize(3);
+        executor.setMaxPoolSize(3);
+        executor.setQueueCapacity(8);
         executor.setDaemon(true);
         executor.setThreadNamePrefix("artist-avatar-");
         executor.initialize();

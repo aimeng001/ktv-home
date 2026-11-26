@@ -3,27 +3,29 @@ import com.homektv.common.ArtistKindClassifier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
-import java.util.Objects;
-import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Enqueues idempotent, application-owned artist avatar work. */
+/** Enqueues idempotent, single-row-per-artist avatar work. */
 @Service
 public class ArtistAvatarJobService {
     private static final Logger log = LoggerFactory.getLogger(ArtistAvatarJobService.class);
+    static final String AUTO_PROVIDER = "AUTO";
     private static final int MAX_KEYS = 10_000;
     private static final int BATCH_SIZE = 500;
     private final JdbcTemplate jdbc;
@@ -33,7 +35,7 @@ public class ArtistAvatarJobService {
     private final AtomicBoolean unresolvedRefreshRequested = new AtomicBoolean(false);
     private final AtomicBoolean unresolvedRefreshRunning = new AtomicBoolean(false);
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     public ArtistAvatarJobService(JdbcTemplate jdbc, ArtistAvatarWorker worker,
                                   com.homektv.musicsource.MusicSourceConfigService configService,
                                   @Qualifier("artistAvatarExecutor") Executor executor) {
@@ -49,7 +51,7 @@ public class ArtistAvatarJobService {
     }
 
     public void enqueuePendingProfiles() {
-        enqueueKeys(worker.pendingKeys(), false);
+        enqueueKeys(worker.pendingKeys(), false, null, false);
     }
 
     /** Enqueues work after the caller's transaction has committed. */
@@ -68,9 +70,9 @@ public class ArtistAvatarJobService {
         }
     }
 
-    /** Reopens unresolved profiles when the administrator changes metadata providers. */
+    /** Reopens unresolved profiles when the administrator changes metadata providers (preserving tried_providers). */
     public void enqueueUnresolvedProfiles() {
-        enqueueKeys(worker.unresolvedKeys(), true);
+        enqueueKeys(worker.unresolvedKeys(), true, null, false);
     }
 
     /** Configuration writes return promptly while the retry queue is rebuilt in the background. */
@@ -117,16 +119,14 @@ public class ArtistAvatarJobService {
         worker.requeueMissingCachedAvatars();
         List<String> keys = worker.unresolvedKeys();
         com.homektv.musicsource.MusicSourceConfig config = configService.getConfig();
-        boolean fallbackEnabled = configService.isAvatarFallbackEnabled();
-        if (config == null || !config.enabled()
-                || ((config.providers() == null || config.providers().isEmpty()) && !fallbackEnabled)) {
+        if (!hasUsableAvatarSources(config)) {
             return Map.of(
                     "queued", 0,
                     "alreadyPending", 0,
                     "nextWorkAt", Instant.now().toString(),
                     "reason", "音乐元数据服务未启用");
         }
-        enqueueKeys(keys, true);
+        enqueueKeys(keys, true, null, true);
         return Map.of(
                 "queued", keys.size(),
                 "alreadyPending", 0,
@@ -158,20 +158,23 @@ public class ArtistAvatarJobService {
         } catch (DataAccessException failure) {
             throw new com.homektv.common.ApiException("MUSIC_SOURCE_UNAVAILABLE", "音乐元数据配置暂时不可用");
         }
-        boolean fallbackEnabled = configService.isAvatarFallbackEnabled();
-        if (config == null || !config.enabled()
-                || ((config.providers() == null || config.providers().isEmpty()) && !fallbackEnabled)) {
+        if (!hasUsableAvatarSources(config)) {
             return Map.of("queued", 0, "resolvedLocally", false, "reason", "音乐元数据服务未启用");
         }
-        enqueueKeys(List.of(safeKey), true, 100_000);
+        enqueueKeys(List.of(safeKey), true, 100_000, true);
         return Map.of("queued", 1, "resolvedLocally", false, "status", "PENDING");
     }
 
-    private void enqueueKeys(Collection<String> keys, boolean reopenTerminal) {
-        enqueueKeys(keys, reopenTerminal, null);
+    private boolean hasUsableAvatarSources(com.homektv.musicsource.MusicSourceConfig config) {
+        if (config == null || !config.enabled()) return false;
+        boolean hasPrimary = config.providers() != null && !config.providers().isEmpty();
+        boolean hasFallback = configService.isAvatarFallbackEnabled()
+                || (config.fallbackProviders() != null && !config.fallbackProviders().isEmpty());
+        return hasPrimary || hasFallback;
     }
 
-    private void enqueueKeys(Collection<String> keys, boolean reopenTerminal, Integer fixedPriority) {
+    private void enqueueKeys(Collection<String> keys, boolean reopenTerminal,
+                             Integer fixedPriority, boolean clearTriedProviders) {
         if (keys == null || keys.isEmpty()) return;
         List<String> boundedKeys = keys.stream()
                 .filter(Objects::nonNull)
@@ -188,47 +191,58 @@ public class ArtistAvatarJobService {
             log.debug("artist avatar configuration unavailable: {}", failure.getMessage());
             return;
         }
-        boolean fallbackEnabled = configService.isAvatarFallbackEnabled();
-        boolean hasPrimary = config != null && config.providers() != null && !config.providers().isEmpty();
-        if (config == null || !config.enabled() || (!hasPrimary && !fallbackEnabled)) return;
+        if (!hasUsableAvatarSources(config)) return;
 
         Map<String, Integer> priorities = fixedPriority != null
                 ? Map.of()
                 : worker.songPriorities(boundedKeys);
-        List<JobSeed> jobs = new java.util.ArrayList<>();
+        List<JobSeed> jobs = new java.util.ArrayList<>(boundedKeys.size());
         for (String key : boundedKeys) {
             int priority = fixedPriority != null ? fixedPriority : priorities.getOrDefault(key, 0);
-            if (hasPrimary) {
-                for (var provider : config.providers()) {
-                    jobs.add(new JobSeed(key, provider.name(), priority, 1));
-                }
-            }
-            if (fallbackEnabled) {
-                jobs.add(new JobSeed(key, "FALLBACK", priority, 0));
-            }
+            jobs.add(new JobSeed(key, AUTO_PROVIDER, priority, 1));
         }
         if (jobs.isEmpty()) return;
         try {
-            String conflictUpdate = reopenTerminal
-                    ? """
-                      ON CONFLICT (artist_key, provider) DO UPDATE SET
-                          priority = GREATEST(artist_avatar_jobs.priority, EXCLUDED.priority),
-                          tier = EXCLUDED.tier,
-                          status = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW') THEN 'PENDING'
-                                        ELSE artist_avatar_jobs.status END,
-                          attempts = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW') THEN 0
-                                          ELSE artist_avatar_jobs.attempts END,
-                          next_run_at = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW')
-                                            THEN now() ELSE artist_avatar_jobs.next_run_at END,
-                          updated_at = now()
-                      """
-                    : """
-                      ON CONFLICT (artist_key, provider) DO NOTHING
-                      """;
+            String conflictUpdate;
+            if (!reopenTerminal) {
+                conflictUpdate = """
+                        ON CONFLICT (artist_key, provider) DO NOTHING
+                        """;
+            } else if (clearTriedProviders) {
+                conflictUpdate = """
+                        ON CONFLICT (artist_key, provider) DO UPDATE SET
+                            priority = GREATEST(artist_avatar_jobs.priority, EXCLUDED.priority),
+                            tier = EXCLUDED.tier,
+                            status = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW') THEN 'PENDING'
+                                          ELSE artist_avatar_jobs.status END,
+                            attempts = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW') THEN 0
+                                            ELSE artist_avatar_jobs.attempts END,
+                            tried_providers = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW')
+                                                   THEN '{}'::text[] ELSE artist_avatar_jobs.tried_providers END,
+                            next_run_at = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW')
+                                              THEN now() ELSE artist_avatar_jobs.next_run_at END,
+                            last_error = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW')
+                                              THEN NULL ELSE artist_avatar_jobs.last_error END,
+                            updated_at = now()
+                        """;
+            } else {
+                conflictUpdate = """
+                        ON CONFLICT (artist_key, provider) DO UPDATE SET
+                            priority = GREATEST(artist_avatar_jobs.priority, EXCLUDED.priority),
+                            tier = EXCLUDED.tier,
+                            status = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW') THEN 'PENDING'
+                                          ELSE artist_avatar_jobs.status END,
+                            attempts = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW') THEN 0
+                                            ELSE artist_avatar_jobs.attempts END,
+                            next_run_at = CASE WHEN artist_avatar_jobs.status IN ('FAILED', 'SKIPPED', 'REVIEW')
+                                              THEN now() ELSE artist_avatar_jobs.next_run_at END,
+                            updated_at = now()
+                        """;
+            }
             int[][] changed = jdbc.batchUpdate("""
                     INSERT INTO artist_avatar_jobs(
-                        artist_key, provider, priority, tier, status, attempts, next_run_at, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, 'PENDING', 0, now(), now(), now())
+                        artist_key, provider, priority, tier, status, attempts, tried_providers, next_run_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'PENDING', 0, '{}', now(), now(), now())
                     """ + conflictUpdate, jobs, BATCH_SIZE, (statement, job) -> {
                         statement.setString(1, job.artistKey());
                         statement.setString(2, job.provider());
@@ -259,7 +273,8 @@ public class ArtistAvatarJobService {
             }
             long pending = counts.getOrDefault("PENDING", 0L) + counts.getOrDefault("PROCESSING", 0L);
             long failed = counts.getOrDefault("FAILED", 0L);
-            long completed = counts.getOrDefault("DONE", 0L) + counts.getOrDefault("SKIPPED", 0L);
+            long completed = counts.getOrDefault("DONE", 0L) + counts.getOrDefault("SKIPPED", 0L)
+                    + counts.getOrDefault("COMPLETED", 0L);
             long total = counts.values().stream().mapToLong(Long::longValue).sum();
             boolean running = counts.getOrDefault("PROCESSING", 0L) > 0 || pending > 0;
             return new com.homektv.common.BackgroundJobSummary(

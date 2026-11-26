@@ -68,6 +68,12 @@ final class MusicSourceHttp {
         return send(HttpRequest.newBuilder(checked(url)).GET(), headers, timeout);
     }
 
+    String getHtmlViaMediaChannel(String url, Map<String, ?> headers, Duration timeout) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(checked(url)).GET();
+        if (callGuard == null) return sendTextOnce(builder, headers, timeout);
+        return callGuard.callMedia(provider, () -> sendTextOnce(builder, headers, timeout));
+    }
+
     JsonNode form(String url, Map<String, String> form, Map<String, ?> headers, Duration timeout) {
         String body = query(form);
         return send(HttpRequest.newBuilder(checked(url)).header("Content-Type", "application/x-www-form-urlencoded")
@@ -100,6 +106,34 @@ final class MusicSourceHttp {
                 long declaredLength = response.headers().firstValueAsLong("Content-Length").orElse(-1);
                 if (declaredLength > MAX_BODY_BYTES) throw new ResponseTooLargeException();
                 return mapper.readTree(readAtMostWithTimeout(body, MAX_BODY_BYTES, timeout));
+            }
+        } catch (MusicSourceException ex) {
+            throw ex;
+        } catch (ResponseTooLargeException ex) {
+            throw new MusicSourceException(provider, "上游响应过大", ex);
+        } catch (Exception ex) {
+            if (ex instanceof InterruptedException) Thread.currentThread().interrupt();
+            throw new MusicSourceException(provider, "平台请求失败", ex);
+        }
+    }
+
+    private String sendTextOnce(HttpRequest.Builder builder, Map<String, ?> headers, Duration timeout) {
+        headers.forEach((key, value) -> builder.header(key, String.valueOf(value)));
+        builder.timeout(timeout).header("Accept", "text/html,application/xhtml+xml,*/*");
+        if (headers.keySet().stream().noneMatch(key -> "user-agent".equalsIgnoreCase(key))) {
+            builder.header("User-Agent", "HomeKTV/0.1 metadata-only");
+        }
+        HttpRequest request = builder.build();
+        try {
+            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            try (InputStream body = response.body()) {
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new ProviderHttpException(provider, response.statusCode(),
+                            parseRetryAfter(response.headers()), "上游返回 HTTP " + response.statusCode());
+                }
+                long declaredLength = response.headers().firstValueAsLong("Content-Length").orElse(-1);
+                if (declaredLength > MAX_BODY_BYTES) throw new ResponseTooLargeException();
+                return new String(readAtMostWithTimeout(body, MAX_BODY_BYTES, timeout), StandardCharsets.UTF_8);
             }
         } catch (MusicSourceException ex) {
             throw ex;

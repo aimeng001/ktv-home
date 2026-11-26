@@ -1,7 +1,7 @@
 package com.homektv.musicsource;
 
-import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 import java.util.EnumMap;
 import java.util.Map;
@@ -11,12 +11,13 @@ import java.util.function.Supplier;
 public class ProviderCallGuard {
     private static final long CDN_MEDIA_INTERVAL_MS = 350L;
     private static final int CDN_MEDIA_MAX_CONCURRENCY = 2;
-    private static final long FALLBACK_INTERVAL_MS = 1_200L;
+    private static final long FALLBACK_INTERVAL_MS = 1_000L;
 
     private final Map<MusicProvider, Integer> activeCalls = new EnumMap<>(MusicProvider.class);
     private final Map<MusicProvider, Long> nextRequestAt = new EnumMap<>(MusicProvider.class);
     private final Map<MusicProvider, Integer> activeMediaCalls = new EnumMap<>(MusicProvider.class);
     private final Map<MusicProvider, Long> nextMediaAt = new EnumMap<>(MusicProvider.class);
+    private final Map<AvatarFallbackProvider, Long> nextFallbackAtByProvider = new EnumMap<>(AvatarFallbackProvider.class);
     private final Object fallbackLock = new Object();
     private long nextFallbackAt = 0L;
     private final Supplier<MusicSourceConfig> configSupplier;
@@ -48,6 +49,22 @@ public class ProviderCallGuard {
             activeMediaCalls.put(provider, 0);
             nextMediaAt.put(provider, 0L);
         }
+        for (AvatarFallbackProvider fallback : AvatarFallbackProvider.values()) {
+            nextFallbackAtByProvider.put(fallback, 0L);
+        }
+    }
+
+    public long nextAvailableAtMillis(MusicProvider provider) {
+        long now = System.currentTimeMillis();
+        boolean busy;
+        synchronized (activeCalls) {
+            busy = activeCalls.getOrDefault(provider, 0) > 0;
+        }
+        long next;
+        synchronized (nextRequestAt) {
+            next = Math.max(now, nextRequestAt.getOrDefault(provider, 0L));
+        }
+        return busy ? next + 2_500L : next;
     }
 
     public <T> T call(MusicProvider provider, Supplier<T> action) {
@@ -103,7 +120,30 @@ public class ProviderCallGuard {
         }
     }
 
-    /** Serialized lightweight throttle for public fallback / web image sources without holding the lock across HTTP I/O. */
+    /** Per-provider throttle for public fallback / web image sources without holding locks across HTTP I/O. */
+    public <T> T callFallback(AvatarFallbackProvider provider, Supplier<T> action) {
+        if (provider == null) {
+            return callFallback(action);
+        }
+        long wait;
+        synchronized (fallbackLock) {
+            long now = System.currentTimeMillis();
+            long next = nextFallbackAtByProvider.getOrDefault(provider, 0L);
+            wait = Math.max(0L, next - now);
+            nextFallbackAtByProvider.put(provider, Math.max(now, next) + FALLBACK_INTERVAL_MS);
+        }
+        if (wait > 0L) {
+            try {
+                Thread.sleep(wait);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new MusicSourceException(MusicProvider.QQ, "兜底刮削请求已取消", ex);
+            }
+        }
+        return action.get();
+    }
+
+    /** Legacy shared fallback image throttle used for direct fallback image downloads. */
     public <T> T callFallback(Supplier<T> action) {
         long wait;
         synchronized (fallbackLock) {
@@ -148,9 +188,7 @@ public class ProviderCallGuard {
 
     private void acquire(MusicProvider provider) throws InterruptedException {
         synchronized (activeCalls) {
-            // The persisted gate is shared by metadata and avatar traffic.
-            // Keep one in-flight request per provider even if the legacy
-            // metadata setting allows a larger local worker pool.
+            // Conservative anti-ban policy: keep 1 in-flight API request per provider.
             while (activeCalls.get(provider) >= 1) activeCalls.wait();
             activeCalls.put(provider, activeCalls.get(provider) + 1);
         }

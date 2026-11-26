@@ -1,7 +1,9 @@
 package com.homektv.musicsource;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -17,7 +19,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -28,10 +32,10 @@ import java.util.Objects;
  */
 @Component
 public class ProviderRequestRateLimiter {
-    static final long MIN_SAFE_INTERVAL_MS = 5_000L;
-    static final int DEFAULT_DAILY_LIMIT = 300;
-    static final long MIN_429_COOLDOWN_SECONDS = 60 * 60L;
-    static final long FORBIDDEN_COOLDOWN_SECONDS = 24 * 60 * 60L;
+    static final long MIN_SAFE_INTERVAL_MS = 1_500L;
+    static final int DEFAULT_DAILY_LIMIT = 3_000;
+    static final long MIN_429_COOLDOWN_SECONDS = 15 * 60L;
+    static final long FORBIDDEN_COOLDOWN_SECONDS = 6 * 60 * 60L;
 
     private final JdbcTemplate jdbc;
     private final Clock clock;
@@ -39,11 +43,11 @@ public class ProviderRequestRateLimiter {
     private final int dailyLimit;
     private final MusicSourceConfigService configService;
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     public ProviderRequestRateLimiter(
             JdbcTemplate jdbc,
-            @Value("${app.music-provider-rate-limit.min-interval-ms:5000}") long configuredIntervalMs,
-            @Value("${app.music-provider-rate-limit.daily-limit:300}") int configuredDailyLimit,
+            @Value("${app.music-provider-rate-limit.min-interval-ms:1500}") long configuredIntervalMs,
+            @Value("${app.music-provider-rate-limit.daily-limit:3000}") int configuredDailyLimit,
             MusicSourceConfigService configService) {
         this(jdbc, Clock.systemUTC(), Math.max(MIN_SAFE_INTERVAL_MS, configuredIntervalMs),
                 Math.max(1, configuredDailyLimit), configService);
@@ -74,6 +78,10 @@ public class ProviderRequestRateLimiter {
         return minIntervalMs;
     }
 
+    public Instant now() {
+        return clock.instant();
+    }
+
     /** Fast non-mutating check so cooled-down or exhausted providers fail before waiting locally. */
     public void ensureNotBlocked(MusicProvider provider) {
         Instant now = clock.instant();
@@ -90,7 +98,7 @@ public class ProviderRequestRateLimiter {
             if (!today.equals(state.windowDateUtc)) {
                 return;
             }
-            int effectiveLimit = configService != null ? configService.getConfig().dailyLimit() : dailyLimit;
+            int effectiveLimit = effectiveDailyLimit();
             if (state.requestCount >= effectiveLimit) {
                 throw new ProviderRateLimitedException(provider, today.plusDays(1)
                         .atStartOfDay(ZoneOffset.UTC).toInstant());
@@ -103,6 +111,47 @@ public class ProviderRequestRateLimiter {
         } catch (DataAccessException ex) {
             throw unavailable(provider, ex);
         }
+    }
+
+    /** Non-locking snapshot used by the avatar router to pick immediately available providers first. */
+    public Map<MusicProvider, RateSnapshot> snapshotStates() {
+        Instant now = clock.instant();
+        LocalDate today = LocalDate.ofInstant(now, ZoneOffset.UTC);
+        Map<MusicProvider, RateSnapshot> snapshots = new EnumMap<>(MusicProvider.class);
+        try {
+            int effectiveLimit = effectiveDailyLimit();
+            jdbc.query("""
+                    SELECT provider, next_request_at, cooldown_until, window_date_utc, request_count
+                    FROM music_provider_rate_state
+                    """, rs -> {
+                String code = rs.getString("provider");
+                MusicProvider provider;
+                try {
+                    provider = MusicProvider.parse(code);
+                } catch (RuntimeException ignored) {
+                    return;
+                }
+                Timestamp nextTs = rs.getTimestamp("next_request_at");
+                Instant nextAt = nextTs == null ? now : nextTs.toInstant();
+                Instant cooldownUntil = timestamp(rs, "cooldown_until");
+                Date windowDate = rs.getDate("window_date_utc");
+                LocalDate date = windowDate == null ? today : windowDate.toLocalDate();
+                int count = date.equals(today) ? rs.getInt("request_count") : 0;
+                Instant blockedUntil = null;
+                if (count >= effectiveLimit) {
+                    blockedUntil = today.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+                } else if (cooldownUntil != null && cooldownUntil.isAfter(now)) {
+                    blockedUntil = cooldownUntil;
+                }
+                snapshots.put(provider, new RateSnapshot(
+                        blockedUntil == null,
+                        max(nextAt, cooldownUntil),
+                        blockedUntil));
+            });
+        } catch (DataAccessException ignored) {
+            return Map.of();
+        }
+        return snapshots;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -118,7 +167,7 @@ public class ProviderRequestRateLimiter {
                 state.lastHttpStatus = null;
                 state.lastError = null;
             }
-            int effectiveLimit = configService != null ? configService.getConfig().dailyLimit() : dailyLimit;
+            int effectiveLimit = effectiveDailyLimit();
             if (state.requestCount >= effectiveLimit) {
                 throw new ProviderRateLimitedException(provider, today.plusDays(1)
                         .atStartOfDay(ZoneOffset.UTC).toInstant());
@@ -127,8 +176,9 @@ public class ProviderRequestRateLimiter {
             if (blockedUntil != null && blockedUntil.isAfter(now)) {
                 throw new ProviderRateLimitedException(provider, blockedUntil);
             }
+            long effectiveIntervalMs = effectiveIntervalMs();
             state.requestCount++;
-            state.nextRequestAt = now.plusMillis(minIntervalMs);
+            state.nextRequestAt = now.plusMillis(effectiveIntervalMs);
             state.updatedAt = now;
             save(provider, state);
         } catch (ProviderRateLimitedException ex) {
@@ -160,17 +210,20 @@ public class ProviderRequestRateLimiter {
             state.failureStreak++;
             state.lastHttpStatus = statusCode;
             state.lastError = statusCode == null ? "transport failure" : "HTTP " + statusCode;
-            Instant cooldown;
             if (statusCode != null && statusCode == 403) {
-                cooldown = now.plusSeconds(FORBIDDEN_COOLDOWN_SECONDS);
+                state.cooldownUntil = max(state.cooldownUntil, now.plusSeconds(FORBIDDEN_COOLDOWN_SECONDS));
+                state.nextRequestAt = max(state.nextRequestAt, state.cooldownUntil);
             } else if (statusCode != null && statusCode == 429) {
                 Instant minimum = now.plusSeconds(MIN_429_COOLDOWN_SECONDS);
-                cooldown = max(minimum, retryAfter);
+                state.cooldownUntil = max(state.cooldownUntil, max(minimum, retryAfter));
+                state.nextRequestAt = max(state.nextRequestAt, state.cooldownUntil);
             } else {
-                cooldown = now.plusSeconds(backoffSeconds(state.failureStreak));
+                long delaySeconds = backoffSeconds(state.failureStreak);
+                if (delaySeconds > 0) {
+                    state.cooldownUntil = max(state.cooldownUntil, now.plusSeconds(delaySeconds));
+                    state.nextRequestAt = max(state.nextRequestAt, state.cooldownUntil);
+                }
             }
-            state.cooldownUntil = max(state.cooldownUntil, cooldown);
-            state.nextRequestAt = max(state.nextRequestAt, state.cooldownUntil);
             state.updatedAt = now;
             save(provider, state);
         } catch (DataAccessException ex) {
@@ -194,14 +247,40 @@ public class ProviderRequestRateLimiter {
                 """, ts, ts);
     }
 
+    private int effectiveDailyLimit() {
+        MusicSourceConfig config = configService != null ? configService.getConfig() : null;
+        return config != null && config.dailyLimit() > 0 ? config.dailyLimit() : dailyLimit;
+    }
+
+    private long effectiveIntervalMs() {
+        MusicSourceConfig config = configService != null ? configService.getConfig() : null;
+        long configured = config != null ? config.requestIntervalMs() : 0L;
+        return Math.max(minIntervalMs, configured);
+    }
+
     private RateState lock(MusicProvider provider) {
-        return jdbc.queryForObject("""
-                SELECT next_request_at, cooldown_until, window_date_utc, request_count,
-                       failure_streak, last_http_status, last_error, updated_at
-                FROM music_provider_rate_state
-                WHERE provider=?
-                FOR UPDATE
-                """, (rs, ignored) -> from(rs), provider.name());
+        try {
+            return jdbc.queryForObject("""
+                    SELECT next_request_at, cooldown_until, window_date_utc, request_count,
+                           failure_streak, last_http_status, last_error, updated_at
+                    FROM music_provider_rate_state
+                    WHERE provider=?
+                    FOR UPDATE
+                    """, (rs, ignored) -> from(rs), provider.name());
+        } catch (EmptyResultDataAccessException missing) {
+            jdbc.update("""
+                    INSERT INTO music_provider_rate_state(provider)
+                    VALUES (?)
+                    ON CONFLICT (provider) DO NOTHING
+                    """, provider.name());
+            return jdbc.queryForObject("""
+                    SELECT next_request_at, cooldown_until, window_date_utc, request_count,
+                           failure_streak, last_http_status, last_error, updated_at
+                    FROM music_provider_rate_state
+                    WHERE provider=?
+                    FOR UPDATE
+                    """, (rs, ignored) -> from(rs), provider.name());
+        }
     }
 
     private void save(MusicProvider provider, RateState state) {
@@ -250,12 +329,10 @@ public class ProviderRequestRateLimiter {
     }
 
     static long backoffSeconds(int streak) {
-        return switch (Math.min(Math.max(streak, 1), 4)) {
-            case 1 -> 15 * 60L;
-            case 2 -> 60 * 60L;
-            case 3 -> 6 * 60 * 60L;
-            default -> 24 * 60 * 60L;
-        };
+        if (streak < 3) return 0L;
+        if (streak <= 4) return 2 * 60L;
+        if (streak <= 7) return 10 * 60L;
+        return 30 * 60L;
     }
 
     private static Instant max(Instant first, Instant second) {
@@ -267,6 +344,8 @@ public class ProviderRequestRateLimiter {
     private static ProviderRateStateUnavailableException unavailable(MusicProvider provider, Throwable cause) {
         return new ProviderRateStateUnavailableException(provider, cause);
     }
+
+    public record RateSnapshot(boolean availableNow, Instant nextAvailableAt, Instant blockedUntil) {}
 
     static final class RateState {
         Instant nextRequestAt;

@@ -320,7 +320,7 @@ class ArtistAvatarWorkerTest {
         OffsetDateTime scheduledExpired = processHttpFailure(0,
                 new ProviderHttpException(MusicProvider.QQ, 429, beforeExpired.minusSeconds(30), "rate limited"));
         assertThat(Duration.between(beforeExpired, scheduledExpired.toInstant()).toSeconds())
-                .isBetween(3590L, 3610L);
+                .isBetween(890L, 910L);
     }
 
     @Test
@@ -331,27 +331,27 @@ class ArtistAvatarWorkerTest {
                 new ProviderHttpException(MusicProvider.QQ, 429, null, "rate limited"));
 
         assertThat(Duration.between(before, scheduled.toInstant()).toSeconds())
-                .isBetween(3590L, 3610L);
+                .isBetween(890L, 910L);
     }
 
     @Test
-    void forbiddenProviderResponseUsesAOneDayCooldown() throws Exception {
+    void forbiddenProviderResponseUsesASixHourCooldown() throws Exception {
         Instant before = Instant.now();
 
         OffsetDateTime scheduled = processHttpFailure(0,
                 new ProviderHttpException(MusicProvider.QQ, 403, null, "forbidden"));
 
         assertThat(Duration.between(before, scheduled.toInstant()).toSeconds())
-                .isBetween(86_390L, 86_410L);
+                .isBetween(21_590L, 21_610L);
     }
 
     @Test
     void retryableHttpFailuresUseTheBoundedBackoffForEachAttemptTier() throws Exception {
         Map<Integer, Long> backoffSeconds = Map.of(
-                1, 60 * 60L,
-                2, 6 * 60 * 60L,
-                3, 24 * 60 * 60L,
-                4, 24 * 60 * 60L);
+                1, 10 * 60L,
+                2, 60 * 60L,
+                3, 6 * 60 * 60L,
+                4, 6 * 60 * 60L);
 
         for (var entry : backoffSeconds.entrySet()) {
             Instant before = Instant.now();
@@ -495,6 +495,95 @@ class ArtistAvatarWorkerTest {
         org.mockito.ArgumentCaptor<Object[]> arguments = org.mockito.ArgumentCaptor.forClass(Object[].class);
         verify(jdbc, org.mockito.Mockito.atLeastOnce()).update(sql.capture(), arguments.capture());
         assertThat(sql.getAllValues()).anyMatch(s -> s.contains("status=?") && s.contains("claim_token=?::uuid"));
+    }
+
+    @Test
+    void autoJobRoutesAcrossUnblockedProvidersPersistsTriedOnMissAndFallsBackCleanly() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        ExternalCoverService covers = mock(ExternalCoverService.class);
+        AssetWriter assets = mock(AssetWriter.class);
+        ArtistMetadataProvider netease = mock(ArtistMetadataProvider.class);
+        ArtistMetadataProvider kuwo = mock(ArtistMetadataProvider.class);
+        com.homektv.musicsource.ProviderRequestRateLimiter limiter = mock(com.homektv.musicsource.ProviderRequestRateLimiter.class);
+
+        ResultSet row = claimRow("zhoujielun", "AUTO", "lease-token");
+        when(profiles.find("zhoujielun")).thenReturn(Optional.of(new ArtistProfileService.Profile(
+                "zhoujielun", "周杰伦", "PERSON", null, null, null, "PENDING")));
+        when(config.getConfig()).thenReturn(new MusicSourceConfig(
+                true, Set.of(MusicProvider.NETEASE, MusicProvider.KUWO),
+                20, 5, 6, 1, 2500, 0.95));
+        when(limiter.snapshotStates()).thenReturn(Map.of(
+                MusicProvider.NETEASE, new com.homektv.musicsource.ProviderRequestRateLimiter.RateSnapshot(
+                        true, Instant.now().minusSeconds(10), null),
+                MusicProvider.KUWO, new com.homektv.musicsource.ProviderRequestRateLimiter.RateSnapshot(
+                        true, Instant.now(), null)));
+        when(netease.provider()).thenReturn(MusicProvider.NETEASE);
+        when(kuwo.provider()).thenReturn(MusicProvider.KUWO);
+        when(netease.search(eq("周杰伦"), eq(5), any())).thenReturn(List.of());
+        when(kuwo.search(eq("周杰伦"), eq(5), any())).thenReturn(List.of(
+                new ExternalArtist(MusicProvider.KUWO, "336", "周杰伦", List.of(), "https://img1.kuwo.cn/star/336.jpg")));
+        when(assets.hasArtistCoverCapacity(any(Long.TYPE))).thenReturn(true);
+        when(covers.downloadArtistAvatar(eq(MusicProvider.KUWO), eq("https://img1.kuwo.cn/star/336.jpg"),
+                eq("zhoujielun:lease-token"), any())).thenReturn("artist-covers/jay.jpg");
+        when(profiles.markAvatarReadyIfClaimed("zhoujielun", "KUWO", "336", "artist-covers/jay.jpg",
+                1L, "lease-token")).thenReturn(true);
+        stubOneClaimThenEmpty(jdbc, row);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+
+        ArtistAvatarWorker worker = new ArtistAvatarWorker(
+                jdbc, profiles, config, covers, assets, List.of(netease, kuwo), Runnable::run);
+        worker.setRateLimiter(limiter);
+        worker.process();
+
+        verify(netease).search(eq("周杰伦"), eq(5), any());
+        verify(kuwo).search(eq("周杰伦"), eq(5), any());
+        verify(profiles).markAvatarReadyIfClaimed("zhoujielun", "KUWO", "336", "artist-covers/jay.jpg",
+                1L, "lease-token");
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc, org.mockito.Mockito.atLeastOnce()).update(sql.capture(), any(Object[].class));
+        assertThat(sql.getAllValues()).anyMatch(s -> s.contains("status=?") && s.contains("claim_token=?::uuid"));
+    }
+
+    @Test
+    void autoJobPersistsTriedProvidersBeforeDeferringWhenRemainingProvidersRateLimit() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ArtistProfileService profiles = mock(ArtistProfileService.class);
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        ExternalCoverService covers = mock(ExternalCoverService.class);
+        AssetWriter assets = mock(AssetWriter.class);
+        ArtistMetadataProvider netease = mock(ArtistMetadataProvider.class);
+        ArtistMetadataProvider kuwo = mock(ArtistMetadataProvider.class);
+        com.homektv.musicsource.ProviderRequestRateLimiter limiter = mock(com.homektv.musicsource.ProviderRequestRateLimiter.class);
+
+        ResultSet row = claimRow("zhoujielun", "AUTO", "lease-token");
+        when(profiles.find("zhoujielun")).thenReturn(Optional.of(new ArtistProfileService.Profile(
+                "zhoujielun", "周杰伦", "PERSON", null, null, null, "PENDING")));
+        when(config.getConfig()).thenReturn(new MusicSourceConfig(
+                true, Set.of(MusicProvider.NETEASE, MusicProvider.KUWO),
+                20, 5, 6, 1, 2500, 0.95));
+        Instant futureCooldown = Instant.now().plusSeconds(900);
+        when(limiter.snapshotStates()).thenReturn(Map.of(
+                MusicProvider.NETEASE, new com.homektv.musicsource.ProviderRequestRateLimiter.RateSnapshot(
+                        true, Instant.now().minusSeconds(10), null),
+                MusicProvider.KUWO, new com.homektv.musicsource.ProviderRequestRateLimiter.RateSnapshot(
+                        false, futureCooldown, futureCooldown)));
+        when(netease.provider()).thenReturn(MusicProvider.NETEASE);
+        when(kuwo.provider()).thenReturn(MusicProvider.KUWO);
+        when(netease.search(eq("周杰伦"), eq(5), any())).thenReturn(List.of());
+        stubOneClaimThenEmpty(jdbc, row);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+
+        ArtistAvatarWorker worker = new ArtistAvatarWorker(
+                jdbc, profiles, config, covers, assets, List.of(netease, kuwo), Runnable::run);
+        worker.setRateLimiter(limiter);
+        worker.process();
+
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc, org.mockito.Mockito.atLeastOnce()).update(sql.capture(), any(Object[].class));
+        assertThat(sql.getAllValues()).anyMatch(s -> s.contains("tried_providers=?"));
+        assertThat(sql.getAllValues()).anyMatch(s -> s.contains("SET status='PENDING', next_run_at=?"));
     }
 
     @Test

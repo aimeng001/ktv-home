@@ -43,8 +43,8 @@ class ProviderRequestRateLimiterTest {
         limiter.beforeRequest(MusicProvider.QQ);
 
         assertThat(state.requestCount).isEqualTo(1);
-        assertThat(state.nextRequestAt).isEqualTo(NOW.plusSeconds(5));
-        verify(prepared).setTimestamp(1, Timestamp.from(NOW.plusSeconds(5)));
+        assertThat(state.nextRequestAt).isEqualTo(NOW.plusMillis(1_500));
+        verify(prepared).setTimestamp(1, Timestamp.from(NOW.plusMillis(1_500)));
         verify(prepared).setInt(4, 1);
     }
 
@@ -160,25 +160,32 @@ class ProviderRequestRateLimiterTest {
 
             limiter.recordFailure(MusicProvider.QQ, 429, retryAfter);
 
-            assertThat(state.cooldownUntil).isEqualTo(NOW.plusSeconds(3_600));
-            assertThat(state.nextRequestAt).isEqualTo(NOW.plusSeconds(3_600));
+            assertThat(state.cooldownUntil).isEqualTo(NOW.plusSeconds(900));
+            assertThat(state.nextRequestAt).isEqualTo(NOW.plusSeconds(900));
         }
     }
 
     @Test
-    void transportFailureUsesBackoffAndSuccessClearsFailureDetails() {
+    void transportFailureUsesThresholdedBackoffAndSuccessClearsFailureDetails() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ProviderRequestRateLimiter.RateState state = state(1, NOW.minusSeconds(1));
         stubState(jdbc, state);
         ProviderRequestRateLimiter limiter = new ProviderRequestRateLimiter(
-                jdbc, Clock.fixed(NOW, ZoneOffset.UTC), 5_000, 300);
+                jdbc, Clock.fixed(NOW, ZoneOffset.UTC), 1_500, 300);
 
         limiter.recordFailure(MusicProvider.QQ, null, null);
-
         assertThat(state.failureStreak).isEqualTo(1);
         assertThat(state.lastHttpStatus).isNull();
         assertThat(state.lastError).isEqualTo("transport failure");
-        assertThat(state.cooldownUntil).isEqualTo(NOW.plusSeconds(900));
+        assertThat(state.cooldownUntil).isNull();
+
+        limiter.recordFailure(MusicProvider.QQ, null, null);
+        assertThat(state.failureStreak).isEqualTo(2);
+        assertThat(state.cooldownUntil).isNull();
+
+        limiter.recordFailure(MusicProvider.QQ, null, null);
+        assertThat(state.failureStreak).isEqualTo(3);
+        assertThat(state.cooldownUntil).isEqualTo(NOW.plusSeconds(120));
 
         limiter.recordSuccess(MusicProvider.QQ);
 
@@ -186,7 +193,7 @@ class ProviderRequestRateLimiterTest {
         assertThat(state.lastHttpStatus).isNull();
         assertThat(state.lastError).isNull();
         assertThat(state.updatedAt).isEqualTo(NOW);
-        assertThat(state.cooldownUntil).isEqualTo(NOW.plusSeconds(900));
+        assertThat(state.cooldownUntil).isEqualTo(NOW.plusSeconds(120));
     }
 
     @Test
@@ -242,10 +249,11 @@ class ProviderRequestRateLimiterTest {
 
     @Test
     void usesFiniteTransportBackoff() {
-        assertThat(ProviderRequestRateLimiter.backoffSeconds(1)).isEqualTo(15 * 60L);
-        assertThat(ProviderRequestRateLimiter.backoffSeconds(2)).isEqualTo(60 * 60L);
-        assertThat(ProviderRequestRateLimiter.backoffSeconds(3)).isEqualTo(6 * 60 * 60L);
-        assertThat(ProviderRequestRateLimiter.backoffSeconds(8)).isEqualTo(24 * 60 * 60L);
+        assertThat(ProviderRequestRateLimiter.backoffSeconds(1)).isZero();
+        assertThat(ProviderRequestRateLimiter.backoffSeconds(2)).isZero();
+        assertThat(ProviderRequestRateLimiter.backoffSeconds(3)).isEqualTo(2 * 60L);
+        assertThat(ProviderRequestRateLimiter.backoffSeconds(5)).isEqualTo(10 * 60L);
+        assertThat(ProviderRequestRateLimiter.backoffSeconds(8)).isEqualTo(30 * 60L);
     }
 
     @Test

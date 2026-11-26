@@ -109,23 +109,15 @@ public class MusicMetadataApplyService {
                 && !suggestedArtist.isBlank() ? suggestedArtist : song.getArtist();
         String previewFingerprint = MediaClassifier.fingerprint(previewArtist, previewTitle, song.getDurationMs());
 
-        // 外部封面下载与图片格式标准化：在写事务外执行，彻底释放数据库连接池
-        String downloadedCoverPath = null;
-        if (requested.contains("cover") && track.coverUrl() != null && !song.isMetadataLocked("cover")) {
-            int timeout = configService.getConfig() != null ? configService.getConfig().timeoutSeconds() : 5;
-            downloadedCoverPath = coverService.download(provider, track.coverUrl(), previewFingerprint, Duration.ofSeconds(timeout));
-        }
-        final String coverPathToApply = downloadedCoverPath;
-
-        // 短平快的数据库写事务（并在事务内按最新实体重算指纹）
+        // 已禁用在线歌曲封面刮削（保留本地文件内嵌封面与歌手头像刮削），保持参数兼容性但不下载/写入歌曲封面。
         return runInTransaction(() -> executeApplyTransaction(songId, provider, externalId, track, requested, overrides,
-                suggestedTitle, suggestedArtist, structuredArtistCredit, filenamePreferred, coverPathToApply));
+                suggestedTitle, suggestedArtist, structuredArtistCredit, filenamePreferred));
     }
 
     private ApplyResult executeApplyTransaction(long songId, MusicProvider provider, String externalId,
                                                 ExternalTrack track, Set<String> requested, Map<String, String> overrides,
                                                 String suggestedTitle, String suggestedArtist, boolean structuredArtistCredit,
-                                                boolean filenamePreferred, String downloadedCoverPath) {
+                                                boolean filenamePreferred) {
         Song song = songRepository.findById(songId).orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         List<String> applied = new ArrayList<>(); List<String> skippedLocked = new ArrayList<>();
         String nextTitle = requested.contains("title") && (!isFieldProtected(song, "title", filenamePreferred) || overrides.containsKey("title"))
@@ -150,12 +142,8 @@ public class MusicMetadataApplyService {
             }
         }
         song.setFingerprint(fingerprint);
-        if (requested.contains("cover") && track.coverUrl() != null) {
-            if (song.isMetadataLocked("cover")) skippedLocked.add("cover");
-            else if (downloadedCoverPath != null) {
-                song.setCoverPath(downloadedCoverPath);
-                applied.add("cover");
-            }
+        if (requested.contains("cover") && track.coverUrl() != null && song.isMetadataLocked("cover")) {
+            skippedLocked.add("cover");
         }
         overrides.keySet().stream().filter(applied::contains).forEach(song::lockMetadata);
         updateProvenance(song, provider, externalId, applied, overrides.keySet());

@@ -39,7 +39,9 @@ public class ExternalCoverService {
     private static final Map<MusicProvider, Set<String>> ALLOWED_HOSTS = Map.of(
             MusicProvider.QQ, Set.of("y.gtimg.cn"),
             MusicProvider.NETEASE, Set.of("music.126.net"),
-            MusicProvider.KUGOU, Set.of("kugou.com", "kugoucdn.com", "kgimg.com")
+            MusicProvider.KUGOU, Set.of("kugou.com", "kugoucdn.com", "kgimg.com"),
+            MusicProvider.KUWO, Set.of("kuwo.cn", "kuwoimg.com"),
+            MusicProvider.ITUNES, Set.of("mzstatic.com")
     );
     private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final ExecutorService BODY_READ_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
@@ -209,6 +211,8 @@ public class ExternalCoverService {
         if (provider == MusicProvider.NETEASE) return "https://music.163.com/";
         if (provider == MusicProvider.QQ) return "https://y.qq.com/";
         if (provider == MusicProvider.KUGOU) return "https://www.kugou.com/";
+        if (provider == MusicProvider.KUWO) return "https://www.kuwo.cn/";
+        if (provider == MusicProvider.ITUNES) return "https://music.apple.com/";
         String host = uri.getHost();
         if (host != null && (host.endsWith("baidu.com") || host.endsWith("bdimg.com") || host.endsWith("bcebos.com"))) {
             return "https://image.baidu.com/";

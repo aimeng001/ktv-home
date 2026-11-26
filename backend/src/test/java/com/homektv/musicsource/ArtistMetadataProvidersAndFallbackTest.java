@@ -249,11 +249,13 @@ class ArtistMetadataProvidersAndFallbackTest {
     }
 
     @Test
-    void qqFallsBackToClientSearchCpSingersWhenMusicuReturnsEmpty() throws Exception {
+    void qqStopsAfterMusicuWithoutIssuingThirdSongSearchRequest() throws Exception {
         HttpClient client = mock(HttpClient.class);
+        AtomicInteger callCount = new AtomicInteger();
         when(client.send(any(HttpRequest.class),
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
                 .thenAnswer(inv -> {
+                    callCount.incrementAndGet();
                     String uri = inv.getArgument(0, HttpRequest.class).uri().toString();
                     if (uri.contains("smartbox_new.fcg")) {
                         return jsonResponse("""
@@ -265,11 +267,7 @@ class ArtistMetadataProvidersAndFallbackTest {
                                 {"code":0,"req":{"code":500003,"subcode":860100001}}
                                 """);
                     }
-                    return jsonResponse("""
-                            {"code":0,"data":{"song":{"list":[
-                              {"songmid":"s1","singer":[{"id":4558,"mid":"0025NhlN2yWrP4","name":"周杰伦"}]}
-                            ]}}}
-                            """);
+                    throw new AssertionError("unexpected 3rd call: " + uri);
                 });
         MusicSourceHttp http = new MusicSourceHttp(
                 mapper, MusicProvider.QQ, Set.of("c.y.qq.com", "u.y.qq.com"), client, null);
@@ -277,12 +275,45 @@ class ArtistMetadataProvidersAndFallbackTest {
 
         List<ExternalArtist> artists = provider.search("周杰伦", 5, Duration.ofSeconds(3));
 
-        assertThat(artists).singleElement().satisfies(artist -> {
-            assertThat(artist.externalId()).isEqualTo("0025NhlN2yWrP4");
-            assertThat(artist.displayName()).isEqualTo("周杰伦");
-            assertThat(artist.avatarUrl())
-                    .isEqualTo("https://y.gtimg.cn/music/photo_new/T001R300x300M0000025NhlN2yWrP4.jpg");
-        });
+        assertThat(artists).isEmpty();
+        assertThat(callCount).hasValue(2);
+    }
+
+    @Test
+    void fallbackChainOpensCircuitAfterThreeConsecutiveTimeoutsAndSkipsBlockedSource() throws Exception {
+        HttpClient client = mock(HttpClient.class);
+        AtomicInteger deezerCalls = new AtomicInteger();
+        when(client.send(any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenAnswer(inv -> {
+                    String uri = inv.getArgument(0, HttpRequest.class).uri().toString();
+                    if (uri.contains("api.deezer.com")) {
+                        deezerCalls.incrementAndGet();
+                        throw new java.io.IOException("connect timed out");
+                    }
+                    return jsonResponse("{}");
+                });
+        ProviderCallGuard guard = new ProviderCallGuard(() -> new MusicSourceConfig(
+                true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95, 3000,
+                Set.of(AvatarFallbackProvider.DEEZER), 2000));
+        MusicSourceConfigService config = mock(MusicSourceConfigService.class);
+        when(config.getConfig()).thenReturn(new MusicSourceConfig(
+                true, Set.of(MusicProvider.QQ), 20, 5, 6, 1, 1500, 0.95, 3000,
+                Set.of(AvatarFallbackProvider.DEEZER), 2000));
+        ArtistAvatarFallbackChain chain = new ArtistAvatarFallbackChain(client, mapper, guard, config, 2000);
+
+        for (int i = 0; i < 3; i++) {
+            assertThat(chain.findCandidateUrls("Adele", Duration.ofMillis(200))).isEmpty();
+        }
+        assertThat(deezerCalls).hasValue(3);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> chain.findCandidateUrls("Adele", Duration.ofMillis(200)))
+                .isInstanceOf(ProviderRateLimitedException.class);
+        assertThat(deezerCalls).hasValue(3);
+
+        chain.resetCircuitBreakers();
+        assertThat(chain.hasAvailableProvider()).isTrue();
     }
 
     @Test

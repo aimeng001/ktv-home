@@ -20,10 +20,12 @@ import java.util.concurrent.Executors;
 @Service
 public class MusicSourceSearchService {
     private final Map<MusicProvider, MusicMetadataProvider> providers = new EnumMap<>(MusicProvider.class);
+    private final Map<MusicProvider, ArtistMetadataProvider> artistProviders = new EnumMap<>(MusicProvider.class);
     private final MusicSourceConfigService configService;
     private final ExternalTrackStorage storage;
     private final ExternalTrackMatcher matcher;
     private final SongRepository songRepository;
+    private ArtistAvatarFallbackChain fallbackChain;
 
     public MusicSourceSearchService(List<MusicMetadataProvider> providers, MusicSourceConfigService configService,
                                     ExternalTrackStorage storage, ExternalTrackMatcher matcher, SongRepository songRepository) {
@@ -32,6 +34,17 @@ public class MusicSourceSearchService {
         this.storage = storage;
         this.matcher = matcher;
         this.songRepository = songRepository;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setArtistProviders(List<ArtistMetadataProvider> artistProviders) {
+        if (artistProviders == null) return;
+        artistProviders.forEach(provider -> this.artistProviders.put(provider.provider(), provider));
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setFallbackChain(ArtistAvatarFallbackChain fallbackChain) {
+        this.fallbackChain = fallbackChain;
     }
 
     public SearchResponse search(String keyword, Set<MusicProvider> requestedProviders, boolean refresh) {
@@ -45,7 +58,8 @@ public class MusicSourceSearchService {
         if (!config.enabled()) throw new ApiException("MUSIC_SOURCES_NOT_CONFIGURED", "请先在系统设置中启用元数据服务");
         Set<MusicProvider> selected = selectProviders(requestedProviders, config.providers());
         selected.retainAll(config.providers());
-        if (selected.isEmpty()) throw new ApiException("MUSIC_SOURCES_NOT_CONFIGURED", "请至少启用一个音乐平台");
+        selected.removeIf(provider -> !provider.supportsSongMetadata() || !providers.containsKey(provider));
+        if (selected.isEmpty()) throw new ApiException("MUSIC_SOURCES_NOT_CONFIGURED", "请至少启用一个支持歌曲元数据的音乐平台");
 
         List<ProviderOutcome> outcomes = new ArrayList<>();
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -147,14 +161,33 @@ public class MusicSourceSearchService {
         List<TestResult> results = new ArrayList<>();
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<CompletableFuture<TestResult>> futures = selected.stream().map(provider -> CompletableFuture.supplyAsync(() -> {
+                long started = System.nanoTime();
                 try {
-                    MusicMetadataProvider.ProviderHealth health = providers.get(provider).health(Duration.ofSeconds(config.timeoutSeconds()));
-                    if (health.healthy()) {
-                        configService.recordSuccess(provider);
-                    } else {
-                        configService.recordError(provider, health.error());
+                    if (provider.supportsSongMetadata() && providers.containsKey(provider)) {
+                        MusicMetadataProvider.ProviderHealth health = providers.get(provider).health(Duration.ofSeconds(config.timeoutSeconds()));
+                        if (health.healthy()) {
+                            configService.recordSuccess(provider);
+                        } else {
+                            configService.recordError(provider, health.error());
+                        }
+                        return new TestResult(provider, provider.displayName(), health.healthy(), health.latencyMs(), health.error());
                     }
-                    return new TestResult(provider, provider.displayName(), health.healthy(), health.latencyMs(), health.error());
+                    ArtistMetadataProvider artistProvider = artistProviders.get(provider);
+                    if (artistProvider == null) {
+                        String msg = "该平台适配器未注册";
+                        configService.recordError(provider, msg);
+                        return new TestResult(provider, provider.displayName(), false, 0, msg);
+                    }
+                    List<ExternalArtist> artists = artistProvider.search("周杰伦", 1, Duration.ofSeconds(config.timeoutSeconds()));
+                    long latency = elapsed(started);
+                    boolean healthy = artists != null && !artists.isEmpty();
+                    if (healthy) {
+                        configService.recordSuccess(provider);
+                        return new TestResult(provider, provider.displayName(), true, latency, null);
+                    }
+                    String err = "未返回歌手头像候选";
+                    configService.recordError(provider, err);
+                    return new TestResult(provider, provider.displayName(), false, latency, err);
                 } catch (RuntimeException ex) {
                     String error = publicError(ex); configService.recordError(provider, error);
                     return new TestResult(provider, provider.displayName(), false, 0, error);
@@ -163,6 +196,13 @@ public class MusicSourceSearchService {
             futures.forEach(future -> results.add(future.join()));
         }
         return results;
+    }
+
+    public List<ArtistAvatarFallbackChain.FallbackTestResult> testFallback(Collection<AvatarFallbackProvider> requested) {
+        if (fallbackChain == null) return List.of();
+        MusicSourceConfig config = configService.getConfig();
+        Duration timeout = Duration.ofSeconds(config != null ? Math.max(2, config.timeoutSeconds()) : 5);
+        return fallbackChain.test(requested, timeout);
     }
 
     private ProviderOutcome searchProvider(MusicProvider provider, String query, MusicSourceConfig config, boolean refresh) {
