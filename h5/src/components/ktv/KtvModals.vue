@@ -149,10 +149,15 @@
       <!-- 调音、音轨纠正与现场音效 -->
       <div v-else-if="activeModal === 'mixer'" class="modal-body">
         <div class="mixer-row">
-          <span>房间音量 ({{ player.muted ? '已静音' : vol }})</span>
+          <span>房间音量 ({{ player.muted ? '已静音' : (player.isWebHost && player.audioBlockedByAutoplay ? `${vol} · 浏览器拦截静音` : vol) }})</span>
           <input type="range" min="0" max="100" aria-label="房间音量" v-model.number="vol" @change="$emit('set-volume', vol)" />
-          <button type="button" class="mini-mute-btn" :class="{ on: player.muted }" @click="$emit('toggle-mute')">
-            {{ player.muted ? '取消静音' : '静音' }}
+          <button
+            type="button"
+            class="mini-mute-btn"
+            :class="{ on: player.muted || (player.isWebHost && player.audioBlockedByAutoplay) }"
+            @click="$emit('toggle-mute')"
+          >
+            {{ (player.isWebHost && player.audioBlockedByAutoplay) ? '开启声音' : (player.muted ? '取消静音' : '静音') }}
           </button>
         </div>
 

@@ -150,4 +150,75 @@ describe('webAudioChannelRouter', () => {
     await expect(p1).resolves.toBe(true)
     await expect(p2).resolves.toBe(true)
   })
+
+  it('clears stale timed-out resume promise so subsequent user gesture invokes ctx.resume() again', async () => {
+    let calls = 0
+    let resolveSecond
+    const fakeCtx = {
+      state: 'suspended',
+      destination: {},
+      createMediaElementSource: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
+      createChannelSplitter: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
+      createChannelMerger: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
+      createGain: vi.fn(() => ({ gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() })),
+      close: vi.fn(),
+      resume: vi.fn(() => {
+        calls += 1
+        if (calls === 1) {
+          // Simulate Chromium non-gestured resume() promise that never settles.
+          return new Promise(() => {})
+        }
+        return new Promise(resolve => { resolveSecond = resolve })
+      }),
+    }
+    const router = createWebAudioChannelRouter({ AudioContextCtor: function() { return fakeCtx } })
+    router.attach({ tagName: 'VIDEO' })
+
+    const timedOut = await router.resume(10)
+    expect(timedOut).toBe(false)
+    expect(fakeCtx.resume).toHaveBeenCalledTimes(1)
+
+    const pNext = router.resumeDirect({ force: true })
+    expect(fakeCtx.resume).toHaveBeenCalledTimes(2)
+    fakeCtx.state = 'running'
+    resolveSecond()
+    await expect(pNext).resolves.toBe(true)
+    expect(router.isSuspended()).toBe(false)
+  })
+
+  it('primes AudioContext without activating graph early and reuses it on attach', () => {
+    const createMediaElementSource = vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() }))
+    const fakeCtx = {
+      state: 'suspended',
+      destination: {},
+      createMediaElementSource,
+      createChannelSplitter: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
+      createChannelMerger: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
+      createGain: vi.fn(() => ({ gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() })),
+      close: vi.fn(),
+      resume: vi.fn(() => {
+        fakeCtx.state = 'running'
+        return Promise.resolve()
+      }),
+    }
+    let ctorCount = 0
+    const router = createWebAudioChannelRouter({
+      AudioContextCtor: function() {
+        ctorCount += 1
+        return fakeCtx
+      },
+    })
+
+    expect(router.prime()).toBe(true)
+    expect(ctorCount).toBe(1)
+    expect(fakeCtx.resume).toHaveBeenCalledTimes(1)
+    expect(router.isActive()).toBe(false)
+    expect(createMediaElementSource).not.toHaveBeenCalled()
+
+    expect(router.attach({ tagName: 'VIDEO' })).toBe(true)
+    expect(ctorCount).toBe(1)
+    expect(router.isActive()).toBe(true)
+    expect(router.isSuspended()).toBe(false)
+    expect(createMediaElementSource).toHaveBeenCalledTimes(1)
+  })
 })

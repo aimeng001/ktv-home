@@ -29,7 +29,7 @@
 </template>
 
 <script setup>
-import { ref, onBeforeUnmount } from 'vue'
+import { ref, onBeforeUnmount, onMounted } from 'vue'
 import { usePlayerStore } from '../../stores/player'
 
 const player = usePlayerStore()
@@ -58,10 +58,15 @@ function getAudioContext() {
   if (!audioCtx) {
     audioCtx = new AudioContext()
   }
-  if (audioCtx.state === 'suspended') {
-    audioCtx.resume()
+  if (audioCtx.state === 'suspended' && typeof audioCtx.resume === 'function') {
+    Promise.resolve(audioCtx.resume()).catch(() => {})
   }
   return audioCtx
+}
+
+function wakeEffectAudioOnGesture() {
+  if (!audioCtx || audioCtx.state !== 'suspended' || typeof audioCtx.resume !== 'function') return
+  Promise.resolve(audioCtx.resume()).catch(() => {})
 }
 
 function playSynthesizedSound(type) {
@@ -175,7 +180,20 @@ function triggerEffect(type = 'applause') {
   }, 2600)
 }
 
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('click', wakeEffectAudioOnGesture, { capture: true })
+    window.addEventListener('touchend', wakeEffectAudioOnGesture, { capture: true })
+    window.addEventListener('keydown', wakeEffectAudioOnGesture, { capture: true })
+  }
+})
+
 onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('click', wakeEffectAudioOnGesture, { capture: true })
+    window.removeEventListener('touchend', wakeEffectAudioOnGesture, { capture: true })
+    window.removeEventListener('keydown', wakeEffectAudioOnGesture, { capture: true })
+  }
   clearTimeout(bannerTimer)
   clearTimeout(particlesTimer)
   if (audioCtx && typeof audioCtx.close === 'function') {

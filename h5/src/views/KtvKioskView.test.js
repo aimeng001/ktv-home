@@ -295,6 +295,22 @@ describe('KtvKioskView', () => {
     await Promise.resolve()
     expect(controlsMock.setMuted).toHaveBeenCalledWith(true)
 
+    // When browser autoplay blocked local audio while room is unmuted, mute button unlocks locally without muting room.
+    controlsMock.setMuted.mockClear()
+    player.tvOnline = false
+    player.webPlayerRole = 'ACTIVE'
+    player.muted = false
+    player.audioBlockedByAutoplay = true
+    player.nowPlaying = { queueId: 7, song: { id: 101, title: '晴天', artist: '周杰伦' } }
+    player.playback = { kind: 'NATIVE', status: 'READY', sourceFileId: 55 }
+    await nextTick()
+    expect(muteBtn?.textContent).toContain('开启声音')
+    muteBtn.click()
+    await Promise.resolve()
+    await nextTick()
+    expect(controlsMock.setMuted).not.toHaveBeenCalledWith(true)
+    expect(player.audioBlockedByAutoplay).toBe(false)
+
     root.querySelector('button[aria-label="伴奏升调"]').click()
     await nextTick()
     expect(root.textContent).not.toContain('+1 半音')

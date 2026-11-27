@@ -47,6 +47,7 @@
     />
 
     <KtvMediaSurface
+      ref="mediaSurfaceRef"
       :fullscreen="fullscreen"
       :pip-rect="pipRect"
       :show-lyrics="showLyrics"
@@ -150,6 +151,7 @@ const showLyrics = ref((() => {
 })())
 const browserRef = ref(null)
 const dockRef = ref(null)
+const mediaSurfaceRef = ref(null)
 const effectOverlayRef = ref(null)
 const pipRect = ref(null)
 
@@ -427,6 +429,20 @@ async function setVolume(val) {
 }
 
 async function toggleMute() {
+  if (player.isWebHost && player.audioBlockedByAutoplay) {
+    const unlocked = await mediaSurfaceRef.value?.unlockAudio?.()
+    if (player.muted) {
+      try {
+        await controls.setMuted(false)
+        toast(unlocked !== false ? '已取消静音并开启声音' : '已请求取消静音')
+      } catch (e) {
+        toast(e.message || '取消静音失败')
+      }
+    } else if (unlocked !== false) {
+      toast('已开启声音')
+    }
+    return
+  }
   const targetMuted = !player.muted
   try {
     await controls.setMuted(targetMuted)

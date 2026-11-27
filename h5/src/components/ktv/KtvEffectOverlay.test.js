@@ -135,4 +135,59 @@ describe('KtvEffectOverlay 现场气氛互动组件', () => {
       window.AudioContext = originalAudioContext
     }
   })
+
+  it('互动音效 AudioContext 处于 suspended 且 resume 拒绝时不泄漏未捕获异常，用户点击后可再次唤醒', async () => {
+    const resumeMock = vi.fn()
+      .mockRejectedValueOnce(new Error('not allowed yet'))
+      .mockResolvedValueOnce(undefined)
+    const originalAudioContext = window.AudioContext
+    class SuspendedAudioContext {
+      constructor() {
+        this.sampleRate = 48000
+        this.currentTime = 0
+        this.state = 'suspended'
+        this.destination = {}
+      }
+      resume() { return resumeMock() }
+      close() { return Promise.resolve() }
+      createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) } }
+      createBufferSource() { return { buffer: null, connect: vi.fn(), start: vi.fn() } }
+      createBiquadFilter() { return { type: '', frequency: { value: 0 }, connect: vi.fn() } }
+      createOscillator() { return { type: '', frequency: { value: 0, setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() }, connect: vi.fn(), start: vi.fn(), stop: vi.fn() } }
+      createGain() {
+        return {
+          gain: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
+          connect: vi.fn(),
+        }
+      }
+    }
+    window.AudioContext = SuspendedAudioContext
+    try {
+      player.tvOnline = false
+      player.webPlayerRole = 'ACTIVE'
+      player.muted = false
+      let overlayRef
+      const Host = {
+        components: { KtvEffectOverlay },
+        template: '<KtvEffectOverlay ref="overlay" />',
+        mounted() {
+          overlayRef = this.$refs.overlay
+        }
+      }
+      app = createApp(Host)
+      app.use(pinia)
+      app.mount(root)
+      await nextTick()
+
+      overlayRef.triggerEffect('clap')
+      await Promise.resolve()
+      expect(resumeMock).toHaveBeenCalledTimes(1)
+
+      window.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      expect(resumeMock).toHaveBeenCalledTimes(2)
+    } finally {
+      window.AudioContext = originalAudioContext
+    }
+  })
 })

@@ -6,12 +6,14 @@ import { createPinia, setActivePinia } from 'pinia'
 const { apiMock, routerMock, toastSpy, media } = vi.hoisted(() => ({
   apiMock: {},
   routerMock: {
+    prime: vi.fn(),
     attach: vi.fn(),
     setRouting: vi.fn(),
     setGain: vi.fn(),
     setPitch: vi.fn(),
     resume: vi.fn(() => Promise.resolve()),
     resumeDirect: vi.fn(),
+    suspend: vi.fn(),
     isActive: vi.fn(() => false),
     isSuspended: () => false,
     dispose: vi.fn()
@@ -366,6 +368,75 @@ describe('KtvMediaSurface 解码失败时的上报兜底', () => {
       routerMock.isSuspended = prevIsSuspended
       routerMock.resume = prevResume
       routerMock.isActive.mockReturnValue(false)
+      instance.unmount()
+      host.remove()
+    }
+  })
+
+  it('在真实点击序列(pointerdown -> click)下不被抢跑销毁按钮，并在 play() 前同步取消视频静音', async () => {
+    const mutedSnapshotsAtPlay = []
+    media.playImpl = () => Promise.resolve()
+    const { instance, host, scopedPlayer } = await mountSurface()
+    const videoEl = host.querySelector('video')
+    const playSpy = vi.spyOn(videoEl, 'play').mockImplementation(() => {
+      mutedSnapshotsAtPlay.push(videoEl.muted)
+      return Promise.resolve()
+    })
+
+    let resolveResume
+    const prevResume = routerMock.resume
+    const prevIsSuspended = routerMock.isSuspended
+    routerMock.isActive.mockReturnValue(true)
+    routerMock.isSuspended = () => true
+    routerMock.resume = vi.fn(() => new Promise(resolve => {
+      resolveResume = () => {
+        routerMock.isSuspended = () => false
+        resolve(true)
+      }
+    }))
+
+    try {
+      scopedPlayer.audioBlockedByAutoplay = true
+      await nextTick()
+      const btn = host.querySelector('.autoplay-unlock')
+      expect(btn).not.toBeNull()
+
+      // pointerdown alone must NOT unmount the unlock button or clear the lock before click completes.
+      btn.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+      await nextTick()
+      expect(host.querySelector('.autoplay-unlock')).not.toBeNull()
+      expect(scopedPlayer.audioBlockedByAutoplay).toBe(true)
+
+      btn.click()
+      expect(playSpy).toHaveBeenCalled()
+      expect(mutedSnapshotsAtPlay[0]).toBe(false)
+      expect(routerMock.resume).toHaveBeenCalledWith(250, { force: true })
+
+      resolveResume()
+      await nextTick()
+      await nextTick()
+      expect(scopedPlayer.audioBlockedByAutoplay).toBe(false)
+      expect(videoEl.muted).toBe(false)
+    } finally {
+      routerMock.resume = prevResume
+      routerMock.isSuspended = prevIsSuspended
+      routerMock.isActive.mockReturnValue(false)
+      playSpy.mockRestore()
+      instance.unmount()
+      host.remove()
+    }
+  })
+
+  it('WEB_HOST 暂停播放时不挂起 AudioContext，避免手机端恢复播放时重新锁死静音', async () => {
+    media.playImpl = () => Promise.resolve()
+    const { instance, host, scopedPlayer } = await mountSurface()
+    try {
+      routerMock.suspend.mockClear()
+      scopedPlayer.state = 'paused'
+      await nextTick()
+      await nextTick()
+      expect(routerMock.suspend).not.toHaveBeenCalled()
+    } finally {
       instance.unmount()
       host.remove()
     }

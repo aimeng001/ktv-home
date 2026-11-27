@@ -55,6 +55,23 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     return globalThis.AudioContext || globalThis.webkitAudioContext || null
   }
 
+  function prime() {
+    const Ctor = resolveCtor()
+    if (!Ctor) return false
+    if (!ctx || ctx.state === 'closed') {
+      try {
+        ctx = new Ctor()
+      } catch {
+        ctx = null
+        return false
+      }
+    }
+    if (ctx.state === 'suspended') {
+      resumeDirect({ force: true })
+    }
+    return true
+  }
+
   function ensureGraph(mediaElement) {
     if (!mediaElement) return false
     const Ctor = resolveCtor()
@@ -63,6 +80,11 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
       return true
     }
     const cached = elementSourceCache?.get(mediaElement)
+    const reusablePrimedCtx = (!attachedElement && ctx && ctx.state !== 'closed') ? ctx : null
+    if (reusablePrimedCtx) {
+      // Preserve an unlocked AudioContext created by prime() so attach() does not recreate a suspended context.
+      ctx = null
+    }
     dispose()
     connectedRouteKey = null
     try {
@@ -70,7 +92,7 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
         ctx = cached.ctx
         source = cached.source
       } else {
-        ctx = new Ctor()
+        ctx = reusablePrimedCtx || new Ctor()
         source = ctx.createMediaElementSource(mediaElement)
         elementSourceCache?.set(mediaElement, { ctx, source })
       }
@@ -129,22 +151,30 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     gainNode.gain.value = lastMuted ? 0 : lastVolume / 100
   }
 
-  function resumeDirect() {
+  function resumeDirect({ force = false } = {}) {
     if (!ctx) return Promise.resolve(false)
-    if (ctx.state !== 'suspended') return Promise.resolve(true)
-    if (pendingResumePromise) return pendingResumePromise
+    if (ctx.state !== 'suspended') {
+      pendingResumePromise = null
+      return Promise.resolve(true)
+    }
+    if (!force && pendingResumePromise) return pendingResumePromise
     if (typeof ctx.resume !== 'function') return Promise.resolve(false)
+    let tracked = null
     try {
       const p = ctx.resume()
       if (p && typeof p.then === 'function') {
-        pendingResumePromise = p.then(
+        tracked = p.then(
           () => ctx?.state !== 'suspended',
           () => false,
         ).finally(() => {
-          pendingResumePromise = null
+          if (pendingResumePromise === tracked) {
+            pendingResumePromise = null
+          }
         })
-        return pendingResumePromise
+        pendingResumePromise = tracked
+        return tracked
       }
+      pendingResumePromise = null
       return Promise.resolve(ctx.state !== 'suspended')
     } catch {
       pendingResumePromise = null
@@ -152,17 +182,22 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     }
   }
 
-  async function resume(timeoutMs = 0) {
-    const p = resumeDirect()
+  async function resume(timeoutMs = 0, { force = false } = {}) {
+    const p = resumeDirect({ force })
     if (timeoutMs > 0) {
       let timer = null
       try {
-        return await Promise.race([
+        const resolved = await Promise.race([
           p,
           new Promise(resolve => {
             timer = setTimeout(() => resolve(ctx?.state !== 'suspended'), timeoutMs)
           }),
         ])
+        if (!resolved && ctx?.state === 'suspended' && pendingResumePromise === p) {
+          // Drop stale un-gestured pending resume promise so the next user gesture calls ctx.resume() directly.
+          pendingResumePromise = null
+        }
+        return resolved
       } finally {
         if (timer) clearTimeout(timer)
       }
@@ -211,6 +246,7 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
   }
 
   return {
+    prime,
     attach(mediaElement) { return ensureGraph(mediaElement) },
     setRouting(audioLayout, vocalMode) { return applyRouting(audioLayout, vocalMode) },
     setGain(volumePct, muted) { applyGain(volumePct, muted) },
@@ -231,7 +267,7 @@ export function createWebAudioChannelRouter({ AudioContextCtor } = {}) {
     resumeDirect,
     suspend,
     dispose,
-    isActive() { return Boolean(ctx) },
+    isActive() { return Boolean(attachedElement && ctx) },
     isSuspended() { return Boolean(ctx && ctx.state === 'suspended') },
   }
 }

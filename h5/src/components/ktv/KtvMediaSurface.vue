@@ -177,11 +177,16 @@
             </span>
             <span>音量加</span>
           </button>
-          <button type="button" class="fs-act" :class="{ active: player.muted }" @click="$emit('toggle-mute')">
+          <button
+            type="button"
+            class="fs-act"
+            :class="{ active: player.muted || (player.isWebHost && player.audioBlockedByAutoplay) }"
+            @click="$emit('toggle-mute')"
+          >
             <span class="fs-act-icon">
-              <img :src="player.muted ? assets.playerUnmute : assets.playerMute" alt="" class="fs-act-png" />
+              <img :src="(player.muted || (player.isWebHost && player.audioBlockedByAutoplay)) ? assets.playerUnmute : assets.playerMute" alt="" class="fs-act-png" />
             </span>
-            <span>{{ player.muted ? '取消静音' : '静音' }}</span>
+            <span>{{ player.isWebHost && player.audioBlockedByAutoplay ? '开启声音' : (player.muted ? '取消静音' : '静音') }}</span>
           </button>
           <button type="button" class="fs-act" @click="$emit('open-browser')">
             <span class="fs-act-icon">
@@ -307,6 +312,7 @@ let lastProgressSentAt = 0
 let lastAppliedSeq = -1
 let lastStreamKey = ''
 let awaitingMediaReload = false
+let unlockInFlightPromise = null
 
 const MAX_LIVE_RECOVERY_ATTEMPTS = 2
 const LIVE_STALL_TIMEOUT_MS = 10000
@@ -443,12 +449,9 @@ function wakeOsd() {
 
 function triggerAudioWakeGesture() {
   if (isSilentConsole.value) return
+  channelRouter.prime?.()
   if (typeof channelRouter.resumeDirect === 'function') {
-    channelRouter.resumeDirect()
-  }
-  const el = videoEl.value
-  if (el) {
-    el.muted = effectiveMuted.value
+    channelRouter.resumeDirect({ force: true })
   }
   if (player.audioBlockedByAutoplay) {
     unlockAudio()
@@ -469,24 +472,27 @@ function onStageClick() {
   if (osdVisible.value) wakeOsd()
 }
 
-function syncAudioRouter() {
+function syncAudioRouter({ forceUnblock = false } = {}) {
   const el = videoEl.value
   if (!el) return
+  const targetMuted = forceUnblock
+    ? (isSilentConsole.value || Boolean(player.muted))
+    : effectiveMuted.value
   if (!isSilentConsole.value) {
     if (needsWebAudioRouting.value || Boolean(channelRouter?.isActive?.())) {
       const routed = channelRouter.attach(el)
       channelRouter.setRouting(player.audioLayout, player.vocalMode)
       channelRouter?.setPitch?.(player.pitchSemitones)
-      channelRouter.setGain(player.volume, effectiveMuted.value)
+      channelRouter.setGain(player.volume, targetMuted)
       if (el.volume !== undefined) {
         el.volume = routed ? 1 : Math.max(0, Math.min(1, (player.volume ?? 60) / 100))
       }
-      el.muted = effectiveMuted.value
+      el.muted = targetMuted
     } else {
       if (el.volume !== undefined) {
         el.volume = Math.max(0, Math.min(1, (player.volume ?? 60) / 100))
       }
-      el.muted = effectiveMuted.value
+      el.muted = targetMuted
     }
   } else {
     channelRouter.setGain(0, true)
@@ -571,34 +577,45 @@ async function attemptPlay() {
 
 async function unlockAudio() {
   const el = videoEl.value
-  if (!el || isSilentConsole.value) return
+  if (!el || isSilentConsole.value) return false
+  if (unlockInFlightPromise) return unlockInFlightPromise
   clearLivePrebuffer()
   const webAudioActive = needsWebAudioRouting.value || Boolean(channelRouter?.isActive?.())
-  player.audioBlockedByAutoplay = false
-  player.audioUnlockFailed = false
-  el.muted = player.muted
-  syncAudioRouter()
-  try {
-    if (webAudioActive) {
-      if (typeof channelRouter.resumeDirect === 'function') {
-        channelRouter.resumeDirect()
+  // Synchronously unmute and issue resume/play within the active user gesture before any await.
+  syncAudioRouter({ forceUnblock: true })
+  const resumePromise = webAudioActive
+    ? (typeof channelRouter.resume === 'function'
+      ? channelRouter.resume(250, { force: true })
+      : channelRouter.resumeDirect?.({ force: true }))
+    : null
+  const playPromise = player.isPlaying ? el.play() : null
+
+  const currentUnlock = (async () => {
+    try {
+      await Promise.all([playPromise, resumePromise])
+      if (webAudioActive && channelRouter.isSuspended?.()) {
+        throw new DOMException('AudioContext remains suspended', 'NotAllowedError')
       }
-      if (typeof channelRouter.resume === 'function') {
-        await channelRouter.resume()
+      player.audioBlockedByAutoplay = false
+      player.audioUnlockFailed = false
+      syncAudioRouter()
+      return true
+    } catch (e) {
+      player.audioBlockedByAutoplay = true
+      player.audioUnlockFailed = true
+      syncAudioRouter()
+      toast(e?.name === 'NotAllowedError'
+        ? '浏览器仍拦截自动播放，请再点一次开启声音'
+        : '声音开启失败，请检查设备输出后重试')
+      return false
+    } finally {
+      if (unlockInFlightPromise === currentUnlock) {
+        unlockInFlightPromise = null
       }
     }
-    if (player.isPlaying) await el.play()
-    if (webAudioActive && channelRouter.isSuspended?.()) {
-      throw new DOMException('AudioContext remains suspended', 'NotAllowedError')
-    }
-  } catch (e) {
-    player.audioBlockedByAutoplay = true
-    player.audioUnlockFailed = true
-    el.muted = true
-    toast(e?.name === 'NotAllowedError'
-      ? '浏览器仍拦截自动播放，请再点一次开启声音'
-      : '声音开启失败，请检查设备输出后重试')
-  }
+  })()
+  unlockInFlightPromise = currentUnlock
+  return currentUnlock
 }
 
 function clearLivePrebuffer() {
@@ -915,7 +932,9 @@ watch(() => player.state, (state) => {
     clearLiveStallWatchdog()
     isSeekingTranscode.value = false
     el.pause()
-    channelRouter?.suspend?.()
+    if (isSilentConsole.value) {
+      channelRouter?.suspend?.()
+    }
   }
 })
 
@@ -1180,8 +1199,8 @@ function onGlobalUserGesture() {
 onMounted(() => {
   applyMediaSource()
   if (typeof window !== 'undefined') {
-    window.addEventListener('pointerdown', onGlobalUserGesture, { capture: true })
     window.addEventListener('click', onGlobalUserGesture, { capture: true })
+    window.addEventListener('touchend', onGlobalUserGesture, { capture: true })
     window.addEventListener('keydown', onGlobalUserGesture, { capture: true })
   }
   if (typeof document !== 'undefined') {
@@ -1191,8 +1210,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
-    window.removeEventListener('pointerdown', onGlobalUserGesture, { capture: true })
     window.removeEventListener('click', onGlobalUserGesture, { capture: true })
+    window.removeEventListener('touchend', onGlobalUserGesture, { capture: true })
     window.removeEventListener('keydown', onGlobalUserGesture, { capture: true })
   }
   if (typeof document !== 'undefined') {
@@ -1207,6 +1226,8 @@ onBeforeUnmount(() => {
   lyricLoader.dispose()
   channelRouter.dispose()
 })
+
+defineExpose({ unlockAudio })
 </script>
 
 <style scoped>
