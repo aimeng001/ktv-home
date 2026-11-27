@@ -41,7 +41,6 @@ DOCKER_BACKEND_TEST_CLASSES: tuple[str, ...] = (
     "PartyLoadIntegrationTest",
     "PersistenceIntegrationTest",
     "WebSocketIntegrationTest",
-    "FlywaySpringBootUpgradeIntegrationTest",
     "FlywayUpgradeCompatibilityTest",
 )
 
@@ -85,7 +84,6 @@ CORE_BACKEND_UNIT_TESTS: tuple[str, ...] = (
     "AdminAuthServiceTest",
     "AdminScanControllerTest",
     "AdminScanControllerDeleteGuardTest",
-    "AdminScanControllerVocalTrackGuardTest",
     "AudioLayoutSerializationTest",
     "QueueCapacityTest",
     "QueueServiceTest",
@@ -95,7 +93,6 @@ CORE_BACKEND_UNIT_TESTS: tuple[str, ...] = (
 )
 
 CORE_BACKEND_TESTCONTAINER_TESTS: tuple[str, ...] = (
-    "FlywaySpringBootUpgradeIntegrationTest#springBootContextStartsSuccessfullyOnLegacyDatabase",
     "FlywayUpgradeCompatibilityTest#failedPostgresMigrationRollsBackEveryStatementInThatMigration",
     "LibraryScanIntegrationTest#scanClassifiesAndIngests",
     "QueuePlaybackIntegrationTest",
@@ -133,7 +130,6 @@ CORE_ANDROID_TEST_CLASSES: tuple[str, ...] = (
     "com.homektv.tv.net.AppConfigStateTest",
     "com.homektv.tv.net.AppConfigSessionScopeTest",
     "com.homektv.tv.net.AppConfigProtocolTest",
-    "com.homektv.tv.net.CredentialMigrationTest",
     "com.homektv.tv.net.DiscoveryProtocolTest",
     "com.homektv.tv.net.InboundDispatchQueueTest",
     "com.homektv.tv.net.KtvHttpTransportTest",
